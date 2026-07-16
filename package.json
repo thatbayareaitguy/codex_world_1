@@ -1,0 +1,36 @@
+{
+  "name": "ts-new-music-radar",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm --filter @radar/web build",
+    "db:generate": "pnpm --filter @radar/db db:generate",
+    "db:up": "tsx packages/db/src/manage.ts up",
+    "db:down": "tsx packages/db/src/manage.ts down",
+    "db:migrate": "pnpm --filter @radar/db db:migrate",
+    "db:reset:test": "tsx packages/db/src/prepare-test.ts",
+    "dev": "pnpm --filter @radar/web dev",
+    "format:check": "prettier --check .",
+    "lint": "eslint . --max-warnings=0",
+    "scan": "tsx apps/scanner/src/cli.ts",
+    "test": "vitest run --exclude '**/*.integration.test.ts' --exclude '**/e2e/**'",
+    "test:e2e": "playwright test",
+    "test:integration": "tsx packages/db/src/prepare-test.ts && vitest run '**/*.integration.test.ts'",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.38.0",
+    "@playwright/test": "^1.58.0",
+    "@types/node": "^24.10.0",
+    "eslint": "^9.38.0",
+    "prettier": "^3.6.2",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.0",
+    "vitest": "^4.0.0"
+  }
+}

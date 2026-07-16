@@ -1,0 +1,21 @@
+# Repository Rules
+
+- Preserve the canonical model, matching engine, source evidence, watchlist, feed, scanner, provider interfaces, and MockProvider.
+- Before implementing a real provider, verify current official account, payment, authentication, functionality, terms, and policy constraints. Record unresolved policy language and never claim provider approval.
+- No provider may require paid developer access, membership, API subscription, or commercial plan. The owner's existing Spotify Premium subscription is the only permitted paid prerequisite.
+- Active providers are Spotify, MusicBrainz, and MockProvider. Do not add YouTube, SoundCloud API, Apple Music, or TIDAL adapters in this milestone.
+- Never add SoundCloud credentials, OAuth, API requests, account import, search requests, monitoring, metadata, artwork, HTML fetching, scraping, browser automation, playback, oEmbed, or playlist writing.
+- SoundCloud is limited to the existing safe manual outbound-link feature and must be hidden by default behind `SOUNDCLOUD_MANUAL_LINKS_ENABLED=false`.
+- Accept SoundCloud field URLs only from `soundcloud.com` or its subdomains over HTTPS. Reject unsafe schemes, embedded credentials, lookalike domains, and non-track paths for track fields.
+- Store external-link state, verifier, and verification timestamp. Permit replacement, rejection, and removal.
+- Keep Spotify data namespaced. Do not use Spotify content to identify, enrich, illustrate, or transfer data to another service.
+- Do not build a combined player, mixed queue, cross-service artwork, audio proxy, download, transform, or rehost path.
+- Keep the Spotify playlist, provider-neutral saved releases, and optional verified SoundCloud outbound-link collection separate.
+- Use `http://127.0.0.1:3000/api/auth/spotify/callback` for local Spotify registration. Do not use localhost.
+- Real provider tests must use synthetic fixtures and injected HTTP mocks. Normal verification must never call live providers.
+- Database integration tests must provision the test PostgreSQL service or fail clearly. Never report a skipped database suite as passing.
+- Use official APIs only, preserve source evidence, validate external payloads with Zod, and keep matching deterministic and explainable.
+- Only exact or manually confirmed matches may be exported. Scanner and playlist writes must be idempotent.
+- Every visible interactive control must have a handler or destination, keyboard focus, accessible name, validation state, and critical Playwright coverage.
+- Keep TypeScript strict and avoid `any`. Run formatting, lint, type checking, unit tests, integration tests, build, and Playwright before handoff.
+- Update `docs/provider-capabilities.md` with official links and a new verification date before any real adapter work.

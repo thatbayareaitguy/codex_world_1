@@ -1,0 +1,171 @@
+export const providerNames = [
+  "mock",
+  "spotify",
+  "musicbrainz",
+  "youtube",
+  "soundcloud",
+  "apple_music",
+  "tidal",
+] as const;
+
+export type ProviderName = (typeof providerNames)[number];
+
+export const releaseTypes = [
+  "single",
+  "ep",
+  "album",
+  "compilation",
+  "remix",
+  "live",
+  "mixtape",
+  "dj_mix",
+  "demo",
+  "soundtrack",
+  "feature",
+  "upload",
+  "other",
+] as const;
+
+export type ReleaseType = (typeof releaseTypes)[number];
+
+export const feedStates = [
+  "new",
+  "upcoming",
+  "saved",
+  "dismissed",
+  "listened",
+  "needs_review",
+] as const;
+
+export type FeedState = (typeof feedStates)[number];
+
+export type AvailabilityState = "playable" | "preview" | "blocked" | "unavailable";
+
+export const soundCloudLinkStates = [
+  "NOT_CHECKED",
+  "SEARCH_LINK_AVAILABLE",
+  "USER_LINKED_UNVERIFIED",
+  "USER_LINKED_VERIFIED",
+  "USER_LINK_REJECTED",
+] as const;
+
+export type SoundCloudLinkState = (typeof soundCloudLinkStates)[number];
+
+export interface SoundCloudLinkRecord {
+  feedItemId: string;
+  rejectedAt?: string;
+  state: SoundCloudLinkState;
+  url: string;
+  verifier?: string;
+  verifiedAt?: string;
+}
+
+export interface ArtistCreditInput {
+  name: string;
+  canonicalArtistId?: string;
+  role: "primary" | "featured" | "remixer" | "producer";
+}
+
+export interface TrackCandidate {
+  provider: ProviderName;
+  externalReleaseId: string;
+  externalTrackId: string;
+  sourceLabel: string;
+  artistExternalId: string;
+  artistName: string;
+  title: string;
+  releaseTitle: string;
+  releaseType: ReleaseType;
+  releaseDate: string;
+  releaseDatePrecision: "day" | "month" | "year";
+  firstSeenAt: string;
+  credits: ArtistCreditInput[];
+  durationMs?: number;
+  isrc?: string;
+  upc?: string;
+  ean?: string;
+  discNumber?: number;
+  trackNumber?: number;
+  musicbrainzRecordingId?: string;
+  musicbrainzReleaseGroupId?: string;
+  version?: string;
+  region: string;
+  availability: AvailabilityState;
+  providerUrl: string;
+  evidenceUrl: string;
+  evidenceType: string;
+  payloadHash: string;
+  isUpcoming?: boolean;
+}
+
+export interface CanonicalTrack {
+  id: string;
+  title: string;
+  normalizedTitle: string;
+  credits: ArtistCreditInput[];
+  durationMs?: number;
+  isrc?: string;
+  upc?: string;
+  ean?: string;
+  discNumber?: number;
+  trackNumber?: number;
+  musicbrainzRecordingId?: string;
+  musicbrainzReleaseGroupId?: string;
+  version?: string;
+}
+
+export type MatchRule =
+  | "exact_provider_id"
+  | "exact_isrc"
+  | "exact_barcode_position"
+  | "exact_musicbrainz"
+  | "metadata"
+  | "new_canonical"
+  | "manual_review";
+
+export interface MatchDecision {
+  kind: "automatic" | "new" | "review";
+  rule: MatchRule;
+  confidence: number;
+  reasons: string[];
+  canonicalTrackId?: string;
+}
+
+export interface ScanFilter {
+  artistId?: string;
+  artistExternalId?: string;
+  full?: boolean;
+  provider?: ProviderName;
+  since?: string;
+}
+
+export interface ProviderScanResult {
+  candidates: TrackCandidate[];
+  nextCursor?: string;
+  providerMetrics?: {
+    failures: number;
+    requests: number;
+    waitMs: number;
+  };
+}
+
+export interface FeedFixtureItem {
+  id: string;
+  state: FeedState;
+  artist: string;
+  title: string;
+  releaseTitle: string;
+  releaseType: ReleaseType;
+  releaseDate: string;
+  releaseDatePrecision?: "day" | "month" | "year";
+  firstSeenAt: string;
+  sources: Array<{ provider: string; href: string; evidenceHref: string }>;
+  spotify: AvailabilityState;
+  soundcloudState: SoundCloudLinkState;
+  links: Array<{ label: string; href: string }>;
+  confidence: number;
+  matchReason: string;
+  region: string;
+  exportStatus: "eligible" | "exported" | "blocked" | "review_required";
+  accent: "coral" | "cyan" | "lime" | "gold";
+}

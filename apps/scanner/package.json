@@ -1,0 +1,17 @@
+{
+  "name": "@radar/scanner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "scan": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@radar/core": "workspace:*",
+    "@radar/db": "workspace:*",
+    "@radar/providers": "workspace:*",
+    "@radar/testing": "workspace:*",
+    "drizzle-orm": "^0.44.7"
+  }
+}
