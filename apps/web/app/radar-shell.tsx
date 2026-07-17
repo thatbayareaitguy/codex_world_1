@@ -38,19 +38,28 @@ import {
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
+import type { WatchlistArtistViewModel } from "../lib/watchlist-types";
 
 interface RadarShellProps {
   feedMode: "database" | "error" | "mock";
+  initialArtists: WatchlistArtistViewModel[];
   initialItems: FeedFixtureItem[];
   providerConfiguration: ProviderUiConfiguration;
   scannedItem: FeedFixtureItem;
+  watchlistMode: "database" | "error" | "mock";
 }
 
 interface ProviderUiConfiguration {
   databaseConfigured: boolean;
   musicbrainz: { configured: boolean; enabled: boolean };
   soundcloudManualLinksEnabled: boolean;
-  spotify: { configured: boolean; enabled: boolean };
+  spotify: {
+    allowedPlaylistConfigured: boolean;
+    allowedPlaylistIdAbbreviated?: string;
+    configured: boolean;
+    enabled: boolean;
+    playlistWritesEnabled: boolean;
+  };
 }
 
 type AppView =
@@ -68,11 +77,44 @@ interface FeedAdvancedFilters {
 }
 
 interface WatchedArtist {
+  active: boolean;
   addedAt: number;
   id: string;
   manuallyAdded: boolean;
   name: string;
+  providers: string[];
   releases: FeedFixtureItem[];
+  source: string;
+}
+
+interface ImportSummary {
+  alreadyPresent: number;
+  created: number;
+  failed: number;
+  merged: number;
+  needsReview: number;
+  persisted: number;
+  retrieved: number;
+  selected: number;
+  skipped: number;
+}
+
+interface ScanRunStatus {
+  completedAt: string | null;
+  id: string;
+  insertedCount: number;
+  provider: string | null;
+  providersCompleted: string[];
+  providersFailed: string[];
+  providersRequested: string[];
+  startedAt: string;
+  status: "running" | "completed" | "partial" | "failed";
+}
+
+interface ScanApiStatus {
+  latest: ScanRunStatus | null;
+  running: boolean;
+  runs: ScanRunStatus[];
 }
 
 const filters: Array<{ state: FeedState | "all"; label: string }> = [
@@ -97,9 +139,11 @@ const appViews = new Set<AppView>([
 
 export function RadarShell({
   feedMode,
+  initialArtists,
   initialItems,
   providerConfiguration,
   scannedItem,
+  watchlistMode,
 }: RadarShellProps) {
   const [activeView, setActiveView] = useState<AppView>("feed");
   const [hydrated, setHydrated] = useState(false);
@@ -107,6 +151,7 @@ export function RadarShell({
   const [items, setItems] = useState(initialItems);
   const [query, setQuery] = useState("");
   const [syncing, setSyncing] = useState(false);
+  const [scanStatus, setScanStatus] = useState<ScanApiStatus | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [exactOnly, setExactOnly] = useState(false);
   const [advancedFilters, setAdvancedFilters] = useState<FeedAdvancedFilters>({
@@ -121,6 +166,8 @@ export function RadarShell({
   const [dailyScan, setDailyScan] = useState(true);
   const [digest, setDigest] = useState(false);
   const [themePreference, setThemePreference] = useState<ThemePreference | null>(null);
+  const [persistedArtists, setPersistedArtists] = useState(initialArtists);
+  const [activeWatchlistMode, setActiveWatchlistMode] = useState(watchlistMode);
   const [addedArtists, setAddedArtists] = useState<WatchedArtist[]>([]);
   const [artistNames, setArtistNames] = useState<Record<string, string>>({});
   const [removedArtistIds, setRemovedArtistIds] = useState<string[]>([]);
@@ -148,6 +195,33 @@ export function RadarShell({
       window.removeEventListener("hashchange", syncViewFromHash);
     };
   }, [providerConfiguration.soundcloudManualLinksEnabled]);
+
+  useEffect(() => {
+    const completedNotice = window.sessionStorage.getItem("ts-radar-scan-notice");
+    if (!completedNotice) return;
+    window.sessionStorage.removeItem("ts-radar-scan-notice");
+    setNotice(completedNotice);
+  }, []);
+
+  useEffect(() => {
+    if (feedMode !== "database") return;
+    let cancelled = false;
+    const loadScanStatus = async () => {
+      try {
+        const response = await fetch("/api/scans", { cache: "no-store" });
+        const status = scanStatusSchema.parse(await response.json());
+        if (!cancelled && response.ok) setScanStatus(status);
+      } catch {
+        // The feed remains usable when scan status is temporarily unavailable.
+      }
+    };
+    void loadScanStatus();
+    const interval = window.setInterval(() => void loadScanStatus(), 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [feedMode]);
 
   useEffect(() => {
     const storedTheme = window.localStorage.getItem("ts-radar-theme");
@@ -221,18 +295,36 @@ export function RadarShell({
   const verifiedSoundCloudLinks = Object.values(soundCloudLinks).filter(
     (link) => link.state === "USER_LINKED_VERIFIED",
   );
+  const fixtureArtists: WatchedArtist[] = Array.from(
+    new Set(initialItems.map((item) => item.artist)),
+  ).map((artist) => {
+    const releases = items.filter((item) => item.artist === artist);
+    const id = `fixture:${artist.toLocaleLowerCase("en-US")}`;
+    return {
+      active: true,
+      addedAt: Math.max(...releases.map((release) => Date.parse(release.firstSeenAt))),
+      id,
+      manuallyAdded: false,
+      name: artistNames[id] ?? artist,
+      providers: Array.from(
+        new Set(releases.flatMap((release) => release.sources.map((source) => source.provider))),
+      ),
+      releases,
+      source: "mock",
+    };
+  });
+  const databaseArtists: WatchedArtist[] = persistedArtists.map((artist) => ({
+    active: artist.active,
+    addedAt: Date.parse(artist.addedAt),
+    id: artist.id,
+    manuallyAdded: artist.source === "manual",
+    name: artistNames[artist.id] ?? artist.name,
+    providers: artist.providers,
+    releases: items.filter((item) => item.artist === artist.name),
+    source: artist.source,
+  }));
   const artists: WatchedArtist[] = [
-    ...Array.from(new Set(initialItems.map((item) => item.artist))).map((artist) => {
-      const releases = items.filter((item) => item.artist === artist);
-      const id = `fixture:${artist.toLocaleLowerCase("en-US")}`;
-      return {
-        addedAt: Math.max(...releases.map((release) => Date.parse(release.firstSeenAt))),
-        id,
-        manuallyAdded: false,
-        name: artistNames[id] ?? artist,
-        releases,
-      };
-    }),
+    ...(activeWatchlistMode === "mock" ? fixtureArtists : databaseArtists),
     ...addedArtists.map((artist) => ({ ...artist, name: artistNames[artist.id] ?? artist.name })),
   ].filter((artist) => !removedArtistIds.includes(artist.id));
 
@@ -240,6 +332,27 @@ export function RadarShell({
     setActiveView(view);
     setNotice(null);
     window.history.replaceState(null, "", `#${view}`);
+  };
+
+  const refreshWatchlistAfterImport = async (summary: ImportSummary) => {
+    try {
+      const response = await fetch("/api/artists", { cache: "no-store" });
+      const body = watchlistResponseSchema.parse(await response.json());
+      if (!response.ok) throw new Error("Unable to refresh followed artists");
+      setPersistedArtists(body.artists);
+      setActiveWatchlistMode("database");
+      setActiveView("artists");
+      window.history.replaceState(null, "", "#artists");
+      setNotice(
+        `Spotify import persisted ${body.activeCount} active artists: ${summary.created} created, ${summary.merged} merged, ${summary.alreadyPresent} already present.`,
+      );
+    } catch {
+      setActiveView("artists");
+      window.history.replaceState(null, "", "#artists");
+      setNotice(
+        `Spotify import was persisted, but the watchlist refresh failed. Reload the page to view ${summary.persisted} active artists.`,
+      );
+    }
   };
 
   const updateItem = (id: string, changes: Partial<FeedFixtureItem>, message: string) => {
@@ -262,11 +375,14 @@ export function RadarShell({
     setAddedArtists((current) => [
       ...current,
       {
+        active: true,
         addedAt: Date.now(),
         id: `manual:${normalizedName.toLocaleLowerCase("en-US")}`,
         manuallyAdded: true,
         name: normalizedName,
+        providers: [],
         releases: [],
+        source: "manual",
       },
     ]);
     setNotice(`${normalizedName} was added and is awaiting provider mapping.`);
@@ -329,7 +445,63 @@ export function RadarShell({
     );
   };
 
-  const runMockScan = () => {
+  const runFeedScan = async () => {
+    if (feedMode === "error") {
+      setNotice("The database is unavailable, so a scan cannot be started.");
+      return;
+    }
+    if (feedMode === "database") {
+      const existingRunIds = new Set(scanStatus?.runs.map((run) => run.id) ?? []);
+      const existingRunningIds = new Set(
+        scanStatus?.runs.filter((run) => run.status === "running").map((run) => run.id) ?? [],
+      );
+      setSyncing(true);
+      setNotice(null);
+      try {
+        const response = await fetch("/api/scans", { method: "POST" });
+        if (response.status === 409) {
+          setNotice("A scan is already running. This page will continue monitoring it.");
+        } else {
+          const launch = scanLaunchSchema.parse(await response.json());
+          if (!response.ok || !launch.accepted) throw new Error("Scan launch failed");
+          setNotice("Release update started. Spotify and MusicBrainz will continue independently.");
+        }
+
+        for (let attempt = 0; attempt < 900; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+          const statusResponse = await fetch("/api/scans", { cache: "no-store" });
+          const status = scanStatusSchema.parse(await statusResponse.json());
+          if (!statusResponse.ok) throw new Error("Scan status failed");
+          setScanStatus(status);
+          const completedRuns = status.runs.filter(
+            (run) =>
+              (!existingRunIds.has(run.id) || existingRunningIds.has(run.id)) &&
+              run.status !== "running",
+          );
+          if (!status.running && completedRuns.length > 0) {
+            const inserted = completedRuns.reduce((total, run) => total + run.insertedCount, 0);
+            const failed = completedRuns.filter(
+              (run) => run.status === "failed" || run.status === "partial",
+            ).length;
+            window.sessionStorage.setItem(
+              "ts-radar-scan-notice",
+              failed
+                ? `Release update finished with ${failed} provider warning${failed === 1 ? "" : "s"}; ${inserted} discoveries were added.`
+                : `Release update complete. ${inserted} new ${inserted === 1 ? "discovery" : "discoveries"} added.`,
+            );
+            window.location.reload();
+            return;
+          }
+        }
+        throw new Error("Scan monitoring timed out");
+      } catch {
+        setNotice("The release update could not be started or monitored. Check System status.");
+      } finally {
+        setSyncing(false);
+      }
+      return;
+    }
+
     setSyncing(true);
     setNotice(null);
     window.setTimeout(() => {
@@ -485,9 +657,10 @@ export function RadarShell({
             onSoundCloudLinkChange={changeSoundCloudLink}
             onToggleExact={() => setExactOnly((value) => !value)}
             onToggleFilters={() => setFiltersOpen((value) => !value)}
-            onRunScan={runMockScan}
+            onRunScan={() => void runFeedScan()}
             ready={hydrated}
             reviewCount={reviewItems.length}
+            scanStatus={scanStatus}
             soundCloudManualLinksEnabled={providerConfiguration.soundcloudManualLinksEnabled}
             syncing={syncing}
           />
@@ -503,13 +676,14 @@ export function RadarShell({
             onRemoveProfile={removeArtistProfile}
             onSaveProfile={saveArtistProfile}
             soundCloudManualLinksEnabled={providerConfiguration.soundcloudManualLinksEnabled}
+            watchlistMode={activeWatchlistMode}
           />
         )}
         {activeView === "exports" && (
           <ExportsView
             items={items}
             onNotice={setNotice}
-            spotifyConfigured={providerConfiguration.spotify.configured}
+            spotifyConfiguration={providerConfiguration.spotify}
           />
         )}
         {activeView === "soundcloud-links" &&
@@ -526,6 +700,7 @@ export function RadarShell({
             digest={digest}
             onDailyScanChange={setDailyScan}
             onDigestChange={setDigest}
+            onImportConfirmed={refreshWatchlistAfterImport}
             onNotice={setNotice}
             onThemeChange={(theme) => {
               setThemePreference(theme);
@@ -655,6 +830,7 @@ interface FeedViewProps {
   onToggleFilters: () => void;
   ready: boolean;
   reviewCount: number;
+  scanStatus: ScanApiStatus | null;
   soundCloudManualLinksEnabled: boolean;
   syncing: boolean;
 }
@@ -676,6 +852,7 @@ function FeedView({
   onToggleFilters,
   ready,
   reviewCount,
+  scanStatus,
   soundCloudManualLinksEnabled,
   syncing,
 }: FeedViewProps) {
@@ -694,12 +871,6 @@ function FeedView({
           <h1>Discovery feed</h1>
           <p>Recent signals from your followed artists, ordered by first seen.</p>
         </div>
-        {feedMode === "mock" && (
-          <button className="scan-button" onClick={onRunScan} disabled={syncing || !ready}>
-            <RefreshCw size={16} className={syncing ? "spinning" : ""} />
-            {!ready ? "Loading feed" : syncing ? "Scanning" : "Run mock scan"}
-          </button>
-        )}
       </div>
 
       <div className="metrics" aria-label="Feed summary">
@@ -718,10 +889,48 @@ function FeedView({
           <strong className="attention">{reviewCount}</strong>
           <small>Blocked from export</small>
         </div>
-        <div>
-          <span>Last scan</span>
-          <strong className="time-value">09:10</strong>
-          <small>Mock provider · 4 sources</small>
+        <div className="last-scan-metric">
+          <div className="metric-heading">
+            <span>Last scan</span>
+            <button
+              aria-label={feedMode === "mock" ? "Run mock scan" : "Run release update now"}
+              className="metric-scan-button"
+              disabled={syncing || scanStatus?.running || !ready || feedMode === "error"}
+              onClick={onRunScan}
+              title={
+                feedMode === "mock"
+                  ? "Run mock scan"
+                  : scanStatus?.running
+                    ? "Release update in progress"
+                    : "Run release update now"
+              }
+              type="button"
+            >
+              <RefreshCw
+                aria-hidden="true"
+                className={syncing || scanStatus?.running ? "spinning" : ""}
+                size={16}
+              />
+            </button>
+          </div>
+          <strong className="time-value">
+            {feedMode === "mock"
+              ? "09:10"
+              : scanStatus?.latest
+                ? formatScanTime(scanStatus.latest.completedAt ?? scanStatus.latest.startedAt)
+                : scanStatus
+                  ? "Never"
+                  : "Loading"}
+          </strong>
+          <small>
+            {feedMode === "mock"
+              ? "Mock provider | 4 sources"
+              : scanStatus?.running
+                ? "Provider update in progress"
+                : scanStatus?.latest
+                  ? scanRunLabel(scanStatus.latest)
+                  : "No provider scan recorded"}
+          </small>
         </div>
       </div>
 
@@ -887,6 +1096,7 @@ function ArtistsView({
   onRemoveProfile,
   onSaveProfile,
   soundCloudManualLinksEnabled,
+  watchlistMode,
 }: {
   artistProfiles: Record<string, string>;
   artists: WatchedArtist[];
@@ -896,10 +1106,12 @@ function ArtistsView({
   onRemoveProfile: (id: string) => void;
   onSaveProfile: (id: string, url: string) => void;
   soundCloudManualLinksEnabled: boolean;
+  watchlistMode: "database" | "error" | "mock";
 }) {
   const [addingArtist, setAddingArtist] = useState(false);
   const [artistName, setArtistName] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const [artistSearch, setArtistSearch] = useState("");
   const [sortOrder, setSortOrder] = useState<ArtistSort>("name-asc");
   const [editingArtistId, setEditingArtistId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
@@ -908,7 +1120,12 @@ function ArtistsView({
   const [profileError, setProfileError] = useState<string | null>(null);
 
   const sortedArtists = useMemo(() => {
-    return [...artists].sort((left, right) => {
+    const query = artistSearch.trim().toLocaleLowerCase("en-US");
+    const matchingArtists = query
+      ? artists.filter((artist) => artist.name.toLocaleLowerCase("en-US").includes(query))
+      : artists;
+
+    return [...matchingArtists].sort((left, right) => {
       if (sortOrder === "recent") {
         return right.addedAt - left.addedAt || left.name.localeCompare(right.name, "en-US");
       }
@@ -916,7 +1133,7 @@ function ArtistsView({
       const comparison = left.name.localeCompare(right.name, "en-US");
       return sortOrder === "name-asc" ? comparison : -comparison;
     });
-  }, [artists, sortOrder]);
+  }, [artistSearch, artists, sortOrder]);
 
   const submitArtist = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -982,6 +1199,17 @@ function ArtistsView({
         >
           <UserPlus size={15} /> Add artist
         </button>
+        <label className="artist-search">
+          <Search aria-hidden="true" size={15} />
+          <input
+            aria-label="Search followed artists"
+            autoComplete="off"
+            onChange={(event) => setArtistSearch(event.target.value)}
+            placeholder="Search artists"
+            type="search"
+            value={artistSearch}
+          />
+        </label>
         <label className="sort-control">
           <span>Sort</span>
           <select
@@ -1031,28 +1259,45 @@ function ArtistsView({
       )}
 
       <div className="data-list" aria-label="Followed artists">
+        {watchlistMode === "error" && (
+          <div className="error-state" role="alert">
+            The persisted watchlist could not be loaded. No empty-watchlist state is being inferred.
+          </div>
+        )}
+        {watchlistMode !== "error" && artists.length === 0 && (
+          <div className="empty-state">
+            <Users size={22} />
+            <strong>No followed artists yet.</strong>
+            <span>Add an artist manually or import followed artists from Spotify.</span>
+          </div>
+        )}
+        {watchlistMode !== "error" && artists.length > 0 && sortedArtists.length === 0 && (
+          <div className="empty-state">
+            <Search size={22} />
+            <strong>No artists match your search.</strong>
+            <span>Try another artist name.</span>
+          </div>
+        )}
         {sortedArtists.map((artist) => (
           <div className="data-row" key={artist.id}>
             <span className="artist-monogram">{artist.name.slice(0, 2).toUpperCase()}</span>
             <div>
               <strong>{artist.name}</strong>
               <small>
-                {artist.manuallyAdded
-                  ? "Added manually in mock mode"
-                  : `${artist.releases.length} mock discovery signal`}
+                {artist.source === "spotify_import"
+                  ? "Imported from Spotify"
+                  : artist.manuallyAdded
+                    ? watchlistMode === "mock"
+                      ? "Added manually in mock mode"
+                      : "Added manually"
+                    : `${artist.releases.length} discovery signal`}
               </small>
             </div>
             <div className="source-stack">
-              {artist.manuallyAdded ? (
+              {artist.providers.length === 0 ? (
                 <span className="provider-tag">No provider IDs</span>
               ) : (
-                Array.from(
-                  new Set(
-                    artist.releases.flatMap((release) =>
-                      release.sources.map((source) => source.provider),
-                    ),
-                  ),
-                ).map((provider) => (
+                artist.providers.map((provider) => (
                   <span className="provider-tag" key={provider}>
                     {provider}
                   </span>
@@ -1069,9 +1314,11 @@ function ArtistsView({
                 </a>
               )}
             </div>
-            <span className={`mapping-status ${artist.manuallyAdded ? "pending" : ""}`}>
-              {artist.manuallyAdded ? <Clock3 size={14} /> : <Check size={14} />}
-              {artist.manuallyAdded ? "Pending mapping" : "Mapped"}
+            <span
+              className={`mapping-status ${artist.manuallyAdded || !artist.active ? "pending" : ""}`}
+            >
+              {artist.manuallyAdded || !artist.active ? <Clock3 size={14} /> : <Check size={14} />}
+              {!artist.active ? "Paused" : artist.manuallyAdded ? "Pending mapping" : "Mapped"}
             </span>
             <div className="row-actions">
               <button
@@ -1186,51 +1433,35 @@ function ArtistsView({
 function ExportsView({
   items,
   onNotice,
-  spotifyConfigured,
+  spotifyConfiguration,
 }: {
   items: FeedFixtureItem[];
   onNotice: (message: string) => void;
-  spotifyConfigured: boolean;
+  spotifyConfiguration: ProviderUiConfiguration["spotify"];
 }) {
   const readyCount = items.filter((item) => item.exportStatus === "eligible").length;
   const exportedCount = items.filter((item) => item.exportStatus === "exported").length;
-  const [playlistName, setPlaylistName] = useState("Release Inbox");
-  const [autoAdd, setAutoAdd] = useState(false);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<{
     alreadyPresent: string[];
     rejected: unknown[];
     toAdd: string[];
   } | null>(null);
-  const [privatePlaylists, setPrivatePlaylists] = useState<Array<{ id: string; name: string }>>([]);
-  const [selectedPlaylistId, setSelectedPlaylistId] = useState("");
+  const [inspectedPlaylist, setInspectedPlaylist] = useState<{
+    id: string;
+    name: string;
+    private: boolean;
+  } | null>(null);
 
-  const playlistRequest = async (path: string, method: "GET" | "POST", body?: unknown) => {
+  const playlistRequest = async (path: string, method: "GET" | "POST") => {
     setBusy(true);
     try {
-      const response = await fetch(path, {
-        ...(body
-          ? { body: JSON.stringify(body), headers: { "Content-Type": "application/json" } }
-          : {}),
-        method,
-      });
+      const response = await fetch(path, { method });
       const payload: unknown = await response.json();
       if (!response.ok) throw new Error("Spotify playlist request failed");
       return payload;
     } finally {
       setBusy(false);
-    }
-  };
-
-  const createPlaylist = async () => {
-    try {
-      await playlistRequest("/api/spotify/playlists", "POST", {
-        mode: "create",
-        name: playlistName,
-      });
-      onNotice(`Private Spotify playlist ${playlistName} is configured.`);
-    } catch {
-      onNotice("Unable to create the private Spotify playlist.");
     }
   };
 
@@ -1262,42 +1493,21 @@ function ExportsView({
     }
   };
 
-  const updateAutoAdd = async (enabled: boolean) => {
-    try {
-      await playlistRequest("/api/spotify/playlists", "POST", { enabled, mode: "auto_add" });
-      setAutoAdd(enabled);
-      onNotice(`Auto-add exact matches ${enabled ? "enabled" : "disabled"}.`);
-    } catch {
-      onNotice("Unable to update auto-add.");
-    }
-  };
-
-  const loadPlaylists = async () => {
+  const inspectPlaylist = async () => {
     try {
       const payload = z
         .object({
-          playlists: z.array(z.object({ id: z.string(), name: z.string() }).passthrough()),
-          target: z.object({ autoAddExactMatches: z.boolean() }).nullable().optional(),
+          playlist: z.object({ id: z.string(), name: z.string(), private: z.boolean() }).nullable(),
         })
         .parse(await playlistRequest("/api/spotify/playlists", "GET"));
-      setPrivatePlaylists(payload.playlists);
-      setAutoAdd(payload.target?.autoAddExactMatches ?? false);
-      setSelectedPlaylistId(payload.playlists[0]?.id ?? "");
+      setInspectedPlaylist(payload.playlist);
+      onNotice(
+        payload.playlist
+          ? `Configured private playlist ${payload.playlist.name} was verified.`
+          : "No Spotify playlist ID is configured.",
+      );
     } catch {
-      onNotice("Unable to load owned private Spotify playlists.");
-    }
-  };
-
-  const selectPlaylist = async () => {
-    if (!selectedPlaylistId) return;
-    try {
-      await playlistRequest("/api/spotify/playlists", "POST", {
-        mode: "select",
-        playlistId: selectedPlaylistId,
-      });
-      onNotice("Existing private Spotify playlist selected.");
-    } catch {
-      onNotice("Unable to select that Spotify playlist.");
+      onNotice("Unable to inspect the configured private Spotify playlist.");
     }
   };
   return (
@@ -1316,9 +1526,9 @@ function ExportsView({
             <div>
               <h2>Spotify private release inbox</h2>
               <p>
-                {spotifyConfigured
-                  ? "Private playlist target"
-                  : "Spotify credentials are not configured"}
+                {spotifyConfiguration.allowedPlaylistConfigured
+                  ? `Configured target ${spotifyConfiguration.allowedPlaylistIdAbbreviated}`
+                  : "No allowed playlist ID configured"}
               </p>
             </div>
           </div>
@@ -1336,44 +1546,26 @@ function ExportsView({
               <dd>{items.length - readyCount - exportedCount}</dd>
             </div>
           </dl>
-          <label className="playlist-name-control">
-            <span>Playlist name</span>
-            <input
-              disabled={!spotifyConfigured || busy}
-              maxLength={100}
-              onChange={(event) => setPlaylistName(event.target.value)}
-              value={playlistName}
-            />
-          </label>
-          <label className="playlist-toggle">
-            <input
-              checked={autoAdd}
-              disabled={!spotifyConfigured || busy}
-              onChange={(event) => void updateAutoAdd(event.target.checked)}
-              type="checkbox"
-            />
-            Auto-add exact matches
-          </label>
           <div className="row-actions">
             <button
               className="secondary-button"
-              disabled={!spotifyConfigured || busy || !playlistName.trim()}
-              onClick={() => void createPlaylist()}
+              disabled={
+                !spotifyConfiguration.configured ||
+                !spotifyConfiguration.allowedPlaylistConfigured ||
+                busy
+              }
+              onClick={() => void inspectPlaylist()}
               type="button"
             >
-              Create private playlist
+              Inspect configured playlist
             </button>
             <button
               className="secondary-button"
-              disabled={!spotifyConfigured || busy}
-              onClick={() => void loadPlaylists()}
-              type="button"
-            >
-              Load private playlists
-            </button>
-            <button
-              className="secondary-button"
-              disabled={!spotifyConfigured || busy}
+              disabled={
+                !spotifyConfiguration.configured ||
+                !spotifyConfiguration.allowedPlaylistConfigured ||
+                busy
+              }
               onClick={() => void previewSync()}
               type="button"
             >
@@ -1381,34 +1573,26 @@ function ExportsView({
             </button>
             <button
               className="secondary-button"
-              disabled={!spotifyConfigured || busy}
+              disabled={
+                !spotifyConfiguration.configured ||
+                !spotifyConfiguration.allowedPlaylistConfigured ||
+                !spotifyConfiguration.playlistWritesEnabled ||
+                busy
+              }
               onClick={() => void syncPlaylist()}
               type="button"
             >
-              <RefreshCw size={15} /> Sync playlist
+              <RefreshCw size={15} />
+              {spotifyConfiguration.playlistWritesEnabled
+                ? "Add eligible tracks"
+                : "Playlist writes disabled"}
             </button>
           </div>
-          {privatePlaylists.length > 0 && (
-            <div className="playlist-selector">
-              <select
-                aria-label="Existing private Spotify playlist"
-                onChange={(event) => setSelectedPlaylistId(event.target.value)}
-                value={selectedPlaylistId}
-              >
-                {privatePlaylists.map((playlist) => (
-                  <option key={playlist.id} value={playlist.id}>
-                    {playlist.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                className="secondary-button"
-                disabled={busy}
-                onClick={() => void selectPlaylist()}
-                type="button"
-              >
-                Use selected playlist
-              </button>
+          {inspectedPlaylist && (
+            <div className="sync-preview" role="status">
+              <span>{inspectedPlaylist.name}</span>
+              <span>{inspectedPlaylist.id}</span>
+              <span>Owned and private</span>
             </div>
           )}
           {preview && (
@@ -1583,6 +1767,7 @@ interface SettingsViewProps {
   digest: boolean;
   onDailyScanChange: (value: boolean) => void;
   onDigestChange: (value: boolean) => void;
+  onImportConfirmed: (summary: ImportSummary) => Promise<void>;
   onNotice: (message: string) => void;
   onThemeChange: (value: ThemePreference) => void;
   providerConfiguration: ProviderUiConfiguration;
@@ -1636,6 +1821,7 @@ const systemStatusSchema = z.object({
     schedule: z.string().nullable(),
   }),
   spotify: z.object({
+    allowedPlaylistConfigured: z.boolean(),
     configured: z.boolean(),
     connected: z.boolean().optional(),
     enabled: z.boolean(),
@@ -1646,6 +1832,7 @@ const systemStatusSchema = z.object({
     lastSuccessfulRequestAt: z.string().nullable().optional(),
     lastSuccessfulScanAt: z.string().nullable().optional(),
     playlistConfigured: z.boolean().optional(),
+    playlistWritesEnabled: z.boolean(),
     redirectUriValid: z.boolean(),
     requiredScopes: z.array(z.string()),
   }),
@@ -1721,6 +1908,7 @@ function SystemStatusView() {
               ["Configured", yesNo(status.spotify.configured)],
               ["Connected", yesNo(status.spotify.connected)],
               ["Scopes granted", status.spotify.grantedScopes?.join(", ") || "Not available"],
+              ["Playlist writes", status.spotify.playlistWritesEnabled ? "Enabled" : "Disabled"],
               ["Last request", formatStatusDate(status.spotify.lastSuccessfulRequestAt)],
               ["Last scan", formatStatusDate(status.spotify.lastSuccessfulScanAt)],
               ["Playlist configured", yesNo(status.spotify.playlistConfigured)],
@@ -1837,6 +2025,7 @@ function SettingsView({
   digest,
   onDailyScanChange,
   onDigestChange,
+  onImportConfirmed,
   onNotice,
   onThemeChange,
   providerConfiguration,
@@ -1876,11 +2065,26 @@ function SettingsView({
           configured={providerConfiguration.spotify.configured}
           enabled={providerConfiguration.spotify.enabled}
           name="Spotify"
+          onImportConfirmed={onImportConfirmed}
         />
         <SpotifySetupChecklist
           configured={providerConfiguration.spotify.configured}
           enabled={providerConfiguration.spotify.enabled}
         />
+        <div className="setting-row">
+          <div>
+            <strong>Spotify playlist permission boundary</strong>
+            <small>
+              Spotify grants playlist permissions at the account scope level, not to one individual
+              playlist. Release Inbox additionally restricts itself to the configured playlist ID.
+            </small>
+          </div>
+          <span className="status-chip">
+            {providerConfiguration.spotify.playlistWritesEnabled
+              ? "Writes enabled"
+              : "Writes disabled"}
+          </span>
+        </div>
         <ProviderSetting
           configured={providerConfiguration.musicbrainz.configured}
           enabled={providerConfiguration.musicbrainz.enabled}
@@ -2090,10 +2294,12 @@ function ProviderSetting({
   configured,
   enabled,
   name,
+  onImportConfirmed,
 }: {
   configured: boolean;
   enabled: boolean;
   name: "Spotify" | "MusicBrainz";
+  onImportConfirmed?: (summary: ImportSummary) => Promise<void>;
 }) {
   const [spotifyStatus, setSpotifyStatus] = useState<z.infer<typeof spotifyStatusSchema> | null>(
     null,
@@ -2159,9 +2365,8 @@ function ProviderSetting({
       const summary = importSummarySchema.parse(await response.json());
       if (!response.ok) throw new Error("Unable to confirm import.");
       setImportPreview(null);
-      setError(
-        `Import complete: ${summary.created} created, ${summary.merged} merged, ${summary.skipped} skipped.`,
-      );
+      setError(null);
+      await onImportConfirmed?.(summary);
     } catch {
       setError("Unable to confirm followed-artist import.");
     } finally {
@@ -2189,7 +2394,7 @@ function ProviderSetting({
         <strong>{name}</strong>
         <small>
           {name === "Spotify"
-            ? "Server-side OAuth, followed-artist import, catalog discovery, and private playlist export."
+            ? "Server-side OAuth, followed-artist import, catalog discovery, and guarded configured-playlist inspection."
             : "Public metadata discovery using your contact email; no account connection is required."}
         </small>
       </div>
@@ -2368,7 +2573,8 @@ function SpotifySetupChecklist({ configured, enabled }: { configured: boolean; e
     ["Account connected", status?.spotify.connected ?? false],
     ["Required scopes granted", scopesGranted],
     ["Followed artists imported", status?.spotify.followedArtistsImported ?? false],
-    ["Release Inbox playlist selected or created", status?.spotify.playlistConfigured ?? false],
+    ["Allowed private playlist ID configured", status?.spotify.allowedPlaylistConfigured ?? false],
+    ["Playlist writes enabled", status?.spotify.playlistWritesEnabled ?? false],
   ];
   return (
     <div className="setting-row setup-checklist-row">
@@ -2388,6 +2594,10 @@ function SpotifySetupChecklist({ configured, enabled }: { configured: boolean; e
           </li>
         ))}
       </ul>
+      <div className="setup-scopes" aria-label="Currently granted Spotify scopes">
+        <strong>Currently granted scopes</strong>
+        <small>{status?.spotify.grantedScopes?.join(", ") || "None granted"}</small>
+      </div>
     </div>
   );
 }
@@ -2577,11 +2787,72 @@ const importPreviewSchema = z.object({
 });
 
 const importSummarySchema = z.object({
+  alreadyPresent: z.number().int().nonnegative(),
   created: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
   merged: z.number().int().nonnegative(),
   needsReview: z.number().int().nonnegative(),
+  persisted: z.number().int().nonnegative(),
+  retrieved: z.number().int().nonnegative(),
+  selected: z.number().int().nonnegative(),
   skipped: z.number().int().nonnegative(),
 });
+
+const scanRunStatusSchema = z.object({
+  completedAt: z.string().datetime().nullable(),
+  id: z.string().uuid(),
+  insertedCount: z.number().int().nonnegative(),
+  provider: z.string().nullable(),
+  providersCompleted: z.array(z.string()),
+  providersFailed: z.array(z.string()),
+  providersRequested: z.array(z.string()),
+  startedAt: z.string().datetime(),
+  status: z.enum(["running", "completed", "partial", "failed"]),
+});
+
+const scanStatusSchema = z.object({
+  latest: scanRunStatusSchema.nullable(),
+  running: z.boolean(),
+  runs: z.array(scanRunStatusSchema),
+});
+
+const scanLaunchSchema = z.object({
+  accepted: z.boolean(),
+});
+
+const watchlistResponseSchema = z.object({
+  activeCount: z.number().int().nonnegative(),
+  artists: z.array(
+    z.object({
+      active: z.boolean(),
+      addedAt: z.string().datetime(),
+      id: z.string().uuid(),
+      name: z.string().min(1),
+      providers: z.array(z.string()),
+      source: z.string(),
+    }),
+  ),
+});
+
+function formatScanTime(value: string): string {
+  return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function scanRunLabel(run: ScanRunStatus): string {
+  const providers = run.providersCompleted.length
+    ? run.providersCompleted
+    : run.providersRequested.length
+      ? run.providersRequested
+      : run.provider
+        ? [run.provider]
+        : [];
+  const providerLabel = providers.length
+    ? providers.map((provider) => titleCase(provider)).join(", ")
+    : "Provider scan";
+  if (run.status === "failed") return `${providerLabel} | failed`;
+  if (run.status === "partial") return `${providerLabel} | completed with warnings`;
+  return `${providerLabel} | ${run.insertedCount} added`;
+}
 
 function FeedItem({
   item,

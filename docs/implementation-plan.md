@@ -23,8 +23,8 @@ Keep the pnpm monorepo, strict TypeScript, Drizzle schema and migration history,
 
 ## Verified Provider Constraints
 
-- Spotify Development Mode requires the app owner to retain Premium. The product requests only `user-follow-read`, `playlist-read-private`, and `playlist-modify-private`.
-- Use `GET /me` and stable `account_id`, `GET /me/following`, individual artist, album, and track endpoints, `GET /me/playlists`, `POST /me/playlists`, and playlist `/items` endpoints.
+- Spotify Development Mode requires the app owner to retain Premium. Initial authorization requests only `user-follow-read` and `playlist-read-private`. Prepared add-only export requests `playlist-modify-private` only when the default-off write gate is explicitly enabled.
+- Use `GET /me` and stable `account_id`, `GET /me/following`, individual artist, album, and track endpoints, and configured playlist `/items` endpoints. Do not list or create playlists for export selection.
 - Do not use removed browse new releases, user playlist routes, bulk track or artist reads, or playlist `/tracks` routes.
 - Spotify followed artists use cursor pagination up to 50 per page. Artist albums and search use no more than 10 per page. Playlist item reads use up to 50 and additions use batches up to 100.
 - MusicBrainz uses JSON search, release-group browse by confirmed artist MBID, release browse by artist, and release browse by `track_artist` for appearances. Browse pages are at most 100 and release offsets advance by actual result count.
@@ -95,7 +95,7 @@ Verified: 2026-07-16
 4. Harden scanner coordination with one global normal-scan lock, provider result isolation, stale-lock inspection and recovery, status and reconciliation commands, trigger metadata, bounded error storage, and detailed-log retention configuration.
 5. Add Windows-compatible `app:up` and `app:down` helpers that verify Docker, start PostgreSQL, apply migrations, and start the loopback-only application without modifying environment files.
 6. Add PostgreSQL custom-format backup and guarded restore commands, out-of-tree default storage, metadata for last backup, restore confirmation, compatibility checks, and test-database recovery coverage.
-7. Add an optional, separately invoked Spotify live smoke command that validates configuration and remains read-only unless an explicit playlist-write confirmation is provided. Never run it during standard verification.
+7. Keep the optional, separately invoked Spotify live smoke command strictly read-only. Never run it during standard verification and expose no live playlist-write option.
 8. Add a consolidated system-status API and UI with accurate database, provider, scanner, backup, and external-scheduler state. Every unavailable action must be disabled with a reason.
 9. Add one database-backed synthetic workflow covering manual and imported artists, provider mappings, duplicate matching, review, feed, idempotent scans, playlist planning, disconnect, and canonical-data retention.
 10. Rewrite the README as an operational guide and add daily-use, troubleshooting, manual-QA, scheduling, backup, security, and Reddit readiness documentation that matches implemented behavior.

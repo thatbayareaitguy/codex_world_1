@@ -18,10 +18,12 @@ Drizzle is used because it keeps the schema and SQL migrations explicit, has a s
 3. The scanner loads only confirmed mappings and invokes providers independently.
 4. Typed provider candidates are matched to canonical tracks.
 5. A transaction preserves provider IDs, source evidence, upcoming history, feed state, availability, and match reasons.
-6. Spotify playlist planning selects only exact or manually confirmed Spotify tracks and compares them with current playlist items before batching additions.
+6. Spotify playlist planning selects only exact or manually confirmed Spotify tracks and compares them with current playlist items. Writes default off. When explicitly enabled, route and client guards allow additions only to the server-configured owned private playlist and record them in the export ledger.
 7. Reddit text is parsed locally, matched only against the canonical watchlist, and enters review unless exact canonical artist and title are corroborated by existing Spotify availability. Reddit content is never sent to AI.
 
 Spotify responses are never submitted to MusicBrainz. MusicBrainz mapping starts from canonical names, user aliases, and confirmed decisions. Canonical display data is provider-neutral; source-specific values remain in external-ID provider fields and evidence records.
+
+The browser cannot supply or select a Spotify write target. `SPOTIFY_ALLOWED_PLAYLIST_ID` is the only target authority. Playlist creation, rename, visibility changes, artwork, follow, unfollow, removal, replacement, and reordering are outside the provider-client surface.
 
 ## Resilience
 

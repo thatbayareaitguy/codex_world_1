@@ -5,8 +5,12 @@ test("runs a mock scan, opens evidence, changes status, and filters the feed", a
   await expect(page.getByRole("heading", { name: "Discovery feed" })).toBeVisible();
   await expect(page.getByRole("article")).toHaveCount(4);
 
-  await page.getByRole("button", { name: "Run mock scan" }).click();
-  await expect(page.getByRole("button", { name: "Scanning" })).toBeDisabled();
+  const lastScan = page.locator(".last-scan-metric");
+  await expect(lastScan.getByText("Last scan", { exact: true })).toBeVisible();
+  const scanButton = lastScan.getByRole("button", { name: "Run mock scan" });
+  await expect(scanButton).toBeVisible();
+  await scanButton.click();
+  await expect(scanButton).toBeDisabled();
   await expect(page.getByRole("heading", { name: "Signal Fires" })).toBeVisible();
   await expect(page.getByRole("article")).toHaveCount(5);
   await expect(page.getByRole("status")).toContainText("Signal Fires was added");
@@ -41,12 +45,73 @@ test("runs a mock scan, opens evidence, changes status, and filters the feed", a
   await expect(page.getByText("No discoveries match this view.")).toBeVisible();
 });
 
+test("keeps every advanced filter inside the panel while resizing", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Filters" }).click();
+  const panel = page.locator(".filter-panel");
+  await expect(panel).toBeVisible();
+
+  for (const viewport of [
+    { height: 900, width: 1400 },
+    { height: 900, width: 900 },
+    { height: 900, width: 480 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const layout = await panel.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const controlsFit = Array.from(element.querySelectorAll("input, select")).every((child) => {
+        const childBounds = child.getBoundingClientRect();
+        return childBounds.left >= bounds.left - 1 && childBounds.right <= bounds.right + 1;
+      });
+      return {
+        controlsFit,
+        noHorizontalOverflow: element.scrollWidth <= element.clientWidth,
+        withinViewport: bounds.left >= 0 && bounds.right <= window.innerWidth,
+      };
+    });
+    expect(layout).toEqual({
+      controlsFit: true,
+      noHorizontalOverflow: true,
+      withinViewport: true,
+    });
+  }
+});
+
 test("adds, sorts, edits, and removes a canonical artist", async ({ page }) => {
   await page.goto("/#artists");
   await expect(page.getByRole("heading", { name: "Followed artists" })).toBeVisible();
 
   const artistRows = page.locator(".data-row");
+  const search = page.getByRole("searchbox", { name: "Search followed artists" });
   const sort = page.getByLabel("Sort artists");
+  await search.fill("oxide");
+  await expect(artistRows).toHaveCount(1);
+  await expect(artistRows.first()).toContainText("Oxide Echo");
+  await search.fill("missing artist");
+  await expect(page.getByText("No artists match your search.")).toBeVisible();
+  await search.fill("");
+  await expect(artistRows).toHaveCount(4);
+  await page.setViewportSize({ height: 900, width: 480 });
+  const toolbarLayout = await page.locator(".artist-toolbar").evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const controlsFit = Array.from(element.querySelectorAll("button, input, select")).every(
+      (control) => {
+        const controlBounds = control.getBoundingClientRect();
+        return controlBounds.left >= bounds.left - 1 && controlBounds.right <= bounds.right + 1;
+      },
+    );
+    return {
+      controlsFit,
+      noHorizontalOverflow: element.scrollWidth <= element.clientWidth,
+      withinViewport: bounds.left >= 0 && bounds.right <= window.innerWidth,
+    };
+  });
+  expect(toolbarLayout).toEqual({
+    controlsFit: true,
+    noHorizontalOverflow: true,
+    withinViewport: true,
+  });
+  await page.setViewportSize({ height: 900, width: 1280 });
   await sort.selectOption("name-desc");
   await expect(artistRows.first()).toContainText("Oxide Echo");
   await sort.selectOption("name-asc");
@@ -73,6 +138,83 @@ test("adds, sorts, edits, and removes a canonical artist", async ({ page }) => {
   ).toBeVisible();
 });
 
+test("shows a confirmed Spotify import from the persisted watchlist response", async ({ page }) => {
+  const importRunId = "00000000-0000-4000-8000-000000000101";
+  const candidateId = "00000000-0000-4000-8000-000000000102";
+  const artistId = "00000000-0000-4000-8000-000000000103";
+
+  await page.route("**/api/spotify/status", async (route) => {
+    await route.fulfill({
+      json: {
+        displayName: "Synthetic Spotify account",
+        scopes: ["user-follow-read", "playlist-read-private"],
+        state: "connected",
+      },
+    });
+  });
+  await page.route("**/api/spotify/import/preview", async (route) => {
+    await route.fulfill({
+      json: {
+        candidates: [
+          {
+            id: candidateId,
+            proposedAction: "create",
+            providerName: "Regression Artist",
+            providerUrl: "https://open.spotify.com/artist/synthetic-regression-artist",
+            selected: true,
+          },
+        ],
+        importRunId,
+        retrieved: 1,
+      },
+    });
+  });
+  await page.route("**/api/spotify/import/confirm", async (route) => {
+    await route.fulfill({
+      json: {
+        alreadyPresent: 0,
+        created: 1,
+        failed: 0,
+        merged: 0,
+        needsReview: 0,
+        persisted: 1,
+        retrieved: 1,
+        selected: 1,
+        skipped: 0,
+      },
+    });
+  });
+  await page.route("**/api/artists", async (route) => {
+    await route.fulfill({
+      json: {
+        activeCount: 1,
+        artists: [
+          {
+            active: true,
+            addedAt: "2026-07-17T12:00:00.000Z",
+            id: artistId,
+            name: "Regression Artist",
+            providers: ["spotify"],
+            source: "spotify_import",
+          },
+        ],
+      },
+    });
+  });
+
+  await page.goto("/#settings");
+  await expect(page.getByText("Connected: Synthetic Spotify account")).toBeVisible();
+  await page.getByRole("button", { name: "Import followed artists" }).click();
+  await expect(page.getByText("Import preview: 1 followed artists")).toBeVisible();
+  await page.getByRole("button", { name: "Confirm import" }).click();
+
+  await expect(page).toHaveURL(/#artists$/);
+  await expect(page.getByRole("heading", { name: "Followed artists" })).toBeVisible();
+  await expect(page.getByText("Regression Artist", { exact: true })).toBeVisible();
+  await expect(page.getByText("Imported from Spotify", { exact: true })).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("Spotify import persisted 1 active artists");
+});
+
 test("hides manual SoundCloud controls by default", async ({ page }) => {
   await page.goto("/");
   const navigation = page.getByRole("complementary", { name: "Primary navigation" });
@@ -91,8 +233,10 @@ test("navigates every primary view and resolves manual review", async ({ page })
   const navigation = page.getByRole("complementary", { name: "Primary navigation" });
 
   await expect(page.getByRole("heading", { name: "Playlist exports" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Create private playlist" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Sync playlist" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Playlist writes disabled" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Inspect configured playlist" })).toBeDisabled();
+  await expect(page.getByLabel("Existing private Spotify playlist")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Create private playlist" })).toHaveCount(0);
 
   await navigation.getByRole("link", { name: "Followed artists 4" }).click();
   await expect(page.getByRole("heading", { name: "Followed artists" })).toBeVisible();
@@ -109,10 +253,19 @@ test("navigates every primary view and resolves manual review", async ({ page })
 
   await navigation.getByRole("link", { name: "Settings" }).click();
   await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Missing credentials" }).first()).toBeDisabled();
+  await expect(page.getByText("Spotify", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Manual SoundCloud links")).toBeVisible();
   await expect(page.getByText("Disabled", { exact: true })).toBeVisible();
   await expect(page.getByText("Spotify setup checklist")).toBeVisible();
+  await expect(page.getByLabel("Currently granted Spotify scopes")).toBeVisible();
+  await expect(page.getByLabel("Currently granted Spotify scopes")).not.toContainText(
+    "playlist-modify",
+  );
+  await expect(
+    page.getByText(
+      "Spotify grants playlist permissions at the account scope level, not to one individual playlist. Release Inbox additionally restricts itself to the configured playlist ID.",
+    ),
+  ).toBeVisible();
   await page.getByLabel("Discovery digest").check();
 
   await navigation.getByRole("link", { name: "Discovery feed 4" }).click();

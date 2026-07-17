@@ -12,6 +12,9 @@
 - Do not build a combined player, mixed queue, cross-service artwork, audio proxy, download, transform, or rehost path.
 - Keep the Spotify playlist, provider-neutral saved releases, and optional verified SoundCloud outbound-link collection separate.
 - Use `http://127.0.0.1:3000/api/auth/spotify/callback` for local Spotify registration. Do not use localhost.
+- Spotify OAuth initially requests only `user-follow-read` and `playlist-read-private`. Playlist writes default off.
+- Any future Spotify write must be an addition to the single valid `SPOTIFY_ALLOWED_PLAYLIST_ID`, pass route-level and provider-client enabled, target, ownership, private, and non-collaborative checks, and use only exact or manually confirmed tracks.
+- Never expose Spotify playlist creation, selection, rename, visibility changes, artwork upload, follow, unfollow, remove, replace, or reorder operations.
 - Real provider tests must use synthetic fixtures and injected HTTP mocks. Normal verification must never call live providers.
 - Operational commands must remain Windows-compatible, loopback-only, secret-safe, and must not modify `.env`.
 - Database restore must require explicit replacement confirmation. Backups belong outside source control and must use PostgreSQL-supported custom-format dumps.

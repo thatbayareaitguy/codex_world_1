@@ -9,7 +9,7 @@ import {
   redditReconciliationRuns,
   scanRuns,
 } from "@radar/db";
-import { loadProviderConfiguration, SPOTIFY_SCOPES } from "@radar/providers";
+import { loadProviderConfiguration, spotifyAuthorizationScopes } from "@radar/providers";
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -43,11 +43,18 @@ export async function GET(): Promise<NextResponse> {
       schedule: process.env.DAILY_SCAN_TIME ?? null,
     },
     spotify: {
+      allowedPlaylistConfigured: Boolean(configuration.spotify.allowedPlaylistId),
       configured: configuration.spotify.configured,
       enabled: configuration.spotify.enabled,
+      playlistWritesEnabled: configuration.spotify.playlistWritesEnabled,
       redirectUriValid:
         configuration.spotify.redirectUri === "http://127.0.0.1:3000/api/auth/spotify/callback",
-      requiredScopes: [...SPOTIFY_SCOPES],
+      requiredScopes: [
+        ...spotifyAuthorizationScopes(
+          configuration.spotify.playlistWritesEnabled &&
+            Boolean(configuration.spotify.allowedPlaylistId),
+        ),
+      ],
     },
   };
   if (!configuration.databaseUrl) {
@@ -153,7 +160,7 @@ export async function GET(): Promise<NextResponse> {
         lastPlaylistSyncAt: playlist?.lastSyncedAt ?? null,
         lastSuccessfulRequestAt: null,
         lastSuccessfulScanAt: successful("spotify")?.completedAt ?? null,
-        playlistConfigured: Boolean(playlist?.providerPlaylistId),
+        playlistConfigured: Boolean(configuration.spotify.allowedPlaylistId),
       },
     });
   } catch {

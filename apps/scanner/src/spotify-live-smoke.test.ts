@@ -7,27 +7,16 @@ describe("Spotify live smoke safeguards", () => {
   });
 
   it("accepts explicit read-only mode", () => {
-    expect(parseSpotifyLiveSmokeOptions(["--dry-run"])).toEqual({
-      confirmTemporaryPlaylist: false,
-      dryRun: true,
-      playlistWrite: false,
-    });
+    expect(parseSpotifyLiveSmokeOptions(["--dry-run"])).toEqual({ dryRun: true });
   });
 
-  it("requires explicit playlist confirmation", () => {
+  it("rejects every former playlist-write option", () => {
     expect(() => parseSpotifyLiveSmokeOptions(["--playlist-write"])).toThrow(
-      "--confirm-temporary-playlist",
+      "Unknown live smoke option",
     );
-  });
-
-  it("rejects conflicting modes", () => {
-    expect(() =>
-      parseSpotifyLiveSmokeOptions([
-        "--dry-run",
-        "--playlist-write",
-        "--confirm-temporary-playlist",
-      ]),
-    ).toThrow("not both");
+    expect(() => parseSpotifyLiveSmokeOptions(["--confirm-temporary-playlist"])).toThrow(
+      "Unknown live smoke option",
+    );
   });
 
   it("refuses incomplete configuration before connecting", async () => {

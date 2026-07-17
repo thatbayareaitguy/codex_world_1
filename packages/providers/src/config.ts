@@ -1,10 +1,16 @@
 import { z } from "zod";
+import { spotifyPlaylistIdSchema } from "./spotify-playlist-policy";
 
 const booleanFlag = (defaultValue: boolean) =>
   z
     .enum(["true", "false"])
     .default(defaultValue ? "true" : "false")
     .transform((value) => value === "true");
+
+const optionalSpotifyPlaylistId = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  spotifyPlaylistIdSchema.optional(),
+);
 
 const environmentSchema = z.object({
   APP_BASE_URL: z.url().default("http://127.0.0.1:3000"),
@@ -27,7 +33,9 @@ const environmentSchema = z.object({
   SOUNDCLOUD_MANUAL_LINKS_ENABLED: booleanFlag(false),
   SPOTIFY_CLIENT_ID: z.string().min(1).optional(),
   SPOTIFY_CLIENT_SECRET: z.string().min(1).optional(),
+  SPOTIFY_ALLOWED_PLAYLIST_ID: optionalSpotifyPlaylistId,
   SPOTIFY_ENABLED: booleanFlag(true),
+  SPOTIFY_PLAYLIST_WRITES_ENABLED: booleanFlag(false),
   SPOTIFY_REDIRECT_URI: z.url().default("http://127.0.0.1:3000/api/auth/spotify/callback"),
 });
 
@@ -58,10 +66,12 @@ export interface ProviderConfiguration {
   scanDetailRetentionDays: number;
   soundcloudManualLinksEnabled: boolean;
   spotify: {
+    allowedPlaylistId?: string;
     clientId?: string;
     clientSecret?: string;
     configured: boolean;
     enabled: boolean;
+    playlistWritesEnabled: boolean;
     redirectUri: string;
   };
 }
@@ -114,10 +124,14 @@ export function loadProviderConfiguration(
     scanDetailRetentionDays: parsed.SCAN_DETAIL_RETENTION_DAYS,
     soundcloudManualLinksEnabled: parsed.SOUNDCLOUD_MANUAL_LINKS_ENABLED,
     spotify: {
+      ...(parsed.SPOTIFY_ALLOWED_PLAYLIST_ID
+        ? { allowedPlaylistId: parsed.SPOTIFY_ALLOWED_PLAYLIST_ID }
+        : {}),
       ...(parsed.SPOTIFY_CLIENT_ID ? { clientId: parsed.SPOTIFY_CLIENT_ID } : {}),
       ...(parsed.SPOTIFY_CLIENT_SECRET ? { clientSecret: parsed.SPOTIFY_CLIENT_SECRET } : {}),
       configured: spotifyConfigured,
       enabled: parsed.SPOTIFY_ENABLED,
+      playlistWritesEnabled: parsed.SPOTIFY_PLAYLIST_WRITES_ENABLED,
       redirectUri: parsed.SPOTIFY_REDIRECT_URI,
     },
   };

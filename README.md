@@ -1,10 +1,10 @@
 # TS New Music Radar
 
-TS New Music Radar is a private, single-user Release Inbox for a provider-neutral artist watchlist. It discovers releases through Spotify, MusicBrainz, approved Reddit evidence, or deterministic mock fixtures; preserves source evidence; routes uncertain matches to review; and synchronizes exact or confirmed Spotify tracks to one private playlist. It has no playback.
+TS New Music Radar is a private, single-user Release Inbox for a provider-neutral artist watchlist. It discovers releases through Spotify, MusicBrainz, approved Reddit evidence, or deterministic mock fixtures; preserves source evidence; routes uncertain matches to review; and prepares exact or confirmed Spotify tracks for restricted export to one private playlist. It has no playback.
 
 ## Current Scope
 
-- Spotify: followed-artist import, mapped release discovery, exact track availability, and private playlist synchronization.
+- Spotify: followed-artist import, mapped release discovery, exact track availability, read-only configured-playlist inspection, and default-disabled add-only export.
 - MusicBrainz: artist mapping, release and release-group discovery, and upcoming release dates.
 - Reddit: configurable evidence sources and deterministic parsing, disabled until Reddit grants explicit API approval.
 - MockProvider: credential-free local scanning and tests.
@@ -41,7 +41,7 @@ Run `pnpm doctor` after editing `.env`. It checks versions, database connectivit
 4. Use the MusicBrainz mapping controls to confirm exact identities and leave ambiguous identities in review.
 5. Run `pnpm scan -- --provider mock` for a credential-free check, then `pnpm scan` for configured providers.
 6. Review Needs review items. Only exact or manually confirmed Spotify matches are eligible for export.
-7. Open Playlist exports, create or select the owned private Release Inbox playlist, preview synchronization, then synchronize. Repeating synchronization does not add the same provider track twice.
+7. Playlist writes are initially disabled. For read-only use, leave both playlist environment values at their defaults. If add-only export is enabled later, create one private playlist directly in Spotify and configure its ID server-side. The application has no picker and cannot create or alter playlists.
 
 ## Daily Operation
 
@@ -107,6 +107,6 @@ pnpm build
 pnpm test:e2e
 ```
 
-The optional real Spotify read test is `pnpm test:spotify:live -- --dry-run`. OAuth must already have been completed interactively. Playlist-write verification additionally requires `--playlist-write --confirm-temporary-playlist` and creates a clearly named temporary private playlist that must be removed manually because the app does not request broader cleanup scopes.
+The optional real Spotify read test is `pnpm test:spotify:live -- --dry-run`. OAuth must already have been completed interactively. The command is strictly read-only and has no playlist-write mode.
 
 Future SoundCloud Artist Pro work remains outside this milestone. It must pass the no-paid-developer-access and Spotify-policy review before any API implementation.

@@ -312,6 +312,35 @@ function spotifyChecks(
           "Register and set http://127.0.0.1:3000/api/auth/spotify/callback.",
         ),
   );
+  if (!configuration.spotify.playlistWritesEnabled) {
+    checks.push(
+      optional(
+        "Spotify playlist writes",
+        "Spotify playlist writes are disabled by default; no playlist mutation can run.",
+      ),
+    );
+    checks.push(
+      configuration.spotify.allowedPlaylistId
+        ? ready("Spotify allowed playlist", "A valid allowed playlist ID is configured and hidden.")
+        : optional(
+            "Spotify allowed playlist",
+            "No allowed playlist ID is configured; read-only Spotify features remain available.",
+          ),
+    );
+  } else {
+    checks.push(
+      ready("Spotify playlist writes", "Spotify playlist additions are explicitly enabled."),
+    );
+    checks.push(
+      configuration.spotify.allowedPlaylistId
+        ? ready("Spotify allowed playlist", "A valid allowed playlist ID is configured and hidden.")
+        : action(
+            "Spotify allowed playlist",
+            "Playlist writes are enabled without an allowed playlist ID.",
+            "Set SPOTIFY_ALLOWED_PLAYLIST_ID or disable SPOTIFY_PLAYLIST_WRITES_ENABLED.",
+          ),
+    );
+  }
   return checks;
 }
 

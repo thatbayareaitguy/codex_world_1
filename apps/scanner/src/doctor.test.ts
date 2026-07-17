@@ -54,6 +54,28 @@ describe("doctor", () => {
     expect(report.checks.find((check) => check.name === "Encryption key")?.required).toBe(false);
   });
 
+  it("reports the default Spotify playlist write boundary without exposing an ID", async () => {
+    const report = await collectDoctorReport(
+      {
+        DATABASE_URL: "postgresql://secret:secret@127.0.0.1:5432/radar",
+        MUSICBRAINZ_ENABLED: "false",
+        REDDIT_ENABLED: "false",
+        SPOTIFY_ALLOWED_PLAYLIST_ID: "1234567890123456789012",
+        SPOTIFY_PLAYLIST_WRITES_ENABLED: "false",
+      },
+      {
+        databaseProbe: () => Promise.resolve(databaseReady),
+        directoryProbe: () => true,
+        expectedMigrationCount: 6,
+        pnpmVersion: "11.9.0",
+        portProbe: () => Promise.resolve("available"),
+      },
+    );
+    const output = formatDoctorReport(report);
+    expect(output).toContain("Spotify playlist writes are disabled by default");
+    expect(output).not.toContain("1234567890123456789012");
+  });
+
   it("reports migrations and stale locks as actionable", async () => {
     const report = await collectDoctorReport(
       {

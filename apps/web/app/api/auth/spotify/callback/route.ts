@@ -50,6 +50,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const oauth = new SpotifyOAuthClient({
         clientId: config.spotify.clientId,
         clientSecret: config.spotify.clientSecret,
+        playlistWritesEnabled:
+          config.spotify.playlistWritesEnabled && Boolean(config.spotify.allowedPlaylistId),
         redirectUri: config.spotify.redirectUri,
       });
       const tokens = await oauth.exchangeCode(code, verifier);

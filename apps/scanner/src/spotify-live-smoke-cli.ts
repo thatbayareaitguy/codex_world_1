@@ -10,10 +10,7 @@ try {
     `${JSON.stringify(
       {
         ...summary,
-        note:
-          summary.temporaryPlaylistCleanup === "manual_required"
-            ? "Delete the temporary private playlist manually in Spotify. The application's minimum scopes do not permit library removal."
-            : "No Spotify data was modified.",
+        note: "No Spotify data was modified.",
       },
       null,
       2,

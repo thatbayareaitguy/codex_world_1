@@ -8,13 +8,14 @@ Create one Spotify Development Mode application using the existing Premium accou
 
 `http://127.0.0.1:3000/api/auth/spotify/callback`
 
-Do not register localhost. Configure `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `SPOTIFY_REDIRECT_URI`, and a base64 32-byte `APP_ENCRYPTION_KEY`. The application requests only:
+Do not register localhost. Configure `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `SPOTIFY_REDIRECT_URI`, and a base64 32-byte `APP_ENCRYPTION_KEY`. Initial authorization requests only:
 
 - `user-follow-read` to import followed artists.
-- `playlist-read-private` to list and inspect owned private playlists.
-- `playlist-modify-private` to create and add items to the Release Inbox playlist.
+- `playlist-read-private` to inspect the one configured private playlist.
 
-Official references: [Development Mode migration](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide), [redirect URIs](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri), [Authorization Code](https://developer.spotify.com/documentation/web-api/tutorials/code-flow), and [PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow).
+Keep `SPOTIFY_PLAYLIST_WRITES_ENABLED=false` and `SPOTIFY_ALLOWED_PLAYLIST_ID=` for initial authorization. Create the desired private playlist directly in Spotify if add-only export is enabled later. Then set its 22-character ID in `SPOTIFY_ALLOWED_PLAYLIST_ID` and explicitly enable writes. The application has no playlist picker and cannot create or modify playlist properties. Enabling writes later changes the requested scope to include `playlist-modify-private`, so reconnecting Spotify will be required.
+
+Official references: [Development Mode migration](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide), [redirect URIs](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri), [Authorization Code](https://developer.spotify.com/documentation/web-api/tutorials/code-flow), [PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow), and [scopes](https://developer.spotify.com/documentation/web-api/concepts/scopes).
 
 ## MusicBrainz
 

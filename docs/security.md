@@ -6,7 +6,9 @@ Spotify uses server-side Authorization Code flow with S256 PKCE. State and verif
 
 The client secret, authorization code exchange, access token, and refresh token remain on the server. Access and refresh tokens are encrypted independently with random nonces using a base64-encoded 32-byte `APP_ENCRYPTION_KEY`. Refresh starts before expiry, rotates the refresh token when Spotify supplies one, and marks the account reconnect-required after invalid grant or authorization failure. Stable Spotify `account_id` links the account.
 
-Requested scopes are `user-follow-read`, `playlist-read-private`, and `playlist-modify-private`. No email, playback, streaming, public playlist, history, or library-write scope is requested.
+Initial authorization requests only `user-follow-read` and `playlist-read-private`. No playlist modification, email, playback, streaming, public playlist, history, or library-write scope is requested while `SPOTIFY_PLAYLIST_WRITES_ENABLED=false`.
+
+Spotify has no playlist-specific write scope. The prepared write path therefore has two independent application gates: `SPOTIFY_PLAYLIST_WRITES_ENABLED=true` and one valid `SPOTIFY_ALLOWED_PLAYLIST_ID`. Routes accept no playlist ID or other write body from the browser. The route and provider client both compare the target with server configuration, retrieve the playlist, and require the connected account to own a private, non-collaborative playlist before additions. Only exact or manually confirmed tracks can be added, and the export ledger remains idempotent. Playlist creation, rename, visibility changes, artwork, follow, unfollow, remove, replace, and reorder operations are not exposed. Tokens and full playlist IDs are excluded from logs; write logs use an abbreviated ID.
 
 ## Web and Logging Controls
 

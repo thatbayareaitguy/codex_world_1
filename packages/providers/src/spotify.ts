@@ -1,4 +1,12 @@
+import { log } from "@radar/core";
 import { z } from "zod";
+import {
+  abbreviateSpotifyPlaylistId,
+  assertOwnedPrivateSpotifyPlaylist,
+  assertSpotifyPlaylistWriteTarget,
+  assertSpotifyTrackIds,
+  type SpotifyPlaylistWritePolicy,
+} from "./spotify-playlist-policy";
 
 const spotifyUrl = z.string().url();
 const externalUrlsSchema = z.object({ spotify: spotifyUrl }).passthrough();
@@ -89,6 +97,7 @@ const trackSchema = trackSummarySchema
   .passthrough();
 const playlistSchema = z
   .object({
+    collaborative: z.boolean(),
     external_urls: externalUrlsSchema,
     id: z.string().min(1),
     name: z.string().min(1),
@@ -158,11 +167,15 @@ export type SpotifyTrack = z.infer<typeof trackSchema>;
 export type SpotifyTrackSummary = z.infer<typeof trackSummarySchema>;
 export type SpotifyTokenResponse = z.infer<typeof spotifyTokenSchema>;
 
-export const SPOTIFY_SCOPES = [
-  "user-follow-read",
-  "playlist-read-private",
-  "playlist-modify-private",
-] as const;
+export const SPOTIFY_READ_SCOPES = ["user-follow-read", "playlist-read-private"] as const;
+export const SPOTIFY_PRIVATE_PLAYLIST_WRITE_SCOPE = "playlist-modify-private" as const;
+export const SPOTIFY_SCOPES = SPOTIFY_READ_SCOPES;
+
+export function spotifyAuthorizationScopes(playlistWritesEnabled: boolean): readonly string[] {
+  return playlistWritesEnabled
+    ? [...SPOTIFY_READ_SCOPES, SPOTIFY_PRIVATE_PLAYLIST_WRITE_SCOPE]
+    : [...SPOTIFY_READ_SCOPES];
+}
 
 export class SpotifyHttpError extends Error {
   constructor(
@@ -186,6 +199,7 @@ interface SpotifyClientOptions {
   apiBaseUrl?: string;
   fetcher?: typeof fetch;
   onUnauthorized?: () => Promise<void>;
+  playlistWritePolicy?: SpotifyPlaylistWritePolicy;
   random?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
   timeoutMs?: number;
@@ -203,6 +217,7 @@ export class SpotifyClient {
   private readonly apiBaseUrl: string;
   private readonly fetcher: typeof fetch;
   private readonly onUnauthorized: (() => Promise<void>) | undefined;
+  private readonly playlistWritePolicy: SpotifyPlaylistWritePolicy;
   private readonly random: () => number;
   private readonly sleep: (milliseconds: number) => Promise<void>;
   private readonly timeoutMs: number;
@@ -212,6 +227,7 @@ export class SpotifyClient {
     this.apiBaseUrl = options.apiBaseUrl ?? "https://api.spotify.com/v1";
     this.fetcher = options.fetcher ?? fetch;
     this.onUnauthorized = options.onUnauthorized;
+    this.playlistWritePolicy = options.playlistWritePolicy ?? { enabled: false };
     this.random = options.random ?? Math.random;
     this.sleep =
       options.sleep ??
@@ -312,14 +328,6 @@ export class SpotifyClient {
     return results;
   }
 
-  createPrivatePlaylist(name: string, signal?: AbortSignal): Promise<SpotifyPlaylist> {
-    return this.request("/me/playlists", playlistSchema, {
-      body: { name, public: false, collaborative: false, description: "Personal release inbox" },
-      method: "POST",
-      signal,
-    });
-  }
-
   getPlaylist(id: string, signal?: AbortSignal): Promise<SpotifyPlaylist> {
     return this.request(`/playlists/${encodeURIComponent(id)}`, playlistSchema, { signal });
   }
@@ -341,11 +349,23 @@ export class SpotifyClient {
   }
 
   async addPlaylistItems(id: string, trackIds: string[], signal?: AbortSignal): Promise<string[]> {
+    const targetPlaylistId = assertSpotifyPlaylistWriteTarget(this.playlistWritePolicy, id);
+    assertSpotifyTrackIds(trackIds);
+    if (trackIds.length === 0) return [];
+    const [profile, playlist] = await Promise.all([
+      this.getCurrentUser(signal),
+      this.getPlaylist(targetPlaylistId, signal),
+    ]);
+    assertOwnedPrivateSpotifyPlaylist(playlist, profile);
+    log("info", "spotify.playlist_addition_started", {
+      itemCount: trackIds.length,
+      playlistId: abbreviateSpotifyPlaylistId(targetPlaylistId),
+    });
     const snapshots: string[] = [];
     for (let offset = 0; offset < trackIds.length; offset += 100) {
       const batch = trackIds.slice(offset, offset + 100);
       const response = await this.request(
-        `/playlists/${encodeURIComponent(id)}/items`,
+        `/playlists/${encodeURIComponent(targetPlaylistId)}/items`,
         z.object({ snapshot_id: z.string() }),
         {
           body: { uris: batch.map((trackId) => `spotify:track:${trackId}`) },
@@ -424,6 +444,7 @@ interface SpotifyOAuthClientOptions {
   clientId: string;
   clientSecret: string;
   fetcher?: typeof fetch;
+  playlistWritesEnabled?: boolean;
   redirectUri: string;
 }
 
@@ -432,6 +453,7 @@ export class SpotifyOAuthClient {
   private readonly clientId: string;
   private readonly clientSecret: string;
   private readonly fetcher: typeof fetch;
+  private readonly playlistWritesEnabled: boolean;
   private readonly redirectUri: string;
 
   constructor(options: SpotifyOAuthClientOptions) {
@@ -439,6 +461,7 @@ export class SpotifyOAuthClient {
     this.clientId = options.clientId;
     this.clientSecret = options.clientSecret;
     this.fetcher = options.fetcher ?? fetch;
+    this.playlistWritesEnabled = options.playlistWritesEnabled ?? false;
     this.redirectUri = options.redirectUri;
   }
 
@@ -450,7 +473,7 @@ export class SpotifyOAuthClient {
       code_challenge_method: "S256",
       redirect_uri: this.redirectUri,
       response_type: "code",
-      scope: SPOTIFY_SCOPES.join(" "),
+      scope: spotifyAuthorizationScopes(this.playlistWritesEnabled).join(" "),
       state,
     }).toString();
     return url.toString();

@@ -2,38 +2,24 @@ import { createDatabase, ensureLocalOwner, SpotifyTokenManager } from "@radar/db
 import { loadProviderConfiguration, SpotifyClient, SpotifyOAuthClient } from "@radar/providers";
 
 export interface SpotifyLiveSmokeOptions {
-  confirmTemporaryPlaylist: boolean;
   dryRun: boolean;
-  playlistWrite: boolean;
 }
 
 export interface SpotifyLiveSmokeSummary {
   albumLookupCompleted: boolean;
   artistReleaseCount: number;
   followedArtistCount: number;
-  playlistCreated: boolean;
   profileRetrieved: boolean;
-  temporaryPlaylistCleanup: "manual_required" | "not_applicable";
   trackLookupCompleted: boolean;
 }
 
 export function parseSpotifyLiveSmokeOptions(args: string[]): SpotifyLiveSmokeOptions {
-  const known = new Set(["--dry-run", "--playlist-write", "--confirm-temporary-playlist", "--"]);
+  const known = new Set(["--dry-run", "--"]);
   const unknown = args.find((arg) => !known.has(arg));
   if (unknown) throw new Error(`Unknown live smoke option: ${unknown}`);
-  const playlistWrite = args.includes("--playlist-write");
   const dryRun = args.includes("--dry-run");
-  const confirmTemporaryPlaylist = args.includes("--confirm-temporary-playlist");
-  if (!dryRun && !playlistWrite) {
-    throw new Error("Choose --dry-run or --playlist-write. Read-only dry-run is recommended.");
-  }
-  if (playlistWrite && !confirmTemporaryPlaylist) {
-    throw new Error("Playlist-write verification requires --confirm-temporary-playlist.");
-  }
-  if (dryRun && playlistWrite) {
-    throw new Error("Choose either --dry-run or --playlist-write, not both.");
-  }
-  return { confirmTemporaryPlaylist, dryRun, playlistWrite };
+  if (!dryRun) throw new Error("Choose --dry-run. Live playlist writes are unavailable.");
+  return { dryRun };
 }
 
 export async function runSpotifyLiveSmoke(
@@ -98,20 +84,12 @@ export async function runSpotifyLiveSmoke(
       }
     }
 
-    let playlistCreated = false;
-    if (options.playlistWrite) {
-      await client.createPrivatePlaylist(
-        `TS New Music Radar temporary live smoke ${new Date().toISOString()}`,
-      );
-      playlistCreated = true;
-    }
+    void options;
     return {
       albumLookupCompleted,
       artistReleaseCount,
       followedArtistCount: followedArtists.length,
-      playlistCreated,
       profileRetrieved: true,
-      temporaryPlaylistCleanup: playlistCreated ? "manual_required" : "not_applicable",
       trackLookupCompleted,
     };
   } finally {

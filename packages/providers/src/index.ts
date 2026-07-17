@@ -7,6 +7,7 @@ export * from "./reddit";
 export * from "./reddit-parser";
 export * from "./security";
 export * from "./spotify";
+export * from "./spotify-playlist-policy";
 export * from "./spotify-playlist";
 export * from "./spotify-provider";
 export * from "./spotify-import";

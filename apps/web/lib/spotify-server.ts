@@ -31,6 +31,8 @@ export async function createSpotifyServerContext(): Promise<SpotifyServerContext
   const oauthClient = new SpotifyOAuthClient({
     clientId: config.spotify.clientId,
     clientSecret: config.spotify.clientSecret,
+    playlistWritesEnabled:
+      config.spotify.playlistWritesEnabled && Boolean(config.spotify.allowedPlaylistId),
     redirectUri: config.spotify.redirectUri,
   });
   const tokens = new SpotifyTokenManager(
@@ -42,6 +44,12 @@ export async function createSpotifyServerContext(): Promise<SpotifyServerContext
   const client = new SpotifyClient({
     accessToken: () => tokens.getAccessToken(),
     onUnauthorized: () => tokens.refresh().then(() => undefined),
+    playlistWritePolicy: {
+      ...(config.spotify.allowedPlaylistId
+        ? { allowedPlaylistId: config.spotify.allowedPlaylistId }
+        : {}),
+      enabled: config.spotify.playlistWritesEnabled,
+    },
   });
   return {
     client,

@@ -24,6 +24,8 @@ pnpm dev -- --hostname 127.0.0.1 --port 3000
 
 Generate a base64-encoded 32-byte `APP_ENCRYPTION_KEY`. Set `MUSICBRAINZ_CONTACT_EMAIL` to a monitored address. Register the exact Spotify callback `http://127.0.0.1:3000/api/auth/spotify/callback`. Optional providers can be disabled independently.
 
+Spotify playlist writes are off by default. Leave `SPOTIFY_PLAYLIST_WRITES_ENABLED=false` and `SPOTIFY_ALLOWED_PLAYLIST_ID=` for read-only authorization. If add-only export is explicitly enabled later, manually create a private non-collaborative playlist in Spotify and configure its 22-character ID. The browser cannot select or override this ID.
+
 Reddit must stay disabled until explicit Data API approval exists. `REDDIT_ACCESS_APPROVED=true` records the owner's assertion only and is not evidence of approval. Manual SoundCloud links can be enabled with `SOUNDCLOUD_MANUAL_LINKS_ENABLED=true`; this causes no SoundCloud request.
 
 Use `DAILY_SCAN_TIME=HH:mm` only to display an expected next time in status. It does not create a schedule.
@@ -64,10 +66,9 @@ The optional real test is separate:
 
 ```powershell
 pnpm test:spotify:live -- --dry-run
-pnpm test:spotify:live -- --playlist-write --confirm-temporary-playlist
 ```
 
-The read-only command requires completed browser OAuth. Write mode creates only a clearly named temporary private playlist and never touches the configured Release Inbox playlist. The minimum scopes do not permit cleanup, so remove that temporary playlist manually in Spotify.
+The command requires completed browser OAuth and is read-only. It has no playlist-write mode.
 
 ## Scheduling And Logs
 

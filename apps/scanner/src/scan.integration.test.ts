@@ -264,7 +264,7 @@ describe.sequential("complete deterministic fake-provider workflow", () => {
       accessTokenExpiresAt: new Date(Date.now() + 3_600_000),
       providerAccountId: "spotify-account-integration",
       refreshToken: encryptSecret("fake-refresh", key),
-      scopes: ["user-follow-read", "playlist-read-private", "playlist-modify-private"],
+      scopes: ["user-follow-read", "playlist-read-private"],
       userId,
     });
   });

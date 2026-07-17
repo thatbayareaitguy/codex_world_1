@@ -5,7 +5,12 @@ describe("provider configuration", () => {
   it("starts without credentials and hides manual SoundCloud links", () => {
     const config = loadProviderConfiguration({});
 
-    expect(config.spotify).toMatchObject({ enabled: true, configured: false });
+    expect(config.spotify).toMatchObject({
+      enabled: true,
+      configured: false,
+      playlistWritesEnabled: false,
+    });
+    expect(config.spotify.allowedPlaylistId).toBeUndefined();
     expect(config.musicbrainz).toMatchObject({ enabled: true, configured: false });
     expect(config.soundcloudManualLinksEnabled).toBe(false);
     expect(config.reddit).toMatchObject({
@@ -16,6 +21,20 @@ describe("provider configuration", () => {
       internalMaxQpm: 30,
     });
     expect(config.initialBackfillDays).toBe(60);
+  });
+
+  it("validates the single allowed Spotify playlist boundary", () => {
+    const config = loadProviderConfiguration({
+      SPOTIFY_ALLOWED_PLAYLIST_ID: "1234567890123456789012",
+      SPOTIFY_PLAYLIST_WRITES_ENABLED: "true",
+    });
+    expect(config.spotify).toMatchObject({
+      allowedPlaylistId: "1234567890123456789012",
+      playlistWritesEnabled: true,
+    });
+    expect(() =>
+      loadProviderConfiguration({ SPOTIFY_ALLOWED_PLAYLIST_ID: "not-a-playlist-id" }),
+    ).toThrow();
   });
 
   it("validates typed feature flags", () => {

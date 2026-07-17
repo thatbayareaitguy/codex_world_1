@@ -1,5 +1,4 @@
-import type { PlaylistItemInput, PlaylistSyncResult } from "./contracts";
-import type { SpotifyClient } from "./spotify";
+import type { PlaylistItemInput } from "./contracts";
 
 export interface PlaylistSyncPlan {
   alreadyPresent: string[];
@@ -32,21 +31,4 @@ export function planSpotifyPlaylistSync(
     plan.toAdd.push(item.providerTrackId);
   }
   return plan;
-}
-
-export async function synchronizeSpotifyPlaylist(
-  client: SpotifyClient,
-  playlistId: string,
-  items: PlaylistItemInput[],
-  signal?: AbortSignal,
-): Promise<PlaylistSyncResult> {
-  const existing = await client.getPlaylistTrackIds(playlistId, signal);
-  const plan = planSpotifyPlaylistSync(items, existing);
-  await client.addPlaylistItems(playlistId, plan.toAdd, signal);
-  return {
-    added: plan.toAdd,
-    alreadyPresent: plan.alreadyPresent,
-    externalPlaylistId: playlistId,
-    rejected: plan.rejected,
-  };
 }
