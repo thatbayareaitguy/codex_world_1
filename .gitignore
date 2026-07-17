@@ -8,6 +8,8 @@ test-results/
 playwright-report/
 *.tsbuildinfo
 *.log
+backups/
+.app-runtime/
 .env
 .env.*
 !.env.example

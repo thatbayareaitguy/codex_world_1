@@ -20,6 +20,7 @@ export const providerEnum = pgEnum("provider", [
   "mock",
   "spotify",
   "musicbrainz",
+  "reddit",
   "youtube",
   "soundcloud",
   "apple_music",
@@ -39,6 +40,10 @@ export const releaseTypeEnum = pgEnum("release_type", [
   "feature",
   "upload",
   "other",
+  "radio_show",
+  "podcast",
+  "playlist",
+  "unknown",
 ]);
 export const feedStateEnum = pgEnum("feed_state", [
   "new",
@@ -478,6 +483,19 @@ export const scanRuns = pgTable("scan_runs", {
   provider: providerEnum("provider"),
   status: scanStatusEnum("status").notNull().default("running"),
   dryRun: boolean("dry_run").notNull().default(false),
+  triggerType: text("trigger_type").notNull().default("manual"),
+  providersRequested: text("providers_requested")
+    .array()
+    .notNull()
+    .default(sql`'{}'::text[]`),
+  providersCompleted: text("providers_completed")
+    .array()
+    .notNull()
+    .default(sql`'{}'::text[]`),
+  providersFailed: text("providers_failed")
+    .array()
+    .notNull()
+    .default(sql`'{}'::text[]`),
   artistFilter: text("artist_filter"),
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt: timestamp("completed_at", { withTimezone: true }),
@@ -487,6 +505,9 @@ export const scanRuns = pgTable("scan_runs", {
   skippedCount: integer("skipped_count").notNull().default(0),
   reviewCount: integer("review_count").notNull().default(0),
   playlistAdditionCount: integer("playlist_addition_count").notNull().default(0),
+  artistsProcessedCount: integer("artists_processed_count").notNull().default(0),
+  duplicatesIgnoredCount: integer("duplicates_ignored_count").notNull().default(0),
+  detailedExpiresAt: timestamp("detailed_expires_at", { withTimezone: true }),
   providerResults: jsonb("provider_results")
     .notNull()
     .default(sql`'{}'::jsonb`),
@@ -497,6 +518,21 @@ export const scanRuns = pgTable("scan_runs", {
     .notNull()
     .default(sql`'[]'::jsonb`),
 });
+
+export const operationLocks = pgTable(
+  "operation_locks",
+  {
+    lockKey: text("lock_key").primaryKey(),
+    ownerToken: text("owner_token").notNull(),
+    operationType: text("operation_type").notNull(),
+    metadata: jsonb("metadata")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    acquiredAt: timestamp("acquired_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("operation_locks_expiry_idx").on(table.expiresAt)],
+);
 
 export const scanLocks = pgTable(
   "scan_locks",
@@ -733,3 +769,203 @@ export const manualMatchDecisions = pgTable(
   },
   (table) => [uniqueIndex("manual_match_candidate_unique").on(table.candidateId)],
 );
+
+export const redditSources = pgTable(
+  "reddit_sources",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    subreddit: text("subreddit").notNull(),
+    displayName: text("display_name").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    initialBackfillDays: integer("initial_backfill_days").notNull().default(14),
+    scanOverlapHours: integer("scan_overlap_hours").notNull().default(72),
+    maxPagesPerScan: integer("max_pages_per_scan").notNull().default(10),
+    flairBoosts: text("flair_boosts")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    flairExclusions: text("flair_exclusions")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    roundupTitlePhrases: text("roundup_title_phrases")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    notes: text("notes"),
+    lastSuccessfulScanAt: timestamp("last_successful_scan_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    lastSeenFullname: text("last_seen_fullname"),
+    lastSeenCreatedAt: timestamp("last_seen_created_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    check(
+      "reddit_sources_subreddit_format_check",
+      sql`${table.subreddit} ~ '^[A-Za-z0-9_]{3,21}$'`,
+    ),
+    check(
+      "reddit_sources_scan_limits_check",
+      sql`${table.initialBackfillDays} between 1 and 365 and ${table.scanOverlapHours} between 1 and 720 and ${table.maxPagesPerScan} between 1 and 100`,
+    ),
+    uniqueIndex("reddit_sources_user_subreddit_unique").on(
+      table.userId,
+      sql`lower(${table.subreddit})`,
+    ),
+  ],
+);
+
+export const redditSubmissions = pgTable(
+  "reddit_submissions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceId: uuid("source_id")
+      .notNull()
+      .references(() => redditSources.id, { onDelete: "cascade" }),
+    fullname: text("fullname").notNull(),
+    redditPostId: text("reddit_post_id").notNull(),
+    subreddit: text("subreddit").notNull(),
+    permalink: text("permalink"),
+    title: text("title"),
+    selfText: text("self_text"),
+    flairText: text("flair_text"),
+    postType: text("post_type").notNull(),
+    isSelfPost: boolean("is_self_post").notNull(),
+    destinationUrl: text("destination_url"),
+    crosspostOriginFullname: text("crosspost_origin_fullname"),
+    redditCreatedAt: timestamp("reddit_created_at", { withTimezone: true }).notNull(),
+    redditEditedAt: timestamp("reddit_edited_at", { withTimezone: true }),
+    sourceState: text("source_state").notNull().default("active"),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("reddit_submissions_fullname_unique").on(table.fullname),
+    index("reddit_submissions_reconciliation_idx").on(table.sourceState, table.lastCheckedAt),
+    index("reddit_submissions_source_created_idx").on(table.sourceId, table.redditCreatedAt),
+  ],
+);
+
+export const redditParseResults = pgTable(
+  "reddit_parse_results",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    submissionId: uuid("submission_id")
+      .notNull()
+      .references(() => redditSubmissions.id, { onDelete: "cascade" }),
+    parserVersion: text("parser_version").notNull(),
+    candidateHash: text("candidate_hash").notNull(),
+    sourceLine: integer("source_line").notNull().default(0),
+    sectionHeading: text("section_heading"),
+    candidateArtistText: text("candidate_artist_text").notNull(),
+    candidateTitleText: text("candidate_title_text").notNull(),
+    candidateReleaseType: text("candidate_release_type").notNull(),
+    candidateVersion: text("candidate_version"),
+    candidateLabel: text("candidate_label"),
+    claimedReleaseDate: date("claimed_release_date"),
+    dateSourceText: text("date_source_text"),
+    dateConfidence: text("date_confidence"),
+    parseConfidence: numeric("parse_confidence", { precision: 4, scale: 3 }).notNull(),
+    parseReasons: text("parse_reasons").array().notNull(),
+    failureReasons: text("failure_reasons").array().notNull(),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("reddit_parse_submission_line_candidate_unique").on(
+      table.submissionId,
+      table.sourceLine,
+      table.candidateHash,
+    ),
+  ],
+);
+
+export const redditCandidateMatches = pgTable(
+  "reddit_candidate_matches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    parseResultId: uuid("parse_result_id")
+      .notNull()
+      .references(() => redditParseResults.id, { onDelete: "cascade" }),
+    canonicalArtistId: uuid("canonical_artist_id").references(() => artists.id, {
+      onDelete: "set null",
+    }),
+    canonicalReleaseId: uuid("canonical_release_id").references(() => releases.id, {
+      onDelete: "set null",
+    }),
+    canonicalTrackId: uuid("canonical_track_id").references(() => tracks.id, {
+      onDelete: "set null",
+    }),
+    releaseCandidateId: uuid("release_candidate_id").references(() => releaseCandidates.id, {
+      onDelete: "set null",
+    }),
+    matchConfidence: numeric("match_confidence", { precision: 4, scale: 3 }).notNull(),
+    matchReasons: text("match_reasons").array().notNull(),
+    reviewStatus: text("review_status").notNull().default("needs_review"),
+    spotifyEvidence: jsonb("spotify_evidence")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    musicbrainzEvidence: jsonb("musicbrainz_evidence")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    decidedBy: uuid("decided_by").references(() => users.id, { onDelete: "set null" }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [uniqueIndex("reddit_candidate_match_parse_unique").on(table.parseResultId)],
+);
+
+export const redditExternalLinks = pgTable(
+  "reddit_external_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    submissionId: uuid("submission_id")
+      .notNull()
+      .references(() => redditSubmissions.id, { onDelete: "cascade" }),
+    parseResultId: uuid("parse_result_id").references(() => redditParseResults.id, {
+      onDelete: "cascade",
+    }),
+    category: text("category").notNull(),
+    originalUrl: text("original_url").notNull(),
+    normalizedUrl: text("normalized_url").notNull(),
+    detectedHost: text("detected_host").notNull(),
+    verificationStatus: text("verification_status").notNull().default("reddit_supplied_unverified"),
+    verifiedBy: uuid("verified_by").references(() => users.id, { onDelete: "set null" }),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("reddit_external_link_submission_url_unique").on(
+      table.submissionId,
+      table.normalizedUrl,
+    ),
+  ],
+);
+
+export const redditReconciliationRuns = pgTable("reddit_reconciliation_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  checkedCount: integer("checked_count").notNull().default(0),
+  deletedCount: integer("deleted_count").notNull().default(0),
+  preservedCanonicalCount: integer("preserved_canonical_count").notNull().default(0),
+  status: text("status").notNull().default("running"),
+  errorSummary: text("error_summary"),
+});
+
+export const applicationMetadata = pgTable("application_metadata", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  updatedAt,
+});

@@ -8,6 +8,13 @@ describe("provider configuration", () => {
     expect(config.spotify).toMatchObject({ enabled: true, configured: false });
     expect(config.musicbrainz).toMatchObject({ enabled: true, configured: false });
     expect(config.soundcloudManualLinksEnabled).toBe(false);
+    expect(config.reddit).toMatchObject({
+      accessApproved: false,
+      configured: false,
+      enabled: false,
+      includeComments: false,
+      internalMaxQpm: 30,
+    });
     expect(config.initialBackfillDays).toBe(60);
   });
 
@@ -25,5 +32,25 @@ describe("provider configuration", () => {
     expect(config.spotify).toMatchObject({ enabled: false, configured: false });
     expect(config.musicbrainz).toMatchObject({ enabled: false, configured: false });
     expect(config.soundcloudManualLinksEnabled).toBe(true);
+  });
+
+  it("requires approval, credentials, and a descriptive Reddit User-Agent", () => {
+    const blocked = loadProviderConfiguration({
+      REDDIT_ACCESS_APPROVED: "false",
+      REDDIT_CLIENT_ID: "client",
+      REDDIT_CLIENT_SECRET: "secret",
+      REDDIT_ENABLED: "true",
+      REDDIT_USER_AGENT: "node",
+    });
+    expect(blocked.reddit).toMatchObject({ configured: false, userAgentValid: false });
+
+    const configured = loadProviderConfiguration({
+      REDDIT_ACCESS_APPROVED: "true",
+      REDDIT_CLIENT_ID: "client",
+      REDDIT_CLIENT_SECRET: "secret",
+      REDDIT_ENABLED: "true",
+      REDDIT_USER_AGENT: "web:ts-new-music-radar:v0.1.0 (by /u/owner)",
+    });
+    expect(configured.reddit).toMatchObject({ configured: true, userAgentValid: true });
   });
 });

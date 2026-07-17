@@ -1,79 +1,96 @@
 # Local Development
 
-## Requirements
+## Requirements And Setup
 
-- Node.js 22 or newer
-- pnpm 11
-- Docker Desktop with Compose v2
-- Spotify Premium only when using a Spotify Development Mode app
-
-Mock mode requires no provider credentials and makes no live provider request.
-
-## Setup
+Install Node.js 22+, pnpm 11.9, and Docker Desktop with Compose v2. Mock mode needs no provider credentials.
 
 ```powershell
 Copy-Item .env.example .env
-pnpm install
-pnpm db:up
-pnpm db:migrate
-pnpm dev -- --hostname 127.0.0.1
+pnpm install --frozen-lockfile
+pnpm app:up:dev
 ```
 
-Open `http://127.0.0.1:3000`.
+`app:up:dev` starts PostgreSQL, applies all pending migrations, and serves only on `127.0.0.1:3000`. `pnpm app:up` uses a production build, creating it if needed. `pnpm app:down` stops the web process tree and database service but preserves the volume. Neither command modifies `.env`.
 
-Generate `APP_ENCRYPTION_KEY` as a base64-encoded 32-byte value. One PowerShell option is:
-
-```powershell
-$bytes = New-Object byte[] 32
-[Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-[Convert]::ToBase64String($bytes)
-```
-
-Set `MUSICBRAINZ_CONTACT_EMAIL` to a monitored address. Set Spotify credentials only after registering the exact 127.0.0.1 callback. Either provider can be disabled independently. Manual SoundCloud development controls can be enabled with `SOUNDCLOUD_MANUAL_LINKS_ENABLED=true`; this adds no SoundCloud API behavior.
-
-## Database Tests
+Run components separately when debugging:
 
 ```powershell
 pnpm db:up
 pnpm db:migrate
-pnpm db:reset:test
-pnpm test:integration
-pnpm db:down
+pnpm dev -- --hostname 127.0.0.1 --port 3000
 ```
 
-The integration command starts `db-test` on port 5433, recreates its public schema, applies every migration, and fails with an actionable Docker error instead of skipping.
+## Environment
 
-## Scanner
+Generate a base64-encoded 32-byte `APP_ENCRYPTION_KEY`. Set `MUSICBRAINZ_CONTACT_EMAIL` to a monitored address. Register the exact Spotify callback `http://127.0.0.1:3000/api/auth/spotify/callback`. Optional providers can be disabled independently.
+
+Reddit must stay disabled until explicit Data API approval exists. `REDDIT_ACCESS_APPROVED=true` records the owner's assertion only and is not evidence of approval. Manual SoundCloud links can be enabled with `SOUNDCLOUD_MANUAL_LINKS_ENABLED=true`; this causes no SoundCloud request.
+
+Use `DAILY_SCAN_TIME=HH:mm` only to display an expected next time in status. It does not create a schedule.
+
+## Scanner And Diagnostics
 
 ```powershell
+pnpm doctor
 pnpm scan -- --provider mock
 pnpm scan -- --provider spotify
 pnpm scan -- --provider musicbrainz
+pnpm scan -- --provider reddit
 pnpm scan -- --artist <internal-artist-id>
 pnpm scan -- --dry-run
 pnpm scan -- --full
-pnpm scan -- --since 2026-06-01
+pnpm scan:status
+pnpm scan:unlock-stale
 ```
 
-Normal `pnpm scan` runs every configured real provider. If neither is configured, it uses MockProvider. The initial backfill defaults to 60 days. Use `--full` only for explicit reconciliation.
+Normal scans use one global database lock. Each provider records an independent run and failure, and a provider failure does not stop the remaining providers. Detailed errors and provider metrics expire after `SCAN_DETAIL_RETENTION_DAYS`; aggregate counts and timestamps remain.
 
-## Scheduling
+## Tests
 
-Generic cron example:
+```powershell
+pnpm format:check
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm test:integration
+pnpm build
+pnpm test:e2e
+git diff --check
+```
+
+`test:integration` starts `db-test` on port 5433, recreates the public schema, and applies every migration. It fails instead of skipping when Docker is unavailable.
+
+The optional real test is separate:
+
+```powershell
+pnpm test:spotify:live -- --dry-run
+pnpm test:spotify:live -- --playlist-write --confirm-temporary-playlist
+```
+
+The read-only command requires completed browser OAuth. Write mode creates only a clearly named temporary private playlist and never touches the configured Release Inbox playlist. The minimum scopes do not permit cleanup, so remove that temporary playlist manually in Spotify.
+
+## Scheduling And Logs
+
+Windows Task Scheduler should invoke `scripts/run-daily-scan.ps1`. The script changes to the repository, relies on the scanner's ignored `.env` loader, uses the scan lock, writes dated logs under `%LOCALAPPDATA%\TSNewMusicRadar\logs`, and returns the scanner exit code. Do not put secrets in task arguments. Configure Run whether user is logged on or not only when that account can start Docker Desktop, then use Task Scheduler's Run command to test it.
+
+Cron example:
 
 ```cron
-17 6 * * * cd /srv/ts-radar && /usr/local/bin/pnpm scan
-43 5 * * 0 cd /srv/ts-radar && /usr/local/bin/pnpm scan -- --full
+17 6 * * * cd /path/to/repo && /usr/local/bin/pnpm scan >> "$HOME/.local/share/TSNewMusicRadar/logs/daily-scan.log" 2>&1
 ```
 
-For Windows Task Scheduler, create a daily task whose program is `pnpm.cmd`, arguments are `scan`, and Start in is the repository directory. Create a separate weekly task with arguments `scan -- --full`.
+## Backup And Restore
 
-## Spotify Workflow
+`pnpm db:backup` creates a timestamped PostgreSQL custom-format dump outside the repository. Restore requires `pnpm db:restore -- --file <path> --confirm-replace-data`, followed by migrations and doctor. Use compatible PostgreSQL major versions and verify watchlist, releases, feed, mappings, settings, and encrypted OAuth columns after restore.
 
-1. Start the web app on 127.0.0.1.
-2. Open Settings and connect Spotify.
-3. Select Import followed artists.
-4. Review the preview and confirm selected create or merge actions.
-5. Run the Spotify and MusicBrainz scans.
-6. Open Playlist exports, create or select an owned private playlist, preview sync, then sync.
-7. Disconnect from Settings to delete tokens and personal import history while preserving canonical watchlist records.
+Disaster-recovery verification procedure:
+
+1. Use a test database and insert synthetic artists, releases, feed items, mappings, settings, and an encrypted fake OAuth token.
+2. Run `pnpm db:backup` against that database and record the dump path.
+3. Reset only the test database.
+4. Restore the dump with explicit confirmation, then run migrations.
+5. Compare record counts and stable synthetic IDs for artists, releases, feed, mappings, and settings.
+6. Confirm OAuth ciphertext remains ciphertext and cannot be found as fixture plaintext.
+7. Run `pnpm doctor` and the integration suite.
+
+Never use real provider data in automated recovery fixtures. Backup retention is manual by default; no command deletes backups automatically.

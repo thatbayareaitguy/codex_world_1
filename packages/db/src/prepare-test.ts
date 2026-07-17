@@ -48,6 +48,7 @@ export async function resetTestDatabase(): Promise<void> {
   const resetClient = postgres(TEST_DATABASE_URL, { max: 1 });
   try {
     await resetClient.unsafe("drop schema if exists public cascade");
+    await resetClient.unsafe("drop schema if exists drizzle cascade");
     await resetClient.unsafe("create schema public");
   } finally {
     await resetClient.end();

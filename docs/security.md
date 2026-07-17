@@ -12,6 +12,8 @@ Requested scopes are `user-follow-read`, `playlist-read-private`, and `playlist-
 
 State-changing routes validate JSON with Zod, enforce same-origin against `APP_BASE_URL`, apply in-memory per-process rate limits, return safe errors, and prevent duplicate writes with database constraints. Logs redact authorization, cookies, tokens, client secrets, passwords, OAuth code, state, and verifier fields. Provider payloads are runtime-validated and full live responses are never logged or committed.
 
+Reddit source mutation routes have the same origin, validation, and rate-limit controls. Reddit network access has a separate hard gate requiring enabled, approval-recorded, complete credential, and valid User-Agent states. Reddit submissions do not persist author, score, comments, votes, media, or HTML. Deleted source text, extracted links, parse rows, evidence, and Reddit-only candidates are purged by reconciliation while independently corroborated canonical records survive without the Reddit association.
+
 Disconnect deletes encrypted Spotify tokens and personal Spotify import history, marks the account disconnected, and preserves the canonical watchlist. Delete all application data requires a separate explicit confirmation and truncates local watchlist, provider, feed, evidence, scan, and export data. It does not remove items already hosted in a Spotify playlist.
 
 ## Provider Boundary
@@ -23,3 +25,5 @@ Manual SoundCloud links are disabled by default. When enabled for development, f
 ## Threat Model
 
 The local prototype assumes one trusted workstation, an untrusted local network, and potentially malicious provider responses or user input. PostgreSQL binds to loopback, `.env` is ignored, and secrets are not sent to browser JavaScript. Production additionally requires HTTPS, a secrets manager, key rotation, encrypted backups, database TLS, retention policy, and multi-instance rate limiting if more than one web process is deployed.
+
+Operational output hides database credentials and provider secrets. Scanner errors are redacted and truncated before persistence. Backups remain local, may contain encrypted OAuth fields and personal library data, and therefore require filesystem access controls and optional volume encryption. The application never automatically deletes backups.

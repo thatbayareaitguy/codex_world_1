@@ -9,6 +9,7 @@ import {
 } from "@radar/core";
 import {
   BellRing,
+  Activity,
   Bookmark,
   Check,
   ChevronDown,
@@ -52,7 +53,8 @@ interface ProviderUiConfiguration {
   spotify: { configured: boolean; enabled: boolean };
 }
 
-type AppView = "feed" | "artists" | "exports" | "soundcloud-links" | "review" | "settings";
+type AppView =
+  "feed" | "artists" | "exports" | "soundcloud-links" | "review" | "status" | "settings";
 type ArtistSort = "name-asc" | "name-desc" | "recent";
 type ThemePreference = "system" | "light" | "dark";
 
@@ -89,6 +91,7 @@ const appViews = new Set<AppView>([
   "exports",
   "soundcloud-links",
   "review",
+  "status",
   "settings",
 ]);
 
@@ -516,6 +519,7 @@ export function RadarShell({
         {activeView === "review" && (
           <ReviewView items={reviewItems} onItemChange={updateItem} query={query} />
         )}
+        {activeView === "status" && <SystemStatusView />}
         {activeView === "settings" && (
           <SettingsView
             dailyScan={dailyScan}
@@ -598,6 +602,13 @@ function PrimaryNavigation({
         onClick={() => navigate("review")}
         view="review"
         warning
+      />
+      <NavItem
+        active={activeView === "status"}
+        icon={<Activity size={17} />}
+        label="System status"
+        onClick={() => navigate("status")}
+        view="status"
       />
     </nav>
   );
@@ -1578,6 +1589,249 @@ interface SettingsViewProps {
   themePreference: ThemePreference;
 }
 
+const systemStatusSchema = z.object({
+  backup: z.object({ lastCompletedAt: z.string().nullable() }),
+  database: z.object({
+    configured: z.boolean(),
+    connected: z.boolean().optional(),
+    error: z.string().optional(),
+    migrationCount: z.number().optional(),
+    migrationCurrent: z.boolean().optional(),
+    state: z.string().optional(),
+  }),
+  generatedAt: z.string(),
+  musicbrainz: z.object({
+    configured: z.boolean(),
+    enabled: z.boolean(),
+    lastError: z.string().nullable().optional(),
+    lastRateLimitWaitMs: z.number().nullable().optional(),
+    lastSuccessfulScanAt: z.string().nullable().optional(),
+    mappingReviewCount: z.number().optional(),
+    userAgentConfigured: z.boolean(),
+  }),
+  reddit: z.object({
+    approvalRecorded: z.boolean(),
+    configured: z.boolean(),
+    credentialsConfigured: z.boolean(),
+    enabled: z.boolean(),
+    lastDeletionReconciliationAt: z.string().nullable().optional(),
+    lastError: z.string().nullable().optional(),
+    lastScanAt: z.string().nullable().optional(),
+    reviewCount: z.number().optional(),
+  }),
+  scanner: z
+    .object({
+      activeScanId: z.string().nullable(),
+      failedProviderCount: z.number(),
+      lastCompletedAt: z.string().nullable(),
+      lockCount: z.number(),
+      running: z.boolean(),
+      staleLockCount: z.number(),
+    })
+    .optional(),
+  scheduler: z.object({
+    expectedNextScanAt: z.string().nullable(),
+    managedByApplication: z.boolean(),
+    recommendedCommand: z.string(),
+    schedule: z.string().nullable(),
+  }),
+  spotify: z.object({
+    configured: z.boolean(),
+    connected: z.boolean().optional(),
+    enabled: z.boolean(),
+    followedArtistsImported: z.boolean().optional(),
+    grantedScopes: z.array(z.string()).optional(),
+    lastError: z.string().nullable().optional(),
+    lastPlaylistSyncAt: z.string().nullable().optional(),
+    lastSuccessfulRequestAt: z.string().nullable().optional(),
+    lastSuccessfulScanAt: z.string().nullable().optional(),
+    playlistConfigured: z.boolean().optional(),
+    redirectUriValid: z.boolean(),
+    requiredScopes: z.array(z.string()),
+  }),
+});
+
+type SystemStatus = z.infer<typeof systemStatusSchema>;
+
+function SystemStatusView() {
+  const [status, setStatus] = useState<SystemStatus | null>(null);
+  const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
+
+  const loadStatus = async () => {
+    setState("loading");
+    try {
+      const response = await fetch("/api/system/status", { cache: "no-store" });
+      const payload = systemStatusSchema.parse(await response.json());
+      setStatus(payload);
+      setState(response.ok ? "loaded" : "error");
+    } catch {
+      setState("error");
+    }
+  };
+
+  useEffect(() => {
+    void loadStatus();
+  }, []);
+
+  return (
+    <section className="content standard-view">
+      <div className="page-heading heading-with-actions">
+        <div>
+          <p className="eyebrow">LOCAL OPERATION</p>
+          <h1>System status</h1>
+          <p>Database, provider, scanner, backup, and external scheduling readiness.</p>
+        </div>
+        <button
+          aria-label="Refresh system status"
+          className="secondary-button"
+          disabled={state === "loading"}
+          onClick={() => void loadStatus()}
+          type="button"
+        >
+          <RefreshCw size={15} /> {state === "loading" ? "Checking" : "Refresh"}
+        </button>
+      </div>
+      {state === "error" && !status && (
+        <div className="error-state" role="alert">
+          <CircleAlert size={20} />
+          <strong>Status could not be loaded.</strong>
+          <span>Run pnpm doctor for command-line diagnostics.</span>
+        </div>
+      )}
+      {status && (
+        <div className="settings-list status-list" aria-live="polite">
+          <StatusSection
+            details={[
+              ["Connection", status.database.connected ? "Connected" : "Unavailable"],
+              [
+                "Migrations",
+                status.database.migrationCurrent
+                  ? `${status.database.migrationCount ?? 0} applied, current`
+                  : "Action required",
+              ],
+              ["Last backup", formatStatusDate(status.backup.lastCompletedAt)],
+            ]}
+            error={status.database.error}
+            name="Database"
+            ready={Boolean(status.database.connected && status.database.migrationCurrent)}
+          />
+          <StatusSection
+            details={[
+              ["Enabled", yesNo(status.spotify.enabled)],
+              ["Configured", yesNo(status.spotify.configured)],
+              ["Connected", yesNo(status.spotify.connected)],
+              ["Scopes granted", status.spotify.grantedScopes?.join(", ") || "Not available"],
+              ["Last request", formatStatusDate(status.spotify.lastSuccessfulRequestAt)],
+              ["Last scan", formatStatusDate(status.spotify.lastSuccessfulScanAt)],
+              ["Playlist configured", yesNo(status.spotify.playlistConfigured)],
+              ["Last playlist sync", formatStatusDate(status.spotify.lastPlaylistSyncAt)],
+            ]}
+            error={status.spotify.lastError}
+            name="Spotify"
+            ready={Boolean(
+              status.spotify.enabled && status.spotify.configured && status.spotify.connected,
+            )}
+          />
+          <StatusSection
+            details={[
+              ["Enabled", yesNo(status.musicbrainz.enabled)],
+              ["User-Agent configured", yesNo(status.musicbrainz.userAgentConfigured)],
+              ["Last scan", formatStatusDate(status.musicbrainz.lastSuccessfulScanAt)],
+              ["Last rate-limit wait", `${status.musicbrainz.lastRateLimitWaitMs ?? 0} ms`],
+              ["Mapping reviews", String(status.musicbrainz.mappingReviewCount ?? 0)],
+            ]}
+            error={status.musicbrainz.lastError}
+            name="MusicBrainz"
+            ready={status.musicbrainz.enabled && status.musicbrainz.configured}
+          />
+          <StatusSection
+            details={[
+              ["Enabled", yesNo(status.reddit.enabled)],
+              ["Approval recorded", yesNo(status.reddit.approvalRecorded)],
+              ["Credentials configured", yesNo(status.reddit.credentialsConfigured)],
+              ["Last scan", formatStatusDate(status.reddit.lastScanAt)],
+              [
+                "Last deletion reconciliation",
+                formatStatusDate(status.reddit.lastDeletionReconciliationAt),
+              ],
+              ["Reviews", String(status.reddit.reviewCount ?? 0)],
+            ]}
+            error={status.reddit.lastError}
+            name="Reddit"
+            ready={!status.reddit.enabled || status.reddit.configured}
+            statusLabel={status.reddit.enabled ? undefined : "Optional provider disabled"}
+          />
+          <StatusSection
+            details={[
+              ["State", status.scanner?.running ? "Running" : "Idle"],
+              ["Active scan", status.scanner?.activeScanId ?? "None"],
+              ["Last completed", formatStatusDate(status.scanner?.lastCompletedAt)],
+              ["Failed providers", String(status.scanner?.failedProviderCount ?? 0)],
+              ["Stale locks", String(status.scanner?.staleLockCount ?? 0)],
+            ]}
+            name="Scanner"
+            ready={Boolean(status.scanner && status.scanner.staleLockCount === 0)}
+          />
+          <StatusSection
+            details={[
+              ["Command", status.scheduler.recommendedCommand],
+              ["Schedule", status.scheduler.schedule ?? "Not entered"],
+              ["Expected next scan", formatStatusDate(status.scheduler.expectedNextScanAt)],
+              ["Managed by application", "No"],
+            ]}
+            error="An external scheduler such as Windows Task Scheduler or cron is required."
+            name="Daily scheduling"
+            ready={false}
+            statusLabel="External scheduler required"
+          />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function StatusSection({
+  details,
+  error,
+  name,
+  ready,
+  statusLabel,
+}: {
+  details: Array<[string, string]>;
+  error?: string | null | undefined;
+  name: string;
+  ready: boolean;
+  statusLabel?: string | undefined;
+}) {
+  return (
+    <div className="setting-row status-section">
+      <div className="status-section-heading">
+        <strong>{name}</strong>
+        <span className={`mock-badge ${ready ? "status-ready" : "status-action"}`}>
+          {statusLabel ?? (ready ? "Ready" : "Action required")}
+        </span>
+      </div>
+      <dl className="status-detail-grid">
+        {details.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+      {error && <small className="status-message">{error}</small>}
+    </div>
+  );
+}
+
+function yesNo(value: boolean | undefined): string {
+  return value ? "Yes" : "No";
+}
+
+function formatStatusDate(value: string | null | undefined): string {
+  return value ? new Date(value).toLocaleString() : "Not recorded";
+}
+
 function SettingsView({
   dailyScan,
   digest,
@@ -1623,11 +1877,16 @@ function SettingsView({
           enabled={providerConfiguration.spotify.enabled}
           name="Spotify"
         />
+        <SpotifySetupChecklist
+          configured={providerConfiguration.spotify.configured}
+          enabled={providerConfiguration.spotify.enabled}
+        />
         <ProviderSetting
           configured={providerConfiguration.musicbrainz.configured}
           enabled={providerConfiguration.musicbrainz.enabled}
           name="MusicBrainz"
         />
+        <RedditSourceSettings databaseConfigured={providerConfiguration.databaseConfigured} />
         <div className="setting-row">
           <div>
             <strong>Appearance</strong>
@@ -2071,6 +2330,213 @@ function ProviderSetting({
       )}
       {error && (
         <span className={error.startsWith("Import complete") ? "form-success" : "form-error"}>
+          {error}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function SpotifySetupChecklist({ configured, enabled }: { configured: boolean; enabled: boolean }) {
+  const [status, setStatus] = useState<SystemStatus | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/system/status", { cache: "no-store" })
+      .then(async (response) => systemStatusSchema.parse(await response.json()))
+      .then((payload) => {
+        if (!cancelled) setStatus(payload);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const granted = new Set(status?.spotify.grantedScopes ?? []);
+  const scopesGranted =
+    status?.spotify.requiredScopes.every((scope) => granted.has(scope)) ?? false;
+  const entries: Array<[string, boolean]> = [
+    ["Development application created", configured],
+    ["Redirect URI configured", status?.spotify.redirectUriValid ?? false],
+    ["Client ID configured", configured],
+    ["Client secret configured", configured],
+    ["Encryption key configured", configured],
+    ["Spotify feature enabled", enabled],
+    ["Account connected", status?.spotify.connected ?? false],
+    ["Required scopes granted", scopesGranted],
+    ["Followed artists imported", status?.spotify.followedArtistsImported ?? false],
+    ["Release Inbox playlist selected or created", status?.spotify.playlistConfigured ?? false],
+  ];
+  return (
+    <div className="setting-row setup-checklist-row">
+      <div>
+        <strong>Spotify setup checklist</strong>
+        <small>Configuration values remain server-side and are never displayed here.</small>
+      </div>
+      <ul className="setup-checklist">
+        {entries.map(([label, complete]) => (
+          <li key={label}>
+            {complete ? (
+              <Check aria-hidden="true" size={14} />
+            ) : (
+              <Clock3 aria-hidden="true" size={14} />
+            )}
+            <span>{label}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+const redditSourcesSchema = z.object({
+  approvalRecorded: z.boolean(),
+  enabled: z.boolean(),
+  sources: z.array(
+    z.object({
+      enabled: z.boolean(),
+      id: z.string(),
+      lastError: z.string().nullable(),
+      lastSuccessfulScanAt: z.string().nullable(),
+      subreddit: z.string(),
+    }),
+  ),
+});
+
+function RedditSourceSettings({ databaseConfigured }: { databaseConfigured: boolean }) {
+  const [payload, setPayload] = useState<z.infer<typeof redditSourcesSchema> | null>(null);
+  const [subreddit, setSubreddit] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const loadSources = async () => {
+    try {
+      const response = await fetch("/api/reddit/sources", { cache: "no-store" });
+      if (!response.ok) throw new Error("Source request failed");
+      setPayload(redditSourcesSchema.parse(await response.json()));
+    } catch {
+      if (databaseConfigured) setError("Unable to load Reddit source configuration.");
+    }
+  };
+  useEffect(() => {
+    void loadSources();
+  }, [databaseConfigured]);
+
+  const addSource = async (event: FormEvent) => {
+    event.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/reddit/sources", {
+        body: JSON.stringify({ subreddit }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+      if (!response.ok) throw new Error("Source creation failed");
+      setSubreddit("");
+      await loadSources();
+    } catch {
+      setError("Enter a unique subreddit name using letters, numbers, or underscores.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const updateSource = async (id: string, enabled: boolean) => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/reddit/sources/${id}`, {
+        body: JSON.stringify({ enabled }),
+        headers: { "Content-Type": "application/json" },
+        method: "PATCH",
+      });
+      if (!response.ok) throw new Error("Source update failed");
+      await loadSources();
+    } catch {
+      setError("Unable to update the Reddit source.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const removeSource = async (id: string) => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/reddit/sources/${id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("Source removal failed");
+      await loadSources();
+    } catch {
+      setError("Unable to remove the Reddit source.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="setting-row reddit-source-setting">
+      <div>
+        <strong>Reddit sources</strong>
+        <small>
+          Configure sources locally. Network scanning remains blocked until Reddit is enabled and
+          explicit approval is recorded.
+        </small>
+      </div>
+      <span className="mock-badge">
+        {payload?.enabled && payload.approvalRecorded
+          ? "Approved configuration enabled"
+          : payload
+            ? "Approval required, scanning disabled"
+            : "Database unavailable"}
+      </span>
+      {payload && (
+        <form className="reddit-source-form" onSubmit={(event) => void addSource(event)}>
+          <label htmlFor="reddit-subreddit">Add subreddit</label>
+          <input
+            id="reddit-subreddit"
+            maxLength={23}
+            onChange={(event) => setSubreddit(event.target.value)}
+            placeholder="electronicmusic"
+            required
+            value={subreddit}
+          />
+          <button className="secondary-button" disabled={submitting} type="submit">
+            <UserPlus size={14} /> Add source
+          </button>
+        </form>
+      )}
+      {payload?.sources.map((source) => (
+        <div className="reddit-source-row" key={source.id}>
+          <span>
+            <strong>r/{source.subreddit}</strong>
+            <small>
+              {source.lastSuccessfulScanAt
+                ? `Last scan ${new Date(source.lastSuccessfulScanAt).toLocaleString()}`
+                : "Not scanned"}
+            </small>
+          </span>
+          <button
+            className="secondary-button"
+            disabled={submitting}
+            onClick={() => void updateSource(source.id, !source.enabled)}
+            type="button"
+          >
+            {source.enabled ? "Pause" : "Enable"}
+          </button>
+          <button
+            aria-label={`Remove r/${source.subreddit}`}
+            className="icon-button destructive"
+            disabled={submitting}
+            onClick={() => void removeSource(source.id)}
+            title={`Remove r/${source.subreddit}`}
+            type="button"
+          >
+            <Trash2 size={15} />
+          </button>
+        </div>
+      ))}
+      {error && (
+        <span className="form-error" role="alert">
           {error}
         </span>
       )}

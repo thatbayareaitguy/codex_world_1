@@ -1,37 +1,112 @@
 # TS New Music Radar
 
-A private, single-user release tracker with a provider-neutral watchlist and canonical feed. Active adapters are Spotify, MusicBrainz, and MockProvider. The application has no playback.
+TS New Music Radar is a private, single-user Release Inbox for a provider-neutral artist watchlist. It discovers releases through Spotify, MusicBrainz, approved Reddit evidence, or deterministic mock fixtures; preserves source evidence; routes uncertain matches to review; and synchronizes exact or confirmed Spotify tracks to one private playlist. It has no playback.
 
-## Local Setup
+## Current Scope
 
-Requirements: Node.js 22+, pnpm 11, and Docker Desktop with Compose v2.
+- Spotify: followed-artist import, mapped release discovery, exact track availability, and private playlist synchronization.
+- MusicBrainz: artist mapping, release and release-group discovery, and upcoming release dates.
+- Reddit: configurable evidence sources and deterministic parsing, disabled until Reddit grants explicit API approval.
+- MockProvider: credential-free local scanning and tests.
+- SoundCloud: optional manual outbound links only, disabled by default. No API, OAuth, player, metadata request, or hosted playlist.
+- Deferred: YouTube, Apple Music, TIDAL, and every other provider.
+
+Required software: Node.js 22 or newer, pnpm 11.9, Docker Desktop with Compose v2, and Git. Spotify Development Mode additionally requires the owner's existing Spotify Premium subscription.
+
+## Initial Installation
 
 ```powershell
 Copy-Item .env.example .env
-pnpm install
-pnpm db:up
-pnpm db:migrate
-pnpm scan -- --provider mock
-pnpm dev -- --hostname 127.0.0.1
+pnpm install --frozen-lockfile
+pnpm app:up:dev
 ```
 
-Open `http://127.0.0.1:3000`. Mock mode works without provider credentials.
+`app:up:dev` starts PostgreSQL, applies migrations, and starts Next.js on `http://127.0.0.1:3000`. It does not overwrite `.env` or expose the app beyond loopback. Use `pnpm app:down` to stop the application and database while preserving the Docker volume. For production-like local operation, run `pnpm app:up` after a successful build.
 
-For real providers, configure Spotify and MusicBrainz as described in [provider registration](docs/provider-registration.md), connect Spotify from Settings, approve the followed-artist import preview, map canonical artists to MusicBrainz, and run `pnpm scan`.
+Generate `APP_ENCRYPTION_KEY` before connecting Spotify:
 
-## Verification
+```powershell
+$bytes = New-Object byte[] 32
+[Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+[Convert]::ToBase64String($bytes)
+```
+
+Run `pnpm doctor` after editing `.env`. It checks versions, database connectivity, migrations, encryption, provider configuration, failed scans, locks, directories, backups, and port status without printing secrets.
+
+## First Use
+
+1. Register a Spotify Development Mode app with `http://127.0.0.1:3000/api/auth/spotify/callback` exactly, then set the Spotify variables and `SPOTIFY_ENABLED=true`.
+2. Open Settings, connect Spotify in the browser, inspect the setup checklist, and import followed artists through the preview.
+3. Add artists that are not followed on Spotify from Followed artists.
+4. Use the MusicBrainz mapping controls to confirm exact identities and leave ambiguous identities in review.
+5. Run `pnpm scan -- --provider mock` for a credential-free check, then `pnpm scan` for configured providers.
+6. Review Needs review items. Only exact or manually confirmed Spotify matches are eligible for export.
+7. Open Playlist exports, create or select the owned private Release Inbox playlist, preview synchronization, then synchronize. Repeating synchronization does not add the same provider track twice.
+
+## Daily Operation
+
+```powershell
+pnpm doctor
+pnpm scan
+pnpm scan:status
+```
+
+Useful diagnostics and recovery:
+
+```powershell
+pnpm scan -- --dry-run
+pnpm scan -- --provider spotify
+pnpm scan -- --provider musicbrainz
+pnpm scan -- --provider reddit
+pnpm scan -- --artist <internal-artist-id>
+pnpm scan -- --full
+pnpm scan:unlock-stale
+```
+
+Reddit commands enforce `REDDIT_ENABLED=true`, `REDDIT_ACCESS_APPROVED=true`, complete credentials, and a valid descriptive User-Agent. The flags are not proof of approval. See [daily use](docs/daily-use.md) and [troubleshooting](docs/troubleshooting.md).
+
+## Scheduling
+
+The application does not schedule itself. Use Windows Task Scheduler to run `powershell.exe` with `-NoProfile -ExecutionPolicy Bypass -File "<repo>\scripts\run-daily-scan.ps1"`. Set Start in to the repository, select a daily trigger, and choose an account with Docker access. No secret belongs in the task definition because the scanner loads the ignored `.env` file. Test with Run and inspect `%LOCALAPPDATA%\TSNewMusicRadar\logs`.
+
+Cron equivalent:
+
+```cron
+17 6 * * * cd /path/to/ts-new-music-radar && /usr/local/bin/pnpm scan >> "$HOME/.local/share/TSNewMusicRadar/logs/daily-scan.log" 2>&1
+```
+
+## Backup And Restore
+
+```powershell
+pnpm db:backup
+pnpm db:restore -- --file "C:\path\to\ts-new-music-radar-<timestamp>.dump" --confirm-replace-data
+pnpm db:migrate
+pnpm doctor
+```
+
+Backups use `pg_dump -Fc`, are timestamped, refuse overwrite, and default outside the repository under `%LOCALAPPDATA%\TSNewMusicRadar\backups`. Restore uses `pg_restore --clean --if-exists --no-owner --exit-on-error` and requires explicit replacement confirmation. Restore with a PostgreSQL major version compatible with the source server, then verify artists, releases, feed, mappings, settings, and encrypted OAuth columns. Retention is manual; for example, review backups quarterly and explicitly remove superseded files only after testing a recent restore.
+
+## Account And Data Removal
+
+Disconnect Spotify in Settings to delete encrypted access and refresh tokens plus personal import records while preserving canonical artists. Delete all application data requires a separate confirmation and clears local records. It does not remove items already hosted by Spotify.
+
+## Updating Safely
+
+1. Run `pnpm db:backup`.
+2. Pull or apply the new code.
+3. Run `pnpm install --frozen-lockfile`, `pnpm db:migrate`, and `pnpm doctor`.
+4. Run the verification commands below before resuming scheduled scans.
 
 ```powershell
 pnpm format:check
 pnpm lint
 pnpm typecheck
 pnpm test
-pnpm db:up
-pnpm db:migrate
 pnpm test:integration
 pnpm build
 pnpm test:e2e
-git diff --check
 ```
 
-See [local development](docs/local-development.md), [architecture](docs/architecture.md), and [provider capabilities](docs/provider-capabilities.md).
+The optional real Spotify read test is `pnpm test:spotify:live -- --dry-run`. OAuth must already have been completed interactively. Playlist-write verification additionally requires `--playlist-write --confirm-temporary-playlist` and creates a clearly named temporary private playlist that must be removed manually because the app does not request broader cleanup scopes.
+
+Future SoundCloud Artist Pro work remains outside this milestone. It must pass the no-paid-developer-access and Spotify-policy review before any API implementation.

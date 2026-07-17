@@ -37,3 +37,70 @@ No playback, previews, embeds, audio handling, cross-provider artwork, Spotify-t
 ## Environment Constraint
 
 Docker is not currently installed on the development machine. The milestone cannot be marked complete until the clean-database migration and non-skipped integration suite run successfully with Docker Compose. The repository commands must report this condition clearly rather than skipping tests.
+
+---
+
+# Reddit Evidence Milestone Plan
+
+Verified: 2026-07-16
+
+## Approval And Policy Gate
+
+Reddit's current Responsible Builder Policy requires explicit approval before any Data API access. Eligible free access is documented at 100 queries per minute per OAuth client ID averaged across ten minutes, but Reddit offers both free and paid access and decides eligibility during review. This repository therefore defaults `REDDIT_ENABLED` and `REDDIT_ACCESS_APPROVED` to `false`. The approval flag records only the owner's assertion after receiving actual approval and is not proof of Reddit approval.
+
+No live request may occur unless both flags are true, credentials are configured, and the descriptive User-Agent is valid. Normal tests use synthetic content and injected HTTP handlers. No unauthenticated, RSS, scraping, browser-automation, search-cache, or third-party fallback is permitted.
+
+## Implementation Order
+
+1. Add typed Reddit configuration, approval-gate diagnostics, and server-only application-token caching using the approved `client_credentials` flow. Do not add a Reddit user connection.
+2. Add a global 30-QPM limiter, response-header tracking, request and scan timeouts, bounded transient retries, exact `Retry-After` handling, and structured redacted metrics.
+3. Add forward-only Reddit schema and migrations for configurable subreddit sources, submissions, parse results, extracted links, candidate relationships, cursor state, reconciliation history, and provenance-preserving review decisions. Seed `EDM` and `dubstep` while leaving the provider disabled.
+4. Implement versioned local parsers for individual titles, safe bounded Markdown roundup lines, explicit and ambiguous dates, release classifications, artist credits, labels, version markers, and safe outbound links. Runtime code must not send Reddit content to any AI service.
+5. Match parsed credits against canonical watchlist names, confirmed aliases, and confirmed Spotify or MusicBrainz mappings. Short, common, fuzzy, conflicting, and Reddit-only candidates require review.
+6. Implement authenticated reads only for `/r/{subreddit}/new`, `/r/{subreddit}/search`, and `/api/info` on the OAuth API host. Listing pages request at most 100 items and use `after` cursors, overlap windows, lookback horizons, source locks, and idempotent writes.
+7. Verify direct Spotify track and album links through the existing Spotify client. Retain SoundCloud and other safe links as unverified source evidence without fetching them. Reddit alone never makes a Spotify playlist item eligible.
+8. Reconcile retained submission fullnames daily and purge deleted Reddit text, links, parse data, evidence, and Reddit-only candidates within the documented process. Independently corroborated canonical records survive without the Reddit association.
+9. Add database-backed routes and settings controls for source CRUD, pause or resume, scans, backfills, cursor reset, search previews, reconciliation, review decisions, and aggregate Reddit-data deletion. Closed-gate controls remain visibly disabled with an explanation.
+10. Extend feed and review views with Reddit provenance, confidence, corroboration, subreddit filters, upcoming labels, and deletion state without author identity, HTML, embeds, media, comments, votes, or karma.
+11. Add synthetic unit, integration, and Playwright coverage for the approval gate, client, parser, matching, persistence, deletion, source management, feed, and review workflows. Add a separately invoked dry-run live smoke command that refuses to run without approved configuration.
+12. Update privacy, terms, provider capability, architecture, security, registration, deployment, parser, and deletion documentation. Run formatting, lint, type checking, unit tests, clean migrations, integration tests, build, Playwright, and diff checks before handoff.
+
+## Unresolved External Decisions
+
+- Reddit has not approved this application.
+- Official documentation does not guarantee that this specific use case will receive free access.
+- The archived OAuth technical guide documents application-only `client_credentials`, but the exact approved application type and authentication method must match Reddit's approval response.
+- If Reddit requires payment, another authentication flow, Devvit hosting, or terms incompatible with this private application, the provider remains disabled and no fallback is used.
+
+---
+
+# Integration Hardening And Local Readiness Plan
+
+Verified: 2026-07-16
+
+## Repository Findings
+
+- The committed baseline contains Spotify, MusicBrainz, MockProvider, canonical matching, scanning, feed, review, playlist synchronization, and database migrations through `0004`.
+- Reddit was not complete in the committed baseline. The working tree contains an approval-gated client and deterministic parser, but no Reddit persistence, migration, scanner orchestration, source-management UI, deletion reconciliation, or database and browser coverage.
+- The repository has no doctor, backup, restore, application lifecycle, scan status, stale-lock recovery, full reconciliation, or optional live Spotify smoke commands.
+- Docker-backed integration tests correctly fail when Docker is unavailable rather than reporting a skip. This machine's Docker availability must be rechecked during verification.
+- The UI has provider and scan-history summaries but no consolidated operational status page or external scheduler status.
+- Existing documentation describes the completed Spotify and MusicBrainz milestone accurately in broad terms, but does not yet document daily operation, backup recovery, diagnostics, or the incomplete Reddit implementation.
+
+## Stabilization Order
+
+1. Restore a clean dependency baseline from the lockfile and fix all current formatting, lint, type, and unit failures before extending operational behavior.
+2. Finish the existing Reddit milestone boundary: forward migration, source records, disabled-by-default status, synthetic scan persistence, deletion purge, and source-management status. Do not enable live access or add another provider.
+3. Add a secret-safe `pnpm doctor` command with tested readiness states for runtime versions, environment, database, migrations, providers, scan history, backup state, data directories, and local port availability.
+4. Harden scanner coordination with one global normal-scan lock, provider result isolation, stale-lock inspection and recovery, status and reconciliation commands, trigger metadata, bounded error storage, and detailed-log retention configuration.
+5. Add Windows-compatible `app:up` and `app:down` helpers that verify Docker, start PostgreSQL, apply migrations, and start the loopback-only application without modifying environment files.
+6. Add PostgreSQL custom-format backup and guarded restore commands, out-of-tree default storage, metadata for last backup, restore confirmation, compatibility checks, and test-database recovery coverage.
+7. Add an optional, separately invoked Spotify live smoke command that validates configuration and remains read-only unless an explicit playlist-write confirmation is provided. Never run it during standard verification.
+8. Add a consolidated system-status API and UI with accurate database, provider, scanner, backup, and external-scheduler state. Every unavailable action must be disabled with a reason.
+9. Add one database-backed synthetic workflow covering manual and imported artists, provider mappings, duplicate matching, review, feed, idempotent scans, playlist planning, disconnect, and canonical-data retention.
+10. Rewrite the README as an operational guide and add daily-use, troubleshooting, manual-QA, scheduling, backup, security, and Reddit readiness documentation that matches implemented behavior.
+11. Run empty-schema and upgrade migrations, all standard automated suites, backup and restore verification, repeated scans and playlist synchronization, stale-lock recovery, production build, browser tests, diagnostics, and diff inspection.
+
+## Completion Boundary
+
+This milestone does not add playback, public users, cloud infrastructure, commercial behavior, analytics, SoundCloud API access, YouTube, Apple Music, or TIDAL. Reddit remains disabled until the owner has actual approved access and configures it explicitly. Live Spotify and Reddit calls are never part of standard tests.

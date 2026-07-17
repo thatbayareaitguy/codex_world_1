@@ -2,6 +2,7 @@ export const providerNames = [
   "mock",
   "spotify",
   "musicbrainz",
+  "reddit",
   "youtube",
   "soundcloud",
   "apple_music",
@@ -24,6 +25,10 @@ export const releaseTypes = [
   "feature",
   "upload",
   "other",
+  "radio_show",
+  "podcast",
+  "playlist",
+  "unknown",
 ] as const;
 
 export type ReleaseType = (typeof releaseTypes)[number];
@@ -168,4 +173,14 @@ export interface FeedFixtureItem {
   region: string;
   exportStatus: "eligible" | "exported" | "blocked" | "review_required";
   accent: "coral" | "cyan" | "lime" | "gold";
+  reddit?: {
+    subreddit: string;
+    postCreatedAt: string;
+    parseConfidence: number;
+    artistMatchConfidence: number;
+    corroboration: "reddit_only" | "spotify" | "musicbrainz" | "user_confirmed";
+    directSpotifyLink: boolean;
+    unverifiedExternalLink: boolean;
+    sourceDeleted: boolean;
+  };
 }

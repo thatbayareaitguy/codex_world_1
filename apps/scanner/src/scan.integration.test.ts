@@ -1,23 +1,38 @@
 import {
+  artistExternalIds,
   artists,
+  acquireOperationLock,
   confirmSpotifyImport,
   consumeOAuthState,
   createDatabase,
   createSpotifyImportRun,
   disconnectSpotifyAccount,
+  expireDetailedScanData,
   ensureLocalOwner,
   feedItems,
+  artistMappingReviews,
+  listRedditSources,
+  operationLocks,
   persistOAuthState,
   playlistExports,
   playlistTargets,
   releaseCandidates,
+  redditCandidateMatches,
+  redditExternalLinks,
+  releaseOperationLock,
   scanLocks,
   sourceEvidence,
   tracks,
+  trackAvailabilities,
+  persistRedditListing,
+  purgeDeletedRedditSubmissions,
+  scanRuns,
+  unlockStaleOperations,
   upsertSpotifyAccount,
 } from "@radar/db";
+import type { TrackCandidate } from "@radar/core";
 import { encryptSecret } from "@radar/providers";
-import { mockProviderFixture } from "@radar/testing";
+import { mockProviderFixture, syntheticRedditListing } from "@radar/testing";
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { persistCandidates } from "./scan";
@@ -25,7 +40,143 @@ import { persistCandidates } from "./scan";
 const databaseUrl =
   process.env.TEST_DATABASE_URL ?? "postgres://radar:radar@127.0.0.1:5433/radar_test";
 
-describe.sequential("PostgreSQL integration", () => {
+const integrationSpotifyCandidates: TrackCandidate[] = [
+  {
+    artistExternalId: "spotify-lumen",
+    artistName: "Lumen Field",
+    availability: "playable",
+    credits: [{ name: "Lumen Field", role: "primary" }],
+    durationMs: 201_000,
+    evidenceType: "synthetic_spotify_album",
+    evidenceUrl: "https://example.test/evidence/album-track-1",
+    externalReleaseId: "spotify-album-integration",
+    externalTrackId: "spotify-album-track-1",
+    firstSeenAt: "2026-07-15T10:00:00.000Z",
+    isrc: "USINT2600001",
+    payloadHash: "sha256:spotify-album-track-1",
+    provider: "spotify",
+    providerUrl: "https://open.spotify.com/track/spotify-album-track-1",
+    region: "US",
+    releaseDate: "2026-07-15",
+    releaseDatePrecision: "day",
+    releaseTitle: "Integration Album",
+    releaseType: "album",
+    sourceLabel: "Synthetic Spotify",
+    title: "Album Track One",
+  },
+  {
+    artistExternalId: "spotify-lumen",
+    artistName: "Lumen Field",
+    availability: "playable",
+    credits: [{ name: "Lumen Field", role: "primary" }],
+    durationMs: 203_000,
+    evidenceType: "synthetic_spotify_album",
+    evidenceUrl: "https://example.test/evidence/album-track-2",
+    externalReleaseId: "spotify-album-integration",
+    externalTrackId: "spotify-album-track-2",
+    firstSeenAt: "2026-07-15T10:00:00.000Z",
+    isrc: "USINT2600002",
+    payloadHash: "sha256:spotify-album-track-2",
+    provider: "spotify",
+    providerUrl: "https://open.spotify.com/track/spotify-album-track-2",
+    region: "US",
+    releaseDate: "2026-07-15",
+    releaseDatePrecision: "day",
+    releaseTitle: "Integration Album",
+    releaseType: "album",
+    sourceLabel: "Synthetic Spotify",
+    title: "Album Track Two",
+  },
+  {
+    artistExternalId: "spotify-mara",
+    artistName: "Mara Voss",
+    availability: "playable",
+    credits: [
+      { name: "Mara Voss", role: "primary" },
+      { name: "Lumen Field", role: "featured" },
+    ],
+    durationMs: 215_000,
+    evidenceType: "synthetic_spotify_feature",
+    evidenceUrl: "https://example.test/evidence/featured-appearance",
+    externalReleaseId: "spotify-feature-integration",
+    externalTrackId: "spotify-feature-track",
+    firstSeenAt: "2026-07-15T10:05:00.000Z",
+    isrc: "USINT2600003",
+    payloadHash: "sha256:spotify-feature-track",
+    provider: "spotify",
+    providerUrl: "https://open.spotify.com/track/spotify-feature-track",
+    region: "US",
+    releaseDate: "2026-07-14",
+    releaseDatePrecision: "day",
+    releaseTitle: "Featured Appearance",
+    releaseType: "feature",
+    sourceLabel: "Synthetic Spotify",
+    title: "Featured Appearance",
+  },
+  {
+    artistExternalId: "spotify-oxide",
+    artistName: "Oxide Echo",
+    availability: "playable",
+    credits: [{ name: "Oxide Echo", role: "primary" }],
+    durationMs: 190_000,
+    evidenceType: "synthetic_spotify_single",
+    evidenceUrl: "https://example.test/evidence/original",
+    externalReleaseId: "spotify-original-integration",
+    externalTrackId: "spotify-original-track",
+    firstSeenAt: "2026-07-15T10:10:00.000Z",
+    isrc: "USINT2600004",
+    payloadHash: "sha256:spotify-original-track",
+    provider: "spotify",
+    providerUrl: "https://open.spotify.com/track/spotify-original-track",
+    region: "US",
+    releaseDate: "2026-07-13",
+    releaseDatePrecision: "day",
+    releaseTitle: "Pulse Vector",
+    releaseType: "single",
+    sourceLabel: "Synthetic Spotify",
+    title: "Pulse Vector",
+  },
+  {
+    artistExternalId: "spotify-oxide",
+    artistName: "Oxide Echo",
+    availability: "playable",
+    credits: [{ name: "Oxide Echo", role: "primary" }],
+    durationMs: 242_000,
+    evidenceType: "synthetic_spotify_remix",
+    evidenceUrl: "https://example.test/evidence/remix",
+    externalReleaseId: "spotify-remix-integration",
+    externalTrackId: "spotify-remix-track",
+    firstSeenAt: "2026-07-15T10:11:00.000Z",
+    payloadHash: "sha256:spotify-remix-track",
+    provider: "spotify",
+    providerUrl: "https://open.spotify.com/track/spotify-remix-track",
+    region: "US",
+    releaseDate: "2026-07-13",
+    releaseDatePrecision: "day",
+    releaseTitle: "Pulse Vector (Extended Remix)",
+    releaseType: "remix",
+    sourceLabel: "Synthetic Spotify",
+    title: "Pulse Vector (Extended Remix)",
+    version: "extended remix",
+  },
+];
+
+const integrationMusicBrainzDuplicate: TrackCandidate = {
+  ...integrationSpotifyCandidates[3]!,
+  availability: "unavailable",
+  evidenceType: "synthetic_musicbrainz_recording",
+  evidenceUrl: "https://musicbrainz.org/recording/00000000-0000-4000-8000-000000000004",
+  externalReleaseId: "musicbrainz-release-integration",
+  externalTrackId: "musicbrainz-recording-integration",
+  firstSeenAt: "2026-07-15T11:00:00.000Z",
+  musicbrainzRecordingId: "00000000-0000-4000-8000-000000000004",
+  payloadHash: "sha256:musicbrainz-recording-integration",
+  provider: "musicbrainz",
+  providerUrl: "https://musicbrainz.org/recording/00000000-0000-4000-8000-000000000004",
+  sourceLabel: "Synthetic MusicBrainz",
+};
+
+describe.sequential("complete deterministic fake-provider workflow", () => {
   const connection = createDatabase(databaseUrl);
 
   beforeAll(async () => {
@@ -58,6 +209,31 @@ describe.sequential("PostgreSQL integration", () => {
     expect(
       (await connection.db.select().from(feedItems)).some((item) => item.state === "needs_review"),
     ).toBe(true);
+
+    const spotify = await persistCandidates(connection.db, integrationSpotifyCandidates, {
+      dryRun: false,
+      full: false,
+      provider: "spotify",
+    });
+    const musicBrainz = await persistCandidates(connection.db, [integrationMusicBrainzDuplicate], {
+      dryRun: false,
+      full: false,
+      provider: "musicbrainz",
+    });
+    const spotifyRerun = await persistCandidates(connection.db, integrationSpotifyCandidates, {
+      dryRun: false,
+      full: false,
+      provider: "spotify",
+    });
+    expect(spotify).toMatchObject({ inserted: 5 });
+    expect(musicBrainz).toMatchObject({ inserted: 1 });
+    expect(spotifyRerun).toMatchObject({ inserted: 0, skipped: 5 });
+    const completeTracks = await connection.db.select().from(tracks);
+    expect(completeTracks.filter((track) => track.isrc === "USINT2600004")).toHaveLength(1);
+    expect(
+      completeTracks.some((track) => track.normalizedTitle === "pulse vector extended remix"),
+    ).toBe(true);
+    expect(completeTracks.some((track) => track.normalizedTitle === "pulse vector")).toBe(true);
   });
 
   it("consumes OAuth state exactly once and rejects expired state", async () => {
@@ -81,6 +257,16 @@ describe.sequential("PostgreSQL integration", () => {
       userId,
     });
     expect(await consumeOAuthState(connection.db, expiredId, "expired-hash")).toBeUndefined();
+
+    const key = Buffer.alloc(32, 7).toString("base64");
+    await upsertSpotifyAccount(connection.db, {
+      accessToken: encryptSecret("fake-access", key),
+      accessTokenExpiresAt: new Date(Date.now() + 3_600_000),
+      providerAccountId: "spotify-account-integration",
+      refreshToken: encryptSecret("fake-refresh", key),
+      scopes: ["user-follow-read", "playlist-read-private", "playlist-modify-private"],
+      userId,
+    });
   });
 
   it("deduplicates repeated Spotify imports by provider artist ID", async () => {
@@ -128,6 +314,34 @@ describe.sequential("PostgreSQL integration", () => {
         (artist) => artist.normalizedName === "integration artist",
       ),
     ).toHaveLength(1);
+
+    const lumen = (await connection.db.select().from(artists)).find(
+      (artist) => artist.normalizedName === "lumen field",
+    );
+    const oxide = (await connection.db.select().from(artists)).find(
+      (artist) => artist.normalizedName === "oxide echo",
+    );
+    expect(lumen).toBeDefined();
+    expect(oxide).toBeDefined();
+    await connection.db.insert(artistExternalIds).values({
+      artistId: lumen!.id,
+      confirmed: true,
+      externalId: "00000000-0000-4000-8000-000000000001",
+      matchReasons: ["Synthetic exact mapping"],
+      matchScore: "1.000",
+      mappingSource: "manual_confirmation",
+      provider: "musicbrainz",
+      providerUrl: "https://musicbrainz.org/artist/00000000-0000-4000-8000-000000000001",
+    });
+    await connection.db.insert(artistMappingReviews).values({
+      artistId: oxide!.id,
+      matchReasons: ["Synthetic ambiguous name"],
+      matchScore: "0.720",
+      proposedExternalId: "00000000-0000-4000-8000-000000000002",
+      provider: "musicbrainz",
+      providerName: "Oxide Echoes",
+    });
+    expect(await connection.db.select().from(artistMappingReviews)).toHaveLength(1);
   });
 
   it("encrypts tokens, deletes them on disconnect, and preserves canonical data", async () => {
@@ -191,5 +405,110 @@ describe.sequential("PostgreSQL integration", () => {
     );
     expect(recovered.skipped).toBe(5);
     expect(await connection.db.select().from(scanLocks)).toHaveLength(0);
+  });
+
+  it("serializes normal scans, recovers stale operation locks, and expires only details", async () => {
+    const lock = await acquireOperationLock(connection.db, {
+      lockKey: "scan:global",
+      operationType: "normal_scan",
+      ttlMs: 60_000,
+    });
+    await expect(
+      acquireOperationLock(connection.db, {
+        lockKey: "scan:global",
+        operationType: "provider_scan",
+      }),
+    ).rejects.toThrow("already running");
+    await releaseOperationLock(connection.db, lock);
+
+    await connection.db.insert(operationLocks).values({
+      acquiredAt: new Date(Date.now() - 120_000),
+      expiresAt: new Date(Date.now() - 60_000),
+      lockKey: "scan:interrupted",
+      metadata: {},
+      operationType: "normal_scan",
+      ownerToken: "interrupted-owner",
+    });
+    expect(await unlockStaleOperations(connection.db)).toBe(1);
+
+    const [expired] = await connection.db
+      .insert(scanRuns)
+      .values({
+        completedAt: new Date(),
+        detailedExpiresAt: new Date(Date.now() - 1),
+        discoveredCount: 9,
+        errors: [{ message: "expired detail" }],
+        metadata: { providerMetrics: { waitMs: 20 } },
+        provider: "mock",
+        providerResults: { mock: { discovered: 9 } },
+        status: "completed",
+      })
+      .returning({ id: scanRuns.id });
+    expect(await expireDetailedScanData(connection.db)).toBe(1);
+    const retained = await connection.db.query.scanRuns.findFirst({
+      where: (table, { eq }) => eq(table.id, expired!.id),
+    });
+    expect(retained).toMatchObject({
+      discoveredCount: 9,
+      errors: [],
+      metadata: {},
+      providerResults: {},
+      status: "completed",
+    });
+  });
+
+  it("persists mocked Reddit evidence idempotently and purges deleted source content", async () => {
+    const userId = await ensureLocalOwner(connection.db);
+    const spotifyBackedTrack = (await connection.db.select().from(tracks)).find(
+      (track) => track.normalizedTitle === "glass horizon",
+    );
+    expect(spotifyBackedTrack).toBeDefined();
+    await connection.db
+      .insert(trackAvailabilities)
+      .values({
+        provider: "spotify",
+        providerTrackId: "spotify-glass-horizon-integration",
+        providerUrl: "https://open.spotify.com/track/spotify-glass-horizon-integration",
+        region: "US",
+        state: "playable",
+        trackId: spotifyBackedTrack!.id,
+      })
+      .onConflictDoNothing();
+    const sources = await listRedditSources(connection.db, userId);
+    const source = sources.find((entry) => entry.subreddit === "EDM");
+    expect(source).toBeDefined();
+    const first = await persistRedditListing(
+      connection.db,
+      userId,
+      source!.id,
+      syntheticRedditListing,
+    );
+    const second = await persistRedditListing(
+      connection.db,
+      userId,
+      source!.id,
+      syntheticRedditListing,
+    );
+    expect(first.insertedSubmissions).toBe(2);
+    expect(first.needsReview).toBeGreaterThan(0);
+    expect(second.insertedSubmissions).toBe(0);
+    expect(second.duplicates).toBe(2);
+    const redditMatches = await connection.db.select().from(redditCandidateMatches);
+    expect(redditMatches.some((match) => match.reviewStatus === "corroborated")).toBe(true);
+    expect(redditMatches.some((match) => match.reviewStatus === "needs_review")).toBe(true);
+    expect(await connection.db.select().from(redditExternalLinks)).not.toHaveLength(0);
+
+    const purge = await purgeDeletedRedditSubmissions(connection.db, ["t3_fixture1"]);
+    expect(purge.deleted).toBe(1);
+    const deleted = await connection.db.query.redditSubmissions.findFirst({
+      where: (table, { eq }) => eq(table.fullname, "t3_fixture1"),
+    });
+    expect(deleted).toMatchObject({
+      destinationUrl: null,
+      permalink: null,
+      selfText: null,
+      sourceState: "deleted",
+      title: null,
+    });
   });
 });

@@ -3,6 +3,8 @@ export * from "./contracts";
 export * from "./future";
 export * from "./mock-provider";
 export * from "./musicbrainz";
+export * from "./reddit";
+export * from "./reddit-parser";
 export * from "./security";
 export * from "./spotify";
 export * from "./spotify-playlist";

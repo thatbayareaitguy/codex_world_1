@@ -1,8 +1,10 @@
 import { log } from "@radar/core";
 import { parseArgs } from "./args";
 import { runScan } from "./scan";
+import { loadLocalEnvironment } from "./local-env";
 
 try {
+  loadLocalEnvironment();
   const options = parseArgs(process.argv.slice(2));
   await runScan(options);
 } catch (error) {

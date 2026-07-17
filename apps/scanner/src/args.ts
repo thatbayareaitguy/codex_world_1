@@ -5,6 +5,7 @@ export interface ScannerOptions {
   artistId?: string;
   full: boolean;
   provider?: ProviderName;
+  source?: string;
   since?: string;
 }
 
@@ -43,6 +44,13 @@ export function parseArgs(args: string[]): ScannerOptions {
         throw new Error(`--provider must be one of: ${providerNames.join(", ")}`);
       }
       options.provider = value as ProviderName;
+      index += 1;
+      continue;
+    }
+    if (arg === "--source") {
+      const value = args[index + 1];
+      if (!value) throw new Error("--source requires a configured subreddit name");
+      options.source = value.replace(/^r\//i, "");
       index += 1;
       continue;
     }

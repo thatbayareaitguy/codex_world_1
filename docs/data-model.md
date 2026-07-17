@@ -20,10 +20,14 @@
 - `source_evidence`: independent provider evidence URLs and payload fingerprints.
 - `upcoming_announcements` and `upcoming_date_history`: future date, precision, source confidence, evidence, and every observed date change.
 - `feed_items`: canonical user state with stable user dedupe key and release or track relationship.
+- `reddit_sources`: local subreddit configuration, lookback, overlap, parser signals, cursor, and last error.
+- `reddit_submissions`, `reddit_parse_results`, and `reddit_external_links`: minimized retained source text, versioned deterministic parse output, and unverified outbound evidence. Author, score, comments, votes, media, and HTML are not stored.
+- `reddit_candidate_matches` and `reddit_reconciliation_runs`: canonical corroboration or review state plus deletion-purge history.
 
 ## Operations and Export
 
-- `scan_runs`: provider status, filter, start, finish, counts, sanitized errors, and provider metrics.
+- `scan_runs`: trigger, requested/completed/failed providers, filter, dry-run state, start, finish, aggregate counts, sanitized errors, metrics, and detail expiry.
+- `operation_locks`: one global expiring operation lock for scan serialization and interruption recovery.
 - `scan_locks`: one expiring lock per provider.
 - `provider_cursors` and `provider_cache`: scoped checkpoints and sanitized cached metadata.
 - `playlist_targets`: one Spotify target, name, private provider ID, snapshot, auto-add policy, and last sync.

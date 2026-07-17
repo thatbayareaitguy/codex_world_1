@@ -13,6 +13,8 @@ import {
   artistFollows,
   artists,
   createDatabase,
+  acquireOperationLock,
+  expireDetailedScanData,
   feedItems,
   providerCursors,
   releaseCandidates,
@@ -30,6 +32,7 @@ import {
   users,
   ensureLocalOwner,
   SpotifyTokenManager,
+  releaseOperationLock,
   type RadarDatabase,
 } from "@radar/db";
 import {
@@ -48,6 +51,7 @@ import { mockProviderFixture } from "@radar/testing";
 import { and, eq, lt, or } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { ScannerOptions } from "./args";
+import { runRedditScan } from "./reddit-scan";
 
 export interface ScanSummary {
   discovered: number;
@@ -62,9 +66,46 @@ type DatabaseExecutor = Pick<RadarDatabase, "insert" | "query" | "select">;
 
 export async function runScan(options: ScannerOptions): Promise<ScanSummary> {
   const configuration = loadProviderConfiguration();
+  if (!configuration.databaseUrl) return runScanUnlocked(options, configuration);
+  const lockDatabase = createDatabase(configuration.databaseUrl);
+  await expireDetailedScanData(lockDatabase.db);
+  const handle = await acquireOperationLock(lockDatabase.db, {
+    lockKey: "scan:global",
+    metadata: {
+      artistId: options.artistId ?? null,
+      dryRun: options.dryRun,
+      provider: options.provider ?? "all",
+      source: options.source ?? null,
+    },
+    operationType: options.provider ? "provider_scan" : "normal_scan",
+  });
+  try {
+    return await runScanUnlocked(options, configuration);
+  } finally {
+    await releaseOperationLock(lockDatabase.db, handle);
+    await lockDatabase.client.end();
+  }
+}
+
+async function runScanUnlocked(
+  options: ScannerOptions,
+  configuration: ReturnType<typeof loadProviderConfiguration>,
+): Promise<ScanSummary> {
   const requested = options.provider;
-  if (requested && !["mock", "spotify", "musicbrainz"].includes(requested)) {
+  if (requested && !["mock", "spotify", "musicbrainz", "reddit"].includes(requested)) {
     throw new Error(`Provider ${requested} is excluded from the current milestone`);
+  }
+
+  if (requested === "reddit") {
+    if (!configuration.databaseUrl) {
+      throw new Error("DATABASE_URL is required for Reddit scans");
+    }
+    const { db, client } = createDatabase(configuration.databaseUrl);
+    try {
+      return await runRedditScan(db, configuration, options);
+    } finally {
+      await client.end();
+    }
   }
 
   const selected: Array<"mock" | "spotify" | "musicbrainz"> = requested
@@ -160,7 +201,7 @@ export async function runScan(options: ScannerOptions): Promise<ScanSummary> {
           inserted: summary.inserted,
         };
       } catch (error) {
-        const failure = error instanceof Error ? error : new Error("Unknown provider error");
+        const failure = new Error(safeScanError(error));
         failures.push(failure);
         aggregate.providerResults![provider.name] = {
           discovered: 0,
@@ -174,7 +215,33 @@ export async function runScan(options: ScannerOptions): Promise<ScanSummary> {
         });
       }
     }
-    if (failures.length === providers.length || (requested && failures.length > 0)) {
+    if (!requested && configuration.reddit.configured) {
+      try {
+        const result = await runRedditScan(db, configuration, { ...options, provider: "reddit" });
+        aggregate.discovered += result.discovered;
+        aggregate.inserted += result.inserted;
+        aggregate.skipped += result.skipped;
+        aggregate.needsReview += result.needsReview;
+        aggregate.providerResults!.reddit = {
+          discovered: result.discovered,
+          inserted: result.inserted,
+        };
+      } catch (error) {
+        const failure = new Error(safeScanError(error));
+        failures.push(failure);
+        aggregate.providerResults!.reddit = {
+          discovered: 0,
+          error: failure.message,
+          inserted: 0,
+        };
+      }
+    }
+    const attemptedProviders =
+      providers.length + (!requested && configuration.reddit.configured ? 1 : 0);
+    if (
+      (attemptedProviders > 0 && failures.length === attemptedProviders) ||
+      (requested && failures.length > 0)
+    ) {
       throw new Error(failures.map((failure) => failure.message).join("; "));
     }
     log("info", options.dryRun ? "scan.dry_run_completed" : "scan.completed", aggregate);
@@ -284,7 +351,7 @@ async function recordProviderFailure(
     dryRun: options.dryRun,
     ...(options.artistId ? { artistFilter: options.artistId } : {}),
     completedAt: new Date(),
-    errors: [{ message: error.message }],
+    errors: [{ message: safeScanError(error) }],
   });
 }
 
@@ -314,6 +381,15 @@ async function persistCandidatesUnlocked(
     .values({
       provider,
       dryRun: false,
+      detailedExpiresAt: new Date(
+        Date.now() + loadProviderConfiguration().scanDetailRetentionDays * 86_400_000,
+      ),
+      providersRequested: [provider],
+      triggerType: options.full
+        ? "full_reconciliation"
+        : options.provider
+          ? "provider_manual"
+          : "manual",
       metadata: providerMetrics ? { providerMetrics } : {},
       ...(options.artistId ? { artistFilter: options.artistId } : {}),
     })
@@ -581,6 +657,8 @@ async function persistCandidatesUnlocked(
         insertedCount: summary.inserted,
         skippedCount: summary.skipped,
         reviewCount: summary.needsReview,
+        artistsProcessedCount: new Set(candidates.map((candidate) => candidate.artistExternalId))
+          .size,
         providerResults: {
           [provider]: {
             discovered: summary.discovered,
@@ -589,6 +667,9 @@ async function persistCandidatesUnlocked(
             status: "completed",
           },
         },
+        providersCompleted: [provider],
+        providersFailed: [],
+        duplicatesIgnoredCount: summary.skipped,
       })
       .where(eq(scanRuns.id, run.id));
     return summary;
@@ -598,11 +679,22 @@ async function persistCandidatesUnlocked(
       .set({
         status: "failed",
         completedAt: new Date(),
-        errors: [{ message: error instanceof Error ? error.message : "Unknown scan error" }],
+        errors: [{ message: safeScanError(error) }],
+        providersFailed: [provider],
       })
       .where(eq(scanRuns.id, run.id));
     throw error;
   }
+}
+
+function safeScanError(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Unknown scan error";
+  return message
+    .replace(/postgres(?:ql)?:\/\/[^\s]+/gi, "[DATABASE_URL REDACTED]")
+    .replace(/(?:Bearer|Basic)\s+\S+/gi, "[AUTHORIZATION REDACTED]")
+    .replace(/(?:access|refresh|client)[_-]?token[=:]\s*\S+/gi, "token=[REDACTED]")
+    .replace(/client[_-]?secret[=:]\s*\S+/gi, "client_secret=[REDACTED]")
+    .slice(0, 1_000);
 }
 
 async function withScanLock<T>(

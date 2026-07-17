@@ -3,7 +3,7 @@
 - Preserve the canonical model, matching engine, source evidence, watchlist, feed, scanner, provider interfaces, and MockProvider.
 - Before implementing a real provider, verify current official account, payment, authentication, functionality, terms, and policy constraints. Record unresolved policy language and never claim provider approval.
 - No provider may require paid developer access, membership, API subscription, or commercial plan. The owner's existing Spotify Premium subscription is the only permitted paid prerequisite.
-- Active providers are Spotify, MusicBrainz, and MockProvider. Do not add YouTube, SoundCloud API, Apple Music, or TIDAL adapters in this milestone.
+- Active providers are Spotify, MusicBrainz, MockProvider, and the approval-gated Reddit evidence adapter. Reddit must remain disabled until explicit API approval is received and recorded. Do not add YouTube, SoundCloud API, Apple Music, or TIDAL adapters in this milestone.
 - Never add SoundCloud credentials, OAuth, API requests, account import, search requests, monitoring, metadata, artwork, HTML fetching, scraping, browser automation, playback, oEmbed, or playlist writing.
 - SoundCloud is limited to the existing safe manual outbound-link feature and must be hidden by default behind `SOUNDCLOUD_MANUAL_LINKS_ENABLED=false`.
 - Accept SoundCloud field URLs only from `soundcloud.com` or its subdomains over HTTPS. Reject unsafe schemes, embedded credentials, lookalike domains, and non-track paths for track fields.
@@ -13,6 +13,8 @@
 - Keep the Spotify playlist, provider-neutral saved releases, and optional verified SoundCloud outbound-link collection separate.
 - Use `http://127.0.0.1:3000/api/auth/spotify/callback` for local Spotify registration. Do not use localhost.
 - Real provider tests must use synthetic fixtures and injected HTTP mocks. Normal verification must never call live providers.
+- Operational commands must remain Windows-compatible, loopback-only, secret-safe, and must not modify `.env`.
+- Database restore must require explicit replacement confirmation. Backups belong outside source control and must use PostgreSQL-supported custom-format dumps.
 - Database integration tests must provision the test PostgreSQL service or fail clearly. Never report a skipped database suite as passing.
 - Use official APIs only, preserve source evidence, validate external payloads with Zod, and keep matching deterministic and explainable.
 - Only exact or manually confirmed matches may be exported. Scanner and playlist writes must be idempotent.

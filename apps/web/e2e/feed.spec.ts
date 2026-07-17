@@ -102,15 +102,82 @@ test("navigates every primary view and resolves manual review", async ({ page })
   await page.getByRole("button", { name: "Confirm match" }).click();
   await expect(page.getByText("No items need review.")).toBeVisible();
 
+  await navigation.getByRole("link", { name: "System status" }).click();
+  await expect(page.getByRole("heading", { name: "System status" })).toBeVisible();
+  await expect(page.getByText("External scheduler required", { exact: true })).toBeVisible();
+  await expect(page.getByText("pnpm scan", { exact: true })).toBeVisible();
+
   await navigation.getByRole("link", { name: "Settings" }).click();
   await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Missing credentials" }).first()).toBeDisabled();
   await expect(page.getByText("Manual SoundCloud links")).toBeVisible();
   await expect(page.getByText("Disabled", { exact: true })).toBeVisible();
+  await expect(page.getByText("Spotify setup checklist")).toBeVisible();
   await page.getByLabel("Discovery digest").check();
 
   await navigation.getByRole("link", { name: "Discovery feed 4" }).click();
   await expect(page.getByRole("heading", { name: "Discovery feed" })).toBeVisible();
+});
+
+test("adds, pauses, enables, and removes a Reddit source without a Reddit request", async ({
+  page,
+}) => {
+  let sources = [
+    {
+      enabled: true,
+      id: "source-edm",
+      lastError: null,
+      lastSuccessfulScanAt: null,
+      subreddit: "EDM",
+    },
+  ];
+  await page.route("**/api/reddit/sources**", async (route) => {
+    const request = route.request();
+    const id = new URL(request.url()).pathname.split("/").at(-1);
+    if (request.method() === "POST") {
+      const body = request.postDataJSON() as { subreddit: string };
+      sources = [
+        ...sources,
+        {
+          enabled: true,
+          id: "source-added",
+          lastError: null,
+          lastSuccessfulScanAt: null,
+          subreddit: body.subreddit,
+        },
+      ];
+      await route.fulfill({ json: { source: sources.at(-1) }, status: 201 });
+      return;
+    }
+    if (request.method() === "PATCH") {
+      const body = request.postDataJSON() as { enabled: boolean };
+      sources = sources.map((source) =>
+        source.id === id ? { ...source, enabled: body.enabled } : source,
+      );
+      await route.fulfill({ json: { source: sources.find((source) => source.id === id) } });
+      return;
+    }
+    if (request.method() === "DELETE") {
+      sources = sources.filter((source) => source.id !== id);
+      await route.fulfill({ json: { removed: true } });
+      return;
+    }
+    await route.fulfill({
+      json: { approvalRecorded: false, enabled: false, sources },
+    });
+  });
+
+  await page.goto("/#settings");
+  await expect(page.getByText("Approval required, scanning disabled")).toBeVisible();
+  await page.getByLabel("Add subreddit").fill("electronicmusic");
+  await page.getByRole("button", { name: "Add source" }).click();
+  await expect(page.getByText("r/electronicmusic")).toBeVisible();
+  const added = page.locator(".reddit-source-row").filter({ hasText: "r/electronicmusic" });
+  await added.getByRole("button", { name: "Pause" }).click();
+  await expect(added.getByRole("button", { name: "Enable" })).toBeVisible();
+  await added.getByRole("button", { name: "Enable" }).click();
+  await added.getByRole("button", { name: "Remove r/electronicmusic" }).click();
+  await expect(page.getByText("r/electronicmusic")).toHaveCount(0);
 });
 
 test("changes, persists, and follows the system appearance", async ({ page }) => {
