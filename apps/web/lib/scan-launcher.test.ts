@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { launchScanNow } from "./scan-launcher";
 
 describe("on-demand scan launcher", () => {
-  it("starts the existing scanner command detached from the web request", async () => {
+  it("starts the existing scanner command without opening a Windows console", async () => {
     const unref = vi.fn();
     const child = Object.assign(new EventEmitter(), {
       pid: 4242,
@@ -29,7 +29,7 @@ describe("on-demand scan launcher", () => {
       [pnpmRuntime, "scan"],
       expect.objectContaining({
         cwd: process.cwd(),
-        detached: true,
+        detached: process.platform !== "win32",
         stdio: "ignore",
         windowsHide: true,
       }),

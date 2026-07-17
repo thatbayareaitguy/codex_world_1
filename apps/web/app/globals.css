@@ -461,6 +461,144 @@ select:focus-visible {
   cursor: not-allowed;
   opacity: 0.55;
 }
+.scan-progress {
+  display: grid;
+  gap: 9px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.scan-progress-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.scan-progress-heading > div {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.scan-progress-heading strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+.scan-progress-heading span {
+  color: var(--muted);
+  font-size: 10px;
+}
+.scan-progress-count {
+  flex: 0 0 auto;
+  font-weight: 750;
+}
+.scan-progress-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.scan-cancel-button {
+  min-height: 28px;
+  padding: 0 9px;
+  color: var(--muted);
+  background: var(--control);
+  border: 1px solid var(--control-line);
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+}
+.scan-cancel-button:hover:not(:disabled) {
+  color: var(--ink);
+}
+.scan-cancel-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.scan-progress-track {
+  position: relative;
+  height: 6px;
+  overflow: hidden;
+  background: var(--control);
+  border-radius: 3px;
+}
+.scan-progress-complete,
+.scan-progress-active {
+  position: absolute;
+  inset-block: 0;
+}
+.scan-progress-complete {
+  left: 0;
+  background: var(--cyan);
+  transition: width 240ms ease;
+}
+.scan-progress-active {
+  width: min(22%, 180px);
+  background: var(--coral);
+  animation: scan-progress-sweep 1.4s ease-in-out infinite;
+}
+@keyframes scan-progress-sweep {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(360%);
+  }
+}
+
+.spotify-scan-status {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-top: 14px;
+  padding: 16px;
+}
+
+.spotify-scan-status-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.spotify-scan-status-heading > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.spotify-scan-status-heading span,
+.spotify-scan-status > small {
+  color: var(--muted);
+}
+
+.spotify-scan-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  margin: 16px 0;
+}
+
+.spotify-scan-grid div {
+  min-width: 0;
+}
+
+.spotify-scan-grid dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.spotify-scan-grid dd {
+  font-size: 13px;
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .spotify-scan-status-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
 
 .feed-controls {
   min-height: 65px;

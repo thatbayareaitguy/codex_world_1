@@ -4,3 +4,8 @@ export * from "./reddit-repositories";
 export * from "./operations";
 export * from "./schema";
 export * from "./spotify-tokens";
+export * from "./spotify-request-gate";
+export * from "./spotify-batches";
+export * from "./musicbrainz-request-gate";
+export * from "./musicbrainz-batches";
+export * from "./musicbrainz-mappings";

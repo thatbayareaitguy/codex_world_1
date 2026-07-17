@@ -1,5 +1,20 @@
 # Architecture
 
+## MusicBrainz execution boundary
+
+Every MusicBrainz caller uses one PostgreSQL-backed lease in `musicbrainz_provider_state`.
+The lease enforces a minimum of 1000 ms between request starts across the web process,
+scanner process, retries, and live validation tools. Safe request telemetry is stored in
+`musicbrainz_request_events`; contact details and response payloads are not stored there.
+
+Discovery runs as persisted artist batches. Each artist advances through release groups,
+primary releases, and track-level appearances. Candidates are committed after each completed
+stage, and the operation-lock heartbeat exposes the current stage and most recent persistence
+checkpoint. A cancelled batch retains prior candidates and can be resumed from incomplete artists.
+
+MusicBrainz consumes canonical artist names, aliases, and confirmed MBIDs. It does not consume
+raw Spotify response metadata. Spotify cooldown state and MusicBrainz state are independent.
+
 ## Runtime
 
 - `apps/web`: Next.js UI and server-only OAuth, import, mapping, Reddit source, status, and playlist routes.
@@ -27,10 +42,10 @@ The browser cannot supply or select a Spotify write target. `SPOTIFY_ALLOWED_PLA
 
 ## Resilience
 
-Provider clients have timeouts, bounded retries, structured errors, pagination, and rate-limit handling. Spotify handles 401 refresh and exact `Retry-After`. MusicBrainz uses one shared serial request gate. Reddit uses its own global request gate and cannot instantiate without recorded approval. Provider failures are isolated.
+Provider clients have timeouts, bounded retries, structured errors, pagination, and rate-limit handling. Every Spotify Web API and token request uses one PostgreSQL-backed client-ID queue with a single lease, a five-second minimum start interval, safe request events, and a persistent global cooldown. A Spotify 429 is not retried. MusicBrainz uses one shared serial request gate. Reddit uses its own global request gate and cannot instantiate without recorded approval. Provider failures are isolated.
 
 One global operation lock serializes normal and provider-specific scans. Provider locks still guard persistence. Expired locks are visible through `scan:status` and only stale locks can be cleared. Detailed scan errors and metrics expire while aggregate history remains.
 
 The local application lifecycle is intentionally simple: Docker Compose runs PostgreSQL, `app:up` migrates before binding Next.js to loopback, and external Task Scheduler or cron runs scans. PostgreSQL custom-format backups are stored outside the repository and restore requires explicit replacement confirmation.
 
-The scheduled strategy uses a 60-day default backfill for initial runs, daily recent reconciliation, and a separate less frequent explicit `--full` scan. Provider ordering is not treated as an updated-since guarantee.
+The scheduled strategy uses persisted 15-artist batches: a confirmed 60-day initial scan with two pages per artist, rotating daily work with one page per artist distributed over 24 hours, and explicit deep reconciliation with ten pages per artist. Provider ordering is not treated as an updated-since guarantee. Per-artist progress survives restart and distinguishes completed, partial, failed, paused, cancelled, and rate-limited work.

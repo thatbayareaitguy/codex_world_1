@@ -12,12 +12,13 @@ export async function launchScanNow(
   spawnProcess: SpawnProcess = spawn,
   environment: NodeJS.ProcessEnv = process.env,
   startDirectory = process.cwd(),
+  scanArguments: string[] = [],
 ): Promise<ScanLaunchResult> {
   const workspaceRoot = findWorkspaceRoot(startDirectory);
-  const command = packageManagerCommand(["scan"], environment);
+  const command = packageManagerCommand(["scan", ...scanArguments], environment);
   const child = spawnProcess(command.executable, command.args, {
     cwd: workspaceRoot,
-    detached: true,
+    detached: process.platform !== "win32",
     env: environment,
     stdio: "ignore",
     windowsHide: true,

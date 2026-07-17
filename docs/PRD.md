@@ -25,4 +25,4 @@ YouTube, SoundCloud API and OAuth, SoundCloud playlists, Apple Music, TIDAL, pla
 
 ## Acceptance Boundary
 
-The app starts without provider credentials and uses MockProvider. Real provider data stays namespaced with evidence. Scan and playlist operations are idempotent. Tokens are encrypted and server-only. Database tests run against provisioned PostgreSQL and never silently skip. All standard provider tests use synthetic responses.
+The app starts without provider credentials and uses MockProvider. Real provider data stays namespaced with evidence. Scan and playlist operations are idempotent. Spotify Development Mode scans are globally serialized, cooldown-aware, bounded by mode-specific page limits, persisted after each artist, and resumable without restarting completed work. Tokens are encrypted and server-only. Database tests run against provisioned PostgreSQL and never silently skip. All standard provider tests use synthetic responses.

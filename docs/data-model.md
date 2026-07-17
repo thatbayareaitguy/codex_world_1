@@ -27,6 +27,10 @@
 ## Operations and Export
 
 - `scan_runs`: trigger, requested/completed/failed providers, filter, dry-run state, start, finish, aggregate counts, sanitized errors, metrics, and detail expiry.
+- `spotify_provider_state`: singleton client-ID request gate, lease, queue depth, request count, next request time, and provider-directed cooldown evidence.
+- `spotify_request_events`: safe endpoint-category metrics, request timing, status, queue wait, raw and parsed `Retry-After`, cooldown, and redacted classifications.
+- `spotify_scan_batches`: bounded Spotify mode, page limit, confirmation, pause/cancel state, estimates, and aggregate artist outcomes.
+- `spotify_artist_scans`: persisted per-artist position, timing, request/candidate/page counts, result state, retry eligibility, and heartbeat.
 - `operation_locks`: one global expiring operation lock for scan serialization and interruption recovery.
 - `scan_locks`: one expiring lock per provider.
 - `provider_cursors` and `provider_cache`: scoped checkpoints and sanitized cached metadata.

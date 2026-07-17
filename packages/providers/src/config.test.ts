@@ -73,3 +73,28 @@ describe("provider configuration", () => {
     expect(configured.reddit).toMatchObject({ configured: true, userAgentValid: true });
   });
 });
+
+describe("Spotify Development Mode configuration", () => {
+  it("uses conservative defaults", () => {
+    expect(loadProviderConfiguration({}).spotify).toMatchObject({
+      artistsPerBatch: 15,
+      batchPauseSeconds: 60,
+      dailyMaxPagesPerArtist: 1,
+      initialMaxPagesPerArtist: 2,
+      maxConcurrency: 1,
+      minRequestIntervalMs: 5_000,
+      reconciliationMaxPagesPerArtist: 10,
+      scanDistributionHours: 24,
+    });
+  });
+
+  it.each([
+    { SPOTIFY_MAX_CONCURRENCY: "0" },
+    { SPOTIFY_MAX_CONCURRENCY: "2" },
+    { SPOTIFY_MIN_REQUEST_INTERVAL_MS: "0" },
+    { SPOTIFY_MIN_REQUEST_INTERVAL_MS: "4999" },
+    { SPOTIFY_DAILY_MAX_PAGES_PER_ARTIST: "0" },
+  ])("rejects unsafe Spotify limits: %j", (environment) => {
+    expect(() => loadProviderConfiguration(environment)).toThrow();
+  });
+});

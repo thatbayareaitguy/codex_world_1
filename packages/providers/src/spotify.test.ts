@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { SpotifyClient, SpotifyHttpError, SpotifyOAuthClient } from "./spotify";
+import {
+  parseSpotifyRetryAfter,
+  SpotifyClient,
+  SpotifyHttpError,
+  SpotifyOAuthClient,
+  type SpotifyRequestGate,
+} from "./spotify";
 
 const artist = (id: string, name = `Artist ${id}`) => ({
   external_urls: { spotify: `https://open.spotify.com/artist/${id}` },
@@ -103,21 +109,57 @@ describe("SpotifyClient", () => {
     expect(onUnauthorized).toHaveBeenCalledOnce();
   });
 
-  it("honors Retry-After exactly for 429 responses", async () => {
+  it("records Retry-After and stops immediately after a 429", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(jsonResponse({}, 429, { "Retry-After": "2" }))
-      .mockResolvedValueOnce(jsonResponse(artist("artist-1")));
-    const sleep = vi.fn(() => Promise.resolve());
+      .mockResolvedValue(
+        jsonResponse({ error: { message: "rate limited" } }, 429, { "Retry-After": "2" }),
+      );
+    const complete = vi.fn().mockResolvedValue(undefined);
+    const requestGate: SpotifyRequestGate = {
+      acquire: vi.fn().mockResolvedValue({
+        eventId: "event",
+        leaseToken: "lease",
+        queueLength: 0,
+        queueWaitMs: 0,
+        startedAt: new Date("2026-07-17T00:00:00Z"),
+      }),
+      complete,
+    };
     const client = new SpotifyClient({
       accessToken: () => Promise.resolve("token"),
       fetcher,
-      sleep,
+      requestGate,
+    });
+
+    await expect(client.getArtist("artist-1")).rejects.toMatchObject({ status: 429 });
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledWith(
+      expect.objectContaining({ eventId: "event" }),
+      expect.objectContaining({
+        errorClassification: "rate_limited_integer_seconds",
+        parsedRetryAfterSeconds: "2",
+        rawRetryAfter: "2",
+        status: 429,
+      }),
+    );
+  });
+
+  it("reports request telemetry without exposing authorization data", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(artist("artist-1")));
+    const onTelemetry = vi.fn(() => Promise.resolve());
+    const client = new SpotifyClient({
+      accessToken: () => Promise.resolve("sensitive-token"),
+      fetcher,
+      onTelemetry,
     });
 
     await client.getArtist("artist-1");
-    expect(sleep).toHaveBeenCalledWith(2_000);
-    expect(client.metrics.rateLimitWaitMs).toBe(2_000);
+
+    expect(onTelemetry).toHaveBeenLastCalledWith(
+      expect.objectContaining({ phase: "request", requests: 1 }),
+    );
+    expect(JSON.stringify(onTelemetry.mock.calls)).not.toContain("sensitive-token");
   });
 
   it("retries transient failures and does not retry permanent failures", async () => {
@@ -275,4 +317,46 @@ describe("SpotifyOAuthClient", () => {
       refresh_token: "rotated-refresh",
     });
   });
+});
+
+describe("parseSpotifyRetryAfter", () => {
+  const observedAt = new Date("2026-07-17T00:00:00.000Z");
+
+  it.each([
+    ["47", 47_000, "47"],
+    ["0", 0, "0"],
+    ["5000", 5_000_000, "5000"],
+  ])("interprets %s as integer seconds", (raw, waitMs, parsedSeconds) => {
+    expect(parseSpotifyRetryAfter(raw, observedAt)).toMatchObject({
+      cooldownIndefinite: false,
+      interpretation: "integer_seconds",
+      parsedSeconds,
+      rawValue: raw,
+      waitMs,
+    });
+  });
+
+  it.each([
+    [null, "missing"],
+    ["", "missing"],
+    ["not-a-duration", "malformed"],
+    ["Wed, 21 Oct 2030 07:28:00 GMT", "http_date"],
+  ] as const)("uses a bounded fallback for %s", (raw, interpretation) => {
+    expect(parseSpotifyRetryAfter(raw, observedAt)).toMatchObject({
+      cooldownIndefinite: false,
+      interpretation,
+      waitMs: 60_000,
+    });
+  });
+
+  it.each(["31536001", "999999999999999999999999999999"])(
+    "blocks indefinitely when %s exceeds the maximum wait",
+    (raw) => {
+      expect(parseSpotifyRetryAfter(raw, observedAt)).toMatchObject({
+        cooldownIndefinite: true,
+        interpretation: "overflow",
+        rawValue: raw,
+      });
+    },
+  );
 });

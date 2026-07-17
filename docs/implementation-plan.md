@@ -1,6 +1,19 @@
 # Spotify and MusicBrainz Milestone Plan
 
-Verified: 2026-07-16
+## MusicBrainz hardening checkpoint
+
+- Add a database-backed global one-request-per-second MusicBrainz gate and safe endpoint telemetry.
+- Browse release groups, primary releases, and track-artist appearances as distinct stages.
+- Persist after every stage and record resumable per-artist batch progress.
+- Add mapping preview, confidence, evidence, confirmation, rejection, and replacement controls.
+- Keep MusicBrainz-only scans independent from Spotify cooldown and playlist synchronization.
+- Validate YUSSI first, rerun for idempotency, then validate at most 10 confirmed artists.
+- Do not begin a 50-artist validation without explicit approval, and never start all 593 artists here.
+  Verified: 2026-07-17
+
+## Spotify Development Mode Hardening
+
+The current work adds one database-backed Spotify request gate, safe 429 telemetry, a persistent client-wide cooldown, configurable one-at-a-time pacing, bounded artist-album pagination, known-release skipping, and resumable 15-artist batches. Initial, daily, and deep-reconciliation modes have separate page limits. The first staged batch requires confirmation. Live validation remains blocked until the preserved cooldown expires and must proceed with YUSSI, then 5 artists, then 15 artists. No full-watchlist scan is part of this work.
 
 ## Preserved Work
 

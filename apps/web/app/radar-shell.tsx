@@ -58,6 +58,7 @@ interface ProviderUiConfiguration {
     allowedPlaylistIdAbbreviated?: string;
     configured: boolean;
     enabled: boolean;
+    minRequestIntervalMs: number;
     playlistWritesEnabled: boolean;
   };
 }
@@ -74,6 +75,7 @@ interface FeedAdvancedFilters {
   releaseType: string;
   sort: "release" | "first-seen";
   spotify: "all" | "available" | "unavailable";
+  provider: "all" | "musicbrainz" | "spotify" | "mock";
 }
 
 interface WatchedArtist {
@@ -108,13 +110,100 @@ interface ScanRunStatus {
   providersFailed: string[];
   providersRequested: string[];
   startedAt: string;
-  status: "running" | "completed" | "partial" | "failed";
+  status: "running" | "completed" | "partial" | "failed" | "cancelled" | "paused" | "rate_limited";
+}
+
+interface ActiveScanStatus {
+  cancelRequested: boolean;
+  completedUnits: number;
+  currentProvider: string | null;
+  currentUnit: string | null;
+  currentStage: string | null;
+  expiresAt: string;
+  heartbeatAt: string | null;
+  lastPersistedResult: string | null;
+  phase: string | null;
+  providersCompleted: string[];
+  providersFailed: string[];
+  providersRequested: string[];
+  rateLimitWaitMs: number;
+  requests: number;
+  retryAfterMs: number;
+  startedAt: string;
+  totalUnits: number;
 }
 
 interface ScanApiStatus {
+  active: ActiveScanStatus | null;
   latest: ScanRunStatus | null;
   running: boolean;
   runs: ScanRunStatus[];
+  musicbrainz: {
+    batch: {
+      cancelledArtists: number;
+      completedArtists: number;
+      failedArtists: number;
+      id: string;
+      status: string;
+      totalArtists: number;
+    } | null;
+    operational: {
+      lastRequestStartedAt: string | null;
+      nextRequestAt: string | null;
+      queueDepth: number;
+      requestCount: number;
+    };
+  };
+  spotify: {
+    batch: SpotifyBatchStatus | null;
+    limiter: {
+      artistsPerBatch: number;
+      batchPauseSeconds: number;
+      distributionHours: number;
+      minRequestIntervalMs: number;
+    };
+    operational: SpotifyOperationalStatus;
+  };
+}
+
+interface SpotifyOperationalStatus {
+  canManualClear: boolean;
+  cooldownActive: boolean;
+  cooldownEndpointCategory: string | null;
+  cooldownErrorClassification: string | null;
+  cooldownIndefinite: boolean;
+  cooldownObservedAt: string | null;
+  cooldownUntil: string | null;
+  lastRequestStartedAt: string | null;
+  nextRequestAt: string | null;
+  parsedRetryAfterSeconds: string | null;
+  queueDepth: number;
+  rawRetryAfter: string | null;
+  requestCount: number;
+}
+
+interface SpotifyArtistScanStatus {
+  artistId: string;
+  errorClassification: string | null;
+  id: string;
+  position: number;
+  status: string;
+}
+
+interface SpotifyBatchStatus {
+  cancelledArtists: number;
+  completedArtists: number;
+  confirmationRequired: boolean;
+  estimatedRequests: number;
+  failedArtists: number;
+  id: string;
+  mode: string;
+  pageLimit: number;
+  partialArtists: number;
+  rateLimitedArtists: number;
+  status: string;
+  totalArtists: number;
+  artistScans: SpotifyArtistScanStatus[];
 }
 
 const filters: Array<{ state: FeedState | "all"; label: string }> = [
@@ -151,6 +240,7 @@ export function RadarShell({
   const [items, setItems] = useState(initialItems);
   const [query, setQuery] = useState("");
   const [syncing, setSyncing] = useState(false);
+  const [cancellingScan, setCancellingScan] = useState(false);
   const [scanStatus, setScanStatus] = useState<ScanApiStatus | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [exactOnly, setExactOnly] = useState(false);
@@ -161,6 +251,7 @@ export function RadarShell({
     releaseType: "all",
     sort: "release",
     spotify: "all",
+    provider: "all",
   });
   const [notice, setNotice] = useState<string | null>(null);
   const [dailyScan, setDailyScan] = useState(true);
@@ -224,6 +315,10 @@ export function RadarShell({
   }, [feedMode]);
 
   useEffect(() => {
+    if (!scanStatus?.running) setCancellingScan(false);
+  }, [scanStatus?.running]);
+
+  useEffect(() => {
     const storedTheme = window.localStorage.getItem("ts-radar-theme");
     setThemePreference(
       storedTheme === "light" || storedTheme === "dark" || storedTheme === "system"
@@ -272,6 +367,11 @@ export function RadarShell({
         const dateMatches =
           (!advancedFilters.dateFrom || item.releaseDate >= advancedFilters.dateFrom) &&
           (!advancedFilters.dateTo || item.releaseDate <= advancedFilters.dateTo);
+        const providerMatches =
+          advancedFilters.provider === "all" ||
+          item.sources.some((source) =>
+            source.provider.toLocaleLowerCase("en-US").startsWith(advancedFilters.provider),
+          );
         return (
           stateMatches &&
           queryMatches &&
@@ -279,7 +379,8 @@ export function RadarShell({
           spotifyMatches &&
           releaseTypeMatches &&
           artistMatches &&
-          dateMatches
+          dateMatches &&
+          providerMatches
         );
       })
       .sort((left, right) => {
@@ -334,13 +435,18 @@ export function RadarShell({
     window.history.replaceState(null, "", `#${view}`);
   };
 
+  const refreshPersistedWatchlist = async () => {
+    const response = await fetch("/api/artists", { cache: "no-store" });
+    const body = watchlistResponseSchema.parse(await response.json());
+    if (!response.ok) throw new Error("Unable to refresh followed artists");
+    setPersistedArtists(body.artists);
+    setActiveWatchlistMode("database");
+    return body;
+  };
+
   const refreshWatchlistAfterImport = async (summary: ImportSummary) => {
     try {
-      const response = await fetch("/api/artists", { cache: "no-store" });
-      const body = watchlistResponseSchema.parse(await response.json());
-      if (!response.ok) throw new Error("Unable to refresh followed artists");
-      setPersistedArtists(body.artists);
-      setActiveWatchlistMode("database");
+      const body = await refreshPersistedWatchlist();
       setActiveView("artists");
       window.history.replaceState(null, "", "#artists");
       setNotice(
@@ -445,12 +551,17 @@ export function RadarShell({
     );
   };
 
-  const runFeedScan = async () => {
+  const runFeedScan = async (scanRequest?: {
+    artistId?: string;
+    musicbrainzBatchId?: string;
+    provider?: "musicbrainz";
+  }) => {
     if (feedMode === "error") {
       setNotice("The database is unavailable, so a scan cannot be started.");
       return;
     }
     if (feedMode === "database") {
+      setCancellingScan(false);
       const existingRunIds = new Set(scanStatus?.runs.map((run) => run.id) ?? []);
       const existingRunningIds = new Set(
         scanStatus?.runs.filter((run) => run.status === "running").map((run) => run.id) ?? [],
@@ -458,13 +569,29 @@ export function RadarShell({
       setSyncing(true);
       setNotice(null);
       try {
-        const response = await fetch("/api/scans", { method: "POST" });
+        const spotifyCooldown = Boolean(scanStatus?.spotify.operational.cooldownActive);
+        const musicbrainzOnly =
+          scanRequest?.provider === "musicbrainz" ||
+          (spotifyCooldown && providerConfiguration.musicbrainz.configured);
+        const response = await fetch("/api/scans", {
+          ...(musicbrainzOnly
+            ? {
+                body: JSON.stringify({ provider: "musicbrainz", ...scanRequest }),
+                headers: { "Content-Type": "application/json" },
+              }
+            : {}),
+          method: "POST",
+        });
         if (response.status === 409) {
           setNotice("A scan is already running. This page will continue monitoring it.");
         } else {
           const launch = scanLaunchSchema.parse(await response.json());
           if (!response.ok || !launch.accepted) throw new Error("Scan launch failed");
-          setNotice("Release update started. Spotify and MusicBrainz will continue independently.");
+          setNotice(
+            musicbrainzOnly
+              ? "MusicBrainz-only release update started. Spotify remains untouched."
+              : "Release update started. Spotify and MusicBrainz will continue independently.",
+          );
         }
 
         for (let attempt = 0; attempt < 900; attempt += 1) {
@@ -515,6 +642,55 @@ export function RadarShell({
         return [scannedItem, ...current];
       });
     }, 700);
+  };
+
+  const cancelFeedScan = async () => {
+    setCancellingScan(true);
+    try {
+      const response = await fetch("/api/scans", { method: "DELETE" });
+      if (!response.ok) throw new Error("Scan cancellation failed");
+      setNotice("Cancellation requested. The scanner will stop at the next safe checkpoint.");
+      setScanStatus((current) =>
+        current?.active
+          ? { ...current, active: { ...current.active, cancelRequested: true } }
+          : current,
+      );
+    } catch {
+      setNotice("The scan cancellation request failed. Check System status.");
+      setCancellingScan(false);
+    }
+  };
+
+  const controlSpotifyBatch = async (
+    action: "pause" | "resume" | "cancel" | "retry_artist" | "start_reconciliation",
+    id: string,
+  ) => {
+    try {
+      const response = await fetch("/api/spotify/scan-control", {
+        body: JSON.stringify(
+          action === "retry_artist"
+            ? { action, artistScanId: id }
+            : action === "start_reconciliation"
+              ? { action, confirmed: true }
+              : { action, batchId: id, ...(action === "resume" ? { confirmed: true } : {}) },
+        ),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+      const body = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Spotify scan action failed");
+      setNotice(
+        action === "pause"
+          ? "Spotify will pause after the current request."
+          : action === "cancel"
+            ? "Future Spotify batch work was cancelled. Completed results were preserved."
+            : "Spotify batch processing was queued.",
+      );
+      const statusResponse = await fetch("/api/scans", { cache: "no-store" });
+      if (statusResponse.ok) setScanStatus(scanStatusSchema.parse(await statusResponse.json()));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Spotify scan action failed.");
+    }
   };
 
   return (
@@ -650,6 +826,7 @@ export function RadarShell({
             feedMode={feedMode}
             filtersOpen={filtersOpen}
             items={visibleItems}
+            musicbrainzConfigured={providerConfiguration.musicbrainz.configured}
             soundCloudLinks={soundCloudLinks}
             onFilterChange={setActiveFilter}
             onAdvancedFiltersChange={setAdvancedFilters}
@@ -658,9 +835,15 @@ export function RadarShell({
             onToggleExact={() => setExactOnly((value) => !value)}
             onToggleFilters={() => setFiltersOpen((value) => !value)}
             onRunScan={() => void runFeedScan()}
+            onMusicBrainzResume={(batchId) =>
+              void runFeedScan({ musicbrainzBatchId: batchId, provider: "musicbrainz" })
+            }
+            onCancelScan={() => void cancelFeedScan()}
+            onSpotifyBatchAction={(action, id) => void controlSpotifyBatch(action, id)}
             ready={hydrated}
             reviewCount={reviewItems.length}
             scanStatus={scanStatus}
+            cancellingScan={cancellingScan}
             soundCloudManualLinksEnabled={providerConfiguration.soundcloudManualLinksEnabled}
             syncing={syncing}
           />
@@ -672,9 +855,15 @@ export function RadarShell({
             artists={artists}
             onAddArtist={addArtist}
             onEditArtist={editArtist}
+            onNotice={setNotice}
+            onRefreshArtists={async () => {
+              await refreshPersistedWatchlist();
+            }}
             onRemoveArtist={removeArtist}
             onRemoveProfile={removeArtistProfile}
             onSaveProfile={saveArtistProfile}
+            onScanArtist={(artistId) => void runFeedScan({ artistId, provider: "musicbrainz" })}
+            musicbrainzConfigured={providerConfiguration.musicbrainz.configured}
             soundCloudManualLinksEnabled={providerConfiguration.soundcloudManualLinksEnabled}
             watchlistMode={activeWatchlistMode}
           />
@@ -820,17 +1009,25 @@ interface FeedViewProps {
   feedMode: "database" | "error" | "mock";
   filtersOpen: boolean;
   items: FeedFixtureItem[];
+  musicbrainzConfigured: boolean;
   soundCloudLinks: Record<string, SoundCloudLinkRecord>;
   onFilterChange: (state: FeedState | "all") => void;
   onAdvancedFiltersChange: (filters: FeedAdvancedFilters) => void;
   onItemChange: (id: string, changes: Partial<FeedFixtureItem>, message: string) => void;
   onSoundCloudLinkChange: (feedItemId: string, record?: SoundCloudLinkRecord) => void;
   onRunScan: () => void;
+  onMusicBrainzResume: (batchId: string) => void;
+  onCancelScan: () => void;
+  onSpotifyBatchAction: (
+    action: "pause" | "resume" | "cancel" | "retry_artist" | "start_reconciliation",
+    id: string,
+  ) => void;
   onToggleExact: () => void;
   onToggleFilters: () => void;
   ready: boolean;
   reviewCount: number;
   scanStatus: ScanApiStatus | null;
+  cancellingScan: boolean;
   soundCloudManualLinksEnabled: boolean;
   syncing: boolean;
 }
@@ -842,20 +1039,92 @@ function FeedView({
   feedMode,
   filtersOpen,
   items,
+  musicbrainzConfigured,
   soundCloudLinks,
   onFilterChange,
   onAdvancedFiltersChange,
   onItemChange,
   onSoundCloudLinkChange,
   onRunScan,
+  onMusicBrainzResume,
+  onCancelScan,
+  onSpotifyBatchAction,
   onToggleExact,
   onToggleFilters,
   ready,
   reviewCount,
   scanStatus,
+  cancellingScan,
   soundCloudManualLinksEnabled,
   syncing,
 }: FeedViewProps) {
+  const scanInProgress = syncing || Boolean(scanStatus?.running);
+  const activeScan = scanStatus?.active;
+  const spotifyOperational = scanStatus?.spotify.operational;
+  const spotifyBatch = scanStatus?.spotify.batch;
+  const musicbrainzBatch = scanStatus?.musicbrainz.batch;
+  const spotifyCooldown = Boolean(spotifyOperational?.cooldownActive);
+  const spotifyRemaining = spotifyBatch
+    ? Math.max(
+        0,
+        spotifyBatch.totalArtists -
+          spotifyBatch.completedArtists -
+          spotifyBatch.partialArtists -
+          spotifyBatch.failedArtists -
+          spotifyBatch.cancelledArtists -
+          spotifyBatch.rateLimitedArtists,
+      )
+    : 0;
+  const retryableArtist = spotifyBatch?.artistScans.find((artist) =>
+    ["failed", "rate_limited", "cancelled"].includes(artist.status),
+  );
+  const estimatedRemainingRequests = spotifyBatch
+    ? Math.ceil(
+        (spotifyBatch.estimatedRequests / Math.max(spotifyBatch.totalArtists, 1)) *
+          spotifyRemaining,
+      )
+    : 0;
+  const estimatedMinimumMs =
+    estimatedRemainingRequests * (scanStatus?.spotify.limiter.minRequestIntervalMs ?? 5_000);
+  const estimatedMaximumMs = Math.ceil(estimatedMinimumMs * 1.5);
+  const observedRequestRate =
+    activeScan?.heartbeatAt && activeScan.requests > 0
+      ? activeScan.requests /
+        Math.max(
+          (new Date(activeScan.heartbeatAt).getTime() - new Date(activeScan.startedAt).getTime()) /
+            60_000,
+          1 / 60,
+        )
+      : 0;
+  const finishedProviderCount = activeScan
+    ? new Set([...activeScan.providersCompleted, ...activeScan.providersFailed]).size
+    : 0;
+  const providerCount = activeScan?.providersRequested.length ?? 0;
+  const currentProviderProgress = activeScan?.totalUnits
+    ? Math.min(activeScan.completedUnits / activeScan.totalUnits, 1)
+    : 0;
+  const completedPercentage = providerCount
+    ? Math.round(((finishedProviderCount + currentProviderProgress) / providerCount) * 100)
+    : 0;
+  const scanProgressText =
+    activeScan?.cancelRequested || cancellingScan
+      ? "Cancellation requested"
+      : activeScan?.phase === "rate_limit_wait" && activeScan.currentProvider
+        ? `${titleCase(activeScan.currentProvider)} rate limit wait | retrying in ${Math.ceil(
+            activeScan.retryAfterMs / 1_000,
+          )} seconds`
+        : activeScan?.totalUnits && activeScan.currentProvider
+          ? `${activeScan.completedUnits} of ${activeScan.totalUnits} artists finished | scanning ${titleCase(
+              activeScan.currentProvider,
+            )}${activeScan.requests ? ` | ${activeScan.requests} requests` : ""}`
+          : activeScan
+            ? `${finishedProviderCount} of ${providerCount} providers finished${
+                activeScan.currentProvider
+                  ? ` | scanning ${titleCase(activeScan.currentProvider)}`
+                  : ""
+              }`
+            : "Starting provider scan";
+
   return (
     <section className="content">
       <div className="page-heading">
@@ -895,14 +1164,24 @@ function FeedView({
             <button
               aria-label={feedMode === "mock" ? "Run mock scan" : "Run release update now"}
               className="metric-scan-button"
-              disabled={syncing || scanStatus?.running || !ready || feedMode === "error"}
+              disabled={
+                syncing ||
+                scanStatus?.running ||
+                (spotifyCooldown && !musicbrainzConfigured) ||
+                !ready ||
+                feedMode === "error"
+              }
               onClick={onRunScan}
               title={
                 feedMode === "mock"
                   ? "Run mock scan"
-                  : scanStatus?.running
-                    ? "Release update in progress"
-                    : "Run release update now"
+                  : spotifyCooldown
+                    ? musicbrainzConfigured
+                      ? "Run MusicBrainz-only update while Spotify is cooling down"
+                      : "Provider scan disabled during Spotify cooldown"
+                    : scanStatus?.running
+                      ? "Release update in progress"
+                      : "Run release update now"
               }
               type="button"
             >
@@ -933,6 +1212,229 @@ function FeedView({
           </small>
         </div>
       </div>
+
+      {scanInProgress && (
+        <div className="scan-progress" role="status">
+          <div className="scan-progress-heading">
+            <div>
+              <strong>Release update in progress</strong>
+              <span>{scanProgressText}</span>
+              {activeScan?.currentStage && (
+                <small>
+                  Stage: {titleCase(activeScan.currentStage)}
+                  {activeScan.lastPersistedResult
+                    ? ` | Last persisted: ${activeScan.lastPersistedResult}`
+                    : ""}
+                </small>
+              )}
+            </div>
+            <div className="scan-progress-actions">
+              {providerCount > 0 && (
+                <span className="scan-progress-count">
+                  {finishedProviderCount}/{providerCount}
+                </span>
+              )}
+              {feedMode === "database" && (
+                <button
+                  className="scan-cancel-button"
+                  disabled={cancellingScan || activeScan?.cancelRequested}
+                  onClick={onCancelScan}
+                  type="button"
+                >
+                  Cancel update
+                </button>
+              )}
+            </div>
+          </div>
+          <div
+            aria-label="Release update progress"
+            aria-valuemax={100}
+            aria-valuemin={0}
+            aria-valuenow={completedPercentage}
+            aria-valuetext={scanProgressText}
+            className="scan-progress-track"
+            role="progressbar"
+          >
+            <span className="scan-progress-complete" style={{ width: `${completedPercentage}%` }} />
+            <span className="scan-progress-active" style={{ left: `${completedPercentage}%` }} />
+          </div>
+        </div>
+      )}
+
+      {feedMode === "database" && musicbrainzBatch && (
+        <section className="spotify-scan-status" aria-label="MusicBrainz scan status">
+          <div className="spotify-scan-status-heading">
+            <div>
+              <strong>MusicBrainz discovery</strong>
+              <span>
+                {musicbrainzBatch.completedArtists} of {musicbrainzBatch.totalArtists} artists |{" "}
+                {titleCase(musicbrainzBatch.status)}
+              </span>
+            </div>
+            {["paused", "cancelled", "failed"].includes(musicbrainzBatch.status) &&
+              musicbrainzBatch.completedArtists < musicbrainzBatch.totalArtists && (
+                <button
+                  className="primary-button"
+                  disabled={Boolean(scanStatus?.running)}
+                  onClick={() => onMusicBrainzResume(musicbrainzBatch.id)}
+                  type="button"
+                >
+                  Resume MusicBrainz
+                </button>
+              )}
+          </div>
+        </section>
+      )}
+
+      {feedMode === "database" && spotifyBatch && (
+        <section className="spotify-scan-status" aria-label="Spotify scan status">
+          <div className="spotify-scan-status-heading">
+            <div>
+              <strong>Spotify {titleCase(spotifyBatch.mode)} scan</strong>
+              <span>
+                {spotifyBatch.status === "paused" && spotifyBatch.confirmationRequired
+                  ? "Awaiting confirmation before the first staged batch"
+                  : titleCase(spotifyBatch.status)}
+              </span>
+            </div>
+            <div className="scan-progress-actions">
+              {spotifyBatch.status === "running" && (
+                <button
+                  className="secondary-button"
+                  onClick={() => onSpotifyBatchAction("pause", spotifyBatch.id)}
+                  type="button"
+                >
+                  Pause after current request
+                </button>
+              )}
+              {["paused", "rate_limited", "pending"].includes(spotifyBatch.status) && (
+                <button
+                  className="primary-button"
+                  disabled={spotifyCooldown || scanStatus?.running}
+                  onClick={() => onSpotifyBatchAction("resume", spotifyBatch.id)}
+                  type="button"
+                >
+                  Resume
+                </button>
+              )}
+              {["pending", "running", "paused", "rate_limited"].includes(spotifyBatch.status) && (
+                <button
+                  className="secondary-button destructive-text"
+                  onClick={() => onSpotifyBatchAction("cancel", spotifyBatch.id)}
+                  type="button"
+                >
+                  Cancel future work
+                </button>
+              )}
+              {retryableArtist && (
+                <button
+                  className="secondary-button"
+                  disabled={spotifyCooldown || scanStatus?.running}
+                  onClick={() => onSpotifyBatchAction("retry_artist", retryableArtist.id)}
+                  type="button"
+                >
+                  Retry one artist
+                </button>
+              )}
+              {["completed", "failed", "cancelled"].includes(spotifyBatch.status) && (
+                <button
+                  className="secondary-button"
+                  disabled={spotifyCooldown || scanStatus?.running}
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        "Start a deep reconciliation batch? It may inspect up to 10 album pages per artist and will use the five-second global request interval.",
+                      )
+                    ) {
+                      onSpotifyBatchAction("start_reconciliation", "");
+                    }
+                  }}
+                  type="button"
+                >
+                  Deep reconciliation
+                </button>
+              )}
+            </div>
+          </div>
+          <dl className="spotify-scan-grid">
+            <div>
+              <dt>Current artist</dt>
+              <dd>{activeScan?.currentUnit ?? "None"}</dd>
+            </div>
+            <div>
+              <dt>Completed</dt>
+              <dd>{spotifyBatch.completedArtists}</dd>
+            </div>
+            <div>
+              <dt>Remaining</dt>
+              <dd>{spotifyRemaining}</dd>
+            </div>
+            <div>
+              <dt>Failed</dt>
+              <dd>{spotifyBatch.failedArtists}</dd>
+            </div>
+            <div>
+              <dt>Cancelled</dt>
+              <dd>{spotifyBatch.cancelledArtists}</dd>
+            </div>
+            <div>
+              <dt>Rate-limited</dt>
+              <dd>{spotifyBatch.rateLimitedArtists}</dd>
+            </div>
+            <div>
+              <dt>Partial</dt>
+              <dd>{spotifyBatch.partialArtists}</dd>
+            </div>
+            <div>
+              <dt>Queue</dt>
+              <dd>{spotifyOperational?.queueDepth ?? 0}</dd>
+            </div>
+            <div>
+              <dt>Request interval</dt>
+              <dd>{(scanStatus.spotify.limiter.minRequestIntervalMs / 1_000).toFixed(1)}s</dd>
+            </div>
+            <div>
+              <dt>Estimated requests</dt>
+              <dd>{spotifyBatch.estimatedRequests}</dd>
+            </div>
+            <div>
+              <dt>Estimated remaining</dt>
+              <dd>
+                {estimatedRemainingRequests > 0
+                  ? `${formatDuration(estimatedMinimumMs)} to ${formatDuration(estimatedMaximumMs)}`
+                  : "Complete"}
+              </dd>
+            </div>
+            <div>
+              <dt>Current request rate</dt>
+              <dd>{observedRequestRate > 0 ? `${observedRequestRate.toFixed(1)}/min` : "Idle"}</dd>
+            </div>
+            <div>
+              <dt>Last heartbeat</dt>
+              <dd>
+                {activeScan?.heartbeatAt
+                  ? new Date(activeScan.heartbeatAt).toLocaleTimeString()
+                  : "Idle"}
+              </dd>
+            </div>
+            <div>
+              <dt>Cooldown</dt>
+              <dd>
+                {spotifyCooldown
+                  ? spotifyOperational?.cooldownIndefinite
+                    ? "Manual review required"
+                    : `Until ${new Date(spotifyOperational!.cooldownUntil!).toLocaleString()}`
+                  : "None"}
+              </dd>
+            </div>
+          </dl>
+          <small>
+            Distributed across {scanStatus.spotify.limiter.distributionHours} hours, about{" "}
+            {(spotifyBatch.totalArtists / scanStatus.spotify.limiter.distributionHours).toFixed(1)}{" "}
+            artists per hour. Completion estimates vary with pagination and Spotify limits.
+          </small>
+        </section>
+      )}
 
       <div className="feed-controls">
         <div className="tabs" role="tablist" aria-label="Feed state">
@@ -965,8 +1467,27 @@ function FeedView({
             Exact matches only
           </label>
           <label>
+            Evidence source
+            <select
+              aria-label="Evidence source"
+              value={advancedFilters.provider}
+              onChange={(event) =>
+                onAdvancedFiltersChange({
+                  ...advancedFilters,
+                  provider: event.target.value as FeedAdvancedFilters["provider"],
+                })
+              }
+            >
+              <option value="all">All</option>
+              <option value="musicbrainz">MusicBrainz</option>
+              <option value="spotify">Spotify</option>
+              <option value="mock">Mock</option>
+            </select>
+          </label>
+          <label>
             Spotify
             <select
+              aria-label="Spotify availability"
               value={advancedFilters.spotify}
               onChange={(event) =>
                 onAdvancedFiltersChange({
@@ -1092,9 +1613,13 @@ function ArtistsView({
   artists,
   onAddArtist,
   onEditArtist,
+  onNotice,
+  onRefreshArtists,
   onRemoveArtist,
   onRemoveProfile,
   onSaveProfile,
+  onScanArtist,
+  musicbrainzConfigured,
   soundCloudManualLinksEnabled,
   watchlistMode,
 }: {
@@ -1102,9 +1627,13 @@ function ArtistsView({
   artists: WatchedArtist[];
   onAddArtist: (name: string) => boolean;
   onEditArtist: (id: string, name: string) => boolean;
+  onNotice: (message: string) => void;
+  onRefreshArtists: () => Promise<void>;
   onRemoveArtist: (id: string, name: string) => void;
   onRemoveProfile: (id: string) => void;
   onSaveProfile: (id: string, url: string) => void;
+  onScanArtist: (id: string) => void;
+  musicbrainzConfigured: boolean;
   soundCloudManualLinksEnabled: boolean;
   watchlistMode: "database" | "error" | "mock";
 }) {
@@ -1118,6 +1647,149 @@ function ArtistsView({
   const [profileArtistId, setProfileArtistId] = useState<string | null>(null);
   const [profileUrl, setProfileUrl] = useState("");
   const [profileError, setProfileError] = useState<string | null>(null);
+  const [mappingArtist, setMappingArtist] = useState<WatchedArtist | null>(null);
+  const [mappingBusy, setMappingBusy] = useState(false);
+  const [mappingMode, setMappingMode] = useState<"current" | "replace">("current");
+  const [confirmedMapping, setConfirmedMapping] = useState<{
+    confidence: string | null;
+    externalId: string;
+    reasons: string[];
+    url: string;
+  } | null>(null);
+  const [mappingResults, setMappingResults] = useState<
+    Array<{
+      confirmed: boolean;
+      confidence: number;
+      disambiguation?: string;
+      id: string;
+      name: string;
+      reasons: string[];
+      reviewId?: string;
+    }>
+  >([]);
+
+  const loadMusicBrainzMapping = async (artist: WatchedArtist) => {
+    const response = await fetch(`/api/musicbrainz/mappings?artistId=${artist.id}`, {
+      cache: "no-store",
+    });
+    const payload = musicBrainzMappingsResponseSchema.parse(await response.json());
+    if (!response.ok) throw new Error("Unable to load MusicBrainz mapping");
+    const mapping = payload.mappings[0] ?? null;
+    setConfirmedMapping(mapping);
+    return { mapping, reviews: payload.reviews };
+  };
+
+  const searchMusicBrainzMapping = async (artist: WatchedArtist) => {
+    setMappingBusy(true);
+    setMappingMode("replace");
+    setMappingResults([]);
+    try {
+      const response = await fetch("/api/musicbrainz/mappings/preview", {
+        body: JSON.stringify({ artistId: artist.id }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+      const payload = z
+        .object({
+          automatic: z.boolean(),
+          results: z.array(
+            z.object({
+              confidence: z.number(),
+              disambiguation: z.string().optional(),
+              id: z.string().uuid(),
+              name: z.string(),
+              reasons: z.array(z.string()),
+            }),
+          ),
+        })
+        .parse(await response.json());
+      if (!response.ok) throw new Error("Mapping preview failed");
+      if (payload.automatic) {
+        await loadMusicBrainzMapping(artist);
+        await onRefreshArtists();
+        onNotice(`${artist.name} received a high-confidence MusicBrainz mapping.`);
+        setMappingMode("current");
+        return;
+      }
+      const details = await loadMusicBrainzMapping(artist);
+      setMappingResults(
+        payload.results.map((result) => {
+          const reviewId = details.reviews.find(
+            (review) => review.proposedExternalId === result.id && review.status === "pending",
+          )?.id;
+          return {
+            confirmed: details.mapping?.externalId === result.id,
+            confidence: result.confidence,
+            id: result.id,
+            name: result.name,
+            reasons: result.reasons,
+            ...(result.disambiguation ? { disambiguation: result.disambiguation } : {}),
+            ...(reviewId ? { reviewId } : {}),
+          };
+        }),
+      );
+    } catch {
+      onNotice("MusicBrainz mapping preview failed. No mapping was changed.");
+      setMappingMode("current");
+    } finally {
+      setMappingBusy(false);
+    }
+  };
+
+  const openMusicBrainzMapping = async (artist: WatchedArtist) => {
+    setMappingArtist(artist);
+    setMappingMode("current");
+    setConfirmedMapping(null);
+    setMappingResults([]);
+    setMappingBusy(true);
+    try {
+      const { mapping } = await loadMusicBrainzMapping(artist);
+      if (!mapping) {
+        setMappingBusy(false);
+        await searchMusicBrainzMapping(artist);
+      }
+    } catch {
+      onNotice("The persisted MusicBrainz mapping could not be loaded.");
+      setMappingArtist(null);
+    } finally {
+      setMappingBusy(false);
+    }
+  };
+
+  const decideMusicBrainzMapping = async (reviewId: string, decision: "confirm" | "reject") => {
+    setMappingBusy(true);
+    try {
+      const response = await fetch("/api/musicbrainz/mappings/decision", {
+        body: JSON.stringify({ decision, reviewId }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+      if (!response.ok) throw new Error("Mapping decision failed");
+      const result = z
+        .object({ decision: z.enum(["confirm", "reject"]), idempotent: z.boolean() })
+        .passthrough()
+        .parse(await response.json());
+      if (decision === "confirm" && mappingArtist) {
+        await loadMusicBrainzMapping(mappingArtist);
+        await onRefreshArtists();
+        setMappingMode("current");
+        setMappingResults([]);
+      } else {
+        setMappingResults((current) => current.filter((item) => item.reviewId !== reviewId));
+      }
+      onNotice(
+        decision === "confirm"
+          ? result.idempotent
+            ? "MusicBrainz mapping was already confirmed."
+            : "MusicBrainz mapping confirmed. A previous mapping was replaced if one existed."
+          : "MusicBrainz mapping candidate rejected.",
+      );
+    } catch {
+      onNotice("The MusicBrainz mapping decision could not be saved.");
+    } finally {
+      setMappingBusy(false);
+    }
+  };
 
   const sortedArtists = useMemo(() => {
     const query = artistSearch.trim().toLocaleLowerCase("en-US");
@@ -1258,6 +1930,134 @@ function ArtistsView({
         </form>
       )}
 
+      {mappingArtist && (
+        <section className="add-artist-form" aria-label="MusicBrainz mapping candidates">
+          <strong>MusicBrainz mapping for {mappingArtist.name}</strong>
+          {mappingBusy && (
+            <span role="status">
+              {mappingMode === "replace" ? "Searching MusicBrainz" : "Loading confirmed mapping"}
+            </span>
+          )}
+          {!mappingBusy && mappingMode === "current" && confirmedMapping && (
+            <div className="inline-row-form confirmed-mapping">
+              <div>
+                <strong>Confirmed mapping</strong>
+                <small>{mappingArtist.name}</small>
+                <small>
+                  MBID: <code>{confirmedMapping.externalId}</code>
+                </small>
+                {confirmedMapping.confidence && (
+                  <small>{Math.round(Number(confirmedMapping.confidence) * 100)}% confidence</small>
+                )}
+                <small>{confirmedMapping.reasons.join("; ")}</small>
+              </div>
+              <a
+                className="secondary-button"
+                href={confirmedMapping.url}
+                rel="noopener noreferrer"
+                target="_blank"
+              >
+                View evidence <ExternalLink size={13} />
+              </a>
+              <button
+                className="secondary-button"
+                onClick={() => void searchMusicBrainzMapping(mappingArtist)}
+                type="button"
+              >
+                Replace mapping
+              </button>
+            </div>
+          )}
+          {!mappingBusy && mappingMode === "current" && !confirmedMapping && (
+            <div className="inline-row-form">
+              <span>No confirmed MusicBrainz mapping is stored.</span>
+              <button
+                className="primary-button"
+                onClick={() => void searchMusicBrainzMapping(mappingArtist)}
+                type="button"
+              >
+                Search MusicBrainz
+              </button>
+            </div>
+          )}
+          {!mappingBusy && mappingMode === "replace" && mappingResults.length === 0 && (
+            <span>
+              No safe replacement candidate was found. The current mapping was not changed.
+            </span>
+          )}
+          {mappingMode === "replace" &&
+            mappingResults.map((result) => (
+              <div className="inline-row-form" key={result.id}>
+                <div>
+                  <strong>{result.name}</strong>
+                  {result.confirmed && <span className="provider-tag">Currently confirmed</span>}
+                  <small>
+                    {Math.round(result.confidence * 100)}% confidence
+                    {result.disambiguation ? ` | ${result.disambiguation}` : ""}
+                  </small>
+                  <small>MBID: {result.id}</small>
+                  <small>{result.reasons.join("; ")}</small>
+                </div>
+                <a
+                  className="secondary-button"
+                  href={`https://musicbrainz.org/artist/${result.id}`}
+                  rel="noopener noreferrer"
+                  target="_blank"
+                >
+                  View evidence <ExternalLink size={13} />
+                </a>
+                <button
+                  className="primary-button"
+                  disabled={result.confirmed || !result.reviewId || mappingBusy}
+                  onClick={() =>
+                    result.reviewId && void decideMusicBrainzMapping(result.reviewId, "confirm")
+                  }
+                  type="button"
+                >
+                  {result.confirmed
+                    ? "Confirmed"
+                    : confirmedMapping
+                      ? "Confirm replacement"
+                      : "Confirm mapping"}
+                </button>
+                <button
+                  className="secondary-button"
+                  disabled={result.confirmed || !result.reviewId || mappingBusy}
+                  onClick={() =>
+                    result.reviewId && void decideMusicBrainzMapping(result.reviewId, "reject")
+                  }
+                  type="button"
+                >
+                  Reject
+                </button>
+              </div>
+            ))}
+          {mappingMode === "replace" && confirmedMapping && (
+            <button
+              className="secondary-button"
+              onClick={() => {
+                setMappingMode("current");
+                setMappingResults([]);
+              }}
+              type="button"
+            >
+              Cancel replacement
+            </button>
+          )}
+          <button
+            className="secondary-button"
+            onClick={() => {
+              setMappingArtist(null);
+              setConfirmedMapping(null);
+              setMappingResults([]);
+            }}
+            type="button"
+          >
+            Close
+          </button>
+        </section>
+      )}
+
       <div className="data-list" aria-label="Followed artists">
         {watchlistMode === "error" && (
           <div className="error-state" role="alert">
@@ -1321,6 +2121,34 @@ function ArtistsView({
               {!artist.active ? "Paused" : artist.manuallyAdded ? "Pending mapping" : "Mapped"}
             </span>
             <div className="row-actions">
+              <button
+                aria-label={`${
+                  artist.providers.includes("musicbrainz") ? "View" : "Map"
+                } ${artist.name} MusicBrainz mapping`}
+                className="icon-button small"
+                disabled={
+                  !musicbrainzConfigured ||
+                  watchlistMode !== "database" ||
+                  !z.string().uuid().safeParse(artist.id).success
+                }
+                onClick={() => void openMusicBrainzMapping(artist)}
+                title="View MusicBrainz mapping"
+              >
+                <Link2 size={15} />
+              </button>
+              <button
+                aria-label={`Run MusicBrainz scan for ${artist.name}`}
+                className="icon-button small"
+                disabled={
+                  !musicbrainzConfigured ||
+                  !artist.providers.includes("musicbrainz") ||
+                  watchlistMode !== "database"
+                }
+                onClick={() => onScanArtist(artist.id)}
+                title="Scan this artist with MusicBrainz"
+              >
+                <RefreshCw size={15} />
+              </button>
               <button
                 aria-label={`Edit ${artist.name}`}
                 className="icon-button small"
@@ -1689,10 +2517,68 @@ function ReviewView({
   onItemChange: (id: string, changes: Partial<FeedFixtureItem>, message: string) => void;
   query: string;
 }) {
+  const [reviewFilter, setReviewFilter] = useState<"all" | "matches" | "musicbrainz_mappings">(
+    "all",
+  );
+  const [mappingReviews, setMappingReviews] = useState<
+    Array<{
+      artistName: string;
+      confidence: string;
+      id: string;
+      name: string;
+      proposedExternalId: string;
+      reasons: string[];
+    }>
+  >([]);
   const normalizedQuery = query.trim().toLocaleLowerCase("en-US");
   const visibleItems = items.filter((item) =>
     `${item.artist} ${item.title}`.toLocaleLowerCase("en-US").includes(normalizedQuery),
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/musicbrainz/mappings", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Mapping reviews unavailable");
+        return z
+          .object({
+            reviews: z.array(
+              z.object({
+                artistName: z.string(),
+                confidence: z.string(),
+                id: z.string().uuid(),
+                name: z.string(),
+                proposedExternalId: z.string().uuid(),
+                reasons: z.array(z.string()),
+                status: z.string(),
+              }),
+            ),
+          })
+          .passthrough()
+          .parse(await response.json());
+      })
+      .then((payload) => {
+        if (!cancelled)
+          setMappingReviews(payload.reviews.filter((review) => review.status === "pending"));
+      })
+      .catch(() => {
+        if (!cancelled) setMappingReviews([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const decideMapping = async (reviewId: string, decision: "confirm" | "reject") => {
+    const response = await fetch("/api/musicbrainz/mappings/decision", {
+      body: JSON.stringify({ decision, reviewId }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    });
+    if (response.ok) {
+      setMappingReviews((current) => current.filter((review) => review.id !== reviewId));
+    }
+  };
 
   return (
     <section className="content standard-view">
@@ -1703,8 +2589,58 @@ function ReviewView({
           <p>Ambiguous matches require an explicit decision before playlist export.</p>
         </div>
       </div>
+      <label className="sort-control">
+        <span>Review type</span>
+        <select
+          aria-label="Filter review queue"
+          onChange={(event) => setReviewFilter(event.target.value as typeof reviewFilter)}
+          value={reviewFilter}
+        >
+          <option value="all">All reviews</option>
+          <option value="matches">Release matches</option>
+          <option value="musicbrainz_mappings">MusicBrainz mappings</option>
+        </select>
+      </label>
       <div className="review-list">
-        {visibleItems.length ? (
+        {reviewFilter !== "matches" &&
+          mappingReviews.map((review) => (
+            <article className="review-card" key={review.id}>
+              <div>
+                <span className="state state-needs_review">MusicBrainz mapping</span>
+                <h2>{review.artistName}</h2>
+                <p>{review.name}</p>
+                <small>
+                  {Math.round(Number(review.confidence) * 100)}% confidence |{" "}
+                  {review.reasons.join("; ")}
+                </small>
+              </div>
+              <div className="review-actions">
+                <a
+                  className="secondary-button"
+                  href={`https://musicbrainz.org/artist/${review.proposedExternalId}`}
+                  rel="noopener noreferrer"
+                  target="_blank"
+                >
+                  Evidence <ExternalLink size={13} />
+                </a>
+                <button
+                  className="secondary-button"
+                  onClick={() => void decideMapping(review.id, "reject")}
+                  type="button"
+                >
+                  Reject
+                </button>
+                <button
+                  className="primary-button"
+                  onClick={() => void decideMapping(review.id, "confirm")}
+                  type="button"
+                >
+                  Confirm or replace
+                </button>
+              </div>
+            </article>
+          ))}
+        {reviewFilter !== "musicbrainz_mappings" && visibleItems.length ? (
           visibleItems.map((item) => (
             <article className="review-card" key={item.id}>
               <div>
@@ -1750,13 +2686,13 @@ function ReviewView({
               </div>
             </article>
           ))
-        ) : (
+        ) : reviewFilter !== "musicbrainz_mappings" && mappingReviews.length === 0 ? (
           <div className="empty-state">
             <Check size={22} />
             <strong>No items need review.</strong>
             <span>Ambiguous future matches will appear here.</span>
           </div>
-        )}
+        ) : null}
       </div>
     </section>
   );
@@ -2064,6 +3000,7 @@ function SettingsView({
         <ProviderSetting
           configured={providerConfiguration.spotify.configured}
           enabled={providerConfiguration.spotify.enabled}
+          minRequestIntervalMs={providerConfiguration.spotify.minRequestIntervalMs}
           name="Spotify"
           onImportConfirmed={onImportConfirmed}
         />
@@ -2293,11 +3230,13 @@ function ScanHistory({ databaseConfigured }: { databaseConfigured: boolean }) {
 function ProviderSetting({
   configured,
   enabled,
+  minRequestIntervalMs,
   name,
   onImportConfirmed,
 }: {
   configured: boolean;
   enabled: boolean;
+  minRequestIntervalMs?: number;
   name: "Spotify" | "MusicBrainz";
   onImportConfirmed?: (summary: ImportSummary) => Promise<void>;
 }) {
@@ -2387,6 +3326,50 @@ function ProviderSetting({
       setSubmitting(false);
     }
   };
+  const clearInvalidCooldown = async () => {
+    const reason = window.prompt(
+      "Describe the verified local parsing defect. This does not remove a Spotify-imposed limit.",
+    );
+    if (!reason || reason.trim().length < 20) {
+      setError("A specific correction reason of at least 20 characters is required.");
+      return;
+    }
+    if (
+      !window.confirm(
+        "Clear only the locally calculated cooldown? This does not mean Spotify removed its rate limit.",
+      )
+    ) {
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/spotify/cooldown", {
+        body: JSON.stringify({ confirmation: "CLEAR INVALID LOCAL COOLDOWN", reason }),
+        headers: { "Content-Type": "application/json" },
+        method: "DELETE",
+      });
+      if (!response.ok) throw new Error("Cooldown correction was rejected.");
+      setSpotifyStatus((current) =>
+        current?.operational
+          ? {
+              ...current,
+              operational: {
+                ...current.operational,
+                canManualClear: false,
+                cooldownActive: false,
+                cooldownIndefinite: false,
+                cooldownUntil: null,
+              },
+            }
+          : current,
+      );
+    } catch {
+      setError("The local cooldown could not be corrected.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <div className="setting-row">
@@ -2408,9 +3391,31 @@ function ProviderSetting({
             Connected: {spotifyStatus.displayName ?? "Spotify account"}
           </span>
           <small>{spotifyStatus.scopes?.join(", ")}</small>
+          {spotifyStatus.operational?.cooldownActive && (
+            <small role="status">
+              Spotify cooldown:{" "}
+              {spotifyStatus.operational.cooldownIndefinite
+                ? "manual review required"
+                : `until ${new Date(spotifyStatus.operational.cooldownUntil!).toLocaleString()}`}
+            </small>
+          )}
+          <small>
+            Request interval: {(minRequestIntervalMs ?? 5_000) / 1_000}s | Queue:{" "}
+            {spotifyStatus.operational?.queueDepth ?? 0}
+          </small>
+          {spotifyStatus.operational?.canManualClear && (
+            <button
+              className="secondary-button"
+              disabled={submitting}
+              onClick={() => void clearInvalidCooldown()}
+              type="button"
+            >
+              Correct invalid local cooldown
+            </button>
+          )}
           <button
             className="secondary-button"
-            disabled={submitting}
+            disabled={submitting || spotifyStatus.operational?.cooldownActive}
             onClick={() => void previewImport()}
             type="button"
           >
@@ -2758,9 +3763,31 @@ function RedditSourceSettings({ databaseConfigured }: { databaseConfigured: bool
   );
 }
 
+const musicBrainzMappingsResponseSchema = z.object({
+  mappings: z.array(
+    z.object({
+      artistId: z.string().uuid(),
+      artistName: z.string(),
+      confidence: z.string().nullable(),
+      externalId: z.string().uuid(),
+      reasons: z.array(z.string()),
+      url: z.string().url(),
+    }),
+  ),
+  reviews: z.array(
+    z.object({
+      id: z.string().uuid(),
+      proposedExternalId: z.string().uuid(),
+      status: z.string(),
+    }),
+  ),
+});
+
 const spotifyStatusSchema = z.object({
+  batch: z.lazy(() => spotifyBatchSchema).optional(),
   displayName: z.string().nullable().optional(),
   lastTokenRefreshAt: z.string().nullable().optional(),
+  operational: z.lazy(() => spotifyOperationalSchema).optional(),
   scopes: z.array(z.string()).optional(),
   state: z.enum([
     "disabled",
@@ -2807,13 +3834,123 @@ const scanRunStatusSchema = z.object({
   providersFailed: z.array(z.string()),
   providersRequested: z.array(z.string()),
   startedAt: z.string().datetime(),
-  status: z.enum(["running", "completed", "partial", "failed"]),
+  status: z.enum([
+    "running",
+    "completed",
+    "partial",
+    "failed",
+    "cancelled",
+    "paused",
+    "rate_limited",
+  ]),
 });
 
+const spotifyOperationalSchema = z.object({
+  canManualClear: z.boolean(),
+  cooldownActive: z.boolean(),
+  cooldownEndpointCategory: z.string().nullable(),
+  cooldownErrorClassification: z.string().nullable(),
+  cooldownIndefinite: z.boolean(),
+  cooldownObservedAt: z.string().datetime().nullable(),
+  cooldownUntil: z.string().datetime().nullable(),
+  lastRequestStartedAt: z.string().datetime().nullable(),
+  nextRequestAt: z.string().datetime().nullable(),
+  parsedRetryAfterSeconds: z.string().nullable(),
+  queueDepth: z.number().int().nonnegative(),
+  rawRetryAfter: z.string().nullable(),
+  requestCount: z.number().int().nonnegative(),
+});
+
+const spotifyArtistScanSchema = z.object({
+  artistId: z.string().uuid(),
+  errorClassification: z.string().nullable(),
+  id: z.string().uuid(),
+  position: z.number().int().nonnegative(),
+  status: z.string(),
+});
+
+const spotifyBatchSchema = z
+  .object({
+    artistScans: z.array(spotifyArtistScanSchema),
+    cancelledArtists: z.number().int().nonnegative(),
+    completedArtists: z.number().int().nonnegative(),
+    confirmationRequired: z.boolean(),
+    estimatedRequests: z.number().int().nonnegative(),
+    failedArtists: z.number().int().nonnegative(),
+    id: z.string().uuid(),
+    mode: z.string(),
+    pageLimit: z.number().int().positive(),
+    partialArtists: z.number().int().nonnegative(),
+    rateLimitedArtists: z.number().int().nonnegative(),
+    status: z.string(),
+    totalArtists: z.number().int().nonnegative(),
+  })
+  .nullable();
+
 const scanStatusSchema = z.object({
+  active: z
+    .object({
+      currentProvider: z.string().nullable(),
+      cancelRequested: z.boolean(),
+      completedUnits: z.number().int().nonnegative(),
+      currentUnit: z.string().nullable(),
+      currentStage: z.string().nullable().default(null),
+      expiresAt: z.string().datetime(),
+      heartbeatAt: z.string().datetime().nullable(),
+      lastPersistedResult: z.string().nullable().default(null),
+      phase: z.string().nullable(),
+      providersCompleted: z.array(z.string()),
+      providersFailed: z.array(z.string()),
+      providersRequested: z.array(z.string()),
+      rateLimitWaitMs: z.number().nonnegative(),
+      requests: z.number().int().nonnegative(),
+      retryAfterMs: z.number().nonnegative(),
+      startedAt: z.string().datetime(),
+      totalUnits: z.number().int().nonnegative(),
+    })
+    .nullable(),
   latest: scanRunStatusSchema.nullable(),
+  musicbrainz: z
+    .object({
+      batch: z
+        .object({
+          cancelledArtists: z.number().int().nonnegative(),
+          completedArtists: z.number().int().nonnegative(),
+          failedArtists: z.number().int().nonnegative(),
+          id: z.string().uuid(),
+          status: z.string(),
+          totalArtists: z.number().int().nonnegative(),
+        })
+        .passthrough()
+        .nullable(),
+      operational: z.object({
+        lastRequestStartedAt: z.string().datetime().nullable(),
+        nextRequestAt: z.string().datetime().nullable(),
+        queueDepth: z.number().int().nonnegative(),
+        requestCount: z.number().int().nonnegative(),
+      }),
+    })
+    .default({
+      batch: null,
+      operational: {
+        lastRequestStartedAt: null,
+        nextRequestAt: null,
+        queueDepth: 0,
+        requestCount: 0,
+      },
+    }),
   running: z.boolean(),
   runs: z.array(scanRunStatusSchema),
+  spotify: z.object({
+    batch: spotifyBatchSchema,
+    limiter: z.object({
+      artistsPerBatch: z.number().int().positive(),
+      batchPauseSeconds: z.number().int().nonnegative(),
+      distributionHours: z.number().positive(),
+      minRequestIntervalMs: z.number().int().positive(),
+    }),
+    operational: spotifyOperationalSchema,
+  }),
 });
 
 const scanLaunchSchema = z.object({
@@ -2836,6 +3973,13 @@ const watchlistResponseSchema = z.object({
 
 function formatScanTime(value: string): string {
   return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatDuration(milliseconds: number): string {
+  const minutes = Math.max(1, Math.ceil(milliseconds / 60_000));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = minutes / 60;
+  return `${hours < 10 ? hours.toFixed(1) : Math.ceil(hours)} hr`;
 }
 
 function scanRunLabel(run: ScanRunStatus): string {

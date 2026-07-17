@@ -7,7 +7,12 @@ import {
   type TrackCandidate,
 } from "@radar/core";
 import type { DiscoveryProvider, ScanContext } from "./contracts";
-import type { SpotifyAlbum, SpotifyAlbumSummary, SpotifyClient, SpotifyTrack } from "./spotify";
+import type {
+  SpotifyAlbum,
+  SpotifyAlbumSummary,
+  SpotifyClient,
+  SpotifyTrackSummary,
+} from "./spotify";
 
 export interface SpotifyArtistMapping {
   artistId: string;
@@ -17,8 +22,9 @@ export interface SpotifyArtistMapping {
 
 interface SpotifyProviderOptions {
   client: SpotifyClient;
-  concurrency?: number;
   mappings: SpotifyArtistMapping[];
+  maxPagesPerArtist?: number;
+  knownReleaseIds?: ReadonlySet<string>;
   now?: () => Date;
   region?: string;
 }
@@ -26,15 +32,17 @@ interface SpotifyProviderOptions {
 export class SpotifyProvider implements DiscoveryProvider {
   readonly name = "spotify" as const;
   private readonly client: SpotifyClient;
-  private readonly concurrency: number;
   private readonly mappings: SpotifyArtistMapping[];
+  private readonly maxPagesPerArtist: number;
+  private readonly knownReleaseIds: ReadonlySet<string>;
   private readonly now: () => Date;
   private readonly region: string;
 
   constructor(options: SpotifyProviderOptions) {
     this.client = options.client;
-    this.concurrency = options.concurrency ?? 4;
     this.mappings = options.mappings;
+    this.maxPagesPerArtist = options.maxPagesPerArtist ?? 1;
+    this.knownReleaseIds = options.knownReleaseIds ?? new Set();
     this.now = options.now ?? (() => new Date());
     this.region = options.region ?? "US";
   }
@@ -50,18 +58,52 @@ export class SpotifyProvider implements DiscoveryProvider {
           context.filter.artistExternalId === mapping.spotifyArtistId),
     );
     const candidates: TrackCandidate[] = [];
-    for (const mapping of mappings) {
-      const albums = await this.client.getArtistAlbums(mapping.spotifyArtistId, context.signal);
-      const selected = albums.filter(
+    for (const [index, mapping] of mappings.entries()) {
+      if (context.signal?.aborted) throw context.signal.reason;
+      if (
+        (await context.onUnitStart?.({
+          currentUnit: mapping.name,
+          currentUnitId: mapping.artistId,
+          position: index,
+          totalUnits: mappings.length,
+        })) === false
+      ) {
+        break;
+      }
+      const albums = await this.client.getArtistAlbumsBounded(
+        mapping.spotifyArtistId,
+        this.maxPagesPerArtist,
+        context.signal,
+      );
+      const selected = albums.items.filter(
         (album) =>
-          context.filter.full ||
-          !context.filter.since ||
-          normalizeSpotifyDate(album.release_date).date >= context.filter.since,
+          (context.filter.full || !this.knownReleaseIds.has(album.id)) &&
+          (context.filter.full ||
+            !context.filter.since ||
+            normalizeSpotifyDate(album.release_date).date >= context.filter.since),
       );
-      const discovered = await mapWithConcurrency(selected, this.concurrency, (album) =>
-        this.scanAlbum(mapping, album, context.signal),
-      );
-      candidates.push(...discovered.flat());
+      const batchCandidates: TrackCandidate[] = [];
+      for (const album of selected) {
+        batchCandidates.push(...(await this.scanAlbum(mapping, album, context.signal)));
+      }
+      if (context.onBatch) {
+        await context.onBatch({
+          candidates: batchCandidates,
+          completedUnits: index + 1,
+          currentUnit: mapping.name,
+          currentUnitId: mapping.artistId,
+          pagesScanned: albums.pagesScanned,
+          partial: albums.partial,
+          providerMetrics: {
+            failures: this.client.metrics.failures,
+            requests: this.client.metrics.requests,
+            waitMs: this.client.metrics.rateLimitWaitMs,
+          },
+          totalUnits: mappings.length,
+        });
+      } else {
+        candidates.push(...batchCandidates);
+      }
     }
     return {
       candidates,
@@ -78,13 +120,11 @@ export class SpotifyProvider implements DiscoveryProvider {
     summary: SpotifyAlbumSummary,
     signal?: AbortSignal,
   ): Promise<TrackCandidate[]> {
-    const [album, trackSummaries] = await Promise.all([
-      this.client.getAlbum(summary.id, signal),
-      this.client.getAlbumTracks(summary.id, signal),
-    ]);
-    const tracks = await mapWithConcurrency(trackSummaries, this.concurrency, (track) =>
-      this.client.getTrack(track.id, signal),
-    );
+    const album = await this.client.getAlbum(summary.id, signal);
+    const tracks = [...album.tracks.items];
+    if (album.tracks.next) {
+      tracks.push(...(await this.client.getAlbumTracks(summary.id, signal, tracks.length)));
+    }
     const releasePrimarilyWatched = album.artists.some(
       (artist) => artist.id === mapping.spotifyArtistId,
     );
@@ -101,7 +141,7 @@ export class SpotifyProvider implements DiscoveryProvider {
 function spotifyCandidate(
   mapping: SpotifyArtistMapping,
   album: SpotifyAlbum,
-  track: SpotifyTrack,
+  track: SpotifyTrackSummary,
   firstSeen: Date,
   region: string,
 ): TrackCandidate {
@@ -140,7 +180,6 @@ function spotifyCandidate(
     trackNumber: track.track_number,
     ...(album.external_ids?.upc ? { upc: album.external_ids.upc } : {}),
     ...(album.external_ids?.ean ? { ean: album.external_ids.ean } : {}),
-    ...(track.external_ids?.isrc ? { isrc: track.external_ids.isrc } : {}),
     ...(version ? { version } : {}),
   } satisfies Omit<TrackCandidate, "payloadHash">;
   return {
@@ -149,7 +188,7 @@ function spotifyCandidate(
   };
 }
 
-function spotifyCredits(track: SpotifyTrack, watchedArtistId: string): ArtistCreditInput[] {
+function spotifyCredits(track: SpotifyTrackSummary, watchedArtistId: string): ArtistCreditInput[] {
   return track.artists.map((artist, index) => ({
     name: artist.name,
     role: artist.id === watchedArtistId && index > 0 ? "featured" : "primary",
@@ -169,23 +208,4 @@ function normalizeSpotifyDate(value: string): { date: string } {
   if (/^\d{4}$/.test(value)) return { date: `${value}-01-01` };
   if (/^\d{4}-\d{2}$/.test(value)) return { date: `${value}-01` };
   return { date: value };
-}
-
-async function mapWithConcurrency<T, R>(
-  values: T[],
-  concurrency: number,
-  operation: (value: T) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(values.length);
-  let nextIndex = 0;
-  const workers = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
-    while (nextIndex < values.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      const value = values[index];
-      if (value !== undefined) results[index] = await operation(value);
-    }
-  });
-  await Promise.all(workers);
-  return results;
 }

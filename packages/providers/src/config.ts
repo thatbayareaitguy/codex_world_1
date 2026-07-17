@@ -34,9 +34,17 @@ const environmentSchema = z.object({
   SPOTIFY_CLIENT_ID: z.string().min(1).optional(),
   SPOTIFY_CLIENT_SECRET: z.string().min(1).optional(),
   SPOTIFY_ALLOWED_PLAYLIST_ID: optionalSpotifyPlaylistId,
+  SPOTIFY_ARTISTS_PER_BATCH: z.coerce.number().int().min(1).max(100).default(15),
+  SPOTIFY_BATCH_PAUSE_SECONDS: z.coerce.number().int().min(1).max(86_400).default(60),
+  SPOTIFY_DAILY_MAX_PAGES_PER_ARTIST: z.coerce.number().int().min(1).max(10).default(1),
   SPOTIFY_ENABLED: booleanFlag(true),
+  SPOTIFY_INITIAL_MAX_PAGES_PER_ARTIST: z.coerce.number().int().min(1).max(10).default(2),
+  SPOTIFY_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(1).default(1),
+  SPOTIFY_MIN_REQUEST_INTERVAL_MS: z.coerce.number().int().min(5_000).max(300_000).default(5_000),
   SPOTIFY_PLAYLIST_WRITES_ENABLED: booleanFlag(false),
+  SPOTIFY_RECONCILIATION_MAX_PAGES_PER_ARTIST: z.coerce.number().int().min(1).max(50).default(10),
   SPOTIFY_REDIRECT_URI: z.url().default("http://127.0.0.1:3000/api/auth/spotify/callback"),
+  SPOTIFY_SCAN_DISTRIBUTION_HOURS: z.coerce.number().int().min(1).max(168).default(24),
 });
 
 export interface ProviderConfiguration {
@@ -67,12 +75,20 @@ export interface ProviderConfiguration {
   soundcloudManualLinksEnabled: boolean;
   spotify: {
     allowedPlaylistId?: string;
+    artistsPerBatch: number;
+    batchPauseSeconds: number;
     clientId?: string;
     clientSecret?: string;
     configured: boolean;
+    dailyMaxPagesPerArtist: number;
     enabled: boolean;
+    initialMaxPagesPerArtist: number;
+    maxConcurrency: number;
+    minRequestIntervalMs: number;
     playlistWritesEnabled: boolean;
+    reconciliationMaxPagesPerArtist: number;
     redirectUri: string;
+    scanDistributionHours: number;
   };
 }
 
@@ -129,10 +145,18 @@ export function loadProviderConfiguration(
         : {}),
       ...(parsed.SPOTIFY_CLIENT_ID ? { clientId: parsed.SPOTIFY_CLIENT_ID } : {}),
       ...(parsed.SPOTIFY_CLIENT_SECRET ? { clientSecret: parsed.SPOTIFY_CLIENT_SECRET } : {}),
+      artistsPerBatch: parsed.SPOTIFY_ARTISTS_PER_BATCH,
+      batchPauseSeconds: parsed.SPOTIFY_BATCH_PAUSE_SECONDS,
       configured: spotifyConfigured,
+      dailyMaxPagesPerArtist: parsed.SPOTIFY_DAILY_MAX_PAGES_PER_ARTIST,
       enabled: parsed.SPOTIFY_ENABLED,
+      initialMaxPagesPerArtist: parsed.SPOTIFY_INITIAL_MAX_PAGES_PER_ARTIST,
+      maxConcurrency: parsed.SPOTIFY_MAX_CONCURRENCY,
+      minRequestIntervalMs: parsed.SPOTIFY_MIN_REQUEST_INTERVAL_MS,
       playlistWritesEnabled: parsed.SPOTIFY_PLAYLIST_WRITES_ENABLED,
+      reconciliationMaxPagesPerArtist: parsed.SPOTIFY_RECONCILIATION_MAX_PAGES_PER_ARTIST,
       redirectUri: parsed.SPOTIFY_REDIRECT_URI,
+      scanDistributionHours: parsed.SPOTIFY_SCAN_DISTRIBUTION_HOURS,
     },
   };
 }

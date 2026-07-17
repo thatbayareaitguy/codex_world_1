@@ -5,12 +5,22 @@ export interface ScannerOptions {
   artistId?: string;
   full: boolean;
   provider?: ProviderName;
+  musicbrainzBatchId?: string;
   source?: string;
+  spotifyBatchId?: string;
+  spotifyConfirmBatch?: boolean;
+  spotifyMaxPages?: number;
+  spotifyMode?: "initial" | "daily" | "reconciliation";
   since?: string;
 }
 
 export function parseArgs(args: string[]): ScannerOptions {
-  const options: ScannerOptions = { dryRun: false, full: false };
+  const options: ScannerOptions = {
+    dryRun: false,
+    full: false,
+    spotifyConfirmBatch: false,
+    spotifyMode: "daily",
+  };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--") continue;
@@ -27,6 +37,43 @@ export function parseArgs(args: string[]): ScannerOptions {
     }
     if (arg === "--full") {
       options.full = true;
+      options.spotifyMode = "reconciliation";
+      continue;
+    }
+    if (arg === "--spotify-mode") {
+      const value = args[index + 1];
+      if (value !== "initial" && value !== "daily" && value !== "reconciliation") {
+        throw new Error("--spotify-mode must be initial, daily, or reconciliation");
+      }
+      options.spotifyMode = value;
+      index += 1;
+      continue;
+    }
+    if (arg === "--spotify-batch") {
+      const value = args[index + 1];
+      if (!value) throw new Error("--spotify-batch requires a batch ID");
+      options.spotifyBatchId = value;
+      index += 1;
+      continue;
+    }
+    if (arg === "--musicbrainz-batch") {
+      const value = args[index + 1];
+      if (!value) throw new Error("--musicbrainz-batch requires a batch ID");
+      options.musicbrainzBatchId = value;
+      index += 1;
+      continue;
+    }
+    if (arg === "--confirm-spotify-batch") {
+      options.spotifyConfirmBatch = true;
+      continue;
+    }
+    if (arg === "--spotify-max-pages") {
+      const value = Number(args[index + 1]);
+      if (!Number.isInteger(value) || value < 1 || value > 50) {
+        throw new Error("--spotify-max-pages requires an integer from 1 to 50");
+      }
+      options.spotifyMaxPages = value;
+      index += 1;
       continue;
     }
     if (arg === "--since") {

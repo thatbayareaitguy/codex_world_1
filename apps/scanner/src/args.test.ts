@@ -10,6 +10,30 @@ describe("parseArgs", () => {
       full: true,
       provider: "mock",
       artistId: "artist-1",
+      spotifyConfirmBatch: false,
+      spotifyMode: "reconciliation",
+    });
+  });
+
+  it("parses bounded Spotify batch controls", () => {
+    expect(
+      parseArgs([
+        "--provider",
+        "spotify",
+        "--spotify-mode",
+        "initial",
+        "--spotify-batch",
+        "batch-1",
+        "--confirm-spotify-batch",
+        "--spotify-max-pages",
+        "1",
+      ]),
+    ).toMatchObject({
+      provider: "spotify",
+      spotifyBatchId: "batch-1",
+      spotifyConfirmBatch: true,
+      spotifyMaxPages: 1,
+      spotifyMode: "initial",
     });
   });
 

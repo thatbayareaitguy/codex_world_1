@@ -70,6 +70,9 @@ const trackSummarySchema = z
     uri: z.string().startsWith("spotify:track:"),
   })
   .passthrough();
+const albumTracksPageSchema = pagingBaseSchema.extend({
+  items: z.array(trackSummarySchema),
+});
 const albumSchema = albumSummarySchema
   .extend({
     external_ids: z
@@ -80,6 +83,7 @@ const albumSchema = albumSummarySchema
       })
       .passthrough()
       .optional(),
+    tracks: albumTracksPageSchema,
   })
   .passthrough();
 const trackSchema = trackSummarySchema
@@ -133,9 +137,7 @@ export const spotifyFollowedArtistsSchema = z.object({
 export const spotifyArtistAlbumsSchema = pagingBaseSchema.extend({
   items: z.array(albumSummarySchema),
 });
-export const spotifyAlbumTracksSchema = pagingBaseSchema.extend({
-  items: z.array(trackSummarySchema),
-});
+export const spotifyAlbumTracksSchema = albumTracksPageSchema;
 export const spotifySearchArtistsSchema = z.object({
   artists: pagingBaseSchema.extend({ items: z.array(artistSchema) }),
 });
@@ -181,7 +183,9 @@ export class SpotifyHttpError extends Error {
   constructor(
     message: string,
     readonly status: number,
-    readonly retryAfterMs?: number,
+    readonly retryAfter?: SpotifyRetryAfterEvidence,
+    readonly endpointCategory?: string,
+    readonly responseClassification?: string,
   ) {
     super(message);
     this.name = "SpotifyHttpError";
@@ -190,8 +194,52 @@ export class SpotifyHttpError extends Error {
 
 export interface SpotifyRequestMetrics {
   failures: number;
+  queueWaitMs: number;
   rateLimitWaitMs: number;
   requests: number;
+}
+
+export interface SpotifyRequestTelemetry extends SpotifyRequestMetrics {
+  endpointCategory?: string;
+  phase: "queued" | "request" | "rate_limit_wait";
+  queueLength?: number;
+  retryAfterMs?: number;
+}
+
+export interface SpotifyRequestPermit {
+  eventId: string;
+  leaseToken: string;
+  queueLength: number;
+  queueWaitMs: number;
+  startedAt: Date;
+}
+
+export interface SpotifyRequestCompletion {
+  cooldownIndefinite?: boolean;
+  cooldownUntil?: Date;
+  errorClassification?: string;
+  parsedRetryAfterSeconds?: string;
+  rawRetryAfter?: string;
+  responseClassification?: string;
+  status?: number;
+}
+
+export interface SpotifyRequestGate {
+  acquire(input: {
+    endpointCategory: string;
+    method: string;
+    signal?: AbortSignal;
+  }): Promise<SpotifyRequestPermit>;
+  complete(permit: SpotifyRequestPermit, result: SpotifyRequestCompletion): Promise<void>;
+}
+
+export interface SpotifyRetryAfterEvidence {
+  cooldownIndefinite: boolean;
+  cooldownUntil?: Date;
+  interpretation: "integer_seconds" | "missing" | "malformed" | "http_date" | "overflow";
+  parsedSeconds?: string;
+  rawValue: string | null;
+  waitMs?: number;
 }
 
 interface SpotifyClientOptions {
@@ -199,8 +247,10 @@ interface SpotifyClientOptions {
   apiBaseUrl?: string;
   fetcher?: typeof fetch;
   onUnauthorized?: () => Promise<void>;
+  onTelemetry?: (telemetry: SpotifyRequestTelemetry) => Promise<void>;
   playlistWritePolicy?: SpotifyPlaylistWritePolicy;
   random?: () => number;
+  requestGate?: SpotifyRequestGate;
   sleep?: (milliseconds: number) => Promise<void>;
   timeoutMs?: number;
 }
@@ -212,14 +262,21 @@ interface RequestOptions {
 }
 
 export class SpotifyClient {
-  readonly metrics: SpotifyRequestMetrics = { failures: 0, rateLimitWaitMs: 0, requests: 0 };
+  readonly metrics: SpotifyRequestMetrics = {
+    failures: 0,
+    queueWaitMs: 0,
+    rateLimitWaitMs: 0,
+    requests: 0,
+  };
   private readonly accessToken: () => Promise<string>;
   private readonly apiBaseUrl: string;
   private readonly fetcher: typeof fetch;
   private readonly onUnauthorized: (() => Promise<void>) | undefined;
+  private readonly onTelemetry: ((telemetry: SpotifyRequestTelemetry) => Promise<void>) | undefined;
   private readonly playlistWritePolicy: SpotifyPlaylistWritePolicy;
   private readonly random: () => number;
-  private readonly sleep: (milliseconds: number) => Promise<void>;
+  private readonly requestGate: SpotifyRequestGate | undefined;
+  private readonly sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   private readonly timeoutMs: number;
 
   constructor(options: SpotifyClientOptions) {
@@ -227,11 +284,13 @@ export class SpotifyClient {
     this.apiBaseUrl = options.apiBaseUrl ?? "https://api.spotify.com/v1";
     this.fetcher = options.fetcher ?? fetch;
     this.onUnauthorized = options.onUnauthorized;
+    this.onTelemetry = options.onTelemetry;
     this.playlistWritePolicy = options.playlistWritePolicy ?? { enabled: false };
     this.random = options.random ?? Math.random;
-    this.sleep =
-      options.sleep ??
-      ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+    this.requestGate = options.requestGate;
+    this.sleep = options.sleep
+      ? (milliseconds, signal) => abortableSleep(options.sleep!, milliseconds, signal)
+      : cancellableSleep;
     this.timeoutMs = options.timeoutMs ?? 15_000;
   }
 
@@ -259,10 +318,24 @@ export class SpotifyClient {
     return this.request(`/artists/${encodeURIComponent(id)}`, artistSchema, { signal });
   }
 
-  async getArtistAlbums(id: string, signal?: AbortSignal): Promise<SpotifyAlbumSummary[]> {
+  async getArtistAlbums(
+    id: string,
+    signal?: AbortSignal,
+    maxPages = Number.POSITIVE_INFINITY,
+  ): Promise<SpotifyAlbumSummary[]> {
+    return (await this.getArtistAlbumsBounded(id, maxPages, signal)).items;
+  }
+
+  async getArtistAlbumsBounded(
+    id: string,
+    maxPages: number,
+    signal?: AbortSignal,
+  ): Promise<{ items: SpotifyAlbumSummary[]; pagesScanned: number; partial: boolean }> {
     const results: SpotifyAlbumSummary[] = [];
     let offset = 0;
-    while (true) {
+    let pages = 0;
+    let hasNext = false;
+    while (pages < maxPages) {
       const query = new URLSearchParams({
         include_groups: "album,single,appears_on,compilation",
         limit: "10",
@@ -273,20 +346,26 @@ export class SpotifyClient {
         spotifyArtistAlbumsSchema,
         { signal },
       );
+      pages += 1;
       results.push(...page.items);
-      if (!page.next || page.items.length === 0) break;
+      hasNext = Boolean(page.next);
+      if (!hasNext || page.items.length === 0) break;
       offset += page.items.length;
     }
-    return results;
+    return { items: results, pagesScanned: pages, partial: hasNext && pages >= maxPages };
   }
 
   getAlbum(id: string, signal?: AbortSignal): Promise<SpotifyAlbum> {
     return this.request(`/albums/${encodeURIComponent(id)}`, albumSchema, { signal });
   }
 
-  async getAlbumTracks(id: string, signal?: AbortSignal): Promise<SpotifyTrackSummary[]> {
+  async getAlbumTracks(
+    id: string,
+    signal?: AbortSignal,
+    startOffset = 0,
+  ): Promise<SpotifyTrackSummary[]> {
     const results: SpotifyTrackSummary[] = [];
-    let offset = 0;
+    let offset = startOffset;
     while (true) {
       const page = await this.request(
         `/albums/${encodeURIComponent(id)}/tracks?limit=50&offset=${offset}`,
@@ -385,8 +464,26 @@ export class SpotifyClient {
   ): Promise<T> {
     let refreshed = false;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const method = options.method ?? "GET";
+      const endpointCategory = spotifyEndpointCategory(path, method);
+      let permit: SpotifyRequestPermit | undefined;
+      let permitCompleted = false;
       try {
+        if (this.requestGate) {
+          await this.emitTelemetry({ endpointCategory, phase: "queued" });
+          permit = await this.requestGate.acquire({
+            endpointCategory,
+            method,
+            ...(options.signal ? { signal: options.signal } : {}),
+          });
+          this.metrics.queueWaitMs += permit.queueWaitMs;
+        }
         this.metrics.requests += 1;
+        await this.emitTelemetry({
+          endpointCategory,
+          phase: "request",
+          ...(permit ? { queueLength: permit.queueLength } : {}),
+        });
         const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
         const signal = options.signal
           ? AbortSignal.any([options.signal, timeoutSignal])
@@ -398,9 +495,39 @@ export class SpotifyClient {
             Authorization: `Bearer ${await this.accessToken()}`,
             ...(options.body ? { "Content-Type": "application/json" } : {}),
           },
-          method: options.method ?? "GET",
+          method,
           signal,
         });
+
+        const responseClassification = response.ok
+          ? undefined
+          : classifySpotifyErrorBody(await response.clone().text());
+        const retryEvidence =
+          response.status === 429
+            ? parseSpotifyRetryAfter(response.headers.get("retry-after"), new Date())
+            : undefined;
+        if (permit && this.requestGate) {
+          await this.requestGate.complete(permit, {
+            status: response.status,
+            ...(responseClassification ? { responseClassification } : {}),
+            ...(retryEvidence
+              ? {
+                  cooldownIndefinite: retryEvidence.cooldownIndefinite,
+                  ...(retryEvidence.cooldownUntil
+                    ? { cooldownUntil: retryEvidence.cooldownUntil }
+                    : {}),
+                  ...(retryEvidence.parsedSeconds
+                    ? { parsedRetryAfterSeconds: retryEvidence.parsedSeconds }
+                    : {}),
+                  ...(retryEvidence.rawValue !== null
+                    ? { rawRetryAfter: retryEvidence.rawValue }
+                    : {}),
+                  errorClassification: `rate_limited_${retryEvidence.interpretation}`,
+                }
+              : {}),
+          });
+          permitCompleted = true;
+        }
 
         if (response.status === 401 && this.onUnauthorized && !refreshed) {
           refreshed = true;
@@ -409,33 +536,55 @@ export class SpotifyClient {
           continue;
         }
         if (!response.ok) {
-          const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
           throw new SpotifyHttpError(
             `Spotify request failed with status ${response.status}`,
             response.status,
-            retryAfterMs,
+            retryEvidence,
+            endpointCategory,
+            responseClassification,
           );
         }
         return schema.parse(await response.json());
       } catch (error) {
+        if (permit && !permitCompleted) {
+          await this.requestGate?.complete(permit, {
+            errorClassification:
+              error instanceof Error && error.name === "AbortError"
+                ? "request_aborted"
+                : "request_failed",
+          });
+        }
         const retryable =
-          (error instanceof SpotifyHttpError && (error.status === 429 || error.status >= 500)) ||
+          (error instanceof SpotifyHttpError && error.status >= 500) ||
           (!(error instanceof SpotifyHttpError) && !(error instanceof z.ZodError));
         if (!retryable || attempt >= 3) {
           this.metrics.failures += 1;
           throw error;
         }
-        const delay =
-          error instanceof SpotifyHttpError && error.retryAfterMs !== undefined
-            ? error.retryAfterMs
-            : Math.floor(250 * 2 ** (attempt - 1) * (0.5 + this.random() * 0.5));
-        if (error instanceof SpotifyHttpError && error.status === 429) {
-          this.metrics.rateLimitWaitMs += delay;
-        }
-        await this.sleep(delay);
+        const delay = Math.floor(250 * 2 ** (attempt - 1) * (0.5 + this.random() * 0.5));
+        await this.sleep(delay, options.signal);
       }
     }
     throw new Error("Spotify retry loop exhausted");
+  }
+
+  private emitTelemetry(
+    event: Pick<
+      SpotifyRequestTelemetry,
+      "endpointCategory" | "phase" | "queueLength" | "retryAfterMs"
+    >,
+  ): Promise<void> {
+    if (!this.onTelemetry) return Promise.resolve();
+    return this.onTelemetry({
+      failures: this.metrics.failures,
+      phase: event.phase,
+      queueWaitMs: this.metrics.queueWaitMs,
+      rateLimitWaitMs: this.metrics.rateLimitWaitMs,
+      requests: this.metrics.requests,
+      ...(event.endpointCategory ? { endpointCategory: event.endpointCategory } : {}),
+      ...(event.queueLength === undefined ? {} : { queueLength: event.queueLength }),
+      ...(event.retryAfterMs === undefined ? {} : { retryAfterMs: event.retryAfterMs }),
+    });
   }
 }
 
@@ -446,6 +595,7 @@ interface SpotifyOAuthClientOptions {
   fetcher?: typeof fetch;
   playlistWritesEnabled?: boolean;
   redirectUri: string;
+  requestGate?: SpotifyRequestGate;
 }
 
 export class SpotifyOAuthClient {
@@ -455,6 +605,7 @@ export class SpotifyOAuthClient {
   private readonly fetcher: typeof fetch;
   private readonly playlistWritesEnabled: boolean;
   private readonly redirectUri: string;
+  private readonly requestGate: SpotifyRequestGate | undefined;
 
   constructor(options: SpotifyOAuthClientOptions) {
     this.accountsBaseUrl = options.accountsBaseUrl ?? "https://accounts.spotify.com";
@@ -463,6 +614,7 @@ export class SpotifyOAuthClient {
     this.fetcher = options.fetcher ?? fetch;
     this.playlistWritesEnabled = options.playlistWritesEnabled ?? false;
     this.redirectUri = options.redirectUri;
+    this.requestGate = options.requestGate;
   }
 
   authorizationUrl(state: string, codeChallenge: string): string {
@@ -497,27 +649,192 @@ export class SpotifyOAuthClient {
   }
 
   private async tokenRequest(body: URLSearchParams): Promise<SpotifyTokenResponse> {
-    const response = await this.fetcher(`${this.accountsBaseUrl}/api/token`, {
-      body,
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${this.clientId}:${this.clientSecret}`).toString("base64")}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
+    const permit = await this.requestGate?.acquire({
+      endpointCategory: "oauth_token",
       method: "POST",
-      signal: AbortSignal.timeout(15_000),
     });
-    if (!response.ok) {
-      throw new SpotifyHttpError(
-        `Spotify token request failed with status ${response.status}`,
-        response.status,
-      );
+    let completed = false;
+    try {
+      const response = await this.fetcher(`${this.accountsBaseUrl}/api/token`, {
+        body,
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${this.clientId}:${this.clientSecret}`).toString("base64")}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        method: "POST",
+        signal: AbortSignal.timeout(15_000),
+      });
+      const responseClassification = response.ok
+        ? undefined
+        : classifySpotifyErrorBody(await response.clone().text());
+      const retryEvidence =
+        response.status === 429
+          ? parseSpotifyRetryAfter(response.headers.get("retry-after"), new Date())
+          : undefined;
+      if (permit && this.requestGate) {
+        await this.requestGate.complete(permit, {
+          status: response.status,
+          ...(responseClassification ? { responseClassification } : {}),
+          ...(retryEvidence
+            ? {
+                cooldownIndefinite: retryEvidence.cooldownIndefinite,
+                ...(retryEvidence.cooldownUntil
+                  ? { cooldownUntil: retryEvidence.cooldownUntil }
+                  : {}),
+                ...(retryEvidence.parsedSeconds
+                  ? { parsedRetryAfterSeconds: retryEvidence.parsedSeconds }
+                  : {}),
+                ...(retryEvidence.rawValue !== null
+                  ? { rawRetryAfter: retryEvidence.rawValue }
+                  : {}),
+                errorClassification: `rate_limited_${retryEvidence.interpretation}`,
+              }
+            : {}),
+        });
+        completed = true;
+      }
+      if (!response.ok) {
+        throw new SpotifyHttpError(
+          `Spotify token request failed with status ${response.status}`,
+          response.status,
+          retryEvidence,
+          "oauth_token",
+          responseClassification,
+        );
+      }
+      return spotifyTokenSchema.parse(await response.json());
+    } catch (error) {
+      if (permit && this.requestGate && !completed) {
+        await this.requestGate.complete(permit, { errorClassification: "oauth_request_failed" });
+      }
+      throw error;
     }
-    return spotifyTokenSchema.parse(await response.json());
   }
 }
 
-function parseRetryAfter(value: string | null): number | undefined {
-  if (!value) return undefined;
-  const seconds = Number(value);
-  return Number.isFinite(seconds) && seconds >= 0 ? Math.ceil(seconds * 1_000) : undefined;
+const spotifyRetryAfterFallbackMs = 60_000;
+const spotifyRetryAfterMaximumSeconds = 31_536_000n;
+
+export function parseSpotifyRetryAfter(
+  value: string | null,
+  observedAt = new Date(),
+): SpotifyRetryAfterEvidence {
+  if (value === null || value.length === 0) {
+    return {
+      cooldownIndefinite: false,
+      cooldownUntil: new Date(observedAt.getTime() + spotifyRetryAfterFallbackMs),
+      interpretation: "missing",
+      rawValue: value,
+      waitMs: spotifyRetryAfterFallbackMs,
+    };
+  }
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    const interpretation = Number.isNaN(Date.parse(trimmed)) ? "malformed" : "http_date";
+    return {
+      cooldownIndefinite: false,
+      cooldownUntil: new Date(observedAt.getTime() + spotifyRetryAfterFallbackMs),
+      interpretation,
+      rawValue: value,
+      waitMs: spotifyRetryAfterFallbackMs,
+    };
+  }
+  const seconds = BigInt(trimmed);
+  if (seconds > spotifyRetryAfterMaximumSeconds) {
+    return {
+      cooldownIndefinite: true,
+      interpretation: "overflow",
+      parsedSeconds: seconds.toString(),
+      rawValue: value,
+    };
+  }
+  const waitMs = Number(seconds) * 1_000;
+  const cooldownUntilMs = observedAt.getTime() + waitMs;
+  if (!Number.isSafeInteger(cooldownUntilMs) || cooldownUntilMs > 8_640_000_000_000_000) {
+    return {
+      cooldownIndefinite: true,
+      interpretation: "overflow",
+      parsedSeconds: seconds.toString(),
+      rawValue: value,
+    };
+  }
+  return {
+    cooldownIndefinite: false,
+    cooldownUntil: new Date(cooldownUntilMs),
+    interpretation: "integer_seconds",
+    parsedSeconds: seconds.toString(),
+    rawValue: value,
+    waitMs,
+  };
+}
+
+export function spotifyEndpointCategory(path: string, method = "GET"): string {
+  if (/^\/artists\/[^/]+\/albums(?:\?|$)/.test(path)) return "artist_albums";
+  if (/^\/artists\/[^/]+$/.test(path)) return "artist";
+  if (/^\/albums\/[^/]+\/tracks(?:\?|$)/.test(path)) return "album_tracks";
+  if (/^\/albums\/[^/]+$/.test(path)) return "album";
+  if (/^\/tracks\/[^/]+$/.test(path)) return "track";
+  if (path.startsWith("/me/following")) return "followed_artists";
+  if (path.startsWith("/me/playlists")) return "user_playlists";
+  if (/^\/playlists\/[^/]+\/items/.test(path)) {
+    return method === "POST" ? "playlist_add_items" : "playlist_items";
+  }
+  if (/^\/playlists\/[^/]+$/.test(path)) return "playlist";
+  if (path.startsWith("/search")) return "artist_search";
+  if (path === "/me") return "current_user";
+  return "other";
+}
+
+function classifySpotifyErrorBody(body: string): string {
+  if (body.trim().length === 0) return "empty";
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (parsed && typeof parsed === "object" && "error" in parsed) return "json_error";
+    return "json_other";
+  } catch {
+    return "non_json";
+  }
+}
+
+async function abortableSleep(
+  sleep: (milliseconds: number) => Promise<void>,
+  milliseconds: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!signal) return sleep(milliseconds);
+  if (signal.aborted) throw signal.reason;
+  let rejectAbort: ((reason?: unknown) => void) | undefined;
+  const onAbort = () => rejectAbort?.(signal.reason);
+  const aborted = new Promise<never>((_, reject) => {
+    rejectAbort = reject;
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    await Promise.race([sleep(milliseconds), aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
+function cancellableSleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(abortReason(signal));
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal ? abortReason(signal) : new Error("Operation aborted"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    if (!signal) return;
+    signal.addEventListener("abort", onAbort, { once: true });
+    void Promise.resolve().then(() => {
+      if (signal.aborted) onAbort();
+    });
+  });
+}
+
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new Error("Operation aborted");
 }

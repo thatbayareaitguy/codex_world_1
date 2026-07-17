@@ -16,6 +16,9 @@
 - Any future Spotify write must be an addition to the single valid `SPOTIFY_ALLOWED_PLAYLIST_ID`, pass route-level and provider-client enabled, target, ownership, private, and non-collaborative checks, and use only exact or manually confirmed tracks.
 - Never expose Spotify playlist creation, selection, rename, visibility changes, artwork upload, follow, unfollow, remove, replace, or reorder operations.
 - Real provider tests must use synthetic fixtures and injected HTTP mocks. Normal verification must never call live providers.
+- Every Spotify Web API and token request must use the shared PostgreSQL-backed client-ID gate. Keep concurrency at one and the request-start interval at or above five seconds unless a later explicitly verified milestone changes the policy.
+- Never bypass, probe during, or erase a valid Spotify provider cooldown. Persist safe 429 evidence without tokens, provider payloads, or artist-specific URLs.
+- Spotify artist scans must remain bounded, persisted per artist, resumable, and partial when a page limit is reached. The first full staged batch requires explicit confirmation and must never launch the whole watchlist at once.
 - Operational commands must remain Windows-compatible, loopback-only, secret-safe, and must not modify `.env`.
 - Database restore must require explicit replacement confirmation. Backups belong outside source control and must use PostgreSQL-supported custom-format dumps.
 - Database integration tests must provision the test PostgreSQL service or fail clearly. Never report a skipped database suite as passing.
@@ -24,3 +27,8 @@
 - Every visible interactive control must have a handler or destination, keyboard focus, accessible name, validation state, and critical Playwright coverage.
 - Keep TypeScript strict and avoid `any`. Run formatting, lint, type checking, unit tests, integration tests, build, and Playwright before handoff.
 - Update `docs/provider-capabilities.md` with official links and a new verification date before any real adapter work.
+- All MusicBrainz HTTP paths, including mapping previews and scanner discovery, must use the database-backed global request gate with at least 1000 ms between request starts.
+- MusicBrainz scans must persist release-group, primary-release, and track-appearance stages incrementally. Cancellation preserves completed stages and uses `CANCELLED`, not `FAILED`.
+- Never use a raw Spotify response to build a MusicBrainz request. MusicBrainz discovery starts only from a confirmed canonical artist mapping.
+- A MusicBrainz release-group ID alone is not sufficient to merge tracks. Require the same disc, track position, and normalized title unless the recording ID is exact.
+- After every substantial task, update `docs/AI_HANDOFF.md` from current repository and database evidence. Keep it concise and exclude credentials, tokens, personal provider data, authorization headers, and raw API payloads.

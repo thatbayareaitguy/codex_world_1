@@ -11,8 +11,10 @@ test("runs a mock scan, opens evidence, changes status, and filters the feed", a
   await expect(scanButton).toBeVisible();
   await scanButton.click();
   await expect(scanButton).toBeDisabled();
+  await expect(page.getByRole("progressbar", { name: "Release update progress" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Signal Fires" })).toBeVisible();
   await expect(page.getByRole("article")).toHaveCount(5);
+  await expect(page.getByRole("progressbar", { name: "Release update progress" })).toHaveCount(0);
   await expect(page.getByRole("status")).toContainText("Signal Fires was added");
 
   const signalFires = page.getByRole("article").filter({
@@ -38,7 +40,11 @@ test("runs a mock scan, opens evidence, changes status, and filters the feed", a
   await page.getByLabel("Exact matches only").check();
   await expect(page.getByRole("heading", { name: "Static Bloom" })).toHaveCount(0);
   await page.getByLabel("Exact matches only").uncheck();
-  await page.getByLabel("Spotify").selectOption("unavailable");
+  await page.getByLabel("Spotify availability").selectOption("unavailable");
+  await expect(page.getByRole("heading", { name: "Glass Horizon" })).toHaveCount(0);
+  await page.getByLabel("Spotify availability").selectOption("all");
+  await page.getByLabel("Evidence source").selectOption("musicbrainz");
+  await expect(page.getByRole("heading", { name: "Afterimage" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Glass Horizon" })).toHaveCount(0);
 
   await page.getByRole("searchbox", { name: "Search discoveries" }).fill("No such release");
@@ -215,6 +221,180 @@ test("shows a confirmed Spotify import from the persisted watchlist response", a
   await expect(page.getByRole("status")).toContainText("Spotify import persisted 1 active artists");
 });
 
+test("persists and displays a confirmed MusicBrainz mapping before replacement", async ({
+  page,
+}) => {
+  const importRunId = "00000000-0000-4000-8000-000000000111";
+  const candidateId = "00000000-0000-4000-8000-000000000112";
+  const artistId = "00000000-0000-4000-8000-000000000113";
+  const firstMbid = "00000000-0000-4000-8000-000000000114";
+  const replacementMbid = "00000000-0000-4000-8000-000000000115";
+  const firstReviewId = "00000000-0000-4000-8000-000000000116";
+  const replacementReviewId = "00000000-0000-4000-8000-000000000117";
+  let confirmedMbid: string | null = null;
+  let previewRequests = 0;
+  const reviews = [
+    { id: firstReviewId, proposedExternalId: firstMbid, status: "pending" },
+    { id: replacementReviewId, proposedExternalId: replacementMbid, status: "pending" },
+  ];
+
+  await page.route("**/api/spotify/status", async (route) => {
+    await route.fulfill({
+      json: {
+        displayName: "Synthetic Spotify account",
+        scopes: ["user-follow-read", "playlist-read-private"],
+        state: "connected",
+      },
+    });
+  });
+  await page.route("**/api/spotify/import/preview", async (route) => {
+    await route.fulfill({
+      json: {
+        candidates: [
+          {
+            id: candidateId,
+            proposedAction: "create",
+            providerName: "Regression Artist",
+            providerUrl: "https://open.spotify.com/artist/synthetic-regression-artist",
+            selected: true,
+          },
+        ],
+        importRunId,
+        retrieved: 1,
+      },
+    });
+  });
+  await page.route("**/api/spotify/import/confirm", async (route) => {
+    await route.fulfill({
+      json: {
+        alreadyPresent: 0,
+        created: 1,
+        failed: 0,
+        merged: 0,
+        needsReview: 0,
+        persisted: 1,
+        retrieved: 1,
+        selected: 1,
+        skipped: 0,
+      },
+    });
+  });
+  await page.route("**/api/artists", async (route) => {
+    await route.fulfill({
+      json: {
+        activeCount: 1,
+        artists: [
+          {
+            active: true,
+            addedAt: "2026-07-17T12:00:00.000Z",
+            id: artistId,
+            name: "Regression Artist",
+            providers: confirmedMbid ? ["spotify", "musicbrainz"] : ["spotify"],
+            source: "spotify_import",
+          },
+        ],
+      },
+    });
+  });
+  await page.route("**/api/musicbrainz/mappings?*", async (route) => {
+    await route.fulfill({
+      json: {
+        mappings: confirmedMbid
+          ? [
+              {
+                artistId,
+                artistName: "Regression Artist",
+                confidence: "0.990",
+                externalId: confirmedMbid,
+                reasons: ["Synthetic exact mapping", "DnB"],
+                url: `https://musicbrainz.org/artist/${confirmedMbid}`,
+              },
+            ]
+          : [],
+        reviews,
+      },
+    });
+  });
+  await page.route("**/api/musicbrainz/mappings/preview", async (route) => {
+    previewRequests += 1;
+    for (const review of reviews) {
+      review.status = review.proposedExternalId === confirmedMbid ? "confirmed" : "pending";
+    }
+    await route.fulfill({
+      json: {
+        automatic: false,
+        currentMapping: confirmedMbid,
+        results: [
+          {
+            confidence: 0.99,
+            disambiguation: "DnB",
+            id: firstMbid,
+            name: "Regression Artist",
+            reasons: ["Synthetic exact mapping", "DnB"],
+          },
+          {
+            confidence: 0.85,
+            id: replacementMbid,
+            name: "Regression Artist Two",
+            reasons: ["Synthetic replacement mapping"],
+          },
+        ],
+      },
+    });
+  });
+  await page.route("**/api/musicbrainz/mappings/decision", async (route) => {
+    const body = route.request().postDataJSON() as { reviewId: string };
+    const selected = reviews.find((review) => review.id === body.reviewId)!;
+    confirmedMbid = selected.proposedExternalId;
+    for (const review of reviews) {
+      review.status = review.id === selected.id ? "confirmed" : "rejected";
+    }
+    await route.fulfill({
+      json: {
+        artistId,
+        decision: "confirm",
+        externalId: confirmedMbid,
+        idempotent: false,
+      },
+    });
+  });
+
+  const importArtist = async () => {
+    await page.goto("/#settings");
+    await page.getByRole("button", { name: "Import followed artists" }).click();
+    await page.getByRole("button", { name: "Confirm import" }).click();
+    await expect(page).toHaveURL(/#artists$/);
+  };
+
+  await importArtist();
+  await page.getByRole("button", { name: "Map Regression Artist MusicBrainz mapping" }).click();
+  await page.getByRole("button", { name: "Confirm mapping" }).first().click();
+  const modal = page.getByRole("region", { name: "MusicBrainz mapping candidates" });
+  await expect(modal.getByText("Confirmed mapping")).toBeVisible();
+  await expect(modal).toContainText(`MBID: ${firstMbid}`);
+  await expect(modal.getByText("Regression Artist Two")).toHaveCount(0);
+  await modal.getByRole("button", { name: "Close" }).click();
+
+  await page.getByRole("button", { name: "View Regression Artist MusicBrainz mapping" }).click();
+  await expect(modal).toContainText(`MBID: ${firstMbid}`);
+  expect(previewRequests).toBe(1);
+  await modal.getByRole("button", { name: "Close" }).click();
+
+  await page.reload();
+  await importArtist();
+  await page.getByRole("button", { name: "View Regression Artist MusicBrainz mapping" }).click();
+  await expect(modal).toContainText(`MBID: ${firstMbid}`);
+  expect(previewRequests).toBe(1);
+
+  await modal.getByRole("button", { name: "Replace mapping" }).click();
+  await expect(modal.getByText("Currently confirmed")).toBeVisible();
+  await modal.getByRole("button", { name: "Confirm replacement" }).click();
+  await expect(modal).toContainText(`MBID: ${replacementMbid}`);
+  await expect(modal.getByText("Regression Artist", { exact: true })).toBeVisible();
+  await expect(modal.getByText("Regression Artist Two")).toHaveCount(0);
+  expect(previewRequests).toBe(2);
+});
+
 test("hides manual SoundCloud controls by default", async ({ page }) => {
   await page.goto("/");
   const navigation = page.getByRole("complementary", { name: "Primary navigation" });
@@ -362,4 +542,118 @@ test("changes, persists, and follows the system appearance", async ({ page }) =>
   await appearance.selectOption("light");
   await page.emulateMedia({ colorScheme: "dark" });
   await expect(documentRoot).toHaveAttribute("data-theme", "light");
+});
+
+test("controls persisted Spotify batches without bypassing cooldown state", async ({ page }) => {
+  const batchId = "11111111-1111-4111-8111-111111111111";
+  const artistScanId = "22222222-2222-4222-8222-222222222222";
+  const actions: string[] = [];
+  let batchStatus = "running";
+  let cooldownActive = false;
+  const scanPayload = () => ({
+    active:
+      batchStatus === "running"
+        ? {
+            cancelRequested: false,
+            completedUnits: 3,
+            currentProvider: "spotify",
+            currentUnit: "Synthetic Artist",
+            expiresAt: "2026-07-17T22:00:00.000Z",
+            heartbeatAt: "2026-07-17T21:00:00.000Z",
+            phase: "scanning",
+            providersCompleted: [],
+            providersFailed: [],
+            providersRequested: ["spotify"],
+            rateLimitWaitMs: 0,
+            requests: 4,
+            retryAfterMs: 0,
+            startedAt: "2026-07-17T20:00:00.000Z",
+            totalUnits: 15,
+          }
+        : null,
+    latest: null,
+    running: batchStatus === "running",
+    runs: [],
+    spotify: {
+      batch: {
+        artistScans: [
+          {
+            artistId: "33333333-3333-4333-8333-333333333333",
+            errorClassification: null,
+            id: artistScanId,
+            position: 0,
+            status: batchStatus,
+          },
+        ],
+        cancelledArtists: 0,
+        completedArtists: batchStatus === "completed" ? 15 : 3,
+        confirmationRequired: batchStatus === "paused",
+        estimatedRequests: 165,
+        failedArtists: 0,
+        id: batchId,
+        mode: "initial",
+        pageLimit: 2,
+        partialArtists: 0,
+        rateLimitedArtists: 0,
+        status: batchStatus,
+        totalArtists: 15,
+      },
+      limiter: {
+        artistsPerBatch: 15,
+        batchPauseSeconds: 60,
+        distributionHours: 24,
+        minRequestIntervalMs: 5000,
+      },
+      operational: {
+        canManualClear: false,
+        cooldownActive,
+        cooldownEndpointCategory: cooldownActive ? "artist_albums" : null,
+        cooldownErrorClassification: cooldownActive ? "rate_limited_integer_seconds" : null,
+        cooldownIndefinite: false,
+        cooldownObservedAt: cooldownActive ? "2026-07-17T21:00:00.000Z" : null,
+        cooldownUntil: cooldownActive ? "2026-07-18T07:38:31.454Z" : null,
+        lastRequestStartedAt: "2026-07-17T21:00:00.000Z",
+        nextRequestAt: null,
+        parsedRetryAfterSeconds: cooldownActive ? "47260" : null,
+        queueDepth: 0,
+        rawRetryAfter: null,
+        requestCount: 4,
+      },
+    },
+  });
+
+  await page.route("**/api/scans", async (route) => {
+    await route.fulfill({ contentType: "application/json", json: scanPayload() });
+  });
+  await page.route("**/api/spotify/scan-control", async (route) => {
+    const body = route.request().postDataJSON() as { action: string };
+    actions.push(body.action);
+    await route.fulfill({ contentType: "application/json", json: { accepted: true }, status: 202 });
+  });
+
+  await page.goto("/?e2e-scan-status=database#feed");
+  await expect(page.getByRole("region", { name: "Spotify scan status" })).toContainText(
+    "Synthetic Artist",
+  );
+  await page.getByRole("button", { name: "Pause after current request" }).click();
+  await page.getByRole("button", { name: "Cancel future work" }).click();
+  expect(actions).toEqual(["pause", "cancel"]);
+
+  batchStatus = "paused";
+  cooldownActive = true;
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Resume" })).toBeDisabled();
+  const musicBrainzOnlyUpdate = page.locator(".last-scan-metric").getByRole("button");
+  await expect(musicBrainzOnlyUpdate).toBeEnabled();
+  await expect(musicBrainzOnlyUpdate).toHaveAttribute(
+    "title",
+    "Run MusicBrainz-only update while Spotify is cooling down",
+  );
+
+  batchStatus = "completed";
+  cooldownActive = false;
+  await page.reload();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Deep reconciliation" }).click();
+  expect(actions).toContain("start_reconciliation");
 });

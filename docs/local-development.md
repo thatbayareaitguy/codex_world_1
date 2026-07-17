@@ -36,6 +36,9 @@ Use `DAILY_SCAN_TIME=HH:mm` only to display an expected next time in status. It 
 pnpm doctor
 pnpm scan -- --provider mock
 pnpm scan -- --provider spotify
+pnpm scan -- --provider spotify --artist <internal-artist-id> --dry-run --spotify-max-pages 1
+pnpm scan -- --provider spotify --spotify-mode daily
+pnpm scan -- --provider spotify --spotify-mode reconciliation --confirm-spotify-batch
 pnpm scan -- --provider musicbrainz
 pnpm scan -- --provider reddit
 pnpm scan -- --artist <internal-artist-id>
@@ -46,6 +49,8 @@ pnpm scan:unlock-stale
 ```
 
 Normal scans use one global database lock. Each provider records an independent run and failure, and a provider failure does not stop the remaining providers. Detailed errors and provider metrics expire after `SCAN_DETAIL_RETENTION_DAYS`; aggregate counts and timestamps remain.
+
+Spotify uses one database-backed queue across web and scanner processes. The default interval is five seconds with concurrency one. A provider 429 persists a client-wide cooldown across restart; do not clear or bypass a valid integer-second wait. Initial scans are limited to 15 artists per batch and begin paused for confirmation. See [Spotify Development Mode Scanning](spotify-development-mode-scanning.md).
 
 ## Tests
 

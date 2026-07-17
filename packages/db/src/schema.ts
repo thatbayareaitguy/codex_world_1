@@ -59,7 +59,50 @@ export const availabilityEnum = pgEnum("availability_state", [
   "blocked",
   "unavailable",
 ]);
-export const scanStatusEnum = pgEnum("scan_status", ["running", "completed", "partial", "failed"]);
+export const scanStatusEnum = pgEnum("scan_status", [
+  "running",
+  "completed",
+  "partial",
+  "failed",
+  "cancelled",
+  "paused",
+  "rate_limited",
+]);
+export const spotifyBatchStatusEnum = pgEnum("spotify_batch_status", [
+  "pending",
+  "running",
+  "completed",
+  "paused",
+  "cancelled",
+  "rate_limited",
+  "failed",
+]);
+export const spotifyArtistScanStatusEnum = pgEnum("spotify_artist_scan_status", [
+  "pending",
+  "running",
+  "completed",
+  "partial",
+  "paused",
+  "cancelled",
+  "rate_limited",
+  "failed",
+]);
+export const musicbrainzBatchStatusEnum = pgEnum("musicbrainz_batch_status", [
+  "pending",
+  "running",
+  "completed",
+  "paused",
+  "cancelled",
+  "failed",
+]);
+export const musicbrainzArtistScanStatusEnum = pgEnum("musicbrainz_artist_scan_status", [
+  "pending",
+  "running",
+  "completed",
+  "paused",
+  "cancelled",
+  "failed",
+]);
 export const matchStatusEnum = pgEnum("match_status", [
   "new",
   "matched",
@@ -518,6 +561,184 @@ export const scanRuns = pgTable("scan_runs", {
     .notNull()
     .default(sql`'[]'::jsonb`),
 });
+
+export const spotifyProviderState = pgTable("spotify_provider_state", {
+  id: text("id").primaryKey().default("global"),
+  cooldownUntil: timestamp("cooldown_until", { withTimezone: true }),
+  cooldownIndefinite: boolean("cooldown_indefinite").notNull().default(false),
+  cooldownObservedAt: timestamp("cooldown_observed_at", { withTimezone: true }),
+  cooldownEndpointCategory: text("cooldown_endpoint_category"),
+  cooldownStatus: integer("cooldown_status"),
+  rawRetryAfter: text("raw_retry_after"),
+  parsedRetryAfterSeconds: text("parsed_retry_after_seconds"),
+  cooldownErrorClassification: text("cooldown_error_classification"),
+  cooldownResponseClassification: text("cooldown_response_classification"),
+  nextRequestAt: timestamp("next_request_at", { withTimezone: true }),
+  lastRequestStartedAt: timestamp("last_request_started_at", { withTimezone: true }),
+  leaseOwner: text("lease_owner"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  queueDepth: integer("queue_depth").notNull().default(0),
+  requestCount: integer("request_count").notNull().default(0),
+  manualClearAt: timestamp("manual_clear_at", { withTimezone: true }),
+  manualClearReason: text("manual_clear_reason"),
+  updatedAt,
+});
+
+export const spotifyRequestEvents = pgTable(
+  "spotify_request_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    endpointCategory: text("endpoint_category").notNull(),
+    method: text("method").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    status: integer("status"),
+    queueWaitMs: integer("queue_wait_ms").notNull().default(0),
+    rawRetryAfter: text("raw_retry_after"),
+    parsedRetryAfterSeconds: text("parsed_retry_after_seconds"),
+    cooldownUntil: timestamp("cooldown_until", { withTimezone: true }),
+    errorClassification: text("error_classification"),
+    responseClassification: text("response_classification"),
+    createdAt,
+  },
+  (table) => [index("spotify_request_events_started_idx").on(table.startedAt)],
+);
+
+export const musicbrainzProviderState = pgTable("musicbrainz_provider_state", {
+  id: text("id").primaryKey().default("global"),
+  nextRequestAt: timestamp("next_request_at", { withTimezone: true }),
+  lastRequestStartedAt: timestamp("last_request_started_at", { withTimezone: true }),
+  leaseOwner: text("lease_owner"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  queueDepth: integer("queue_depth").notNull().default(0),
+  requestCount: integer("request_count").notNull().default(0),
+  updatedAt,
+});
+
+export const musicbrainzRequestEvents = pgTable(
+  "musicbrainz_request_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    endpointCategory: text("endpoint_category").notNull(),
+    method: text("method").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    status: integer("status"),
+    queueWaitMs: integer("queue_wait_ms").notNull().default(0),
+    retryAttempt: integer("retry_attempt").notNull().default(1),
+    errorClassification: text("error_classification"),
+    createdAt,
+  },
+  (table) => [index("musicbrainz_request_events_started_idx").on(table.startedAt)],
+);
+
+export const musicbrainzScanBatches = pgTable(
+  "musicbrainz_scan_batches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    scanRunId: uuid("scan_run_id").references(() => scanRuns.id, { onDelete: "set null" }),
+    status: musicbrainzBatchStatusEnum("status").notNull().default("pending"),
+    totalArtists: integer("total_artists").notNull(),
+    completedArtists: integer("completed_artists").notNull().default(0),
+    failedArtists: integer("failed_artists").notNull().default(0),
+    cancelledArtists: integer("cancelled_artists").notNull().default(0),
+    pauseRequested: boolean("pause_requested").notNull().default(false),
+    cancelRequested: boolean("cancel_requested").notNull().default(false),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [index("musicbrainz_scan_batches_status_idx").on(table.status, table.createdAt)],
+);
+
+export const musicbrainzArtistScans = pgTable(
+  "musicbrainz_artist_scans",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    batchId: uuid("batch_id")
+      .notNull()
+      .references(() => musicbrainzScanBatches.id, { onDelete: "cascade" }),
+    artistId: uuid("artist_id")
+      .notNull()
+      .references(() => artists.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    status: musicbrainzArtistScanStatusEnum("status").notNull().default("pending"),
+    stage: text("stage").notNull().default("pending"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    requestCount: integer("request_count").notNull().default(0),
+    candidateCount: integer("candidate_count").notNull().default(0),
+    releaseGroupCount: integer("release_group_count").notNull().default(0),
+    releaseCount: integer("release_count").notNull().default(0),
+    errorClassification: text("error_classification"),
+    lastPersistedAt: timestamp("last_persisted_at", { withTimezone: true }),
+    lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("musicbrainz_artist_scans_batch_artist_unique").on(table.batchId, table.artistId),
+    uniqueIndex("musicbrainz_artist_scans_batch_position_unique").on(table.batchId, table.position),
+    index("musicbrainz_artist_scans_status_idx").on(table.status, table.updatedAt),
+  ],
+);
+
+export const spotifyScanBatches = pgTable(
+  "spotify_scan_batches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    scanRunId: uuid("scan_run_id").references(() => scanRuns.id, { onDelete: "set null" }),
+    mode: text("mode").notNull(),
+    status: spotifyBatchStatusEnum("status").notNull().default("pending"),
+    pageLimit: integer("page_limit").notNull(),
+    totalArtists: integer("total_artists").notNull(),
+    completedArtists: integer("completed_artists").notNull().default(0),
+    failedArtists: integer("failed_artists").notNull().default(0),
+    partialArtists: integer("partial_artists").notNull().default(0),
+    cancelledArtists: integer("cancelled_artists").notNull().default(0),
+    rateLimitedArtists: integer("rate_limited_artists").notNull().default(0),
+    estimatedRequests: integer("estimated_requests").notNull().default(0),
+    pauseRequested: boolean("pause_requested").notNull().default(false),
+    cancelRequested: boolean("cancel_requested").notNull().default(false),
+    confirmationRequired: boolean("confirmation_required").notNull().default(false),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [index("spotify_scan_batches_status_idx").on(table.status, table.createdAt)],
+);
+
+export const spotifyArtistScans = pgTable(
+  "spotify_artist_scans",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    batchId: uuid("batch_id")
+      .notNull()
+      .references(() => spotifyScanBatches.id, { onDelete: "cascade" }),
+    artistId: uuid("artist_id")
+      .notNull()
+      .references(() => artists.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    status: spotifyArtistScanStatusEnum("status").notNull().default("pending"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    requestCount: integer("request_count").notNull().default(0),
+    candidateCount: integer("candidate_count").notNull().default(0),
+    pagesScanned: integer("pages_scanned").notNull().default(0),
+    errorClassification: text("error_classification"),
+    retryEligibleAt: timestamp("retry_eligible_at", { withTimezone: true }),
+    lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("spotify_artist_scans_batch_artist_unique").on(table.batchId, table.artistId),
+    uniqueIndex("spotify_artist_scans_batch_position_unique").on(table.batchId, table.position),
+    index("spotify_artist_scans_status_idx").on(table.status, table.updatedAt),
+  ],
+);
 
 export const operationLocks = pgTable(
   "operation_locks",

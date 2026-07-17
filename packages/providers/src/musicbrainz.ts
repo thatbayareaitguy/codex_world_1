@@ -72,9 +72,13 @@ export const musicbrainzArtistSearchSchema = z.object({
     z
       .object({
         aliases: z
-          .array(z.object({ name: z.string(), primary: z.boolean().optional() }).passthrough())
+          .array(
+            z
+              .object({ name: z.string(), primary: z.boolean().nullable().optional() })
+              .passthrough(),
+          )
           .default([]),
-        country: z.string().optional(),
+        country: z.string().nullable().optional(),
         disambiguation: z.string().optional(),
         id: mbid,
         "life-span": z
@@ -121,6 +125,29 @@ export class MusicBrainzHttpError extends Error {
   }
 }
 
+export interface MusicBrainzRequestPermit {
+  eventId: string;
+  leaseToken: string;
+  queueLength: number;
+  queueWaitMs: number;
+  startedAt: Date;
+}
+
+export interface MusicBrainzRequestCompletion {
+  errorClassification?: string;
+  status?: number;
+}
+
+export interface MusicBrainzRequestGate {
+  acquire(input: {
+    endpointCategory: string;
+    method: "GET";
+    retryAttempt: number;
+    signal?: AbortSignal;
+  }): Promise<MusicBrainzRequestPermit>;
+  complete(permit: MusicBrainzRequestPermit, result: MusicBrainzRequestCompletion): Promise<void>;
+}
+
 export class MusicBrainzRateGate {
   private queue = Promise.resolve();
   private nextRequestAt = 0;
@@ -154,16 +181,18 @@ interface MusicBrainzClientOptions {
   contactEmail: string;
   fetcher?: typeof fetch;
   gate?: MusicBrainzRateGate;
+  requestGate?: MusicBrainzRequestGate;
   packageVersion?: string;
   sleep?: (milliseconds: number) => Promise<void>;
 }
 
 export class MusicBrainzClient {
-  readonly metrics = { failures: 0, requests: 0, throttleWaits: 0 };
+  readonly metrics = { failures: 0, requests: 0, throttleWaits: 0, waitMs: 0 };
   private readonly baseUrl: string;
   private readonly cache = new Map<string, unknown>();
   private readonly fetcher: typeof fetch;
   private readonly gate: MusicBrainzRateGate;
+  private readonly requestGate: MusicBrainzRequestGate | undefined;
   private readonly sleep: (milliseconds: number) => Promise<void>;
   private readonly userAgent: string;
 
@@ -171,10 +200,11 @@ export class MusicBrainzClient {
     this.baseUrl = options.baseUrl ?? "https://musicbrainz.org/ws/2";
     this.fetcher = options.fetcher ?? fetch;
     this.gate = options.gate ?? sharedMusicBrainzGate;
+    this.requestGate = options.requestGate;
     this.sleep =
       options.sleep ??
       ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
-    this.userAgent = `ReleaseInbox/${options.packageVersion ?? "0.1.0"} (${options.contactEmail})`;
+    this.userAgent = `TSNewMusicRadar/${options.packageVersion ?? "0.1.0"} (${options.contactEmail})`;
   }
 
   searchArtists(
@@ -256,8 +286,18 @@ export class MusicBrainzClient {
     if (cached !== undefined) return cached as T;
 
     for (let attempt = 1; attempt <= 3; attempt += 1) {
+      let permit: MusicBrainzRequestPermit | undefined;
       try {
-        const result = await this.gate.schedule(async () => {
+        permit = this.requestGate
+          ? await this.requestGate.acquire({
+              endpointCategory: musicBrainzEndpointCategory(path),
+              method: "GET",
+              retryAttempt: attempt,
+              ...(signal ? { signal } : {}),
+            })
+          : undefined;
+        if (permit) this.metrics.waitMs += permit.queueWaitMs;
+        const execute = async () => {
           this.metrics.requests += 1;
           const response = await this.fetcher(`${this.baseUrl}${path}`, {
             headers: { Accept: "application/json", "User-Agent": this.userAgent },
@@ -271,11 +311,28 @@ export class MusicBrainzClient {
               response.status,
             );
           }
-          return schema.parse(await response.json());
-        });
+          const parsed = schema.parse(await response.json());
+          await this.requestGate?.complete(permit!, { status: response.status });
+          permit = undefined;
+          return parsed;
+        };
+        const result = this.requestGate ? await execute() : await this.gate.schedule(execute);
         this.cache.set(path, result);
         return result;
       } catch (error) {
+        if (permit) {
+          await this.requestGate?.complete(permit, {
+            errorClassification:
+              error instanceof z.ZodError
+                ? "invalid_response"
+                : error instanceof MusicBrainzHttpError
+                  ? `http_${error.status}`
+                  : signal?.aborted
+                    ? "cancelled"
+                    : "network_error",
+            ...(error instanceof MusicBrainzHttpError ? { status: error.status } : {}),
+          });
+        }
         const retryable =
           (error instanceof MusicBrainzHttpError && error.status === 503) ||
           (!(error instanceof MusicBrainzHttpError) && !(error instanceof z.ZodError));
@@ -284,7 +341,9 @@ export class MusicBrainzClient {
           throw error;
         }
         this.metrics.throttleWaits += 1;
-        await this.sleep(500 * 2 ** (attempt - 1));
+        const waitMs = 500 * 2 ** (attempt - 1);
+        this.metrics.waitMs += waitMs;
+        await this.sleep(waitMs);
       }
     }
     throw new Error("MusicBrainz retry loop exhausted");
@@ -357,33 +416,124 @@ export class MusicBrainzProvider implements DiscoveryProvider {
       ? this.mappedArtists.filter((mapping) => mapping.artistId === context.filter.artistId)
       : this.mappedArtists;
     for (const mapping of mappings) {
+      const position = mappings.indexOf(mapping);
+      if (context.onUnitStart) {
+        const shouldContinue = await context.onUnitStart({
+          currentUnit: mapping.name,
+          currentUnitId: mapping.artistId,
+          position,
+          totalUnits: mappings.length,
+        });
+        if (!shouldContinue) {
+          throwIfMusicBrainzAborted(context.signal);
+          break;
+        }
+      }
+      throwIfMusicBrainzAborted(context.signal);
+      const releaseGroups = await this.client.browseReleaseGroups(mapping.mbid, context.signal);
+      await context.onBatch?.({
+        candidates: [],
+        completedUnits: position,
+        currentUnit: mapping.name,
+        currentUnitId: mapping.artistId,
+        lastPersistedResult: "Release groups inspected",
+        providerMetrics: this.providerMetrics(),
+        releaseGroupCount: releaseGroups.length,
+        stage: "release_groups",
+        totalUnits: mappings.length,
+      });
+      throwIfMusicBrainzAborted(context.signal);
       const primary = await this.client.browseReleases(mapping.mbid, "artist", context.signal);
+      const primaryCandidates = uniqueMusicBrainzCandidates(
+        primary.flatMap((release) => releaseCandidates(mapping, release, this.now())),
+      ).filter(
+        (candidate) =>
+          context.filter.full ||
+          !context.filter.since ||
+          candidate.releaseDate >= context.filter.since,
+      );
+      candidates.push(...primaryCandidates);
+      await context.onBatch?.({
+        candidates: primaryCandidates,
+        completedUnits: position,
+        currentUnit: mapping.name,
+        currentUnitId: mapping.artistId,
+        lastPersistedResult: `${primaryCandidates.length} primary candidates persisted`,
+        providerMetrics: this.providerMetrics(),
+        releaseCount: primary.length,
+        stage: "primary_releases",
+        totalUnits: mappings.length,
+      });
+      throwIfMusicBrainzAborted(context.signal);
       const appearances = await this.client.browseReleases(
         mapping.mbid,
         "track_artist",
         context.signal,
       );
-      for (const release of [...primary, ...appearances]) {
-        const discovered = releaseCandidates(mapping, release, this.now());
-        candidates.push(
-          ...discovered.filter(
-            (candidate) =>
-              context.filter.full ||
-              !context.filter.since ||
-              candidate.releaseDate >= context.filter.since,
-          ),
-        );
-      }
+      const primaryKeys = new Set(primaryCandidates.map(musicBrainzCandidateKey));
+      const appearanceCandidates = uniqueMusicBrainzCandidates(
+        appearances.flatMap((release) => releaseCandidates(mapping, release, this.now())),
+      ).filter(
+        (candidate) =>
+          !primaryKeys.has(musicBrainzCandidateKey(candidate)) &&
+          (context.filter.full ||
+            !context.filter.since ||
+            candidate.releaseDate >= context.filter.since),
+      );
+      candidates.push(...appearanceCandidates);
+      await context.onBatch?.({
+        candidates: appearanceCandidates,
+        completedUnits: position + 1,
+        currentUnit: mapping.name,
+        currentUnitId: mapping.artistId,
+        lastPersistedResult: `${appearanceCandidates.length} appearance candidates persisted`,
+        providerMetrics: this.providerMetrics(),
+        releaseCount: appearances.length,
+        stage: "track_appearances",
+        totalUnits: mappings.length,
+      });
     }
     return {
       candidates,
       providerMetrics: {
         failures: this.client.metrics.failures,
         requests: this.client.metrics.requests,
-        waitMs: this.client.metrics.throttleWaits * 1_000,
+        waitMs: this.client.metrics.waitMs,
       },
     };
   }
+
+  private providerMetrics() {
+    return {
+      failures: this.client.metrics.failures,
+      requests: this.client.metrics.requests,
+      waitMs: this.client.metrics.waitMs,
+    };
+  }
+}
+
+function musicBrainzEndpointCategory(path: string): string {
+  if (path.startsWith("/artist?")) return "artist_search";
+  if (path.startsWith("/release-group?")) return "release_group_browse";
+  if (path.includes("track_artist=")) return "track_appearance_browse";
+  return "release_browse";
+}
+
+function musicBrainzCandidateKey(candidate: TrackCandidate): string {
+  return `${candidate.externalReleaseId}:${candidate.externalTrackId}`;
+}
+
+function uniqueMusicBrainzCandidates(candidates: TrackCandidate[]): TrackCandidate[] {
+  return [
+    ...new Map(
+      candidates.map((candidate) => [musicBrainzCandidateKey(candidate), candidate]),
+    ).values(),
+  ];
+}
+
+function throwIfMusicBrainzAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error ? signal.reason : new Error("MusicBrainz scan cancelled.");
 }
 
 function releaseCandidates(

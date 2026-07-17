@@ -1,4 +1,9 @@
-import { createDatabase, ensureLocalOwner, SpotifyTokenManager } from "@radar/db";
+import {
+  createDatabase,
+  createSpotifyRequestGate,
+  ensureLocalOwner,
+  SpotifyTokenManager,
+} from "@radar/db";
 import { loadProviderConfiguration, SpotifyClient, SpotifyOAuthClient } from "@radar/providers";
 
 export interface SpotifyLiveSmokeOptions {
@@ -50,6 +55,10 @@ export async function runSpotifyLiveSmoke(
       clientId: configuration.spotify.clientId,
       clientSecret: configuration.spotify.clientSecret,
       redirectUri: configuration.spotify.redirectUri,
+      requestGate: createSpotifyRequestGate(
+        connection.db,
+        configuration.spotify.minRequestIntervalMs,
+      ),
     });
     const tokens = new SpotifyTokenManager(
       connection.db,
@@ -60,6 +69,10 @@ export async function runSpotifyLiveSmoke(
     const client = new SpotifyClient({
       accessToken: () => tokens.getAccessToken(),
       onUnauthorized: () => tokens.refresh().then(() => undefined),
+      requestGate: createSpotifyRequestGate(
+        connection.db,
+        configuration.spotify.minRequestIntervalMs,
+      ),
     });
 
     await client.getCurrentUser();

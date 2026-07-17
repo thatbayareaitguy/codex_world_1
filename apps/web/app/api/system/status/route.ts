@@ -10,7 +10,7 @@ import {
   scanRuns,
 } from "@radar/db";
 import { loadProviderConfiguration, spotifyAuthorizationScopes } from "@radar/providers";
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { NextResponse } from "next/server";
@@ -94,7 +94,12 @@ export async function GET(): Promise<NextResponse> {
       connection.db
         .select({ count: sql<number>`count(*)::int` })
         .from(artistMappingReviews)
-        .where(eq(artistMappingReviews.status, "pending")),
+        .where(
+          and(
+            eq(artistMappingReviews.provider, "musicbrainz"),
+            eq(artistMappingReviews.status, "pending"),
+          ),
+        ),
       connection.db
         .select({ count: sql<number>`count(*)::int` })
         .from(redditCandidateMatches)

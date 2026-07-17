@@ -3,7 +3,35 @@ import type { ProviderName, ProviderScanResult, ScanFilter, TrackCandidate } fro
 export interface ScanContext {
   cursor?: string;
   filter: ScanFilter;
+  onBatch?: (batch: ProviderScanBatch) => Promise<void>;
+  onUnitStart?: (unit: ProviderScanUnit) => Promise<boolean>;
   signal?: AbortSignal;
+}
+
+export interface ProviderScanBatch {
+  candidates: TrackCandidate[];
+  completedUnits: number;
+  currentUnit: string;
+  currentUnitId?: string;
+  stage?: string;
+  lastPersistedResult?: string;
+  releaseGroupCount?: number;
+  releaseCount?: number;
+  pagesScanned?: number;
+  partial?: boolean;
+  providerMetrics?: {
+    failures: number;
+    requests: number;
+    waitMs: number;
+  };
+  totalUnits: number;
+}
+
+export interface ProviderScanUnit {
+  currentUnit: string;
+  currentUnitId: string;
+  position: number;
+  totalUnits: number;
 }
 
 export interface FollowedArtistRecord {

@@ -7,13 +7,20 @@ import type { WatchlistArtistViewModel } from "../lib/watchlist-types";
 
 export const dynamic = "force-dynamic";
 
-export default async function HomePage() {
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const configuration = loadProviderConfiguration();
   const e2eMockMode = process.env.RADAR_E2E_MOCK_MODE === "true";
+  const parameters = await searchParams;
+  const e2eScanStatusMode = e2eMockMode && parameters["e2e-scan-status"] === "database";
   let initialItems = feedFixtures;
   let feedMode: "database" | "error" | "mock" = "mock";
   let initialArtists: WatchlistArtistViewModel[] = [];
   let watchlistMode: "database" | "error" | "mock" = "mock";
+  if (e2eScanStatusMode) feedMode = "database";
   if (configuration.databaseUrl && !e2eMockMode) {
     try {
       initialItems = await loadDatabaseFeed(configuration.databaseUrl);
@@ -51,6 +58,7 @@ export default async function HomePage() {
             : {}),
           configured: configuration.spotify.configured,
           enabled: configuration.spotify.enabled,
+          minRequestIntervalMs: configuration.spotify.minRequestIntervalMs,
           playlistWritesEnabled: configuration.spotify.playlistWritesEnabled,
         },
       }}

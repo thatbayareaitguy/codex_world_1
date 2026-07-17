@@ -12,7 +12,18 @@ import {
   artistExternalIds,
   artistFollows,
   artists,
+  attachSpotifyBatchScanRun,
   createDatabase,
+  createMusicBrainzRequestGate,
+  createMusicBrainzBatch,
+  loadMusicBrainzBatchArtistIds,
+  startMusicBrainzArtist,
+  recordMusicBrainzStage,
+  finishMusicBrainzBatch,
+  attachMusicBrainzBatchScanRun,
+  createSpotifyRequestGate,
+  deferSpotifyRequests,
+  claimNextSpotifyArtist,
   acquireOperationLock,
   expireDetailedScanData,
   feedItems,
@@ -32,8 +43,13 @@ import {
   users,
   ensureLocalOwner,
   SpotifyTokenManager,
+  finishSpotifyArtistScan,
+  heartbeatOperationLock,
+  operationCancellationRequested,
   releaseOperationLock,
   type RadarDatabase,
+  SpotifyCooldownError,
+  spotifyScanBatches,
 } from "@radar/db";
 import {
   loadProviderConfiguration,
@@ -43,15 +59,18 @@ import {
   SpotifyClient,
   SpotifyOAuthClient,
   SpotifyProvider,
+  SpotifyHttpError,
   type CanonicalArtistMappingInput,
   type DiscoveryProvider,
   type SpotifyArtistMapping,
+  type SpotifyRequestTelemetry,
 } from "@radar/providers";
 import { mockProviderFixture } from "@radar/testing";
 import { and, eq, lt, or } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { ScannerOptions } from "./args";
 import { runRedditScan } from "./reddit-scan";
+import { prepareSpotifyWork, type PreparedSpotifyWork } from "./spotify-scan-plan";
 
 export interface ScanSummary {
   discovered: number;
@@ -62,7 +81,26 @@ export interface ScanSummary {
   providerResults?: Record<string, { error?: string; inserted: number; discovered: number }>;
 }
 
+interface PreparedMusicBrainzWork {
+  batchId: string;
+  mappings: CanonicalArtistMappingInput[];
+}
+
 type DatabaseExecutor = Pick<RadarDatabase, "insert" | "query" | "select">;
+
+interface ScanRuntime {
+  reportProgress: (metadata: Record<string, unknown>, force?: boolean) => Promise<void>;
+  signal: AbortSignal;
+}
+
+interface PersistRunContext {
+  artistsProcessedCount: number;
+  cumulativeBase: ScanSummary;
+  id: string;
+  status: "running" | "completed" | "paused" | "cancelled" | "rate_limited";
+}
+
+const scanHeartbeatTtlMs = 30_000;
 
 export async function runScan(options: ScannerOptions): Promise<ScanSummary> {
   const configuration = loadProviderConfiguration();
@@ -79,9 +117,78 @@ export async function runScan(options: ScannerOptions): Promise<ScanSummary> {
     },
     operationType: options.provider ? "provider_scan" : "normal_scan",
   });
+  const controller = new AbortController();
+  const progressMetadata: Record<string, unknown> = {
+    artistId: options.artistId ?? null,
+    completedUnits: 0,
+    currentProvider: null,
+    dryRun: options.dryRun,
+    phase: "starting",
+    provider: options.provider ?? "all",
+    providersCompleted: [],
+    providersFailed: [],
+    requests: 0,
+    rateLimitWaitMs: 0,
+    source: options.source ?? null,
+    totalUnits: 0,
+  };
+  let lastHeartbeatAt = 0;
+  let heartbeatBusy = false;
+  const reportProgress = async (metadata: Record<string, unknown>, force = false) => {
+    Object.assign(progressMetadata, metadata);
+    if (
+      force &&
+      !controller.signal.aborted &&
+      (await operationCancellationRequested(lockDatabase.db, handle))
+    ) {
+      const error = new Error("Scan cancelled by the user.");
+      controller.abort(error);
+      throw error;
+    }
+    const now = Date.now();
+    if (heartbeatBusy || (!force && now - lastHeartbeatAt < 2_000)) return;
+    heartbeatBusy = true;
+    try {
+      const active = await heartbeatOperationLock(
+        lockDatabase.db,
+        handle,
+        progressMetadata,
+        scanHeartbeatTtlMs,
+      );
+      if (!active) {
+        const error = new Error("The scan operation lock was lost.");
+        controller.abort(error);
+        throw error;
+      }
+      lastHeartbeatAt = now;
+    } finally {
+      heartbeatBusy = false;
+    }
+  };
+  await reportProgress({}, true);
+  let monitorTask = Promise.resolve();
+  const monitor = setInterval(() => {
+    monitorTask = monitorTask.then(async () => {
+      try {
+        if (await operationCancellationRequested(lockDatabase.db, handle)) {
+          controller.abort(new Error("Scan cancelled by the user."));
+          return;
+        }
+        await reportProgress({}, true);
+      } catch (error) {
+        log("warn", "scan.heartbeat_failed", { message: safeScanError(error) });
+      }
+    });
+  }, 5_000);
+  monitor.unref();
   try {
-    return await runScanUnlocked(options, configuration);
+    return await runScanUnlocked(options, configuration, {
+      reportProgress,
+      signal: controller.signal,
+    });
   } finally {
+    clearInterval(monitor);
+    await monitorTask;
     await releaseOperationLock(lockDatabase.db, handle);
     await lockDatabase.client.end();
   }
@@ -90,6 +197,7 @@ export async function runScan(options: ScannerOptions): Promise<ScanSummary> {
 async function runScanUnlocked(
   options: ScannerOptions,
   configuration: ReturnType<typeof loadProviderConfiguration>,
+  runtime?: ScanRuntime,
 ): Promise<ScanSummary> {
   const requested = options.provider;
   if (requested && !["mock", "spotify", "musicbrainz", "reddit"].includes(requested)) {
@@ -108,13 +216,14 @@ async function runScanUnlocked(
     }
   }
 
-  const selected: Array<"mock" | "spotify" | "musicbrainz"> = requested
+  let selected: Array<"mock" | "spotify" | "musicbrainz"> = requested
     ? [requested as "mock" | "spotify" | "musicbrainz"]
     : [
         ...(configuration.spotify.configured ? (["spotify"] as const) : []),
         ...(configuration.musicbrainz.configured ? (["musicbrainz"] as const) : []),
       ];
   if (selected.length === 0) selected.push("mock");
+  await runtime?.reportProgress({ providersRequested: selected }, true);
 
   if (selected.length === 1 && selected[0] === "mock") {
     const result = await new MockProvider(mockProviderFixture).scan({
@@ -156,15 +265,107 @@ async function runScanUnlocked(
     providerResults: {},
   };
   try {
-    const providers = await buildProviders(db, selected, configuration);
+    let spotifyWork: PreparedSpotifyWork | undefined;
+    let musicBrainzWork: PreparedMusicBrainzWork | undefined;
+    if (selected.includes("spotify")) {
+      spotifyWork = await prepareSpotifyWork(db, await spotifyMappings(db), configuration, options);
+      if (spotifyWork.paused) {
+        const pausedRunId = options.dryRun
+          ? undefined
+          : await createProviderScanRun(db, "spotify", options);
+        if (pausedRunId) {
+          await attachSpotifyBatchScanRun(db, spotifyWork.batchId, pausedRunId);
+          await db
+            .update(scanRuns)
+            .set({
+              metadata: { batchId: spotifyWork.batchId, mode: spotifyWork.mode },
+              status: "paused",
+            })
+            .where(eq(scanRuns.id, pausedRunId));
+        }
+        aggregate.providerResults!.spotify = { discovered: 0, inserted: 0 };
+        await runtime?.reportProgress(
+          {
+            currentProvider: null,
+            phase: "spotify_batch_confirmation_required",
+            spotifyBatchId: spotifyWork.batchId,
+          },
+          true,
+        );
+        selected = selected.filter((provider) => provider !== "spotify");
+        if (requested === "spotify") return aggregate;
+      }
+    }
+    if (selected.includes("musicbrainz")) {
+      const availableMappings = await musicBrainzMappings(db);
+      const requestedMappings = options.artistId
+        ? availableMappings.filter((mapping) => mapping.artistId === options.artistId)
+        : availableMappings;
+      if (options.artistId && requestedMappings.length === 0) {
+        throw new Error("The selected artist does not have a confirmed MusicBrainz mapping.");
+      }
+      const batchId =
+        options.musicbrainzBatchId ??
+        (await createMusicBrainzBatch(
+          db,
+          requestedMappings.map((mapping) => mapping.artistId),
+        ));
+      const pendingArtistIds = options.musicbrainzBatchId
+        ? await loadMusicBrainzBatchArtistIds(db, batchId)
+        : requestedMappings.map((mapping) => mapping.artistId);
+      const pending = new Set(pendingArtistIds);
+      musicBrainzWork = {
+        batchId,
+        mappings: requestedMappings.filter((mapping) => pending.has(mapping.artistId)),
+      };
+    }
+    const providers = await buildProviders(
+      db,
+      selected,
+      configuration,
+      spotifyWork,
+      musicBrainzWork,
+      runtime
+        ? (telemetry) => runtime.reportProgress(spotifyTelemetryMetadata(telemetry))
+        : undefined,
+    );
     const failures: Error[] = [];
+    const providersCompleted: string[] = [];
+    const providersFailed: string[] = [];
     for (const provider of providers) {
+      let providerRunId: string | undefined;
+      let currentSpotifyArtistScan: Awaited<ReturnType<typeof claimNextSpotifyArtist>> | undefined;
+      let previousSpotifyRequestCount = 0;
+      let musicBrainzArtistRequestBase = 0;
+      let previousMusicBrainzRequestCount = 0;
       try {
+        await runtime?.reportProgress(
+          {
+            completedUnits: 0,
+            currentProvider: provider.name,
+            currentUnit: null,
+            phase: "provider_start",
+            totalUnits: 0,
+          },
+          true,
+        );
         if (provider.name === "musicbrainz") {
           await new Promise((resolve) =>
             setTimeout(resolve, 100 + Math.floor(Math.random() * 400)),
           );
         }
+        providerRunId = options.dryRun
+          ? undefined
+          : await createProviderScanRun(db, provider.name, options);
+        if (provider.name === "spotify" && providerRunId && spotifyWork) {
+          await attachSpotifyBatchScanRun(db, spotifyWork.batchId, providerRunId);
+        }
+        if (provider.name === "musicbrainz" && providerRunId && musicBrainzWork) {
+          await attachMusicBrainzBatchScanRun(db, musicBrainzWork.batchId, providerRunId);
+        }
+        let incrementalSummary = emptyScanSummary(false);
+        let batchPersisted = false;
+        let artistsProcessedCount = 0;
         const result = await provider.scan({
           filter: {
             ...(options.artistId ? { artistId: options.artistId } : {}),
@@ -176,22 +377,228 @@ async function runScanUnlocked(
                 .toISOString()
                 .slice(0, 10),
           },
+          ...(provider.name === "spotify"
+            ? {
+                onUnitStart: async (unit) => {
+                  currentSpotifyArtistScan = await claimNextSpotifyArtist(db, spotifyWork!.batchId);
+                  if (!currentSpotifyArtistScan) return false;
+                  if (currentSpotifyArtistScan.artistId !== unit.currentUnitId) {
+                    throw new Error(
+                      "Spotify batch order no longer matches the provider work list.",
+                    );
+                  }
+                  await runtime?.reportProgress(
+                    {
+                      completedUnits: unit.position,
+                      currentUnit: unit.currentUnit,
+                      phase: "scanning",
+                      spotifyBatchId: spotifyWork!.batchId,
+                      totalUnits: unit.totalUnits,
+                    },
+                    true,
+                  );
+                  return true;
+                },
+                onBatch: async (batch) => {
+                  batchPersisted = true;
+                  artistsProcessedCount = batch.completedUnits;
+                  const batchSummary = options.dryRun
+                    ? {
+                        discovered: batch.candidates.length,
+                        dryRun: true,
+                        inserted: 0,
+                        needsReview: 0,
+                        skipped: 0,
+                      }
+                    : await persistCandidates(
+                        db,
+                        batch.candidates,
+                        { ...options, provider: provider.name },
+                        undefined,
+                        batch.providerMetrics,
+                        {
+                          artistsProcessedCount: batch.completedUnits,
+                          cumulativeBase: incrementalSummary,
+                          id: providerRunId!,
+                          status: "running",
+                        },
+                      );
+                  incrementalSummary = addScanSummaries(incrementalSummary, batchSummary);
+                  if (currentSpotifyArtistScan) {
+                    const requestCount = Math.max(
+                      0,
+                      (batch.providerMetrics?.requests ?? previousSpotifyRequestCount) -
+                        previousSpotifyRequestCount,
+                    );
+                    previousSpotifyRequestCount = batch.providerMetrics?.requests ?? 0;
+                    await finishSpotifyArtistScan(db, {
+                      artistScanId: currentSpotifyArtistScan.id,
+                      candidateCount: batch.candidates.length,
+                      pagesScanned: batch.pagesScanned ?? 0,
+                      requestCount,
+                      status: batch.partial ? "partial" : "completed",
+                    });
+                    currentSpotifyArtistScan = undefined;
+                  }
+                  await runtime?.reportProgress(
+                    {
+                      completedUnits: batch.completedUnits,
+                      currentUnit: batch.currentUnit,
+                      phase: "scanning",
+                      rateLimitWaitMs: batch.providerMetrics?.waitMs ?? 0,
+                      requests: batch.providerMetrics?.requests ?? 0,
+                      totalUnits: batch.totalUnits,
+                    },
+                    true,
+                  );
+                },
+              }
+            : provider.name === "musicbrainz"
+              ? {
+                  onUnitStart: async (unit) => {
+                    if (!musicBrainzWork) return false;
+                    const claimed = await startMusicBrainzArtist(
+                      db,
+                      musicBrainzWork.batchId,
+                      unit.currentUnitId,
+                    );
+                    if (!claimed) return false;
+                    musicBrainzArtistRequestBase = previousMusicBrainzRequestCount;
+                    await runtime?.reportProgress(
+                      {
+                        completedUnits: unit.position,
+                        currentUnit: unit.currentUnit,
+                        currentUnitId: unit.currentUnitId,
+                        currentStage: "artist_start",
+                        phase: "scanning",
+                        totalUnits: unit.totalUnits,
+                      },
+                      true,
+                    );
+                    return !runtime?.signal.aborted;
+                  },
+                  onBatch: async (batch) => {
+                    batchPersisted = true;
+                    artistsProcessedCount = batch.completedUnits;
+                    const batchSummary = options.dryRun
+                      ? {
+                          discovered: batch.candidates.length,
+                          dryRun: true,
+                          inserted: 0,
+                          needsReview: 0,
+                          skipped: 0,
+                        }
+                      : await persistCandidates(
+                          db,
+                          batch.candidates,
+                          { ...options, provider: provider.name },
+                          undefined,
+                          batch.providerMetrics,
+                          {
+                            artistsProcessedCount: batch.completedUnits,
+                            cumulativeBase: incrementalSummary,
+                            id: providerRunId!,
+                            status: "running",
+                          },
+                        );
+                    incrementalSummary = addScanSummaries(incrementalSummary, batchSummary);
+                    if (musicBrainzWork && batch.currentUnitId && batch.stage) {
+                      await recordMusicBrainzStage(db, {
+                        artistId: batch.currentUnitId,
+                        batchId: musicBrainzWork.batchId,
+                        candidateCount: batch.candidates.length,
+                        ...(batch.releaseCount === undefined
+                          ? {}
+                          : { releaseCount: batch.releaseCount }),
+                        ...(batch.releaseGroupCount === undefined
+                          ? {}
+                          : { releaseGroupCount: batch.releaseGroupCount }),
+                        requestCount: Math.max(
+                          0,
+                          (batch.providerMetrics?.requests ?? 0) - musicBrainzArtistRequestBase,
+                        ),
+                        stage: batch.stage as
+                          | "artist_start"
+                          | "release_groups"
+                          | "primary_releases"
+                          | "track_appearances",
+                      });
+                      if (batch.stage === "track_appearances") {
+                        previousMusicBrainzRequestCount = batch.providerMetrics?.requests ?? 0;
+                      }
+                    }
+                    await runtime?.reportProgress(
+                      {
+                        completedUnits: batch.completedUnits,
+                        currentStage: batch.stage ?? "scanning",
+                        currentUnit: batch.currentUnit,
+                        currentUnitId: batch.currentUnitId ?? null,
+                        lastPersistedResult: batch.lastPersistedResult ?? null,
+                        phase: "scanning",
+                        rateLimitWaitMs: batch.providerMetrics?.waitMs ?? 0,
+                        requests: batch.providerMetrics?.requests ?? 0,
+                        totalUnits: batch.totalUnits,
+                      },
+                      true,
+                    );
+                  },
+                }
+              : {}),
+          ...(runtime ? { signal: runtime.signal } : {}),
         });
-        const summary = options.dryRun
-          ? {
-              discovered: result.candidates.length,
-              dryRun: true,
-              inserted: 0,
-              needsReview: 0,
-              skipped: 0,
-            }
-          : await persistCandidates(
-              db,
-              result.candidates,
-              { ...options, provider: provider.name },
-              result.nextCursor,
-              result.providerMetrics,
-            );
+        const persistedBatchStatus =
+          provider.name === "spotify" && spotifyWork
+            ? await db.query.spotifyScanBatches.findFirst({
+                where: eq(spotifyScanBatches.id, spotifyWork.batchId),
+                columns: { status: true },
+              })
+            : null;
+        const providerOutcome =
+          persistedBatchStatus?.status === "paused" ||
+          persistedBatchStatus?.status === "cancelled" ||
+          persistedBatchStatus?.status === "rate_limited"
+            ? persistedBatchStatus.status
+            : "completed";
+        const summary = batchPersisted
+          ? options.dryRun
+            ? incrementalSummary
+            : (await persistCandidates(
+                db,
+                [],
+                { ...options, provider: provider.name },
+                result.nextCursor,
+                result.providerMetrics,
+                {
+                  artistsProcessedCount,
+                  cumulativeBase: incrementalSummary,
+                  id: providerRunId!,
+                  status: providerOutcome,
+                },
+              ),
+              incrementalSummary)
+          : options.dryRun
+            ? {
+                discovered: result.candidates.length,
+                dryRun: true,
+                inserted: 0,
+                needsReview: 0,
+                skipped: 0,
+              }
+            : await persistCandidates(
+                db,
+                result.candidates,
+                { ...options, provider: provider.name },
+                result.nextCursor,
+                result.providerMetrics,
+                {
+                  artistsProcessedCount: new Set(
+                    result.candidates.map((candidate) => candidate.artistExternalId),
+                  ).size,
+                  cumulativeBase: emptyScanSummary(false),
+                  id: providerRunId!,
+                  status: providerOutcome,
+                },
+              );
         aggregate.discovered += summary.discovered;
         aggregate.inserted += summary.inserted;
         aggregate.skipped += summary.skipped;
@@ -200,7 +607,55 @@ async function runScanUnlocked(
           discovered: summary.discovered,
           inserted: summary.inserted,
         };
+        if (providerOutcome === "completed") providersCompleted.push(provider.name);
+        if (provider.name === "musicbrainz" && musicBrainzWork) {
+          await finishMusicBrainzBatch(db, musicBrainzWork.batchId, "completed");
+        }
+        if (provider.name === "spotify" && providerOutcome === "completed") {
+          await deferSpotifyRequests(
+            db,
+            spotifyBatchPauseMilliseconds(configuration.spotify.batchPauseSeconds),
+          );
+        }
+        await runtime?.reportProgress(
+          {
+            currentProvider: null,
+            phase: providerOutcome === "completed" ? "provider_completed" : providerOutcome,
+            providersCompleted,
+          },
+          true,
+        );
       } catch (error) {
+        const outcomeStatus = scanOutcomeStatus(error, runtime?.signal);
+        if (provider.name === "musicbrainz" && musicBrainzWork) {
+          await finishMusicBrainzBatch(
+            db,
+            musicBrainzWork.batchId,
+            outcomeStatus === "cancelled" ? "cancelled" : "failed",
+          );
+        }
+        if (provider.name === "spotify" && currentSpotifyArtistScan) {
+          const rateLimited = outcomeStatus === "rate_limited";
+          const cancelled = outcomeStatus === "cancelled";
+          await finishSpotifyArtistScan(db, {
+            artistScanId: currentSpotifyArtistScan.id,
+            candidateCount: 0,
+            errorClassification: rateLimited
+              ? "rate_limited"
+              : cancelled
+                ? "cancelled_by_user"
+                : "provider_failure",
+            pagesScanned: 0,
+            requestCount: 0,
+            ...(error instanceof SpotifyCooldownError && error.cooldownUntil
+              ? { retryEligibleAt: error.cooldownUntil }
+              : error instanceof SpotifyHttpError && error.retryAfter?.cooldownUntil
+                ? { retryEligibleAt: error.retryAfter.cooldownUntil }
+                : {}),
+            status: rateLimited ? "rate_limited" : cancelled ? "cancelled" : "failed",
+          });
+          currentSpotifyArtistScan = undefined;
+        }
         const failure = new Error(safeScanError(error));
         failures.push(failure);
         aggregate.providerResults![provider.name] = {
@@ -208,7 +663,23 @@ async function runScanUnlocked(
           error: failure.message,
           inserted: 0,
         };
-        await recordProviderFailure(db, provider.name, options, failure);
+        if (outcomeStatus === "failed") providersFailed.push(provider.name);
+        await recordProviderFailure(
+          db,
+          provider.name,
+          options,
+          failure,
+          providerRunId,
+          outcomeStatus,
+        );
+        await runtime?.reportProgress(
+          {
+            currentProvider: null,
+            phase: outcomeStatus,
+            providersFailed,
+          },
+          true,
+        );
         log("error", "scan.provider_failed", {
           message: failure.message,
           provider: provider.name,
@@ -255,6 +726,9 @@ async function buildProviders(
   db: RadarDatabase,
   selected: Array<"mock" | "spotify" | "musicbrainz">,
   configuration: ReturnType<typeof loadProviderConfiguration>,
+  spotifyWork?: PreparedSpotifyWork,
+  musicBrainzWork?: PreparedMusicBrainzWork,
+  onSpotifyTelemetry?: (telemetry: SpotifyRequestTelemetry) => Promise<void>,
 ): Promise<DiscoveryProvider[]> {
   const providers: DiscoveryProvider[] = [];
   for (const provider of selected) {
@@ -278,6 +752,7 @@ async function buildProviders(
         clientId: configuration.spotify.clientId,
         clientSecret: configuration.spotify.clientSecret,
         redirectUri: configuration.spotify.redirectUri,
+        requestGate: createSpotifyRequestGate(db, configuration.spotify.minRequestIntervalMs),
       });
       const tokenManager = new SpotifyTokenManager(
         db,
@@ -288,8 +763,18 @@ async function buildProviders(
       const client = new SpotifyClient({
         accessToken: () => tokenManager.getAccessToken(),
         onUnauthorized: () => tokenManager.refresh().then(() => undefined),
+        requestGate: createSpotifyRequestGate(db, configuration.spotify.minRequestIntervalMs),
+        ...(onSpotifyTelemetry ? { onTelemetry: onSpotifyTelemetry } : {}),
       });
-      providers.push(new SpotifyProvider({ client, mappings: await spotifyMappings(db) }));
+      if (!spotifyWork) throw new Error("Spotify scan work was not prepared.");
+      providers.push(
+        new SpotifyProvider({
+          client,
+          knownReleaseIds: spotifyWork.knownReleaseIds,
+          mappings: spotifyWork.mappings,
+          maxPagesPerArtist: spotifyWork.maxPagesPerArtist,
+        }),
+      );
       continue;
     }
     if (!configuration.musicbrainz.configured || !configuration.musicbrainz.contactEmail) {
@@ -297,8 +782,11 @@ async function buildProviders(
     }
     providers.push(
       new MusicBrainzProvider(
-        new MusicBrainzClient({ contactEmail: configuration.musicbrainz.contactEmail }),
-        await musicBrainzMappings(db),
+        new MusicBrainzClient({
+          contactEmail: configuration.musicbrainz.contactEmail,
+          requestGate: createMusicBrainzRequestGate(db),
+        }),
+        musicBrainzWork?.mappings ?? (await musicBrainzMappings(db)),
       ),
     );
   }
@@ -314,7 +802,14 @@ async function spotifyMappings(db: RadarDatabase): Promise<SpotifyArtistMapping[
     })
     .from(artistExternalIds)
     .innerJoin(artists, eq(artists.id, artistExternalIds.artistId))
-    .where(and(eq(artistExternalIds.provider, "spotify"), eq(artistExternalIds.confirmed, true)));
+    .innerJoin(artistFollows, eq(artistFollows.artistId, artists.id))
+    .where(
+      and(
+        eq(artistExternalIds.provider, "spotify"),
+        eq(artistExternalIds.confirmed, true),
+        eq(artistFollows.active, true),
+      ),
+    );
   return mappings;
 }
 
@@ -344,15 +839,52 @@ async function recordProviderFailure(
   provider: TrackCandidate["provider"],
   options: ScannerOptions,
   error: Error,
+  runId?: string,
+  status: "failed" | "cancelled" | "rate_limited" = "failed",
 ): Promise<void> {
+  if (runId) {
+    await db
+      .update(scanRuns)
+      .set({
+        completedAt: new Date(),
+        errors: [{ message: safeScanError(error) }],
+        providersFailed: status === "failed" ? [provider] : [],
+        status,
+      })
+      .where(eq(scanRuns.id, runId));
+    return;
+  }
   await db.insert(scanRuns).values({
     provider,
-    status: "failed",
+    status,
     dryRun: options.dryRun,
     ...(options.artistId ? { artistFilter: options.artistId } : {}),
     completedAt: new Date(),
     errors: [{ message: safeScanError(error) }],
   });
+}
+
+function scanOutcomeStatus(
+  error: unknown,
+  signal?: AbortSignal,
+): "failed" | "cancelled" | "rate_limited" {
+  if (signal?.aborted) return "cancelled";
+  if (
+    error instanceof SpotifyCooldownError ||
+    (error instanceof SpotifyHttpError && error.status === 429)
+  ) {
+    return "rate_limited";
+  }
+  return "failed";
+}
+
+export function spotifyBatchPauseMilliseconds(
+  pauseSeconds: number,
+  random: () => number = Math.random,
+): number {
+  const base = Math.max(1, Math.floor(pauseSeconds)) * 1_000;
+  const maximumJitter = Math.max(1_000, Math.min(10_000, Math.floor(base * 0.2)));
+  return base + Math.floor(Math.max(0, Math.min(random(), 0.999_999)) * maximumJitter);
 }
 
 export async function persistCandidates(
@@ -361,10 +893,19 @@ export async function persistCandidates(
   options: ScannerOptions,
   nextCursor?: string,
   providerMetrics?: { failures: number; requests: number; waitMs: number },
+  runContext?: PersistRunContext,
 ): Promise<ScanSummary> {
   const provider = candidates[0]?.provider ?? options.provider ?? "mock";
   return withScanLock(db, provider, () =>
-    persistCandidatesUnlocked(db, candidates, options, nextCursor, provider, providerMetrics),
+    persistCandidatesUnlocked(
+      db,
+      candidates,
+      options,
+      nextCursor,
+      provider,
+      providerMetrics,
+      runContext,
+    ),
   );
 }
 
@@ -375,26 +916,14 @@ async function persistCandidatesUnlocked(
   nextCursor: string | undefined,
   provider: TrackCandidate["provider"],
   providerMetrics?: { failures: number; requests: number; waitMs: number },
+  runContext?: PersistRunContext,
 ): Promise<ScanSummary> {
-  const [run] = await db
-    .insert(scanRuns)
-    .values({
-      provider,
-      dryRun: false,
-      detailedExpiresAt: new Date(
-        Date.now() + loadProviderConfiguration().scanDetailRetentionDays * 86_400_000,
-      ),
-      providersRequested: [provider],
-      triggerType: options.full
-        ? "full_reconciliation"
-        : options.provider
-          ? "provider_manual"
-          : "manual",
-      metadata: providerMetrics ? { providerMetrics } : {},
-      ...(options.artistId ? { artistFilter: options.artistId } : {}),
-    })
-    .returning({ id: scanRuns.id });
-  if (!run) throw new Error("Failed to create scan run");
+  const run = runContext ?? {
+    artistsProcessedCount: 0,
+    cumulativeBase: emptyScanSummary(false),
+    id: await createProviderScanRun(db, provider, options, providerMetrics),
+    status: "completed" as const,
+  };
 
   const summary: ScanSummary = {
     discovered: candidates.length,
@@ -648,28 +1177,29 @@ async function persistCandidatesUnlocked(
       }
     });
 
+    const cumulative = addScanSummaries(run.cumulativeBase, summary);
     await db
       .update(scanRuns)
       .set({
-        status: "completed",
-        completedAt: new Date(),
-        discoveredCount: summary.discovered,
-        insertedCount: summary.inserted,
-        skippedCount: summary.skipped,
-        reviewCount: summary.needsReview,
-        artistsProcessedCount: new Set(candidates.map((candidate) => candidate.artistExternalId))
-          .size,
+        status: run.status,
+        completedAt: run.status === "running" ? null : new Date(),
+        discoveredCount: cumulative.discovered,
+        insertedCount: cumulative.inserted,
+        skippedCount: cumulative.skipped,
+        reviewCount: cumulative.needsReview,
+        artistsProcessedCount: run.artistsProcessedCount,
         providerResults: {
           [provider]: {
-            discovered: summary.discovered,
-            inserted: summary.inserted,
-            skipped: summary.skipped,
-            status: "completed",
+            discovered: cumulative.discovered,
+            inserted: cumulative.inserted,
+            skipped: cumulative.skipped,
+            status: run.status,
           },
         },
-        providersCompleted: [provider],
+        providersCompleted: run.status === "completed" ? [provider] : [],
         providersFailed: [],
-        duplicatesIgnoredCount: summary.skipped,
+        duplicatesIgnoredCount: cumulative.skipped,
+        metadata: providerMetrics ? { providerMetrics } : {},
       })
       .where(eq(scanRuns.id, run.id));
     return summary;
@@ -685,6 +1215,57 @@ async function persistCandidatesUnlocked(
       .where(eq(scanRuns.id, run.id));
     throw error;
   }
+}
+
+async function createProviderScanRun(
+  db: RadarDatabase,
+  provider: TrackCandidate["provider"],
+  options: ScannerOptions,
+  providerMetrics?: { failures: number; requests: number; waitMs: number },
+): Promise<string> {
+  const [run] = await db
+    .insert(scanRuns)
+    .values({
+      provider,
+      dryRun: false,
+      detailedExpiresAt: new Date(
+        Date.now() + loadProviderConfiguration().scanDetailRetentionDays * 86_400_000,
+      ),
+      providersRequested: [provider],
+      triggerType: options.full
+        ? "full_reconciliation"
+        : options.provider
+          ? "provider_manual"
+          : "manual",
+      metadata: providerMetrics ? { providerMetrics } : {},
+      ...(options.artistId ? { artistFilter: options.artistId } : {}),
+    })
+    .returning({ id: scanRuns.id });
+  if (!run) throw new Error("Failed to create scan run");
+  return run.id;
+}
+
+function emptyScanSummary(dryRun: boolean): ScanSummary {
+  return { discovered: 0, dryRun, inserted: 0, needsReview: 0, skipped: 0 };
+}
+
+function addScanSummaries(left: ScanSummary, right: ScanSummary): ScanSummary {
+  return {
+    discovered: left.discovered + right.discovered,
+    dryRun: left.dryRun || right.dryRun,
+    inserted: left.inserted + right.inserted,
+    needsReview: left.needsReview + right.needsReview,
+    skipped: left.skipped + right.skipped,
+  };
+}
+
+function spotifyTelemetryMetadata(telemetry: SpotifyRequestTelemetry): Record<string, unknown> {
+  return {
+    phase: telemetry.phase,
+    rateLimitWaitMs: telemetry.rateLimitWaitMs,
+    requests: telemetry.requests,
+    retryAfterMs: telemetry.retryAfterMs ?? null,
+  };
 }
 
 function safeScanError(error: unknown): string {

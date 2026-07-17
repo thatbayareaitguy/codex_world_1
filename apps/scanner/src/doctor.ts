@@ -1,4 +1,4 @@
-import { createDatabase, operationLocks, scanRuns } from "@radar/db";
+import { createDatabase, getSpotifyOperationalStatus, operationLocks, scanRuns } from "@radar/db";
 import { isValidRedditUserAgent, loadProviderConfiguration } from "@radar/providers";
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import { accessSync, constants, existsSync, readdirSync, readFileSync } from "node:fs";
@@ -22,6 +22,8 @@ export interface DoctorDatabaseStatus {
   lastSuccessfulScan?: string;
   migrationCount: number;
   migrationError?: string;
+  spotifyCooldownActive?: boolean;
+  spotifyCooldownUntil?: string;
   staleLocks: number;
 }
 
@@ -121,6 +123,18 @@ export async function collectDoctorReport(
               "Run pnpm scan:unlock-stale after confirming no scan is running.",
             )
           : ready("Scan locks", "No stale operation locks were detected."),
+      );
+      checks.push(
+        databaseStatus.spotifyCooldownActive
+          ? action(
+              "Spotify cooldown",
+              databaseStatus.spotifyCooldownUntil
+                ? `Spotify requests are blocked until ${databaseStatus.spotifyCooldownUntil}.`
+                : "Spotify requests are blocked pending manual review.",
+              "Wait for the provider cooldown. Do not probe or bypass it.",
+              false,
+            )
+          : ready("Spotify cooldown", "No active Spotify cooldown was detected.", false),
       );
       checks.push(
         ready(
@@ -251,6 +265,8 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
     let failedScans = 0;
     let lastSuccessfulScan: string | undefined;
     let staleLocks = 0;
+    let spotifyCooldownActive = false;
+    let spotifyCooldownUntil: string | undefined;
     try {
       const [failed] = await db
         .select({ count: sql<number>`count(*)::int` })
@@ -269,6 +285,9 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
         .from(operationLocks)
         .where(sql`${operationLocks.expiresAt} < now()`);
       staleLocks = locks?.count ?? 0;
+      const spotify = await getSpotifyOperationalStatus(db);
+      spotifyCooldownActive = spotify.cooldownActive;
+      spotifyCooldownUntil = spotify.cooldownUntil?.toISOString();
     } catch {
       // Migration status already explains why operational tables cannot be read.
     }
@@ -278,6 +297,8 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
       ...(lastSuccessfulScan ? { lastSuccessfulScan } : {}),
       migrationCount,
       ...(migrationError ? { migrationError } : {}),
+      spotifyCooldownActive,
+      ...(spotifyCooldownUntil ? { spotifyCooldownUntil } : {}),
       staleLocks,
     };
   } finally {

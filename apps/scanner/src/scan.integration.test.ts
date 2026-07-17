@@ -1,18 +1,33 @@
 import {
   artistExternalIds,
+  artistFollows,
   artists,
   acquireOperationLock,
+  attachMusicBrainzBatchScanRun,
   confirmSpotifyImport,
   consumeOAuthState,
   createDatabase,
+  createMusicBrainzRequestGate,
+  createMusicBrainzBatch,
   createSpotifyImportRun,
+  decideMusicBrainzArtistMapping,
   disconnectSpotifyAccount,
   expireDetailedScanData,
   ensureLocalOwner,
   feedItems,
   artistMappingReviews,
   listRedditSources,
+  heartbeatOperationLock,
+  listFollowedArtists,
+  operationCancellationRequested,
   operationLocks,
+  musicbrainzArtistScans,
+  musicbrainzProviderState,
+  musicbrainzRequestEvents,
+  loadMusicBrainzBatchArtistIds,
+  startMusicBrainzArtist,
+  recordMusicBrainzStage,
+  finishMusicBrainzBatch,
   persistOAuthState,
   playlistExports,
   playlistTargets,
@@ -20,6 +35,7 @@ import {
   redditCandidateMatches,
   redditExternalLinks,
   releaseOperationLock,
+  requestOperationCancellation,
   scanLocks,
   sourceEvidence,
   tracks,
@@ -34,8 +50,8 @@ import type { TrackCandidate } from "@radar/core";
 import { encryptSecret } from "@radar/providers";
 import { mockProviderFixture, syntheticRedditListing } from "@radar/testing";
 import { sql } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { persistCandidates } from "./scan";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { persistCandidates, runScan } from "./scan";
 
 const databaseUrl =
   process.env.TEST_DATABASE_URL ?? "postgres://radar:radar@127.0.0.1:5433/radar_test";
@@ -236,6 +252,118 @@ describe.sequential("complete deterministic fake-provider workflow", () => {
     expect(completeTracks.some((track) => track.normalizedTitle === "pulse vector")).toBe(true);
   });
 
+  it("uses one database-backed MusicBrainz queue across concurrent callers", async () => {
+    await connection.db.delete(musicbrainzRequestEvents);
+    await connection.db.delete(musicbrainzProviderState);
+    const firstGate = createMusicBrainzRequestGate(connection.db, 1_000);
+    const secondGate = createMusicBrainzRequestGate(connection.db, 1_000);
+    const firstPromise = firstGate.acquire({
+      endpointCategory: "artist_search",
+      method: "GET",
+      retryAttempt: 1,
+    });
+    const secondPromise = secondGate.acquire({
+      endpointCategory: "release_browse",
+      method: "GET",
+      retryAttempt: 1,
+    });
+    const first = await firstPromise;
+    await firstGate.complete(first, { status: 200 });
+    const second = await secondPromise;
+    expect(Math.abs(second.startedAt.getTime() - first.startedAt.getTime())).toBeGreaterThanOrEqual(
+      900,
+    );
+    await secondGate.complete(second, { status: 200 });
+    const events = await connection.db.select().from(musicbrainzRequestEvents);
+    expect(events).toHaveLength(2);
+    expect(events.every((event) => event.status === 200)).toBe(true);
+  });
+
+  it("resumes only incomplete MusicBrainz artists after cancellation and restart", async () => {
+    const artistRows = await connection.db
+      .insert(artists)
+      .values([
+        { name: "Batch Artist One", normalizedName: "batch artist one" },
+        { name: "Batch Artist Two", normalizedName: "batch artist two" },
+      ])
+      .onConflictDoNothing()
+      .returning({ id: artists.id });
+    expect(artistRows).toHaveLength(2);
+    const [firstArtist, secondArtist] = artistRows;
+    const batchId = await createMusicBrainzBatch(connection.db, [
+      firstArtist!.id,
+      secondArtist!.id,
+    ]);
+    expect(await startMusicBrainzArtist(connection.db, batchId, firstArtist!.id)).toBe(true);
+    await recordMusicBrainzStage(connection.db, {
+      artistId: firstArtist!.id,
+      batchId,
+      candidateCount: 1,
+      releaseCount: 2,
+      requestCount: 3,
+      stage: "track_appearances",
+    });
+    expect(await startMusicBrainzArtist(connection.db, batchId, secondArtist!.id)).toBe(true);
+    await recordMusicBrainzStage(connection.db, {
+      artistId: secondArtist!.id,
+      batchId,
+      candidateCount: 0,
+      releaseGroupCount: 5,
+      requestCount: 1,
+      stage: "release_groups",
+    });
+    await finishMusicBrainzBatch(connection.db, batchId, "cancelled");
+
+    expect(await loadMusicBrainzBatchArtistIds(connection.db, batchId)).toEqual([secondArtist!.id]);
+    const [resumeRun] = await connection.db
+      .insert(scanRuns)
+      .values({ provider: "musicbrainz" })
+      .returning({ id: scanRuns.id });
+    await attachMusicBrainzBatchScanRun(connection.db, batchId, resumeRun!.id);
+    const resumedBatch = await connection.db.query.musicbrainzScanBatches.findFirst({
+      where: (table, { eq }) => eq(table.id, batchId),
+    });
+    expect(resumedBatch).toMatchObject({
+      cancelledArtists: 0,
+      completedArtists: 1,
+      failedArtists: 0,
+      status: "running",
+    });
+    const resumedArtist = await connection.db.query.musicbrainzArtistScans.findFirst({
+      where: (table, { and, eq }) =>
+        and(eq(table.batchId, batchId), eq(table.artistId, secondArtist!.id)),
+    });
+    expect(resumedArtist).toMatchObject({
+      candidateCount: 0,
+      releaseCount: 0,
+      releaseGroupCount: 0,
+      requestCount: 0,
+      stage: "pending",
+      status: "pending",
+    });
+    expect(await startMusicBrainzArtist(connection.db, batchId, secondArtist!.id)).toBe(true);
+    await recordMusicBrainzStage(connection.db, {
+      artistId: secondArtist!.id,
+      batchId,
+      candidateCount: 0,
+      releaseCount: 0,
+      requestCount: 3,
+      stage: "track_appearances",
+    });
+    await finishMusicBrainzBatch(connection.db, batchId, "completed");
+    expect(await loadMusicBrainzBatchArtistIds(connection.db, batchId)).toEqual([]);
+    expect(
+      await connection.db.query.musicbrainzScanBatches.findFirst({
+        where: (table, { eq }) => eq(table.id, batchId),
+      }),
+    ).toMatchObject({
+      cancelledArtists: 0,
+      completedArtists: 2,
+      failedArtists: 0,
+      status: "completed",
+    });
+  });
+
   it("consumes OAuth state exactly once and rejects expired state", async () => {
     const userId = await ensureLocalOwner(connection.db);
     const validId = await persistOAuthState(connection.db, {
@@ -342,6 +470,170 @@ describe.sequential("complete deterministic fake-provider workflow", () => {
       providerName: "Oxide Echoes",
     });
     expect(await connection.db.select().from(artistMappingReviews)).toHaveLength(1);
+  });
+
+  it("cancels a short MusicBrainz scan at the first forced progress checkpoint", async () => {
+    const lumen = (await connection.db.select().from(artists)).find(
+      (artist) => artist.normalizedName === "lumen field",
+    );
+    expect(lumen).toBeDefined();
+    let requestCount = 0;
+    vi.stubEnv("DATABASE_URL", databaseUrl);
+    vi.stubEnv("MUSICBRAINZ_ENABLED", "true");
+    vi.stubEnv("MUSICBRAINZ_CONTACT_EMAIL", "integration@example.invalid");
+    vi.stubGlobal("fetch", async () => {
+      requestCount += 1;
+      expect(await requestOperationCancellation(connection.db, "scan:global")).toBe(true);
+      return new Response(
+        JSON.stringify({
+          "release-group-count": 0,
+          "release-group-offset": 0,
+          "release-groups": [],
+        }),
+        { headers: { "Content-Type": "application/json" }, status: 200 },
+      );
+    });
+
+    try {
+      await expect(
+        runScan({
+          artistId: lumen!.id,
+          dryRun: false,
+          full: false,
+          provider: "musicbrainz",
+          spotifyConfirmBatch: false,
+          spotifyMode: "daily",
+        }),
+      ).rejects.toThrow("Scan cancelled by the user");
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+
+    expect(requestCount).toBe(1);
+    const batch = await connection.db.query.musicbrainzScanBatches.findFirst({
+      orderBy: (table, { desc }) => [desc(table.createdAt)],
+    });
+    expect(batch).toMatchObject({
+      cancelledArtists: 1,
+      completedArtists: 0,
+      status: "cancelled",
+      totalArtists: 1,
+    });
+    const [artistScan] = await connection.db
+      .select()
+      .from(musicbrainzArtistScans)
+      .where(sql`${musicbrainzArtistScans.batchId} = ${batch!.id}`);
+    expect(artistScan).toMatchObject({
+      releaseGroupCount: 0,
+      stage: "release_groups",
+      status: "cancelled",
+    });
+    expect(
+      await connection.db.query.operationLocks.findFirst({
+        where: (table, { eq }) => eq(table.lockKey, "scan:global"),
+      }),
+    ).toBeUndefined();
+  });
+
+  it("persists MusicBrainz confirmations idempotently and resolves replacement reviews", async () => {
+    const [artist] = await connection.db
+      .insert(artists)
+      .values({ name: "Mapping Decision Artist", normalizedName: "mapping decision artist" })
+      .returning({ id: artists.id });
+    const userId = await ensureLocalOwner(connection.db);
+    await connection.db.insert(artistFollows).values({ artistId: artist!.id, userId });
+    const [first, replacement] = await connection.db
+      .insert(artistMappingReviews)
+      .values([
+        {
+          artistId: artist!.id,
+          matchReasons: ["Synthetic exact mapping"],
+          matchScore: "0.990",
+          proposedExternalId: "00000000-0000-4000-8000-000000000011",
+          provider: "musicbrainz",
+          providerName: "Mapping Decision Artist",
+        },
+        {
+          artistId: artist!.id,
+          matchReasons: ["Synthetic replacement mapping"],
+          matchScore: "0.850",
+          proposedExternalId: "00000000-0000-4000-8000-000000000012",
+          provider: "musicbrainz",
+          providerName: "Mapping Decision Artist Two",
+        },
+      ])
+      .returning({ id: artistMappingReviews.id });
+
+    const confirmed = await decideMusicBrainzArtistMapping(connection.db, {
+      decision: "confirm",
+      reviewId: first!.id,
+    });
+    expect(confirmed).toMatchObject({
+      decision: "confirm",
+      externalId: "00000000-0000-4000-8000-000000000011",
+      idempotent: false,
+    });
+    const persisted = await connection.db.query.artistExternalIds.findFirst({
+      where: (table, { and, eq }) =>
+        and(eq(table.artistId, artist!.id), eq(table.provider, "musicbrainz")),
+    });
+    expect(persisted).toMatchObject({
+      confirmed: true,
+      externalId: "00000000-0000-4000-8000-000000000011",
+      mappingSource: "user_confirmed_musicbrainz",
+    });
+    const firstConfirmedAt = persisted!.confirmedAt;
+    const resolvedReviews = await connection.db.query.artistMappingReviews.findMany({
+      where: (table, { eq }) => eq(table.artistId, artist!.id),
+      orderBy: (table, { asc }) => [asc(table.createdAt)],
+    });
+    expect(resolvedReviews).toMatchObject([{ status: "confirmed" }, { status: "rejected" }]);
+    expect(resolvedReviews.every((review) => review.decidedAt instanceof Date)).toBe(true);
+
+    const reconfirmed = await decideMusicBrainzArtistMapping(connection.db, {
+      decision: "confirm",
+      reviewId: first!.id,
+    });
+    expect(reconfirmed.idempotent).toBe(true);
+    expect(
+      (
+        await connection.db.query.artistExternalIds.findFirst({
+          where: (table, { and, eq }) =>
+            and(eq(table.artistId, artist!.id), eq(table.provider, "musicbrainz")),
+        })
+      )?.confirmedAt,
+    ).toEqual(firstConfirmedAt);
+
+    const replaced = await decideMusicBrainzArtistMapping(connection.db, {
+      decision: "confirm",
+      reviewId: replacement!.id,
+    });
+    expect(replaced).toMatchObject({
+      externalId: "00000000-0000-4000-8000-000000000012",
+      idempotent: false,
+    });
+    expect(
+      await connection.db.query.artistExternalIds.findMany({
+        where: (table, { eq }) => eq(table.artistId, artist!.id),
+      }),
+    ).toMatchObject([{ confirmed: true, externalId: "00000000-0000-4000-8000-000000000012" }]);
+    expect(
+      await connection.db.query.artistMappingReviews.findMany({
+        where: (table, { eq }) => eq(table.artistId, artist!.id),
+        orderBy: (table, { asc }) => [asc(table.createdAt)],
+      }),
+    ).toMatchObject([{ status: "rejected" }, { status: "confirmed" }]);
+
+    const reloadedConnection = createDatabase(databaseUrl);
+    try {
+      const reloaded = await listFollowedArtists(reloadedConnection.db, userId);
+      expect(reloaded.find((entry) => entry.artistId === artist!.id)?.providers).toContain(
+        "musicbrainz",
+      );
+    } finally {
+      await reloadedConnection.client.end();
+    }
   });
 
   it("encrypts tokens, deletes them on disconnect, and preserves canonical data", async () => {
@@ -455,6 +747,39 @@ describe.sequential("complete deterministic fake-provider workflow", () => {
       providerResults: {},
       status: "completed",
     });
+  });
+
+  it("heartbeats an active scan lock and records cooperative cancellation", async () => {
+    const lock = await acquireOperationLock(connection.db, {
+      lockKey: "scan:cancellation-test",
+      operationType: "provider_scan",
+      ttlMs: 1_000,
+    });
+    const before = await connection.db.query.operationLocks.findFirst({
+      where: (table, { eq }) => eq(table.lockKey, "scan:cancellation-test"),
+    });
+
+    expect(
+      await heartbeatOperationLock(
+        connection.db,
+        lock,
+        { completedUnits: 4, currentUnit: "YUSSI" },
+        60_000,
+      ),
+    ).toBe(true);
+    expect(await requestOperationCancellation(connection.db, lock.lockKey)).toBe(true);
+    expect(await operationCancellationRequested(connection.db, lock)).toBe(true);
+
+    const after = await connection.db.query.operationLocks.findFirst({
+      where: (table, { eq }) => eq(table.lockKey, "scan:cancellation-test"),
+    });
+    expect(after?.expiresAt.getTime()).toBeGreaterThan(before!.expiresAt.getTime());
+    expect(after?.metadata).toMatchObject({
+      cancelRequested: true,
+      completedUnits: 4,
+      currentUnit: "YUSSI",
+    });
+    await releaseOperationLock(connection.db, lock);
   });
 
   it("persists mocked Reddit evidence idempotently and purges deleted source content", async () => {
