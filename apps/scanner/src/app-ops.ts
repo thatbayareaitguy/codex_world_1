@@ -15,14 +15,15 @@ try {
     mkdirSync(runtimeDirectory, { recursive: true });
     mkdirSync(logDirectory(), { recursive: true });
     await run("docker", ["compose", "up", "-d", "db"]);
-    await run(packageManagerExecutable(), ["db:migrate"]);
+    await runPackageManager(["db:migrate"]);
     if (!development && !existsSync(resolve("apps", "web", ".next", "BUILD_ID"))) {
-      await run(packageManagerExecutable(), ["build"]);
+      await runPackageManager(["build"]);
     }
     const args = development
-      ? ["dev", "--", "--hostname", "127.0.0.1", "--port", "3000"]
+      ? ["--filter", "@radar/web", "dev", "--hostname", "127.0.0.1", "--port", "3000"]
       : ["--filter", "@radar/web", "start", "--hostname", "127.0.0.1", "--port", "3000"];
-    const child = spawn(packageManagerExecutable(), args, {
+    const command = packageManagerCommand(args);
+    const child = spawn(command.executable, command.args, {
       cwd: process.cwd(),
       env: process.env,
       stdio: "inherit",
@@ -77,6 +78,21 @@ function run(executable: string, args: string[]): Promise<void> {
   });
 }
 
-function packageManagerExecutable(): string {
-  return process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+function runPackageManager(args: string[]): Promise<void> {
+  const command = packageManagerCommand(args);
+  return run(command.executable, command.args);
+}
+
+function packageManagerCommand(args: string[]): { args: string[]; executable: string } {
+  const npmExecPath = process.env.npm_execpath?.trim();
+  if (npmExecPath && /\.(?:cjs|mjs|js)$/i.test(npmExecPath)) {
+    return { args: [npmExecPath, ...args], executable: process.execPath };
+  }
+  if (process.platform === "win32") {
+    return {
+      args: ["/d", "/s", "/c", "pnpm.cmd", ...args],
+      executable: process.env.ComSpec ?? "cmd.exe",
+    };
+  }
+  return { args, executable: "pnpm" };
 }

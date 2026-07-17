@@ -2190,7 +2190,7 @@ function ProviderSetting({
         <small>
           {name === "Spotify"
             ? "Server-side OAuth, followed-artist import, catalog discovery, and private playlist export."
-            : "Public metadata discovery with a required contact email and one request per second."}
+            : "Public metadata discovery using your contact email; no account connection is required."}
         </small>
       </div>
       {name === "Spotify" && configured && loading ? (
@@ -2228,6 +2228,10 @@ function ProviderSetting({
         <a className="primary-button" href="/api/auth/spotify/start">
           {spotifyStatus?.state === "reconnect_required" ? "Reconnect Spotify" : "Connect Spotify"}
         </a>
+      ) : name === "MusicBrainz" ? (
+        <span className="mock-badge" role="status">
+          {enabled && configured ? "Ready" : status}
+        </span>
       ) : (
         <button className="secondary-button" disabled type="button">
           {status}
