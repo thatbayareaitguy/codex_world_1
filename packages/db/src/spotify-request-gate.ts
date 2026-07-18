@@ -112,17 +112,32 @@ export async function deferSpotifyRequests(
   delayMs: number,
   now = new Date(),
 ): Promise<Date> {
-  if (!Number.isInteger(delayMs) || delayMs < 0) throw new Error("Invalid Spotify request delay.");
+  if (!Number.isSafeInteger(delayMs) || delayMs < 0) {
+    throw new Error("Invalid Spotify request delay.");
+  }
+  const targetTime = now.getTime() + delayMs;
+  if (!Number.isFinite(now.getTime()) || targetTime > 8_640_000_000_000_000) {
+    throw new Error("Spotify request delay exceeds the supported timestamp range.");
+  }
   await ensureSpotifyState(db);
-  const nextRequestAt = new Date(now.getTime() + delayMs);
-  await db
-    .update(spotifyProviderState)
-    .set({
-      nextRequestAt: sql`greatest(coalesce(${spotifyProviderState.nextRequestAt}, ${nextRequestAt}), ${nextRequestAt})`,
-      updatedAt: now,
-    })
-    .where(eq(spotifyProviderState.id, spotifyStateId));
-  return nextRequestAt;
+  const requestedNextRequestAt = new Date(targetTime);
+  return db.transaction(async (tx) => {
+    const [state] = await tx
+      .select({ nextRequestAt: spotifyProviderState.nextRequestAt })
+      .from(spotifyProviderState)
+      .where(eq(spotifyProviderState.id, spotifyStateId))
+      .for("update");
+    if (!state) throw new Error("Spotify provider state is unavailable.");
+    const nextRequestAt =
+      state.nextRequestAt && state.nextRequestAt > requestedNextRequestAt
+        ? state.nextRequestAt
+        : requestedNextRequestAt;
+    await tx
+      .update(spotifyProviderState)
+      .set({ nextRequestAt, updatedAt: now })
+      .where(eq(spotifyProviderState.id, spotifyStateId));
+    return nextRequestAt;
+  });
 }
 
 async function acquireSpotifyPermit(

@@ -1,86 +1,91 @@
 # AI Handoff
 
-Updated: 2026-07-17 16:29:30 PDT (UTC-07:00)
+Updated: 2026-07-18 16:54:23 PDT (UTC-07:00)
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`
-- Latest commit: current `HEAD` (`docs: update handoff after scan correction`). Resolve its immutable hash with `git rev-parse HEAD`.
-- Current milestone: combined Spotify hardening and MusicBrainz validation checkpoint complete. Spotify Development Mode live validation remains paused.
-- Git state: working tree clean after this handoff commit; branch synchronized with `origin/codex/release-radar-hardening` by the requested push.
+- Latest commit: current `HEAD` (`fix: stabilize Spotify request deferral and live scanning`).
+- Current milestone: one-artist Spotify persistence and idempotency validation complete; five-artist staged validation has not started.
+- Git state: the validated checkpoint is committed locally and not pushed. The branch is one commit ahead of `origin/codex/release-radar-hardening` before any later amend.
 
 ## Confirmed Working
 
-- PostgreSQL and Docker development services, migrations, backup, restore, and doctor checks.
+- PostgreSQL, Docker services, nine forward migrations, application port, and doctor checks.
 - Database-backed canonical watchlist with 593 active follows.
-- Spotify OAuth connection and followed-artist import persistence. No Spotify request was made during the latest MusicBrainz tasks.
-- Global database-backed MusicBrainz request pacing at one request per second.
-- Live one-artist MusicBrainz scan for YUSSI, including incremental progress, heartbeat, cancellation, resume, legitimate no-results persistence, and idempotent rerun.
-- YUSSI confirmed MusicBrainz mapping persisted as a user-confirmed mapping. Related reviews are resolved.
-- Transactional MusicBrainz confirmation, idempotent reconfirmation, replacement cleanup, persisted-state modal display, and watchlist refresh are covered by database and browser tests.
-- Mock scanning, feed filtering, evidence links, artist management, navigation, appearance settings, and guarded Spotify batch controls.
+- Spotify OAuth connection, followed-artist import, global cooldown, shared request gate, bounded pagination, persisted partial scans, and provider request telemetry.
+- YUSSI one-page dry run and one-page non-dry discovery through the live Spotify API without HTTP 429 or playlist access.
+- The first non-dry scan persisted 15 Spotify candidates as 13 canonical tracks under 2 releases: `Hold On` and the 12-track `UNTAMED` album. Two repeated single/album recordings were matched to their canonical album tracks.
+- The feed shows `Hold On` dated 2026-07-16 with YUSSI credit and protected Spotify evidence links. `UNTAMED` renders as one 12-track release group.
+- One canonical non-review feed item is enforced per user and track. All 15 provider candidates and evidence rows remain preserved.
+- The exact idempotency rerun made one `artist_albums` request and created zero records or duplicates.
+- MusicBrainz pacing, confirmed mapping persistence, review resolution, cancellation, resume, and live one-artist validation.
+- Mock scanning, artist management, feed filters, evidence links, navigation, appearance settings, and guarded Spotify batch controls.
 
 ## Implemented, Not Live-Tested
 
-- The revised YUSSI mapping modal has synthetic Playwright coverage but still needs one user-visible verification in the running application.
-- Spotify global cooldown enforcement, request queue, bounded pagination, staged batches, pause, cancel, retry, and resume have credential-free coverage but no post-cooldown live Spotify validation.
-- Spotify single-playlist write boundary is implemented and tested but writes remain disabled and have not been used against a real account.
+- Five-artist and larger staged Spotify batches have not run.
+- Spotify playlist writes remain disabled and have never been used against the real account.
+- Deep Spotify reconciliation and the full watchlist scan have not run.
 - A 10-artist MusicBrainz batch has not run because fewer than 10 artists have confirmed mappings.
 
 ## Known Defects And Limitations
 
-- Historical scan `8ae0a233-9bc8-4ad2-b61d-24099507f6f5` was safely reclassified from `failed` to `cancelled` after every guard matched. Its timestamps, counts, artist/provider fields, and original cancellation message were preserved. Doctor no longer reports a failed scan.
-- One historical pre-fix MusicBrainz artist-scan telemetry row may retain a doubled stage count. Current batch summaries and new runs are corrected.
-- MusicBrainz returned no YUSSI candidates inside the tested 60-day backfill. This is a legitimate no-results state, not proof of completeness.
-- Normal MusicBrainz scans are limited to artists with confirmed mappings.
-- Spotify Development Mode limits are unpublished, so completion estimates remain ranges and full completeness cannot be claimed.
+- Spotify scan `eeadfa36-2f08-491a-adbb-144b94a15720` remains `failed` with its original timestamp-binding diagnostic evidence. Its metadata now marks it resolved after the fix and successful live validation; doctor excludes resolved historical failures from active problems.
+- The first non-dry YUSSI request encountered a local `request_failed` event, then refreshed OAuth successfully and recovered. No 429 or provider cooldown resulted.
+- YUSSI remains partially scanned because the approved page limit was one and another Spotify page exists.
+- Normal scans intentionally omit old first-page releases outside the 60-day backfill. Completeness cannot be guaranteed under bounded pagination or unpublished Spotify Development Mode limits.
+- Spotify availability displayed as unavailable for these records in the configured US region even though evidence links are present. This was not changed during discovery validation.
+- One historical pre-fix MusicBrainz artist-scan row may retain a doubled stage count.
 
-## Provider Blockers
+## Provider Cooldowns And Blockers
 
-- Spotify provider cooldown: stored until `2026-07-18T07:38:31.454Z` (`2026-07-18 00:38:31 PDT`). Spotify request count remains zero under the new gate. Do not probe, clear, or bypass the cooldown.
-- MusicBrainz: two confirmed mappings. At least 10 total are required before the requested 10-artist batch validation.
+- Spotify: no active cooldown and no stale lock. The preserved cooldown expired at `2026-07-18T07:38:31.454Z`.
+- MusicBrainz: two confirmed mappings; ten are needed for the requested 10-artist batch.
 - Reddit: disabled pending explicit API approval.
-- SoundCloud API, YouTube, Apple Music, TIDAL, and other providers remain excluded. SoundCloud is limited to the disabled-by-default manual outbound-link feature.
+- SoundCloud API, YouTube, Apple Music, TIDAL, and other providers remain excluded. Manual SoundCloud links remain disabled by default.
 
 ## Database
 
-- Applied migrations: 8, through `0007_musicbrainz_workflow`.
-- Committed forward migrations: `0006_amusing_power_pack` and `0007_musicbrainz_workflow`, with snapshots and journal updates.
-- Clean test-database migration provisioning passes as part of integration tests.
-- Current safe counts: 593 active follows and 2 confirmed MusicBrainz mappings.
-- Historical failed or partial scans requiring attention: 0. Operation and provider scan locks: 0.
+- Applied migrations: 9, through `0008_groovy_wolfsbane`.
+- Migration 0008 removes only redundant non-review feed presentation rows, preserves the earliest first-seen timestamp and latest feed state, then enforces canonical feed uniqueness.
+- YUSSI baseline before non-dry validation: 0 Spotify releases, tracks, candidates, evidence rows, feed items, or review items; provider request count 12.
+- YUSSI after validation and idempotency rerun: 1 canonical artist, 1 Spotify artist mapping, 2 canonical releases, 13 canonical tracks, 15 release candidates, 15 evidence rows, 13 feed items, 0 review items, and provider request count 20.
+- Duplicate canonical artists, provider release IDs, provider track IDs, evidence identities, and non-review feed tracks: 0.
+- Active operation and scan locks: 0.
 
 ## Verification
-
-Latest complete credential-free verification on 2026-07-17 at approximately 16:04 PDT:
 
 - Format: passed.
 - Lint: passed with zero warnings.
 - Strict TypeScript: passed across all workspace projects.
-- Unit tests: 188 passed in 25 files.
-- PostgreSQL integration tests: 19 passed in 3 files.
+- Unit tests: 192 passed in 26 files.
+- PostgreSQL integration tests: 25 passed in 3 files.
 - Playwright: 10 passed.
-- Production build: passed.
-- Doctor: `READY`; no failed scans or stale locks. The active Spotify cooldown remains the only provider action notice.
+- Production build: passed; 22 routes/pages generated.
+- Doctor: `READY`; 9 migrations applied, no cooldown or stale lock, and 1 resolved historical failure preserved.
 - `git diff --check`: passed.
+- First non-dry request events: one failed local `artist_albums` attempt, one successful `oauth_token` refresh, one successful `artist_albums` retry, and four successful `album` requests. Successful request starts respected at least five seconds spacing. HTTP 429 count: 0. Playlist request count: 0.
+- Idempotency rerun: one successful `artist_albums` request, zero inserted records, and no count changes.
 
 ## Uncommitted Files
 
-- None after this handoff commit. Ignored local credentials, runtime logs, build output, and test artifacts remain outside source control.
+- None expected after the handoff amendment. Verify with `git status`.
 
 ## Security And Policy
 
-- Credentials, OAuth tokens, authorization headers, contact email, and raw provider payloads must not enter this document or logs.
-- Spotify tokens remain server-side and encrypted at rest. Browser code must not receive provider secrets.
-- Spotify playlist writes default off. Future writes are limited to adding exact or manually confirmed tracks to one configured, owned, private playlist.
-- No combined player, mixed queue, cross-service artwork, audio proxy, scraping, or SoundCloud API integration is permitted.
-- Plain outbound links to another service remain a documented Spotify policy uncertainty. Keep canonical records provider-neutral and Spotify data namespaced.
+- Credentials, tokens, authorization headers, contact email, and raw provider payloads remain excluded from source, handoff text, and reports.
+- Spotify tokens remain encrypted and server-side. All live requests used the shared cooldown and request gate.
+- Spotify playlist writes remain disabled; no playlist read or write occurred during validation.
+- No MusicBrainz or Reddit request occurred during Spotify validation.
+- No combined player, mixed queue, scraping, cross-service artwork, audio proxy, or SoundCloud API integration is permitted.
+- Plain external links to another service remain a documented Spotify policy uncertainty.
 
 ## Next Action
 
-After the stored Spotify cooldown expires, decide whether to run the one-artist YUSSI Spotify dry-run validation. Do not run it before explicit approval.
+Review and commit the current validated change set, then decide whether to approve a five-artist Spotify staged test. Do not start a larger batch until the five-artist request count and timing are reviewed.
 
 ## User Decisions Needed
 
-- After the stored Spotify cooldown expires, explicitly approve or defer the one-artist YUSSI Spotify dry-run validation.
-- Confirm MusicBrainz mappings for enough artists to permit a 10-artist MusicBrainz batch, or defer that validation.
+- Approve or defer the five-artist Spotify staged validation.
+- Confirm enough MusicBrainz mappings for a 10-artist batch, or defer that validation.

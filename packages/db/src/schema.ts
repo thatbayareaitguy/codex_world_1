@@ -888,6 +888,9 @@ export const feedItems = pgTable(
   },
   (table) => [
     uniqueIndex("feed_user_dedupe_unique").on(table.userId, table.dedupeKey),
+    uniqueIndex("feed_user_track_unique")
+      .on(table.userId, table.trackId)
+      .where(sql`${table.trackId} is not null and ${table.state} <> 'needs_review'`),
     index("feed_user_state_seen_idx").on(table.userId, table.state, table.firstSeenAt),
   ],
 );

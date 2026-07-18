@@ -1586,16 +1586,42 @@ function FeedView({
           </div>
         )}
         {items.length ? (
-          items.map((item) => (
-            <FeedItem
-              item={item}
-              key={item.id}
-              onItemChange={onItemChange}
-              onSoundCloudLinkChange={onSoundCloudLinkChange}
-              soundCloudManualLinksEnabled={soundCloudManualLinksEnabled}
-              soundCloudLink={soundCloudLinks[item.id]}
-            />
-          ))
+          groupFeedItems(items).map((group) =>
+            group.items.length > 1 ? (
+              <section
+                aria-label={`${group.releaseTitle} ${titleCase(group.releaseType)}`}
+                className="release-feed-group"
+                key={group.key}
+              >
+                <div className="release-feed-group-heading">
+                  <div>
+                    <span>{titleCase(group.releaseType)}</span>
+                    <strong>{group.releaseTitle}</strong>
+                  </div>
+                  <span>{group.items.length} tracks</span>
+                </div>
+                {group.items.map((item) => (
+                  <FeedItem
+                    item={item}
+                    key={item.id}
+                    onItemChange={onItemChange}
+                    onSoundCloudLinkChange={onSoundCloudLinkChange}
+                    soundCloudManualLinksEnabled={soundCloudManualLinksEnabled}
+                    soundCloudLink={soundCloudLinks[item.id]}
+                  />
+                ))}
+              </section>
+            ) : (
+              <FeedItem
+                item={group.items[0]!}
+                key={group.key}
+                onItemChange={onItemChange}
+                onSoundCloudLinkChange={onSoundCloudLinkChange}
+                soundCloudManualLinksEnabled={soundCloudManualLinksEnabled}
+                soundCloudLink={soundCloudLinks[group.items[0]!.id]}
+              />
+            ),
+          )
         ) : (
           <div className="empty-state">
             <Search size={22} />
@@ -4082,7 +4108,12 @@ function FeedItem({
         <div className="evidence-row">
           <div className="source-stack">
             {item.sources.map((source) => (
-              <a href={source.href} key={source.provider} rel="noopener noreferrer" target="_blank">
+              <a
+                href={source.href}
+                key={`${source.provider}:${source.href}`}
+                rel="noopener noreferrer"
+                target="_blank"
+              >
                 {source.provider}
                 <ExternalLink size={12} />
               </a>
@@ -4140,6 +4171,33 @@ function FeedItem({
       </div>
     </article>
   );
+}
+
+function groupFeedItems(items: FeedFixtureItem[]) {
+  const groups = new Map<
+    string,
+    {
+      items: FeedFixtureItem[];
+      key: string;
+      releaseTitle: string;
+      releaseType: FeedFixtureItem["releaseType"];
+    }
+  >();
+  for (const item of items) {
+    const key = item.releaseId ?? `${item.releaseTitle}:${item.releaseDate}:${item.releaseType}`;
+    const group = groups.get(key);
+    if (group) {
+      group.items.push(item);
+    } else {
+      groups.set(key, {
+        items: [item],
+        key,
+        releaseTitle: item.releaseTitle,
+        releaseType: item.releaseType,
+      });
+    }
+  }
+  return [...groups.values()];
 }
 
 function SoundCloudReleaseControls({

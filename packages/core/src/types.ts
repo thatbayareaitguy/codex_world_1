@@ -159,6 +159,7 @@ export interface FeedFixtureItem {
   state: FeedState;
   artist: string;
   title: string;
+  releaseId?: string;
   releaseTitle: string;
   releaseType: ReleaseType;
   releaseDate: string;

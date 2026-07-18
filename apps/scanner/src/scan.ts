@@ -62,6 +62,7 @@ import {
   SpotifyHttpError,
   type CanonicalArtistMappingInput,
   type DiscoveryProvider,
+  type ProviderReleaseObservation,
   type SpotifyArtistMapping,
   type SpotifyRequestTelemetry,
 } from "@radar/providers";
@@ -69,6 +70,7 @@ import { mockProviderFixture } from "@radar/testing";
 import { and, eq, lt, or } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { ScannerOptions } from "./args";
+import { buildDryRunReport, candidateKey, type DryRunReport } from "./dry-run-report";
 import { runRedditScan } from "./reddit-scan";
 import { prepareSpotifyWork, type PreparedSpotifyWork } from "./spotify-scan-plan";
 
@@ -78,7 +80,19 @@ export interface ScanSummary {
   skipped: number;
   needsReview: number;
   dryRun: boolean;
+  dryRunReport?: DryRunReport;
   providerResults?: Record<string, { error?: string; inserted: number; discovered: number }>;
+}
+
+export class DryRunOperationalError extends Error {
+  constructor(
+    message: string,
+    readonly classification: string,
+    readonly summary: ScanSummary,
+  ) {
+    super(message);
+    this.name = "DryRunOperationalError";
+  }
 }
 
 interface PreparedMusicBrainzWork {
@@ -264,6 +278,11 @@ async function runScanUnlocked(
     dryRun: options.dryRun,
     providerResults: {},
   };
+  const backfillStart =
+    options.since ??
+    new Date(Date.now() - configuration.initialBackfillDays * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
   try {
     let spotifyWork: PreparedSpotifyWork | undefined;
     let musicBrainzWork: PreparedMusicBrainzWork | undefined;
@@ -338,6 +357,10 @@ async function runScanUnlocked(
       let previousSpotifyRequestCount = 0;
       let musicBrainzArtistRequestBase = 0;
       let previousMusicBrainzRequestCount = 0;
+      const dryRunCandidates: TrackCandidate[] = [];
+      const dryRunReleases: ProviderReleaseObservation[] = [];
+      let dryRunPagesScanned = 0;
+      let dryRunPartial = false;
       try {
         await runtime?.reportProgress(
           {
@@ -371,11 +394,7 @@ async function runScanUnlocked(
             ...(options.artistId ? { artistId: options.artistId } : {}),
             ...(options.full ? { full: true } : {}),
             provider: provider.name,
-            since:
-              options.since ??
-              new Date(Date.now() - configuration.initialBackfillDays * 86_400_000)
-                .toISOString()
-                .slice(0, 10),
+            since: backfillStart,
           },
           ...(provider.name === "spotify"
             ? {
@@ -402,6 +421,12 @@ async function runScanUnlocked(
                 onBatch: async (batch) => {
                   batchPersisted = true;
                   artistsProcessedCount = batch.completedUnits;
+                  if (options.dryRun) {
+                    dryRunCandidates.push(...batch.candidates);
+                    dryRunReleases.push(...(batch.releases ?? []));
+                    dryRunPagesScanned += batch.pagesScanned ?? 0;
+                    dryRunPartial ||= batch.partial ?? false;
+                  }
                   const batchSummary = options.dryRun
                     ? {
                         discovered: batch.candidates.length,
@@ -559,6 +584,16 @@ async function runScanUnlocked(
           persistedBatchStatus?.status === "rate_limited"
             ? persistedBatchStatus.status
             : "completed";
+        if (options.dryRun && provider.name === "spotify") {
+          aggregate.dryRunReport = await createSpotifyDryRunReport(db, {
+            backfillStart,
+            candidates: dryRunCandidates,
+            pagesScanned: dryRunPagesScanned,
+            partial: dryRunPartial,
+            releases: dryRunReleases,
+            requestCount: result.providerMetrics?.requests ?? 0,
+          });
+        }
         const summary = batchPersisted
           ? options.dryRun
             ? incrementalSummary
@@ -612,19 +647,36 @@ async function runScanUnlocked(
           await finishMusicBrainzBatch(db, musicBrainzWork.batchId, "completed");
         }
         if (provider.name === "spotify" && providerOutcome === "completed") {
-          await deferSpotifyRequests(
-            db,
-            spotifyBatchPauseMilliseconds(configuration.spotify.batchPauseSeconds),
-          );
+          const defer = () =>
+            deferSpotifyRequests(
+              db,
+              spotifyBatchPauseMilliseconds(configuration.spotify.batchPauseSeconds),
+            );
+          if (options.dryRun && aggregate.dryRunReport) {
+            await runDryRunFinalOperationalStep(aggregate, "request_deferral_failed", defer);
+          } else {
+            await defer();
+          }
         }
-        await runtime?.reportProgress(
-          {
-            currentProvider: null,
-            phase: providerOutcome === "completed" ? "provider_completed" : providerOutcome,
-            providersCompleted,
-          },
-          true,
-        );
+        const reportCompletion = () =>
+          runtime?.reportProgress(
+            {
+              currentProvider: null,
+              phase: providerOutcome === "completed" ? "provider_completed" : providerOutcome,
+              providersCompleted,
+            },
+            true,
+          ) ?? Promise.resolve();
+        if (options.dryRun && aggregate.dryRunReport) {
+          await runDryRunFinalOperationalStep(
+            aggregate,
+            "progress_telemetry_failed",
+            reportCompletion,
+          );
+          aggregate.dryRunReport.finalOperationalStep = { status: "completed" };
+        } else {
+          await reportCompletion();
+        }
       } catch (error) {
         const outcomeStatus = scanOutcomeStatus(error, runtime?.signal);
         if (provider.name === "musicbrainz" && musicBrainzWork) {
@@ -656,10 +708,14 @@ async function runScanUnlocked(
           });
           currentSpotifyArtistScan = undefined;
         }
-        const failure = new Error(safeScanError(error));
+        const failure =
+          error instanceof DryRunOperationalError ? error : new Error(safeScanError(error));
         failures.push(failure);
         aggregate.providerResults![provider.name] = {
-          discovered: 0,
+          discovered:
+            options.dryRun && aggregate.dryRunReport
+              ? aggregate.dryRunReport.trackCandidates.length
+              : 0,
           error: failure.message,
           inserted: 0,
         };
@@ -671,6 +727,7 @@ async function runScanUnlocked(
           failure,
           providerRunId,
           outcomeStatus,
+          aggregate,
         );
         await runtime?.reportProgress(
           {
@@ -713,7 +770,10 @@ async function runScanUnlocked(
       (attemptedProviders > 0 && failures.length === attemptedProviders) ||
       (requested && failures.length > 0)
     ) {
-      throw new Error(failures.map((failure) => failure.message).join("; "));
+      const dryRunFailure = failures.find(
+        (failure): failure is DryRunOperationalError => failure instanceof DryRunOperationalError,
+      );
+      throw dryRunFailure ?? new Error(failures.map((failure) => failure.message).join("; "));
     }
     log("info", options.dryRun ? "scan.dry_run_completed" : "scan.completed", aggregate);
     return aggregate;
@@ -841,13 +901,18 @@ async function recordProviderFailure(
   error: Error,
   runId?: string,
   status: "failed" | "cancelled" | "rate_limited" = "failed",
+  summary?: ScanSummary,
 ): Promise<void> {
+  const errorEvidence = {
+    message: safeScanError(error),
+    ...(error instanceof DryRunOperationalError ? { classification: error.classification } : {}),
+  };
   if (runId) {
     await db
       .update(scanRuns)
       .set({
         completedAt: new Date(),
-        errors: [{ message: safeScanError(error) }],
+        errors: [errorEvidence],
         providersFailed: status === "failed" ? [provider] : [],
         status,
       })
@@ -858,10 +923,34 @@ async function recordProviderFailure(
     provider,
     status,
     dryRun: options.dryRun,
+    providersRequested: [provider],
+    providersFailed: status === "failed" ? [provider] : [],
+    triggerType: options.provider ? "provider_manual" : "manual",
     ...(options.artistId ? { artistFilter: options.artistId } : {}),
     completedAt: new Date(),
-    errors: [{ message: safeScanError(error) }],
+    errors: [errorEvidence],
+    ...(summary?.dryRunReport ? { metadata: { dryRunReport: summary.dryRunReport } } : {}),
   });
+}
+
+export async function runDryRunFinalOperationalStep(
+  summary: ScanSummary,
+  classification: string,
+  operation: () => Promise<unknown>,
+): Promise<void> {
+  try {
+    await operation();
+  } catch (error) {
+    const message = safeScanError(error);
+    if (summary.dryRunReport) {
+      summary.dryRunReport.finalOperationalStep = {
+        classification,
+        message,
+        status: "failed",
+      };
+    }
+    throw new DryRunOperationalError(message, classification, summary);
+  }
 }
 
 function scanOutcomeStatus(
@@ -1351,6 +1440,50 @@ async function ensureArtist(db: DatabaseExecutor, candidate: TrackCandidate): Pr
     confirmed: true,
   });
   return artist.id;
+}
+
+export async function createSpotifyDryRunReport(
+  db: RadarDatabase,
+  input: {
+    backfillStart: string;
+    candidates: TrackCandidate[];
+    pagesScanned: number;
+    partial: boolean;
+    releases: ProviderReleaseObservation[];
+    requestCount: number;
+  },
+): Promise<DryRunReport> {
+  const [canonicalTracks, existingCandidates, providerMatches] = await Promise.all([
+    loadCanonicalTracks(db),
+    db
+      .select({
+        provider: releaseCandidates.provider,
+        providerReleaseId: releaseCandidates.providerReleaseId,
+        providerTrackId: releaseCandidates.providerTrackId,
+      })
+      .from(releaseCandidates)
+      .where(eq(releaseCandidates.provider, "spotify")),
+    db
+      .select({ externalId: trackExternalIds.externalId, trackId: trackExternalIds.trackId })
+      .from(trackExternalIds)
+      .where(eq(trackExternalIds.provider, "spotify")),
+  ]);
+  return buildDryRunReport({
+    ...input,
+    canonicalTracks,
+    existingCandidateKeys: new Set(
+      existingCandidates.map((candidate) =>
+        candidateKey({
+          externalReleaseId: candidate.providerReleaseId,
+          externalTrackId: candidate.providerTrackId,
+          provider: candidate.provider,
+        }),
+      ),
+    ),
+    providerTrackMatches: new Map(
+      providerMatches.map((match) => [match.externalId, match.trackId]),
+    ),
+  });
 }
 
 async function loadCanonicalTracks(db: DatabaseExecutor): Promise<CanonicalTrack[]> {

@@ -57,6 +57,13 @@
       "when": 1784323766384,
       "tag": "0007_musicbrainz_workflow",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784418320888,
+      "tag": "0008_groovy_wolfsbane",
+      "breakpoints": true
     }
   ]
 }

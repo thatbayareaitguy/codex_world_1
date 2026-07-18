@@ -42,7 +42,14 @@ export async function loadDatabaseFeed(databaseUrl: string): Promise<FeedFixture
       const credits = creditRows
         .filter((row) => row.trackId === feed.trackId)
         .sort((left, right) => left.creditOrder - right.creditOrder);
-      const evidence = evidenceRows.filter((row) => row.candidateId === candidate.id);
+      const relatedCandidateIds = new Set(
+        candidateRows
+          .filter((row) =>
+            feed.trackId ? row.matchedTrackId === feed.trackId : row.id === candidate.id,
+          )
+          .map((row) => row.id),
+      );
+      const evidence = evidenceRows.filter((row) => relatedCandidateIds.has(row.candidateId));
       const availabilities = availabilityRows.filter((row) => row.trackId === feed.trackId);
       const spotify = availabilities.find((row) => row.provider === "spotify");
       const exported = exportRows.some(
@@ -81,6 +88,7 @@ export async function loadDatabaseFeed(databaseUrl: string): Promise<FeedFixture
           links: evidence.map((row) => ({ href: row.sourceUrl, label: "Source evidence" })),
           matchReason: candidate.matchReasons.join("; "),
           region: spotify?.region ?? availabilities[0]?.region ?? "ZZ",
+          ...(release ? { releaseId: release.id } : {}),
           releaseDate: candidate.releaseDate,
           releaseDatePrecision:
             release?.releaseDatePrecision === "year" || release?.releaseDatePrecision === "month"

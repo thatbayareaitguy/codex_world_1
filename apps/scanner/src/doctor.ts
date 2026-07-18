@@ -1,6 +1,6 @@
 import { createDatabase, getSpotifyOperationalStatus, operationLocks, scanRuns } from "@radar/db";
 import { isValidRedditUserAgent, loadProviderConfiguration } from "@radar/providers";
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { accessSync, constants, existsSync, readdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
@@ -22,6 +22,7 @@ export interface DoctorDatabaseStatus {
   lastSuccessfulScan?: string;
   migrationCount: number;
   migrationError?: string;
+  resolvedScans?: number;
   spotifyCooldownActive?: boolean;
   spotifyCooldownUntil?: string;
   staleLocks: number;
@@ -113,7 +114,13 @@ export async function collectDoctorReport(
               "Run pnpm scan:status and retry the failed provider.",
               false,
             )
-          : ready("Failed scans", "No failed scan runs are pending.", false),
+          : ready(
+              "Failed scans",
+              databaseStatus.resolvedScans
+                ? `No failed scan runs are pending; ${databaseStatus.resolvedScans} resolved historical failure(s) are preserved.`
+                : "No failed scan runs are pending.",
+              false,
+            ),
       );
       checks.push(
         databaseStatus.staleLocks > 0
@@ -263,6 +270,7 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
       migrationError = "The Drizzle migration table is missing.";
     }
     let failedScans = 0;
+    let resolvedScans = 0;
     let lastSuccessfulScan: string | undefined;
     let staleLocks = 0;
     let spotifyCooldownActive = false;
@@ -271,8 +279,17 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
       const [failed] = await db
         .select({ count: sql<number>`count(*)::int` })
         .from(scanRuns)
-        .where(inArray(scanRuns.status, ["failed", "partial"]));
+        .where(
+          sql`${scanRuns.status} in ('failed', 'partial') and coalesce(${scanRuns.metadata}->'resolution'->>'status', '') <> 'resolved'`,
+        );
       failedScans = failed?.count ?? 0;
+      const [resolved] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(scanRuns)
+        .where(
+          sql`${scanRuns.status} in ('failed', 'partial') and ${scanRuns.metadata}->'resolution'->>'status' = 'resolved'`,
+        );
+      resolvedScans = resolved?.count ?? 0;
       const [last] = await db
         .select({ completedAt: scanRuns.completedAt })
         .from(scanRuns)
@@ -297,6 +314,7 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
       ...(lastSuccessfulScan ? { lastSuccessfulScan } : {}),
       migrationCount,
       ...(migrationError ? { migrationError } : {}),
+      resolvedScans,
       spotifyCooldownActive,
       ...(spotifyCooldownUntil ? { spotifyCooldownUntil } : {}),
       staleLocks,

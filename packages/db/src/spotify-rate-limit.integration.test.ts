@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createDatabase, type RadarDatabase } from "./client";
 import {
@@ -13,6 +14,7 @@ import {
 import {
   clearInvalidSpotifyCooldown,
   createSpotifyRequestGate,
+  deferSpotifyRequests,
   getSpotifyOperationalStatus,
   SpotifyCooldownError,
 } from "./spotify-request-gate";
@@ -47,6 +49,80 @@ afterAll(async () => {
 });
 
 describe("Spotify global request gate", () => {
+  it("binds deferred JavaScript dates as UTC and preserves them across connections", async () => {
+    const now = new Date("2026-07-18T02:00:00.123-07:00");
+    const deferredUntil = await deferSpotifyRequests(db, 5_000, now);
+    expect(deferredUntil.toISOString()).toBe("2026-07-18T09:00:05.123Z");
+
+    const restarted = createDatabase(databaseUrl);
+    try {
+      expect((await getSpotifyOperationalStatus(restarted.db)).nextRequestAt?.toISOString()).toBe(
+        "2026-07-18T09:00:05.123Z",
+      );
+    } finally {
+      await restarted.client.end();
+    }
+  });
+
+  it("enforces a persisted five-second deferral after a database reconnection", async () => {
+    const deferredAt = Date.now();
+    await deferSpotifyRequests(db, 5_000, new Date(deferredAt));
+    const restarted = createDatabase(databaseUrl);
+    try {
+      const permit = await createSpotifyRequestGate(restarted.db, 5_000).acquire({
+        endpointCategory: "artist_albums",
+        method: "GET",
+      });
+      expect(permit.startedAt.getTime() - deferredAt).toBeGreaterThanOrEqual(4_900);
+      await createSpotifyRequestGate(restarted.db, 5_000).complete(permit, { status: 200 });
+    } finally {
+      await restarted.client.end();
+    }
+  }, 10_000);
+
+  it("handles missing state, concurrent deferrals, large delays, and invalid values", async () => {
+    const now = new Date("2026-07-18T09:00:00.000Z");
+    const [shorter, longer] = await Promise.all([
+      deferSpotifyRequests(db, 86_400_000, now),
+      deferSpotifyRequests(db, 365 * 86_400_000, now),
+    ]);
+    expect(shorter.toISOString()).toBe("2026-07-19T09:00:00.000Z");
+    expect(longer.toISOString()).toBe("2027-07-18T09:00:00.000Z");
+    expect((await getSpotifyOperationalStatus(db)).nextRequestAt?.toISOString()).toBe(
+      "2027-07-18T09:00:00.000Z",
+    );
+    await expect(
+      deferSpotifyRequests(db, "0; drop table scan_runs" as unknown as number, now),
+    ).rejects.toThrow("Invalid Spotify request delay");
+    await expect(deferSpotifyRequests(db, Number.MAX_SAFE_INTEGER, now)).rejects.toThrow(
+      "supported timestamp range",
+    );
+  });
+
+  it("does not shorten an existing deferral or weaken a later cooldown", async () => {
+    const now = new Date();
+    const deferredUntil = await deferSpotifyRequests(db, 120_000, now);
+    const cooldownUntil = new Date(now.getTime() + 300_000);
+    await db
+      .update(spotifyProviderState)
+      .set({
+        cooldownObservedAt: now,
+        cooldownStatus: 429,
+        cooldownUntil,
+      })
+      .where(eq(spotifyProviderState.id, "global"));
+    expect(await deferSpotifyRequests(db, 10_000, now)).toEqual(deferredUntil);
+    const status = await getSpotifyOperationalStatus(db, now);
+    expect(status.nextRequestAt).toEqual(deferredUntil);
+    expect(status.cooldownUntil).toEqual(cooldownUntil);
+    await expect(
+      createSpotifyRequestGate(db, 5_000).acquire({
+        endpointCategory: "artist_albums",
+        method: "GET",
+      }),
+    ).rejects.toBeInstanceOf(SpotifyCooldownError);
+  });
+
   it("persists a 429 cooldown and blocks a separate gate instance", async () => {
     const firstGate = createSpotifyRequestGate(db, 5_000);
     const permit = await firstGate.acquire({ endpointCategory: "artist_albums", method: "GET" });
@@ -112,6 +188,20 @@ describe("Spotify global request gate", () => {
     );
     expect(events[1]!.queueWaitMs).toBeGreaterThanOrEqual(4_900);
   }, 10_000);
+
+  it("serializes concurrent callers across gate instances", async () => {
+    const firstGate = createSpotifyRequestGate(db, 5_000);
+    const secondGate = createSpotifyRequestGate(db, 5_000);
+    const first = await firstGate.acquire({ endpointCategory: "artist", method: "GET" });
+    const secondPromise = secondGate.acquire({
+      endpointCategory: "artist_albums",
+      method: "GET",
+    });
+    await firstGate.complete(first, { status: 200 });
+    const second = await secondPromise;
+    await secondGate.complete(second, { status: 200 });
+    expect(second.startedAt.getTime() - first.startedAt.getTime()).toBeGreaterThanOrEqual(4_900);
+  }, 15_000);
 });
 
 describe("Spotify resumable batches", () => {

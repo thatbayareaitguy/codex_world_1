@@ -24,7 +24,20 @@ export interface ProviderScanBatch {
     requests: number;
     waitMs: number;
   };
+  releases?: ProviderReleaseObservation[];
   totalUnits: number;
+}
+
+export interface ProviderReleaseObservation {
+  backfillEligible: boolean;
+  candidateCount: number;
+  externalReleaseId: string;
+  reasons: string[];
+  releaseDate: string;
+  releaseDatePrecision: "day" | "month" | "year";
+  releaseType: string;
+  selectedForDetails: boolean;
+  title: string;
 }
 
 export interface ProviderScanUnit {

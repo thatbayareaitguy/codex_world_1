@@ -32,6 +32,7 @@ import {
   playlistExports,
   playlistTargets,
   releaseCandidates,
+  releases,
   redditCandidateMatches,
   redditExternalLinks,
   releaseOperationLock,
@@ -51,7 +52,7 @@ import { encryptSecret } from "@radar/providers";
 import { mockProviderFixture, syntheticRedditListing } from "@radar/testing";
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { persistCandidates, runScan } from "./scan";
+import { createSpotifyDryRunReport, persistCandidates, runScan } from "./scan";
 
 const databaseUrl =
   process.env.TEST_DATABASE_URL ?? "postgres://radar:radar@127.0.0.1:5433/radar_test";
@@ -245,7 +246,14 @@ describe.sequential("complete deterministic fake-provider workflow", () => {
     expect(musicBrainz).toMatchObject({ inserted: 1 });
     expect(spotifyRerun).toMatchObject({ inserted: 0, skipped: 5 });
     const completeTracks = await connection.db.select().from(tracks);
+    const [isrcTrack] = completeTracks.filter((track) => track.isrc === "USINT2600004");
+    expect(isrcTrack).toBeDefined();
     expect(completeTracks.filter((track) => track.isrc === "USINT2600004")).toHaveLength(1);
+    expect(
+      (await connection.db.select().from(feedItems)).filter(
+        (item) => item.trackId === isrcTrack!.id,
+      ),
+    ).toHaveLength(1);
     expect(
       completeTracks.some((track) => track.normalizedTitle === "pulse vector extended remix"),
     ).toBe(true);
@@ -534,6 +542,50 @@ describe.sequential("complete deterministic fake-provider workflow", () => {
         where: (table, { eq }) => eq(table.lockKey, "scan:global"),
       }),
     ).toBeUndefined();
+  });
+
+  it("builds a structured Spotify dry-run report without canonical writes", async () => {
+    const before = {
+      candidates: (await connection.db.select().from(releaseCandidates)).length,
+      evidence: (await connection.db.select().from(sourceEvidence)).length,
+      feed: (await connection.db.select().from(feedItems)).length,
+      releases: (await connection.db.select().from(releases)).length,
+      tracks: (await connection.db.select().from(tracks)).length,
+    };
+    const report = await createSpotifyDryRunReport(connection.db, {
+      backfillStart: "2026-05-19",
+      candidates: integrationSpotifyCandidates,
+      pagesScanned: 1,
+      partial: true,
+      releases: [
+        {
+          backfillEligible: true,
+          candidateCount: integrationSpotifyCandidates.length,
+          externalReleaseId: "spotify-album-integration",
+          reasons: ["Synthetic release is inside the backfill"],
+          releaseDate: "2026-07-15",
+          releaseDatePrecision: "day",
+          releaseType: "album",
+          selectedForDetails: true,
+          title: "Integration Album",
+        },
+      ],
+      requestCount: 3,
+    });
+
+    expect(report).toMatchObject({
+      discovery: { pagesScanned: 1, partial: true, requestCount: 3, status: "succeeded" },
+      persistence: { canonicalWrites: 0, status: "skipped" },
+      releases: [{ releaseDate: "2026-07-15", title: "Integration Album" }],
+    });
+    expect(report.trackCandidates).toHaveLength(integrationSpotifyCandidates.length);
+    expect({
+      candidates: (await connection.db.select().from(releaseCandidates)).length,
+      evidence: (await connection.db.select().from(sourceEvidence)).length,
+      feed: (await connection.db.select().from(feedItems)).length,
+      releases: (await connection.db.select().from(releases)).length,
+      tracks: (await connection.db.select().from(tracks)).length,
+    }).toEqual(before);
   });
 
   it("persists MusicBrainz confirmations idempotently and resolves replacement reviews", async () => {

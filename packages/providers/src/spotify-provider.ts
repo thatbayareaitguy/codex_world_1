@@ -6,7 +6,7 @@ import {
   type ReleaseType,
   type TrackCandidate,
 } from "@radar/core";
-import type { DiscoveryProvider, ScanContext } from "./contracts";
+import type { DiscoveryProvider, ProviderReleaseObservation, ScanContext } from "./contracts";
 import type {
   SpotifyAlbum,
   SpotifyAlbumSummary,
@@ -75,16 +75,19 @@ export class SpotifyProvider implements DiscoveryProvider {
         this.maxPagesPerArtist,
         context.signal,
       );
+      const releases = albums.items.map((album) =>
+        releaseObservation(album, this.knownReleaseIds, context.filter),
+      );
       const selected = albums.items.filter(
         (album) =>
-          (context.filter.full || !this.knownReleaseIds.has(album.id)) &&
-          (context.filter.full ||
-            !context.filter.since ||
-            normalizeSpotifyDate(album.release_date).date >= context.filter.since),
+          releases.find((release) => release.externalReleaseId === album.id)?.selectedForDetails,
       );
       const batchCandidates: TrackCandidate[] = [];
       for (const album of selected) {
-        batchCandidates.push(...(await this.scanAlbum(mapping, album, context.signal)));
+        const candidates = await this.scanAlbum(mapping, album, context.signal);
+        batchCandidates.push(...candidates);
+        const release = releases.find((entry) => entry.externalReleaseId === album.id);
+        if (release) release.candidateCount += candidates.length;
       }
       if (context.onBatch) {
         await context.onBatch({
@@ -99,6 +102,7 @@ export class SpotifyProvider implements DiscoveryProvider {
             requests: this.client.metrics.requests,
             waitMs: this.client.metrics.rateLimitWaitMs,
           },
+          releases,
           totalUnits: mappings.length,
         });
       } else {
@@ -136,6 +140,41 @@ export class SpotifyProvider implements DiscoveryProvider {
       )
       .map((track) => spotifyCandidate(mapping, album, track, this.now(), this.region));
   }
+}
+
+function releaseObservation(
+  album: SpotifyAlbumSummary,
+  knownReleaseIds: ReadonlySet<string>,
+  filter: ScanContext["filter"],
+): ProviderReleaseObservation {
+  const releaseDate = normalizeSpotifyDate(album.release_date).date;
+  const backfillEligible = !filter.since || releaseDate >= filter.since;
+  const known = knownReleaseIds.has(album.id);
+  const selectedForDetails = Boolean(filter.full || (!known && backfillEligible));
+  const reasons = selectedForDetails
+    ? [
+        filter.full
+          ? "Explicit reconciliation includes the release"
+          : `Release date is on or after backfill start ${filter.since ?? "unbounded"}`,
+        ...(known ? ["Provider release ID is already known"] : ["Provider release ID is new"]),
+      ]
+    : [
+        ...(known ? ["Provider release ID is already known"] : []),
+        ...(!backfillEligible && filter.since
+          ? [`Release date is before backfill start ${filter.since}`]
+          : []),
+      ];
+  return {
+    backfillEligible,
+    candidateCount: 0,
+    externalReleaseId: album.id,
+    reasons,
+    releaseDate,
+    releaseDatePrecision: album.release_date_precision,
+    releaseType: album.album_type,
+    selectedForDetails,
+    title: album.name,
+  };
 }
 
 function spotifyCandidate(

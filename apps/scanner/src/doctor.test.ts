@@ -103,6 +103,28 @@ describe("doctor", () => {
     );
   });
 
+  it("distinguishes resolved historical scan failures from pending failures", async () => {
+    const report = await collectDoctorReport(
+      {
+        DATABASE_URL: "postgresql://secret:secret@127.0.0.1:5432/radar",
+        MUSICBRAINZ_ENABLED: "false",
+        REDDIT_ENABLED: "false",
+        SPOTIFY_ENABLED: "false",
+      },
+      {
+        databaseProbe: () =>
+          Promise.resolve({ ...databaseReady, failedScans: 0, resolvedScans: 1 }),
+        directoryProbe: () => true,
+        expectedMigrationCount: 6,
+        pnpmVersion: "11.9.0",
+        portProbe: () => Promise.resolve("available"),
+      },
+    );
+    const failedScanCheck = report.checks.find((check) => check.name === "Failed scans");
+    expect(failedScanCheck).toMatchObject({ state: "READY" });
+    expect(failedScanCheck?.message).toContain("1 resolved historical failure");
+  });
+
   it("redacts database credentials from failures", async () => {
     const report = await collectDoctorReport(
       { DATABASE_URL: "postgresql://owner:private@127.0.0.1:5432/radar" },
