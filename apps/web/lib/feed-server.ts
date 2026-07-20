@@ -12,6 +12,8 @@ import {
 } from "@radar/db";
 import { count, max } from "drizzle-orm";
 
+import { formatFeedArtistCredits } from "./feed-format";
+
 export interface DatabaseFeedRevision {
   count: number;
   revision: string;
@@ -83,15 +85,7 @@ export async function loadDatabaseFeedSnapshot(databaseUrl: string): Promise<Dat
       const exported = exportRows.some(
         (row) => row.trackId === feed.trackId && row.status === "exported",
       );
-      const artist = credits.length
-        ? credits
-            .map((credit, creditIndex) =>
-              credit.role === "featured" && creditIndex > 0
-                ? `feat. ${credit.creditedName}`
-                : credit.creditedName,
-            )
-            .join(" ")
-        : candidate.artistExternalId;
+      const artist = credits.length ? formatFeedArtistCredits(credits) : candidate.artistExternalId;
       const sources = evidence.map((row) => ({
         evidenceHref: row.sourceUrl,
         href: row.sourceUrl,
