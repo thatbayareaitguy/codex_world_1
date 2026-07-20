@@ -726,6 +726,8 @@ export const spotifyArtistScans = pgTable(
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     requestCount: integer("request_count").notNull().default(0),
     candidateCount: integer("candidate_count").notNull().default(0),
+    releaseCount: integer("release_count"),
+    backfillReleaseCount: integer("backfill_release_count"),
     pagesScanned: integer("pages_scanned").notNull().default(0),
     errorClassification: text("error_classification"),
     retryEligibleAt: timestamp("retry_eligible_at", { withTimezone: true }),

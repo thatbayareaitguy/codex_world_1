@@ -103,9 +103,11 @@ export async function finishSpotifyArtistScan(
   db: RadarDatabase,
   input: {
     artistScanId: string;
+    backfillReleaseCount?: number;
     candidateCount: number;
     errorClassification?: string;
     pagesScanned: number;
+    releaseCount?: number;
     requestCount: number;
     retryEligibleAt?: Date;
     status: Exclude<SpotifyArtistProgressStatus, "pending" | "running">;
@@ -119,10 +121,12 @@ export async function finishSpotifyArtistScan(
   await db
     .update(spotifyArtistScans)
     .set({
+      backfillReleaseCount: input.backfillReleaseCount ?? null,
       candidateCount: input.candidateCount,
       errorClassification: input.errorClassification?.slice(0, 100) ?? null,
       finishedAt: new Date(),
       pagesScanned: input.pagesScanned,
+      releaseCount: input.releaseCount ?? null,
       requestCount: input.requestCount,
       retryEligibleAt: input.retryEligibleAt ?? null,
       status: input.status,

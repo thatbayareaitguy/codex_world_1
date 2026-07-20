@@ -458,6 +458,7 @@ async function runScanUnlocked(
                     previousSpotifyRequestCount = batch.providerMetrics?.requests ?? 0;
                     await finishSpotifyArtistScan(db, {
                       artistScanId: currentSpotifyArtistScan.id,
+                      ...spotifyReleaseTelemetry(batch.releases),
                       candidateCount: batch.candidates.length,
                       pagesScanned: batch.pagesScanned ?? 0,
                       requestCount,
@@ -974,6 +975,16 @@ export function spotifyBatchPauseMilliseconds(
   const base = Math.max(1, Math.floor(pauseSeconds)) * 1_000;
   const maximumJitter = Math.max(1_000, Math.min(10_000, Math.floor(base * 0.2)));
   return base + Math.floor(Math.max(0, Math.min(random(), 0.999_999)) * maximumJitter);
+}
+
+export function spotifyReleaseTelemetry(
+  releases: ProviderReleaseObservation[] | undefined,
+): { backfillReleaseCount: number; releaseCount: number } | Record<string, never> {
+  if (!releases) return {};
+  return {
+    backfillReleaseCount: releases.filter((release) => release.backfillEligible).length,
+    releaseCount: releases.length,
+  };
 }
 
 export async function persistCandidates(

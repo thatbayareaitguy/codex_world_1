@@ -229,8 +229,10 @@ describe("Spotify resumable batches", () => {
     expect(recovered?.artistId).toBe(firstArtist.id);
     await finishSpotifyArtistScan(db, {
       artistScanId: recovered!.id,
+      backfillReleaseCount: 4,
       candidateCount: 1,
       pagesScanned: 2,
+      releaseCount: 7,
       requestCount: 3,
       status: "partial",
     });
@@ -247,5 +249,7 @@ describe("Spotify resumable batches", () => {
       orderBy: (table, { asc }) => [asc(table.position)],
     });
     expect(rows.map((row) => row.status)).toEqual(["partial", "cancelled"]);
+    expect(rows[0]).toMatchObject({ backfillReleaseCount: 4, releaseCount: 7 });
+    expect(rows[1]).toMatchObject({ backfillReleaseCount: null, releaseCount: null });
   });
 });

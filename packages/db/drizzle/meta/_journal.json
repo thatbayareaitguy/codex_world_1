@@ -64,6 +64,13 @@
       "when": 1784418320888,
       "tag": "0008_groovy_wolfsbane",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784448005694,
+      "tag": "0009_first_white_queen",
+      "breakpoints": true
     }
   ]
 }
