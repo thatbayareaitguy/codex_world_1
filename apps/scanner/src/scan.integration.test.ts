@@ -46,6 +46,7 @@ import {
   scanRuns,
   unlockStaleOperations,
   upsertSpotifyAccount,
+  updateFeedPreferences,
 } from "@radar/db";
 import type { TrackCandidate } from "@radar/core";
 import { encryptSecret } from "@radar/providers";
@@ -258,6 +259,29 @@ describe.sequential("complete deterministic fake-provider workflow", () => {
       completeTracks.some((track) => track.normalizedTitle === "pulse vector extended remix"),
     ).toBe(true);
     expect(completeTracks.some((track) => track.normalizedTitle === "pulse vector")).toBe(true);
+  });
+
+  it("persists saved and listened preferences independently", async () => {
+    const userId = await ensureLocalOwner(connection.db);
+    const [feed] = await connection.db.select().from(feedItems).limit(1);
+    expect(feed).toBeDefined();
+    const originalState = feed!.state;
+
+    const saved = await updateFeedPreferences(connection.db, userId, feed!.id, { saved: true });
+    expect(saved).toMatchObject({ listened: false, saved: true });
+
+    const listened = await updateFeedPreferences(connection.db, userId, feed!.id, {
+      listened: true,
+    });
+    expect(listened).toMatchObject({ listened: true, saved: true });
+
+    const unsaved = await updateFeedPreferences(connection.db, userId, feed!.id, { saved: false });
+    expect(unsaved).toMatchObject({ listened: true, saved: false });
+
+    const unlistened = await updateFeedPreferences(connection.db, userId, feed!.id, {
+      listened: false,
+    });
+    expect(unlistened).toMatchObject({ listened: false, saved: false, state: originalState });
   });
 
   it("uses one database-backed MusicBrainz queue across concurrent callers", async () => {

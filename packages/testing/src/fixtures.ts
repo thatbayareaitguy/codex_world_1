@@ -128,6 +128,8 @@ export const feedFixtures: FeedFixtureItem[] = [
   {
     id: "feed-1",
     state: "new",
+    saved: false,
+    listened: false,
     artist: "Lumen Field",
     title: "Glass Horizon",
     releaseTitle: "Glass Horizon",
@@ -160,6 +162,8 @@ export const feedFixtures: FeedFixtureItem[] = [
   {
     id: "feed-2",
     state: "needs_review",
+    saved: false,
+    listened: false,
     artist: "Oxide Echo",
     title: "Static Bloom",
     releaseTitle: "Static Bloom (session take)",
@@ -187,6 +191,8 @@ export const feedFixtures: FeedFixtureItem[] = [
   {
     id: "feed-3",
     state: "upcoming",
+    saved: false,
+    listened: false,
     artist: "Juniper Vale",
     title: "Afterimage",
     releaseTitle: "Afterimage EP",
@@ -213,7 +219,9 @@ export const feedFixtures: FeedFixtureItem[] = [
   },
   {
     id: "feed-4",
-    state: "saved",
+    state: "new",
+    saved: true,
+    listened: false,
     artist: "Mara Voss feat. Lumen Field",
     title: "Soft Collision",
     releaseTitle: "Soft Collision",
@@ -241,6 +249,8 @@ export const feedFixtures: FeedFixtureItem[] = [
 export const mockScanFeedFixture: FeedFixtureItem = {
   id: "feed-scan-1",
   state: "new",
+  saved: false,
+  listened: false,
   artist: "North Arcade",
   title: "Signal Fires",
   releaseTitle: "Signal Fires",

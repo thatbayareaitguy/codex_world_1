@@ -1,9 +1,25 @@
 import { expect, test } from "@playwright/test";
 
 test("runs a mock scan, opens evidence, changes status, and filters the feed", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-07-19T12:00:00-07:00"));
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Discovery feed" })).toBeVisible();
   await expect(page.getByRole("article")).toHaveCount(4);
+  await expect(page.locator(".feed-item .state-new")).toHaveCount(0);
+  await expect(page.getByText(/\d+% match/)).toHaveCount(0);
+  const summaryMetrics = page.locator(".metrics > div");
+  await expect(summaryMetrics.nth(0).locator("strong")).toHaveText("3");
+  await expect(summaryMetrics.nth(0).locator("small")).toHaveText("+0 since last scan");
+  await expect(summaryMetrics.nth(1).locator("strong")).toHaveText("1");
+
+  const glassHorizon = page.getByRole("article").filter({
+    has: page.getByRole("heading", { name: "Glass Horizon" }),
+  });
+  await expect(glassHorizon.locator(".badges").getByText("Spotify", { exact: true })).toBeVisible();
+  const afterimage = page.getByRole("article").filter({
+    has: page.getByRole("heading", { name: "Afterimage" }),
+  });
+  await expect(afterimage.locator(".badges").getByText("Spotify", { exact: true })).toHaveCount(0);
 
   const lastScan = page.locator(".last-scan-metric");
   await expect(lastScan.getByText("Last scan", { exact: true })).toBeVisible();
@@ -16,10 +32,37 @@ test("runs a mock scan, opens evidence, changes status, and filters the feed", a
   await expect(page.getByRole("article")).toHaveCount(5);
   await expect(page.getByRole("progressbar", { name: "Release update progress" })).toHaveCount(0);
   await expect(page.getByRole("status")).toContainText("Signal Fires was added");
+  await expect(summaryMetrics.nth(0).locator("strong")).toHaveText("4");
+  await expect(summaryMetrics.nth(0).locator("small")).toHaveText("+1 since last scan");
 
   const signalFires = page.getByRole("article").filter({
     has: page.getByRole("heading", { name: "Signal Fires" }),
   });
+  const expandedHeight = await signalFires.evaluate(
+    (element) => element.getBoundingClientRect().height,
+  );
+  expect(expandedHeight).toBeLessThan(140);
+  await expect(
+    signalFires.locator(".evidence-row").getByRole("link", { name: "Evidence" }),
+  ).toBeVisible();
+  const collapseButton = signalFires.getByRole("button", { name: "Collapse Signal Fires" });
+  await expect(collapseButton).toHaveAttribute("aria-expanded", "true");
+  await collapseButton.click();
+  const expandButton = signalFires.getByRole("button", { name: "Expand Signal Fires" });
+  await expect(expandButton).toHaveAttribute("aria-expanded", "false");
+  await expect(signalFires.getByRole("link", { name: "Evidence" })).toBeHidden();
+  const collapsedHeight = await signalFires.evaluate(
+    (element) => element.getBoundingClientRect().height,
+  );
+  expect(collapsedHeight).toBeLessThan(60);
+  expect(collapsedHeight).toBeLessThan(expandedHeight);
+  await expandButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(signalFires.getByRole("button", { name: "Collapse Signal Fires" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+
   const evidenceLink = signalFires.getByRole("link", { name: "Evidence" });
   await expect(evidenceLink).toHaveAttribute(
     "href",
@@ -31,11 +74,46 @@ test("runs a mock scan, opens evidence, changes status, and filters the feed", a
   const evidencePage = await popupPromise;
   await evidencePage.close();
 
-  await signalFires.getByRole("button", { name: "Save Signal Fires" }).click();
+  const saveButton = signalFires.getByRole("button", { name: "Save Signal Fires" });
+  await saveButton.click();
+  await expect(signalFires.getByRole("button", { name: "Unsave Signal Fires" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  const listenedButton = signalFires.getByRole("button", { name: "Mark Signal Fires listened" });
+  await listenedButton.click();
+  await expect(
+    signalFires.getByRole("button", { name: "Mark Signal Fires unlistened" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(signalFires.getByText("Saved", { exact: true })).toBeVisible();
+  await expect(signalFires.getByText("Listened", { exact: true })).toBeVisible();
+
   await page.getByRole("tab", { name: "Saved" }).click();
+  await expect(page.getByRole("heading", { name: "Signal Fires" })).toBeVisible();
+  await page.getByRole("tab", { name: "Listened" }).click();
   await expect(page.getByRole("heading", { name: "Signal Fires" })).toBeVisible();
 
   await page.getByRole("tab", { name: "All" }).click();
+  await signalFires.getByRole("button", { name: "Unsave Signal Fires" }).click();
+  await expect(signalFires.getByRole("button", { name: "Save Signal Fires" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  await expect(
+    signalFires.getByRole("button", { name: "Mark Signal Fires unlistened" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("tab", { name: "Saved" }).click();
+  await expect(page.getByRole("heading", { name: "Signal Fires" })).toHaveCount(0);
+  await page.getByRole("tab", { name: "Listened" }).click();
+  await expect(page.getByRole("heading", { name: "Signal Fires" })).toBeVisible();
+
+  await page.getByRole("tab", { name: "All" }).click();
+  await signalFires.getByRole("button", { name: "Mark Signal Fires unlistened" }).click();
+  await expect(
+    signalFires.getByRole("button", { name: "Mark Signal Fires listened" }),
+  ).toHaveAttribute("aria-pressed", "false");
+  await expect(signalFires.getByText("New", { exact: true })).toHaveCount(0);
+
   await page.getByRole("button", { name: "Filters" }).click();
   await page.getByLabel("Exact matches only").check();
   await expect(page.getByRole("heading", { name: "Static Bloom" })).toHaveCount(0);
@@ -49,6 +127,8 @@ test("runs a mock scan, opens evidence, changes status, and filters the feed", a
 
   await page.getByRole("searchbox", { name: "Search discoveries" }).fill("No such release");
   await expect(page.getByText("No discoveries match this view.")).toBeVisible();
+  await expect(summaryMetrics.nth(0).locator("strong")).toHaveText("4");
+  await expect(summaryMetrics.nth(1).locator("strong")).toHaveText("1");
 });
 
 test("keeps every advanced filter inside the panel while resizing", async ({ page }) => {
@@ -423,6 +503,7 @@ test("navigates every primary view and resolves manual review", async ({ page })
 
   await navigation.getByRole("link", { name: "Review queue 1" }).click();
   await expect(page.getByRole("heading", { name: "Review queue" })).toBeVisible();
+  await expect(page.getByText(/90% confidence/)).toBeVisible();
   await page.getByRole("button", { name: "Confirm match" }).click();
   await expect(page.getByText("No items need review.")).toBeVisible();
 
@@ -632,9 +713,22 @@ test("controls persisted Spotify batches without bypassing cooldown state", asyn
   });
 
   await page.goto("/?e2e-scan-status=database#feed");
-  await expect(page.getByRole("region", { name: "Spotify scan status" })).toContainText(
-    "Synthetic Artist",
-  );
+  const spotifyStatus = page.getByRole("region", { name: "Spotify scan status" });
+  await expect(spotifyStatus).toContainText("Synthetic Artist");
+  const collapseStatus = spotifyStatus.getByRole("button", {
+    name: "Collapse Spotify scan status",
+  });
+  await expect(collapseStatus).toHaveAttribute("aria-expanded", "true");
+  await collapseStatus.click();
+  await expect(spotifyStatus.getByText("Synthetic Artist")).toBeHidden();
+  await expect(
+    spotifyStatus.getByRole("button", { name: "Pause after current request" }),
+  ).toBeHidden();
+  const expandStatus = spotifyStatus.getByRole("button", { name: "Expand Spotify scan status" });
+  await expect(expandStatus).toHaveAttribute("aria-expanded", "false");
+  await expandStatus.focus();
+  await page.keyboard.press("Enter");
+  await expect(spotifyStatus.getByText("Synthetic Artist")).toBeVisible();
   await page.getByRole("button", { name: "Pause after current request" }).click();
   await page.getByRole("button", { name: "Cancel future work" }).click();
   expect(actions).toEqual(["pause", "cancel"]);

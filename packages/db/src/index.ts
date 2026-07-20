@@ -1,5 +1,6 @@
 export * from "./client";
 export * from "./repositories";
+export * from "./feed-preferences";
 export * from "./reddit-repositories";
 export * from "./operations";
 export * from "./schema";

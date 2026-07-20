@@ -157,6 +157,8 @@ export interface ProviderScanResult {
 export interface FeedFixtureItem {
   id: string;
   state: FeedState;
+  saved: boolean;
+  listened: boolean;
   artist: string;
   title: string;
   releaseId?: string;

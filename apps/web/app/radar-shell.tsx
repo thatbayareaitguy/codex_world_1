@@ -67,6 +67,18 @@ type AppView =
   "feed" | "artists" | "exports" | "soundcloud-links" | "review" | "status" | "settings";
 type ArtistSort = "name-asc" | "name-desc" | "recent";
 type ThemePreference = "system" | "light" | "dark";
+type FeedPreference = "saved" | "listened";
+
+interface StreamingSourceDefinition {
+  id: string;
+  label: string;
+  sourcePrefixes: string[];
+}
+
+const streamingSourceDefinitions: StreamingSourceDefinition[] = [
+  { id: "spotify", label: "Spotify", sourcePrefixes: ["spotify"] },
+  { id: "soundcloud", label: "SoundCloud", sourcePrefixes: ["soundcloud"] },
+];
 
 interface FeedAdvancedFilters {
   artist: string;
@@ -240,6 +252,8 @@ export function RadarShell({
   const [items, setItems] = useState(initialItems);
   const [query, setQuery] = useState("");
   const [syncing, setSyncing] = useState(false);
+  const [mockLastScanInsertedCount, setMockLastScanInsertedCount] = useState(0);
+  const [pendingFeedActions, setPendingFeedActions] = useState<string[]>([]);
   const [cancellingScan, setCancellingScan] = useState(false);
   const [scanStatus, setScanStatus] = useState<ScanApiStatus | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -348,7 +362,13 @@ export function RadarShell({
     const normalizedQuery = query.trim().toLocaleLowerCase("en-US");
     return items
       .filter((item) => {
-        const stateMatches = activeFilter === "all" || item.state === activeFilter;
+        const stateMatches =
+          activeFilter === "all" ||
+          (activeFilter === "saved"
+            ? item.saved
+            : activeFilter === "listened"
+              ? item.listened
+              : item.state === activeFilter);
         const queryMatches =
           !normalizedQuery ||
           `${item.artist} ${item.title} ${item.releaseTitle}`
@@ -464,6 +484,62 @@ export function RadarShell({
   const updateItem = (id: string, changes: Partial<FeedFixtureItem>, message: string) => {
     setItems((current) => current.map((item) => (item.id === id ? { ...item, ...changes } : item)));
     setNotice(message);
+  };
+
+  const toggleFeedPreference = async (item: FeedFixtureItem, preference: FeedPreference) => {
+    const actionKey = `${item.id}:${preference}`;
+    if (pendingFeedActions.includes(actionKey)) return;
+    const nextValue = !item[preference];
+    setPendingFeedActions((current) => [...current, actionKey]);
+    setItems((current) =>
+      current.map((currentItem) =>
+        currentItem.id === item.id ? { ...currentItem, [preference]: nextValue } : currentItem,
+      ),
+    );
+
+    try {
+      if (feedMode === "database") {
+        const response = await fetch(`/api/feed-items/${encodeURIComponent(item.id)}`, {
+          body: JSON.stringify({ [preference]: nextValue }),
+          headers: { "Content-Type": "application/json" },
+          method: "PATCH",
+        });
+        const body = feedPreferenceResponseSchema.parse(await response.json());
+        if (!response.ok) throw new Error("Unable to persist feed preference");
+        setItems((current) =>
+          current.map((currentItem) =>
+            currentItem.id === item.id
+              ? {
+                  ...currentItem,
+                  listened: body.item.listened,
+                  saved: body.item.saved,
+                  state: body.item.state,
+                }
+              : currentItem,
+          ),
+        );
+      }
+      setNotice(
+        preference === "saved"
+          ? nextValue
+            ? `${item.title} was saved.`
+            : `${item.title} was removed from saved.`
+          : nextValue
+            ? `${item.title} was marked listened.`
+            : `${item.title} was marked unlistened.`,
+      );
+    } catch {
+      setItems((current) =>
+        current.map((currentItem) =>
+          currentItem.id === item.id
+            ? { ...currentItem, [preference]: item[preference] }
+            : currentItem,
+        ),
+      );
+      setNotice(`Unable to update ${item.title}. Try again.`);
+    } finally {
+      setPendingFeedActions((current) => current.filter((key) => key !== actionKey));
+    }
   };
 
   const addArtist = (name: string): boolean => {
@@ -635,9 +711,11 @@ export function RadarShell({
       setSyncing(false);
       setItems((current) => {
         if (current.some((item) => item.id === scannedItem.id)) {
+          setMockLastScanInsertedCount(0);
           setNotice("Mock scan completed. No duplicate discoveries were added.");
           return current;
         }
+        setMockLastScanInsertedCount(1);
         setNotice(`Mock scan completed. ${scannedItem.title} was added to the feed.`);
         return [scannedItem, ...current];
       });
@@ -826,11 +904,17 @@ export function RadarShell({
             feedMode={feedMode}
             filtersOpen={filtersOpen}
             items={visibleItems}
+            lastScanInsertedCount={
+              feedMode === "mock"
+                ? mockLastScanInsertedCount
+                : (scanStatus?.latest?.insertedCount ?? 0)
+            }
             musicbrainzConfigured={providerConfiguration.musicbrainz.configured}
             soundCloudLinks={soundCloudLinks}
             onFilterChange={setActiveFilter}
             onAdvancedFiltersChange={setAdvancedFilters}
             onItemChange={updateItem}
+            onTogglePreference={(item, preference) => void toggleFeedPreference(item, preference)}
             onSoundCloudLinkChange={changeSoundCloudLink}
             onToggleExact={() => setExactOnly((value) => !value)}
             onToggleFilters={() => setFiltersOpen((value) => !value)}
@@ -840,9 +924,11 @@ export function RadarShell({
             }
             onCancelScan={() => void cancelFeedScan()}
             onSpotifyBatchAction={(action, id) => void controlSpotifyBatch(action, id)}
+            pendingFeedActions={pendingFeedActions}
             ready={hydrated}
             reviewCount={reviewItems.length}
             scanStatus={scanStatus}
+            summaryItems={items}
             cancellingScan={cancellingScan}
             soundCloudManualLinksEnabled={providerConfiguration.soundcloudManualLinksEnabled}
             syncing={syncing}
@@ -1009,11 +1095,13 @@ interface FeedViewProps {
   feedMode: "database" | "error" | "mock";
   filtersOpen: boolean;
   items: FeedFixtureItem[];
+  lastScanInsertedCount: number;
   musicbrainzConfigured: boolean;
   soundCloudLinks: Record<string, SoundCloudLinkRecord>;
   onFilterChange: (state: FeedState | "all") => void;
   onAdvancedFiltersChange: (filters: FeedAdvancedFilters) => void;
   onItemChange: (id: string, changes: Partial<FeedFixtureItem>, message: string) => void;
+  onTogglePreference: (item: FeedFixtureItem, preference: FeedPreference) => void;
   onSoundCloudLinkChange: (feedItemId: string, record?: SoundCloudLinkRecord) => void;
   onRunScan: () => void;
   onMusicBrainzResume: (batchId: string) => void;
@@ -1024,9 +1112,11 @@ interface FeedViewProps {
   ) => void;
   onToggleExact: () => void;
   onToggleFilters: () => void;
+  pendingFeedActions: string[];
   ready: boolean;
   reviewCount: number;
   scanStatus: ScanApiStatus | null;
+  summaryItems: FeedFixtureItem[];
   cancellingScan: boolean;
   soundCloudManualLinksEnabled: boolean;
   syncing: boolean;
@@ -1039,11 +1129,13 @@ function FeedView({
   feedMode,
   filtersOpen,
   items,
+  lastScanInsertedCount,
   musicbrainzConfigured,
   soundCloudLinks,
   onFilterChange,
   onAdvancedFiltersChange,
   onItemChange,
+  onTogglePreference,
   onSoundCloudLinkChange,
   onRunScan,
   onMusicBrainzResume,
@@ -1051,13 +1143,18 @@ function FeedView({
   onSpotifyBatchAction,
   onToggleExact,
   onToggleFilters,
+  pendingFeedActions,
   ready,
   reviewCount,
   scanStatus,
+  summaryItems,
   cancellingScan,
   soundCloudManualLinksEnabled,
   syncing,
 }: FeedViewProps) {
+  const [collapsedReleaseGroups, setCollapsedReleaseGroups] = useState<string[]>([]);
+  const [spotifyStatusCollapsed, setSpotifyStatusCollapsed] = useState(false);
+  const feedSummary = useMemo(() => calculateFeedSummary(summaryItems), [summaryItems]);
   const scanInProgress = syncing || Boolean(scanStatus?.running);
   const activeScan = scanStatus?.active;
   const spotifyOperational = scanStatus?.spotify.operational;
@@ -1138,19 +1235,18 @@ function FeedView({
                 : "MOCK SCAN HEALTHY"}
           </p>
           <h1>Discovery feed</h1>
-          <p>Recent signals from your followed artists, ordered by first seen.</p>
         </div>
       </div>
 
       <div className="metrics" aria-label="Feed summary">
         <div>
           <span>New this week</span>
-          <strong>7</strong>
-          <small>+3 since last scan</small>
+          <strong>{feedSummary.newThisWeek}</strong>
+          <small>+{lastScanInsertedCount} since last scan</small>
         </div>
         <div>
           <span>Upcoming</span>
-          <strong>2</strong>
+          <strong>{feedSummary.upcoming}</strong>
           <small>Next 30 days</small>
         </div>
         <div>
@@ -1287,152 +1383,177 @@ function FeedView({
       )}
 
       {feedMode === "database" && spotifyBatch && (
-        <section className="spotify-scan-status" aria-label="Spotify scan status">
+        <section
+          className={`spotify-scan-status ${spotifyStatusCollapsed ? "is-collapsed" : ""}`}
+          aria-label="Spotify scan status"
+        >
           <div className="spotify-scan-status-heading">
-            <div>
-              <strong>Spotify {titleCase(spotifyBatch.mode)} scan</strong>
-              <span>
-                {spotifyBatch.status === "paused" && spotifyBatch.confirmationRequired
-                  ? "Awaiting confirmation before the first staged batch"
-                  : titleCase(spotifyBatch.status)}
-              </span>
+            <div className="spotify-scan-status-summary">
+              <button
+                aria-expanded={!spotifyStatusCollapsed}
+                aria-label={`${spotifyStatusCollapsed ? "Expand" : "Collapse"} Spotify scan status`}
+                className="feed-item-disclosure"
+                onClick={() => setSpotifyStatusCollapsed((current) => !current)}
+                title={`${spotifyStatusCollapsed ? "Expand" : "Collapse"} Spotify scan status`}
+                type="button"
+              >
+                {spotifyStatusCollapsed ? <ChevronRight size={17} /> : <ChevronDown size={17} />}
+              </button>
+              <div>
+                <strong>Spotify {titleCase(spotifyBatch.mode)} scan</strong>
+                <span>
+                  {spotifyBatch.status === "paused" && spotifyBatch.confirmationRequired
+                    ? "Awaiting confirmation before the first staged batch"
+                    : titleCase(spotifyBatch.status)}
+                </span>
+              </div>
             </div>
-            <div className="scan-progress-actions">
-              {spotifyBatch.status === "running" && (
-                <button
-                  className="secondary-button"
-                  onClick={() => onSpotifyBatchAction("pause", spotifyBatch.id)}
-                  type="button"
-                >
-                  Pause after current request
-                </button>
-              )}
-              {["paused", "rate_limited", "pending"].includes(spotifyBatch.status) && (
-                <button
-                  className="primary-button"
-                  disabled={spotifyCooldown || scanStatus?.running}
-                  onClick={() => onSpotifyBatchAction("resume", spotifyBatch.id)}
-                  type="button"
-                >
-                  Resume
-                </button>
-              )}
-              {["pending", "running", "paused", "rate_limited"].includes(spotifyBatch.status) && (
-                <button
-                  className="secondary-button destructive-text"
-                  onClick={() => onSpotifyBatchAction("cancel", spotifyBatch.id)}
-                  type="button"
-                >
-                  Cancel future work
-                </button>
-              )}
-              {retryableArtist && (
-                <button
-                  className="secondary-button"
-                  disabled={spotifyCooldown || scanStatus?.running}
-                  onClick={() => onSpotifyBatchAction("retry_artist", retryableArtist.id)}
-                  type="button"
-                >
-                  Retry one artist
-                </button>
-              )}
-              {["completed", "failed", "cancelled"].includes(spotifyBatch.status) && (
-                <button
-                  className="secondary-button"
-                  disabled={spotifyCooldown || scanStatus?.running}
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        "Start a deep reconciliation batch? It may inspect up to 10 album pages per artist and will use the five-second global request interval.",
-                      )
-                    ) {
-                      onSpotifyBatchAction("start_reconciliation", "");
-                    }
-                  }}
-                  type="button"
-                >
-                  Deep reconciliation
-                </button>
-              )}
-            </div>
+            {!spotifyStatusCollapsed && (
+              <div className="scan-progress-actions">
+                {spotifyBatch.status === "running" && (
+                  <button
+                    className="secondary-button"
+                    onClick={() => onSpotifyBatchAction("pause", spotifyBatch.id)}
+                    type="button"
+                  >
+                    Pause after current request
+                  </button>
+                )}
+                {["paused", "rate_limited", "pending"].includes(spotifyBatch.status) && (
+                  <button
+                    className="primary-button"
+                    disabled={spotifyCooldown || scanStatus?.running}
+                    onClick={() => onSpotifyBatchAction("resume", spotifyBatch.id)}
+                    type="button"
+                  >
+                    Resume
+                  </button>
+                )}
+                {["pending", "running", "paused", "rate_limited"].includes(spotifyBatch.status) && (
+                  <button
+                    className="secondary-button destructive-text"
+                    onClick={() => onSpotifyBatchAction("cancel", spotifyBatch.id)}
+                    type="button"
+                  >
+                    Cancel future work
+                  </button>
+                )}
+                {retryableArtist && (
+                  <button
+                    className="secondary-button"
+                    disabled={spotifyCooldown || scanStatus?.running}
+                    onClick={() => onSpotifyBatchAction("retry_artist", retryableArtist.id)}
+                    type="button"
+                  >
+                    Retry one artist
+                  </button>
+                )}
+                {["completed", "failed", "cancelled"].includes(spotifyBatch.status) && (
+                  <button
+                    className="secondary-button"
+                    disabled={spotifyCooldown || scanStatus?.running}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          "Start a deep reconciliation batch? It may inspect up to 10 album pages per artist and will use the five-second global request interval.",
+                        )
+                      ) {
+                        onSpotifyBatchAction("start_reconciliation", "");
+                      }
+                    }}
+                    type="button"
+                  >
+                    Deep reconciliation
+                  </button>
+                )}
+              </div>
+            )}
           </div>
-          <dl className="spotify-scan-grid">
-            <div>
-              <dt>Current artist</dt>
-              <dd>{activeScan?.currentUnit ?? "None"}</dd>
-            </div>
-            <div>
-              <dt>Completed</dt>
-              <dd>{spotifyBatch.completedArtists}</dd>
-            </div>
-            <div>
-              <dt>Remaining</dt>
-              <dd>{spotifyRemaining}</dd>
-            </div>
-            <div>
-              <dt>Failed</dt>
-              <dd>{spotifyBatch.failedArtists}</dd>
-            </div>
-            <div>
-              <dt>Cancelled</dt>
-              <dd>{spotifyBatch.cancelledArtists}</dd>
-            </div>
-            <div>
-              <dt>Rate-limited</dt>
-              <dd>{spotifyBatch.rateLimitedArtists}</dd>
-            </div>
-            <div>
-              <dt>Partial</dt>
-              <dd>{spotifyBatch.partialArtists}</dd>
-            </div>
-            <div>
-              <dt>Queue</dt>
-              <dd>{spotifyOperational?.queueDepth ?? 0}</dd>
-            </div>
-            <div>
-              <dt>Request interval</dt>
-              <dd>{(scanStatus.spotify.limiter.minRequestIntervalMs / 1_000).toFixed(1)}s</dd>
-            </div>
-            <div>
-              <dt>Estimated requests</dt>
-              <dd>{spotifyBatch.estimatedRequests}</dd>
-            </div>
-            <div>
-              <dt>Estimated remaining</dt>
-              <dd>
-                {estimatedRemainingRequests > 0
-                  ? `${formatDuration(estimatedMinimumMs)} to ${formatDuration(estimatedMaximumMs)}`
-                  : "Complete"}
-              </dd>
-            </div>
-            <div>
-              <dt>Current request rate</dt>
-              <dd>{observedRequestRate > 0 ? `${observedRequestRate.toFixed(1)}/min` : "Idle"}</dd>
-            </div>
-            <div>
-              <dt>Last heartbeat</dt>
-              <dd>
-                {activeScan?.heartbeatAt
-                  ? new Date(activeScan.heartbeatAt).toLocaleTimeString()
-                  : "Idle"}
-              </dd>
-            </div>
-            <div>
-              <dt>Cooldown</dt>
-              <dd>
-                {spotifyCooldown
-                  ? spotifyOperational?.cooldownIndefinite
-                    ? "Manual review required"
-                    : `Until ${new Date(spotifyOperational!.cooldownUntil!).toLocaleString()}`
-                  : "None"}
-              </dd>
-            </div>
-          </dl>
-          <small>
-            Distributed across {scanStatus.spotify.limiter.distributionHours} hours, about{" "}
-            {(spotifyBatch.totalArtists / scanStatus.spotify.limiter.distributionHours).toFixed(1)}{" "}
-            artists per hour. Completion estimates vary with pagination and Spotify limits.
-          </small>
+          {!spotifyStatusCollapsed && (
+            <>
+              <dl className="spotify-scan-grid">
+                <div>
+                  <dt>Current artist</dt>
+                  <dd>{activeScan?.currentUnit ?? "None"}</dd>
+                </div>
+                <div>
+                  <dt>Completed</dt>
+                  <dd>{spotifyBatch.completedArtists}</dd>
+                </div>
+                <div>
+                  <dt>Remaining</dt>
+                  <dd>{spotifyRemaining}</dd>
+                </div>
+                <div>
+                  <dt>Failed</dt>
+                  <dd>{spotifyBatch.failedArtists}</dd>
+                </div>
+                <div>
+                  <dt>Cancelled</dt>
+                  <dd>{spotifyBatch.cancelledArtists}</dd>
+                </div>
+                <div>
+                  <dt>Rate-limited</dt>
+                  <dd>{spotifyBatch.rateLimitedArtists}</dd>
+                </div>
+                <div>
+                  <dt>Partial</dt>
+                  <dd>{spotifyBatch.partialArtists}</dd>
+                </div>
+                <div>
+                  <dt>Queue</dt>
+                  <dd>{spotifyOperational?.queueDepth ?? 0}</dd>
+                </div>
+                <div>
+                  <dt>Request interval</dt>
+                  <dd>{(scanStatus.spotify.limiter.minRequestIntervalMs / 1_000).toFixed(1)}s</dd>
+                </div>
+                <div>
+                  <dt>Estimated requests</dt>
+                  <dd>{spotifyBatch.estimatedRequests}</dd>
+                </div>
+                <div>
+                  <dt>Estimated remaining</dt>
+                  <dd>
+                    {estimatedRemainingRequests > 0
+                      ? `${formatDuration(estimatedMinimumMs)} to ${formatDuration(estimatedMaximumMs)}`
+                      : "Complete"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Current request rate</dt>
+                  <dd>
+                    {observedRequestRate > 0 ? `${observedRequestRate.toFixed(1)}/min` : "Idle"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Last heartbeat</dt>
+                  <dd>
+                    {activeScan?.heartbeatAt
+                      ? new Date(activeScan.heartbeatAt).toLocaleTimeString()
+                      : "Idle"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Cooldown</dt>
+                  <dd>
+                    {spotifyCooldown
+                      ? spotifyOperational?.cooldownIndefinite
+                        ? "Manual review required"
+                        : `Until ${new Date(spotifyOperational!.cooldownUntil!).toLocaleString()}`
+                      : "None"}
+                  </dd>
+                </div>
+              </dl>
+              <small>
+                Distributed across {scanStatus.spotify.limiter.distributionHours} hours, about{" "}
+                {(spotifyBatch.totalArtists / scanStatus.spotify.limiter.distributionHours).toFixed(
+                  1,
+                )}{" "}
+                artists per hour. Completion estimates vary with pagination and Spotify limits.
+              </small>
+            </>
+          )}
         </section>
       )}
 
@@ -1586,42 +1707,75 @@ function FeedView({
           </div>
         )}
         {items.length ? (
-          groupFeedItems(items).map((group) =>
-            group.items.length > 1 ? (
+          groupFeedItems(items).map((group) => {
+            if (group.items.length === 1) {
+              return (
+                <FeedItem
+                  item={group.items[0]!}
+                  key={group.key}
+                  onItemChange={onItemChange}
+                  onTogglePreference={onTogglePreference}
+                  pendingFeedActions={pendingFeedActions}
+                  onSoundCloudLinkChange={onSoundCloudLinkChange}
+                  soundCloudManualLinksEnabled={soundCloudManualLinksEnabled}
+                  soundCloudLink={soundCloudLinks[group.items[0]!.id]}
+                />
+              );
+            }
+
+            const collapsed = collapsedReleaseGroups.includes(group.key);
+            return (
               <section
                 aria-label={`${group.releaseTitle} ${titleCase(group.releaseType)}`}
-                className="release-feed-group"
+                className={`release-feed-group ${collapsed ? "is-collapsed" : ""}`}
                 key={group.key}
               >
                 <div className="release-feed-group-heading">
-                  <div>
+                  <button
+                    aria-expanded={!collapsed}
+                    aria-label={`${collapsed ? "Expand" : "Collapse"} ${group.releaseTitle} ${titleCase(group.releaseType)}`}
+                    className="release-group-disclosure"
+                    onClick={() =>
+                      setCollapsedReleaseGroups((current) =>
+                        current.includes(group.key)
+                          ? current.filter((key) => key !== group.key)
+                          : [...current, group.key],
+                      )
+                    }
+                    title={`${collapsed ? "Expand" : "Collapse"} release`}
+                    type="button"
+                  >
+                    {collapsed ? <ChevronRight size={17} /> : <ChevronDown size={17} />}
+                  </button>
+                  <div className="release-feed-group-icon" aria-hidden="true">
+                    <Disc3 size={20} />
+                  </div>
+                  <div className="release-feed-group-title">
                     <span>{titleCase(group.releaseType)}</span>
                     <strong>{group.releaseTitle}</strong>
+                    <small>Released {formatDate(group.releaseDate)}</small>
                   </div>
-                  <span>{group.items.length} tracks</span>
+                  <span className="release-feed-group-count">{group.items.length} tracks</span>
                 </div>
-                {group.items.map((item) => (
-                  <FeedItem
-                    item={item}
-                    key={item.id}
-                    onItemChange={onItemChange}
-                    onSoundCloudLinkChange={onSoundCloudLinkChange}
-                    soundCloudManualLinksEnabled={soundCloudManualLinksEnabled}
-                    soundCloudLink={soundCloudLinks[item.id]}
-                  />
-                ))}
+                {!collapsed && (
+                  <div className="release-feed-group-items">
+                    {group.items.map((item) => (
+                      <FeedItem
+                        item={item}
+                        key={item.id}
+                        onItemChange={onItemChange}
+                        onTogglePreference={onTogglePreference}
+                        pendingFeedActions={pendingFeedActions}
+                        onSoundCloudLinkChange={onSoundCloudLinkChange}
+                        soundCloudManualLinksEnabled={soundCloudManualLinksEnabled}
+                        soundCloudLink={soundCloudLinks[item.id]}
+                      />
+                    ))}
+                  </div>
+                )}
               </section>
-            ) : (
-              <FeedItem
-                item={group.items[0]!}
-                key={group.key}
-                onItemChange={onItemChange}
-                onSoundCloudLinkChange={onSoundCloudLinkChange}
-                soundCloudManualLinksEnabled={soundCloudManualLinksEnabled}
-                soundCloudLink={soundCloudLinks[group.items[0]!.id]}
-              />
-            ),
-          )
+            );
+          })
         ) : (
           <div className="empty-state">
             <Search size={22} />
@@ -3983,6 +4137,15 @@ const scanLaunchSchema = z.object({
   accepted: z.boolean(),
 });
 
+const feedPreferenceResponseSchema = z.object({
+  item: z.object({
+    id: z.string().uuid(),
+    listened: z.boolean(),
+    saved: z.boolean(),
+    state: z.enum(["new", "upcoming", "saved", "dismissed", "listened", "needs_review"]),
+  }),
+});
+
 const watchlistResponseSchema = z.object({
   activeCount: z.number().int().nonnegative(),
   artists: z.array(
@@ -4027,19 +4190,27 @@ function scanRunLabel(run: ScanRunStatus): string {
 function FeedItem({
   item,
   onItemChange,
+  onTogglePreference,
+  pendingFeedActions,
   onSoundCloudLinkChange,
   soundCloudManualLinksEnabled,
   soundCloudLink,
 }: {
   item: FeedFixtureItem;
   onItemChange: (id: string, changes: Partial<FeedFixtureItem>, message: string) => void;
+  onTogglePreference: (item: FeedFixtureItem, preference: FeedPreference) => void;
+  pendingFeedActions: string[];
   onSoundCloudLinkChange: (feedItemId: string, record?: SoundCloudLinkRecord) => void;
   soundCloudManualLinksEnabled: boolean;
   soundCloudLink: SoundCloudLinkRecord | undefined;
 }) {
+  const [collapsed, setCollapsed] = useState(false);
   const stateLabel = item.state === "needs_review" ? "Needs review" : titleCase(item.state);
+  const savePending = pendingFeedActions.includes(`${item.id}:saved`);
+  const listenedPending = pendingFeedActions.includes(`${item.id}:listened`);
+  const streamingSources = getStreamingSourceTags(item, soundCloudLink);
   return (
-    <article className="feed-item">
+    <article className={`feed-item ${collapsed ? "is-collapsed" : ""}`}>
       <div className={`cover cover-${item.accent}`} aria-hidden="true">
         {item.releaseType === "ep" ? (
           <Disc3 size={30} />
@@ -4053,30 +4224,61 @@ function FeedItem({
 
       <div className="item-main">
         <div className="item-title-row">
-          <div>
-            <div className="badges">
-              <span className={`state state-${item.state}`}>{stateLabel}</span>
-              <span>{titleCase(item.releaseType)}</span>
+          <div className="item-title-copy">
+            <button
+              aria-expanded={!collapsed}
+              aria-label={`${collapsed ? "Expand" : "Collapse"} ${item.title}`}
+              className="feed-item-disclosure"
+              onClick={() => setCollapsed((current) => !current)}
+              title={`${collapsed ? "Expand" : "Collapse"} release details`}
+              type="button"
+            >
+              {collapsed ? <ChevronRight size={17} /> : <ChevronDown size={17} />}
+            </button>
+            <div className="item-heading">
+              <div className="badges">
+                {item.state !== "new" && (
+                  <span className={`state state-${item.state}`}>{stateLabel}</span>
+                )}
+                {item.saved && item.state !== "saved" && <span className="state-saved">Saved</span>}
+                {item.listened && item.state !== "listened" && (
+                  <span className="state-listened">Listened</span>
+                )}
+                <span>{titleCase(item.releaseType)}</span>
+                {streamingSources.map((source) => (
+                  <span
+                    className={`streaming-source streaming-source-${source.id}`}
+                    key={source.id}
+                    title={`${source.label} source evidence is available`}
+                  >
+                    {source.label}
+                  </span>
+                ))}
+              </div>
+              <h2>{item.title}</h2>
+              <p className="artist">{item.artist}</p>
             </div>
-            <h2>{item.title}</h2>
-            <p className="artist">{item.artist}</p>
           </div>
           <div className="item-actions">
             <button
-              className="icon-button small"
-              title="Save"
-              aria-label={`Save ${item.title}`}
-              onClick={() => onItemChange(item.id, { state: "saved" }, `${item.title} was saved.`)}
+              aria-label={item.saved ? `Unsave ${item.title}` : `Save ${item.title}`}
+              aria-pressed={item.saved}
+              className={`icon-button small preference-toggle ${item.saved ? "active" : ""}`}
+              disabled={savePending}
+              title={item.saved ? "Unsave" : "Save"}
+              onClick={() => onTogglePreference(item, "saved")}
             >
-              <Bookmark size={16} />
+              <Bookmark fill={item.saved ? "currentColor" : "none"} size={16} />
             </button>
             <button
-              className="icon-button small"
-              title="Mark listened"
-              aria-label={`Mark ${item.title} listened`}
-              onClick={() =>
-                onItemChange(item.id, { state: "listened" }, `${item.title} was marked listened.`)
+              aria-label={
+                item.listened ? `Mark ${item.title} unlistened` : `Mark ${item.title} listened`
               }
+              aria-pressed={item.listened}
+              className={`icon-button small preference-toggle ${item.listened ? "active" : ""}`}
+              disabled={listenedPending}
+              title={item.listened ? "Mark unlistened" : "Mark listened"}
+              onClick={() => onTogglePreference(item, "listened")}
             >
               <Headphones size={16} />
             </button>
@@ -4127,6 +4329,14 @@ function FeedItem({
               SoundCloud {soundCloudStateLabel(soundCloudLink?.state ?? item.soundcloudState)}
             </span>
           )}
+          <a
+            className="feed-evidence-link"
+            href={item.links[0]?.href}
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            Evidence <ChevronRight size={13} />
+          </a>
         </div>
 
         {soundCloudManualLinksEnabled && (
@@ -4136,17 +4346,6 @@ function FeedItem({
             record={soundCloudLink}
           />
         )}
-
-        <div className="match-row">
-          <div className="confidence">
-            <span style={{ width: `${item.confidence * 100}%` }} />
-          </div>
-          <strong>{Math.round(item.confidence * 100)}% match</strong>
-          <span>{item.matchReason}</span>
-          <a href={item.links[0]?.href} rel="noopener noreferrer" target="_blank">
-            Evidence <ChevronRight size={13} />
-          </a>
-        </div>
       </div>
 
       <div className="export-column">
@@ -4179,6 +4378,7 @@ function groupFeedItems(items: FeedFixtureItem[]) {
     {
       items: FeedFixtureItem[];
       key: string;
+      releaseDate: string;
       releaseTitle: string;
       releaseType: FeedFixtureItem["releaseType"];
     }
@@ -4192,12 +4392,57 @@ function groupFeedItems(items: FeedFixtureItem[]) {
       groups.set(key, {
         items: [item],
         key,
+        releaseDate: item.releaseDate,
         releaseTitle: item.releaseTitle,
         releaseType: item.releaseType,
       });
     }
   }
   return [...groups.values()];
+}
+
+function calculateFeedSummary(items: FeedFixtureItem[], now = new Date()) {
+  const startOfWeek = new Date(now);
+  startOfWeek.setHours(0, 0, 0, 0);
+  startOfWeek.setDate(startOfWeek.getDate() - ((startOfWeek.getDay() + 6) % 7));
+
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  const endOfUpcomingWindow = new Date(startOfToday);
+  endOfUpcomingWindow.setDate(endOfUpcomingWindow.getDate() + 30);
+  endOfUpcomingWindow.setHours(23, 59, 59, 999);
+
+  return {
+    newThisWeek: items.filter((item) => {
+      const firstSeenAt = Date.parse(item.firstSeenAt);
+      return Number.isFinite(firstSeenAt) && firstSeenAt >= startOfWeek.getTime();
+    }).length,
+    upcoming: items.filter((item) => {
+      const releaseDate = Date.parse(`${item.releaseDate.slice(0, 10)}T00:00:00`);
+      return (
+        Number.isFinite(releaseDate) &&
+        releaseDate >= startOfToday.getTime() &&
+        releaseDate <= endOfUpcomingWindow.getTime()
+      );
+    }).length,
+  };
+}
+
+function getStreamingSourceTags(
+  item: FeedFixtureItem,
+  soundCloudLink: SoundCloudLinkRecord | undefined,
+) {
+  const sourceNames = item.sources.map((source) =>
+    source.provider.trim().toLocaleLowerCase("en-US"),
+  );
+  return streamingSourceDefinitions.filter((definition) => {
+    if (definition.id === "soundcloud" && soundCloudLink?.state === "USER_LINKED_VERIFIED") {
+      return true;
+    }
+    return sourceNames.some((sourceName) =>
+      definition.sourcePrefixes.some((prefix) => sourceName.startsWith(prefix)),
+    );
+  });
 }
 
 function SoundCloudReleaseControls({

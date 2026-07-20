@@ -71,6 +71,7 @@ export async function loadDatabaseFeed(databaseUrl: string): Promise<FeedFixture
       }));
       const exact = candidate.matchRule.startsWith("exact_");
       const spotifyState = spotify?.state ?? "unavailable";
+      const primaryState = feed.state === "saved" || feed.state === "listened" ? "new" : feed.state;
       return [
         {
           accent: ["coral", "cyan", "lime", "gold"][index % 4] as FeedFixtureItem["accent"],
@@ -85,6 +86,7 @@ export async function loadDatabaseFeed(databaseUrl: string): Promise<FeedFixture
                 : "blocked",
           firstSeenAt: feed.firstSeenAt.toISOString(),
           id: feed.id,
+          listened: feed.listenedAt !== null || feed.state === "listened",
           links: evidence.map((row) => ({ href: row.sourceUrl, label: "Source evidence" })),
           matchReason: candidate.matchReasons.join("; "),
           region: spotify?.region ?? availabilities[0]?.region ?? "ZZ",
@@ -96,10 +98,11 @@ export async function loadDatabaseFeed(databaseUrl: string): Promise<FeedFixture
               : "day",
           releaseTitle: release?.title ?? candidate.title,
           releaseType: release?.releaseType ?? "other",
+          saved: feed.savedAt !== null || feed.state === "saved",
           soundcloudState: "NOT_CHECKED",
           sources,
           spotify: spotifyState,
-          state: feed.state,
+          state: primaryState,
           title: track?.title ?? candidate.title,
         },
       ];
