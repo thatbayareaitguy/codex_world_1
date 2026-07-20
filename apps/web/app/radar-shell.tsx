@@ -5,6 +5,9 @@ import {
   type FeedState,
   type SoundCloudLinkRecord,
   buildSoundCloudSearchUrl,
+  feedStates,
+  releaseTypes,
+  soundCloudLinkStates,
   validateSoundCloudUrl,
 } from "@radar/core";
 import {
@@ -36,13 +39,14 @@ import {
   X,
 } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import type { WatchlistArtistViewModel } from "../lib/watchlist-types";
 
 interface RadarShellProps {
   feedMode: "database" | "error" | "mock";
   initialArtists: WatchlistArtistViewModel[];
+  initialFeedRevision: string | null;
   initialItems: FeedFixtureItem[];
   providerConfiguration: ProviderUiConfiguration;
   scannedItem: FeedFixtureItem;
@@ -241,6 +245,7 @@ const appViews = new Set<AppView>([
 export function RadarShell({
   feedMode,
   initialArtists,
+  initialFeedRevision,
   initialItems,
   providerConfiguration,
   scannedItem,
@@ -250,6 +255,13 @@ export function RadarShell({
   const [hydrated, setHydrated] = useState(false);
   const [activeFilter, setActiveFilter] = useState<FeedState | "all">("all");
   const [items, setItems] = useState(initialItems);
+  const itemsRef = useRef(initialItems);
+  const feedRevisionRef = useRef(initialFeedRevision);
+  const feedRefreshInFlightRef = useRef(false);
+  const [feedRefreshState, setFeedRefreshState] = useState<
+    "idle" | "checking" | "updated" | "error"
+  >("idle");
+  const [feedRefreshMessage, setFeedRefreshMessage] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [mockLastScanInsertedCount, setMockLastScanInsertedCount] = useState(0);
@@ -357,6 +369,71 @@ export function RadarShell({
     if (themePreference === "system") systemTheme.addEventListener("change", applyTheme);
     return () => systemTheme.removeEventListener("change", applyTheme);
   }, [themePreference]);
+
+  const refreshDatabaseFeed = useCallback(
+    async ({ force = false }: { force?: boolean } = {}) => {
+      if (feedMode !== "database" || feedRefreshInFlightRef.current) return false;
+      feedRefreshInFlightRef.current = true;
+      setFeedRefreshState("checking");
+      try {
+        const revisionResponse = await fetch("/api/feed?mode=revision", { cache: "no-store" });
+        const revision = feedRevisionResponseSchema.parse(await revisionResponse.json());
+        if (!revisionResponse.ok) throw new Error("Feed revision check failed");
+        if (!force && feedRevisionRef.current === revision.revision) {
+          setFeedRefreshState("idle");
+          return false;
+        }
+
+        const snapshotResponse = await fetch("/api/feed", { cache: "no-store" });
+        const snapshot = feedSnapshotResponseSchema.parse(await snapshotResponse.json());
+        if (!snapshotResponse.ok) throw new Error("Feed refresh failed");
+
+        const anchor = captureVisibleFeedAnchor();
+        const current = itemsRef.current;
+        const currentIds = new Set(current.map((item) => item.id));
+        const refreshedItems = snapshot.items as FeedFixtureItem[];
+        const addedCount = refreshedItems.filter((item) => !currentIds.has(item.id)).length;
+        const merged = mergeFeedItems(current, refreshedItems);
+        itemsRef.current = merged;
+        feedRevisionRef.current = snapshot.revision;
+        setItems(merged);
+        setFeedRefreshState("updated");
+        setFeedRefreshMessage(
+          addedCount > 0
+            ? `${addedCount} new ${addedCount === 1 ? "release" : "releases"} added.`
+            : "Feed is current.",
+        );
+        restoreVisibleFeedAnchor(anchor);
+        return true;
+      } catch {
+        setFeedRefreshState("error");
+        setFeedRefreshMessage("Feed refresh failed. Existing discoveries remain available.");
+        return false;
+      } finally {
+        feedRefreshInFlightRef.current = false;
+      }
+    },
+    [feedMode],
+  );
+
+  useEffect(() => {
+    if (feedMode !== "database") return;
+    const checkForChanges = () => {
+      if (document.visibilityState === "visible") void refreshDatabaseFeed();
+    };
+    if (!feedRevisionRef.current) checkForChanges();
+    const interval = window.setInterval(checkForChanges, 15_000);
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") void refreshDatabaseFeed();
+    };
+    window.addEventListener("focus", checkForChanges);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", checkForChanges);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [feedMode, refreshDatabaseFeed]);
 
   const visibleItems = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase("en-US");
@@ -686,13 +763,11 @@ export function RadarShell({
             const failed = completedRuns.filter(
               (run) => run.status === "failed" || run.status === "partial",
             ).length;
-            window.sessionStorage.setItem(
-              "ts-radar-scan-notice",
-              failed
-                ? `Release update finished with ${failed} provider warning${failed === 1 ? "" : "s"}; ${inserted} discoveries were added.`
-                : `Release update complete. ${inserted} new ${inserted === 1 ? "discovery" : "discoveries"} added.`,
-            );
-            window.location.reload();
+            const message = failed
+              ? `Release update finished with ${failed} provider warning${failed === 1 ? "" : "s"}; ${inserted} discoveries were added.`
+              : `Release update complete. ${inserted} new ${inserted === 1 ? "discovery" : "discoveries"} added.`;
+            await refreshDatabaseFeed({ force: true });
+            setNotice(message);
             return;
           }
         }
@@ -919,6 +994,7 @@ export function RadarShell({
             onToggleExact={() => setExactOnly((value) => !value)}
             onToggleFilters={() => setFiltersOpen((value) => !value)}
             onRunScan={() => void runFeedScan()}
+            onRefreshFeed={() => void refreshDatabaseFeed({ force: true })}
             onMusicBrainzResume={(batchId) =>
               void runFeedScan({ musicbrainzBatchId: batchId, provider: "musicbrainz" })
             }
@@ -932,6 +1008,8 @@ export function RadarShell({
             cancellingScan={cancellingScan}
             soundCloudManualLinksEnabled={providerConfiguration.soundcloudManualLinksEnabled}
             syncing={syncing}
+            feedRefreshMessage={feedRefreshMessage}
+            feedRefreshState={feedRefreshState}
           />
         )}
 
@@ -1093,6 +1171,8 @@ interface FeedViewProps {
   advancedFilters: FeedAdvancedFilters;
   exactOnly: boolean;
   feedMode: "database" | "error" | "mock";
+  feedRefreshMessage: string | null;
+  feedRefreshState: "idle" | "checking" | "updated" | "error";
   filtersOpen: boolean;
   items: FeedFixtureItem[];
   lastScanInsertedCount: number;
@@ -1104,6 +1184,7 @@ interface FeedViewProps {
   onTogglePreference: (item: FeedFixtureItem, preference: FeedPreference) => void;
   onSoundCloudLinkChange: (feedItemId: string, record?: SoundCloudLinkRecord) => void;
   onRunScan: () => void;
+  onRefreshFeed: () => void;
   onMusicBrainzResume: (batchId: string) => void;
   onCancelScan: () => void;
   onSpotifyBatchAction: (
@@ -1127,6 +1208,8 @@ function FeedView({
   advancedFilters,
   exactOnly,
   feedMode,
+  feedRefreshMessage,
+  feedRefreshState,
   filtersOpen,
   items,
   lastScanInsertedCount,
@@ -1138,6 +1221,7 @@ function FeedView({
   onTogglePreference,
   onSoundCloudLinkChange,
   onRunScan,
+  onRefreshFeed,
   onMusicBrainzResume,
   onCancelScan,
   onSpotifyBatchAction,
@@ -1236,6 +1320,32 @@ function FeedView({
           </p>
           <h1>Discovery feed</h1>
         </div>
+        {feedMode === "database" && (
+          <div className="feed-refresh-control">
+            {feedRefreshMessage && (
+              <span
+                className={feedRefreshState === "error" ? "feed-refresh-error" : ""}
+                role={feedRefreshState === "error" ? "alert" : "status"}
+              >
+                {feedRefreshMessage}
+              </span>
+            )}
+            <button
+              aria-label="Refresh feed"
+              className="secondary-button"
+              disabled={feedRefreshState === "checking"}
+              onClick={onRefreshFeed}
+              type="button"
+            >
+              <RefreshCw
+                aria-hidden="true"
+                className={feedRefreshState === "checking" ? "spinning" : ""}
+                size={15}
+              />
+              {feedRefreshState === "checking" ? "Checking" : "Refresh feed"}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="metrics" aria-label="Feed summary">
@@ -1728,6 +1838,7 @@ function FeedView({
               <section
                 aria-label={`${group.releaseTitle} ${titleCase(group.releaseType)}`}
                 className={`release-feed-group ${collapsed ? "is-collapsed" : ""}`}
+                data-feed-anchor={group.key}
                 key={group.key}
               >
                 <div className="release-feed-group-heading">
@@ -3963,6 +4074,53 @@ const musicBrainzMappingsResponseSchema = z.object({
   ),
 });
 
+const feedItemResponseSchema = z.object({
+  accent: z.enum(["coral", "cyan", "lime", "gold"]),
+  artist: z.string(),
+  confidence: z.number().min(0).max(1),
+  exportStatus: z.enum(["eligible", "exported", "blocked", "review_required"]),
+  firstSeenAt: z.string().datetime(),
+  id: z.string(),
+  links: z.array(z.object({ href: z.string().url(), label: z.string() })),
+  listened: z.boolean(),
+  matchReason: z.string(),
+  reddit: z
+    .object({
+      artistMatchConfidence: z.number(),
+      corroboration: z.enum(["reddit_only", "spotify", "musicbrainz", "user_confirmed"]),
+      directSpotifyLink: z.boolean(),
+      parseConfidence: z.number(),
+      postCreatedAt: z.string(),
+      sourceDeleted: z.boolean(),
+      subreddit: z.string(),
+      unverifiedExternalLink: z.boolean(),
+    })
+    .optional(),
+  region: z.string(),
+  releaseDate: z.string(),
+  releaseDatePrecision: z.enum(["day", "month", "year"]).optional(),
+  releaseId: z.string().optional(),
+  releaseTitle: z.string(),
+  releaseType: z.enum(releaseTypes),
+  saved: z.boolean(),
+  soundcloudState: z.enum(soundCloudLinkStates),
+  sources: z.array(
+    z.object({ evidenceHref: z.string().url(), href: z.string().url(), provider: z.string() }),
+  ),
+  spotify: z.enum(["playable", "preview", "blocked", "unavailable"]),
+  state: z.enum(feedStates),
+  title: z.string(),
+});
+
+const feedRevisionResponseSchema = z.object({
+  count: z.number().int().nonnegative(),
+  revision: z.string().min(1),
+});
+
+const feedSnapshotResponseSchema = feedRevisionResponseSchema.extend({
+  items: z.array(feedItemResponseSchema),
+});
+
 const spotifyStatusSchema = z.object({
   batch: z.lazy(() => spotifyBatchSchema).optional(),
   displayName: z.string().nullable().optional(),
@@ -4187,6 +4345,43 @@ function scanRunLabel(run: ScanRunStatus): string {
   return `${providerLabel} | ${run.insertedCount} added`;
 }
 
+function mergeFeedItems(
+  currentItems: FeedFixtureItem[],
+  refreshedItems: FeedFixtureItem[],
+): FeedFixtureItem[] {
+  const itemsById = new Map(currentItems.map((item) => [item.id, item]));
+  for (const item of refreshedItems) itemsById.set(item.id, item);
+  return Array.from(itemsById.values());
+}
+
+interface FeedScrollAnchor {
+  id: string;
+  top: number;
+}
+
+function captureVisibleFeedAnchor(): FeedScrollAnchor | null {
+  const anchor = Array.from(document.querySelectorAll<HTMLElement>("[data-feed-anchor]")).find(
+    (element) => element.getBoundingClientRect().bottom > 0,
+  );
+  return anchor?.dataset.feedAnchor
+    ? { id: anchor.dataset.feedAnchor, top: anchor.getBoundingClientRect().top }
+    : null;
+}
+
+function restoreVisibleFeedAnchor(anchor: FeedScrollAnchor | null): void {
+  if (!anchor) return;
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      const matchingAnchor = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-feed-anchor]"),
+      ).find((element) => element.dataset.feedAnchor === anchor.id);
+      if (matchingAnchor) {
+        window.scrollBy({ top: matchingAnchor.getBoundingClientRect().top - anchor.top });
+      }
+    });
+  });
+}
+
 function FeedItem({
   item,
   onItemChange,
@@ -4210,7 +4405,7 @@ function FeedItem({
   const listenedPending = pendingFeedActions.includes(`${item.id}:listened`);
   const streamingSources = getStreamingSourceTags(item, soundCloudLink);
   return (
-    <article className={`feed-item ${collapsed ? "is-collapsed" : ""}`}>
+    <article className={`feed-item ${collapsed ? "is-collapsed" : ""}`} data-feed-anchor={item.id}>
       <div className={`cover cover-${item.accent}`} aria-hidden="true">
         {item.releaseType === "ep" ? (
           <Disc3 size={30} />

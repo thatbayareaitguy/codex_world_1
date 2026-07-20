@@ -1,7 +1,7 @@
 import { feedFixtures, mockScanFeedFixture } from "@radar/testing";
 import { abbreviateSpotifyPlaylistId, loadProviderConfiguration } from "@radar/providers";
 import { RadarShell } from "./radar-shell";
-import { loadDatabaseFeed } from "../lib/feed-server";
+import { loadDatabaseFeedSnapshot } from "../lib/feed-server";
 import { loadDatabaseWatchlist } from "../lib/watchlist-server";
 import type { WatchlistArtistViewModel } from "../lib/watchlist-types";
 
@@ -17,13 +17,16 @@ export default async function HomePage({
   const parameters = await searchParams;
   const e2eScanStatusMode = e2eMockMode && parameters["e2e-scan-status"] === "database";
   let initialItems = feedFixtures;
+  let initialFeedRevision: string | null = null;
   let feedMode: "database" | "error" | "mock" = "mock";
   let initialArtists: WatchlistArtistViewModel[] = [];
   let watchlistMode: "database" | "error" | "mock" = "mock";
   if (e2eScanStatusMode) feedMode = "database";
   if (configuration.databaseUrl && !e2eMockMode) {
     try {
-      initialItems = await loadDatabaseFeed(configuration.databaseUrl);
+      const snapshot = await loadDatabaseFeedSnapshot(configuration.databaseUrl);
+      initialItems = snapshot.items;
+      initialFeedRevision = snapshot.revision;
       feedMode = "database";
     } catch {
       feedMode = "error";
@@ -38,6 +41,7 @@ export default async function HomePage({
   return (
     <RadarShell
       feedMode={feedMode}
+      initialFeedRevision={initialFeedRevision}
       initialArtists={initialArtists}
       initialItems={initialItems}
       providerConfiguration={{

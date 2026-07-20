@@ -386,6 +386,23 @@ select:focus-visible {
   color: var(--muted);
   font-size: 14px;
 }
+.feed-refresh-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-height: 35px;
+}
+.feed-refresh-control > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.feed-refresh-control > .feed-refresh-error {
+  color: #a53e35;
+}
+.feed-refresh-control .secondary-button {
+  flex: 0 0 auto;
+}
 .scan-button {
   height: 39px;
   display: inline-flex;
@@ -1756,6 +1773,10 @@ select:focus-visible {
   }
   .page-heading {
     align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .feed-refresh-control {
+    margin-left: auto;
   }
   .page-heading h1 {
     font-size: 30px;

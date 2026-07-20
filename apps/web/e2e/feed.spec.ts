@@ -1,5 +1,92 @@
 import { expect, test } from "@playwright/test";
 
+test("shows externally persisted discoveries without reloading the page", async ({ page }) => {
+  let revision = "revision-1";
+  let revisionChecks = 0;
+  let refreshFails = false;
+  const externalItem = {
+    accent: "lime",
+    artist: "Lumen Field",
+    confidence: 1,
+    exportStatus: "eligible",
+    firstSeenAt: "2026-07-19T19:00:00.000Z",
+    id: "external-feed-item",
+    links: [{ href: "https://example.test/evidence/glass-signal", label: "Source evidence" }],
+    listened: false,
+    matchReason: "Exact provider recording ID",
+    region: "US",
+    releaseDate: "2026-07-19",
+    releaseDatePrecision: "day",
+    releaseTitle: "Glass Signal",
+    releaseType: "single",
+    saved: false,
+    soundcloudState: "NOT_CHECKED",
+    sources: [
+      {
+        evidenceHref: "https://example.test/evidence/glass-signal",
+        href: "https://example.test/releases/glass-signal",
+        provider: "Spotify",
+      },
+    ],
+    spotify: "playable",
+    state: "new",
+    title: "Glass Signal",
+  } as const;
+
+  await page.route("**/api/feed**", async (route) => {
+    const requestUrl = new URL(route.request().url());
+    if (refreshFails) {
+      await route.fulfill({ json: { error: "Synthetic refresh failure" }, status: 500 });
+      return;
+    }
+    if (requestUrl.searchParams.get("mode") === "revision") {
+      revisionChecks += 1;
+      await route.fulfill({ json: { count: revision === "revision-1" ? 4 : 5, revision } });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        count: revision === "revision-1" ? 4 : 5,
+        items: revision === "revision-1" ? [] : [externalItem],
+        revision,
+      },
+    });
+  });
+
+  await page.goto("/?e2e-scan-status=database#feed");
+  await expect.poll(() => revisionChecks).toBeGreaterThan(0);
+  const glassHorizon = page.getByRole("article").filter({
+    has: page.getByRole("heading", { name: "Glass Horizon" }),
+  });
+  await glassHorizon.getByRole("button", { name: "Collapse Glass Horizon" }).click();
+  await page.getByRole("tab", { name: "New" }).click();
+  await page.getByRole("button", { name: "Filters" }).click();
+  await page.getByLabel("Sort").selectOption("first-seen");
+  await page.getByRole("searchbox", { name: "Search discoveries" }).fill("Glass");
+  await page.evaluate(() => {
+    Object.defineProperty(window, "feedRefreshMarker", { value: "still-here", writable: true });
+  });
+
+  revision = "revision-2";
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+
+  await expect(page.getByRole("heading", { name: "Glass Signal" })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "1 new release added." })).toBeVisible();
+  await expect(page.getByRole("searchbox", { name: "Search discoveries" })).toHaveValue("Glass");
+  await expect(page.getByRole("tab", { name: "New" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByLabel("Sort")).toHaveValue("first-seen");
+  await expect(glassHorizon.getByRole("button", { name: "Expand Glass Horizon" })).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => Reflect.get(window, "feedRefreshMarker") === "still-here"))
+    .toBe(true);
+  await expect(page.getByRole("heading", { name: "Glass Signal" })).toHaveCount(1);
+
+  refreshFails = true;
+  await page.getByRole("button", { name: "Refresh feed" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Feed refresh failed" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Glass Signal" })).toBeVisible();
+});
+
 test("runs a mock scan, opens evidence, changes status, and filters the feed", async ({ page }) => {
   await page.clock.setFixedTime(new Date("2026-07-19T12:00:00-07:00"));
   await page.goto("/");
@@ -489,6 +576,9 @@ test("hides manual SoundCloud controls by default", async ({ page }) => {
 });
 
 test("navigates every primary view and resolves manual review", async ({ page }) => {
+  await page.route("**/api/musicbrainz/mappings", async (route) => {
+    await route.fulfill({ json: { mappings: [], reviews: [] } });
+  });
   await page.goto("/#exports");
   const navigation = page.getByRole("complementary", { name: "Primary navigation" });
 

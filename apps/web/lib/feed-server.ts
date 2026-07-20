@@ -10,8 +10,34 @@ import {
   trackCredits,
   tracks,
 } from "@radar/db";
+import { count, max } from "drizzle-orm";
+
+export interface DatabaseFeedRevision {
+  count: number;
+  revision: string;
+}
+
+export interface DatabaseFeedSnapshot extends DatabaseFeedRevision {
+  items: FeedFixtureItem[];
+}
 
 export async function loadDatabaseFeed(databaseUrl: string): Promise<FeedFixtureItem[]> {
+  return (await loadDatabaseFeedSnapshot(databaseUrl)).items;
+}
+
+export async function loadDatabaseFeedRevision(databaseUrl: string): Promise<DatabaseFeedRevision> {
+  const connection = createDatabase(databaseUrl);
+  try {
+    const [revisionRow] = await connection.db
+      .select({ count: count(), updatedAt: max(feedItems.updatedAt) })
+      .from(feedItems);
+    return toFeedRevision(revisionRow);
+  } finally {
+    await connection.client.end();
+  }
+}
+
+export async function loadDatabaseFeedSnapshot(databaseUrl: string): Promise<DatabaseFeedSnapshot> {
   const connection = createDatabase(databaseUrl);
   try {
     const [
@@ -23,6 +49,7 @@ export async function loadDatabaseFeed(databaseUrl: string): Promise<FeedFixture
       evidenceRows,
       availabilityRows,
       exportRows,
+      revisionRows,
     ] = await Promise.all([
       connection.db.select().from(feedItems),
       connection.db.select().from(releaseCandidates),
@@ -32,9 +59,10 @@ export async function loadDatabaseFeed(databaseUrl: string): Promise<FeedFixture
       connection.db.select().from(sourceEvidence),
       connection.db.select().from(trackAvailabilities),
       connection.db.select().from(playlistExports),
+      connection.db.select({ count: count(), updatedAt: max(feedItems.updatedAt) }).from(feedItems),
     ]);
 
-    return feedRows.flatMap((feed, index) => {
+    const items: FeedFixtureItem[] = feedRows.flatMap((feed, index) => {
       const candidate = candidateRows.find((row) => row.id === feed.candidateId);
       if (!candidate) return [];
       const track = trackRows.find((row) => row.id === feed.trackId);
@@ -107,9 +135,16 @@ export async function loadDatabaseFeed(databaseUrl: string): Promise<FeedFixture
         },
       ];
     });
+    return { items, ...toFeedRevision(revisionRows[0]) };
   } finally {
     await connection.client.end();
   }
+}
+
+function toFeedRevision(row: { count: number; updatedAt: Date | null } | undefined) {
+  const itemCount = row?.count ?? 0;
+  const updatedAt = row?.updatedAt?.toISOString() ?? "empty";
+  return { count: itemCount, revision: `${updatedAt}:${itemCount}` };
 }
 
 function providerLabel(provider: string): string {
