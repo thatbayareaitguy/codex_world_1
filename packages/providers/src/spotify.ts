@@ -478,6 +478,8 @@ export class SpotifyClient {
       let permit: SpotifyRequestPermit | undefined;
       let permitCompleted = false;
       try {
+        // Token refresh uses the same global gate. Resolve it before claiming an API lease.
+        const accessToken = await this.accessToken();
         if (this.requestGate) {
           await this.emitTelemetry({ endpointCategory, phase: "queued" });
           permit = await this.requestGate.acquire({
@@ -501,7 +503,7 @@ export class SpotifyClient {
           ...(options.body ? { body: JSON.stringify(options.body) } : {}),
           headers: {
             Accept: "application/json",
-            Authorization: `Bearer ${await this.accessToken()}`,
+            Authorization: `Bearer ${accessToken}`,
             ...(options.body ? { "Content-Type": "application/json" } : {}),
           },
           method,

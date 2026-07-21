@@ -84,13 +84,13 @@ export async function loadDatabaseFeedSnapshot(databaseUrl: string): Promise<Dat
       );
       const evidence = evidenceRows.filter((row) => relatedCandidateIds.has(row.candidateId));
       const hasSpotifyEvidence = evidence.some((row) => row.provider === "spotify");
-      const spotifyReleaseExternalId = releaseExternalIdRows.find(
-        (row) => row.releaseId === release?.id && row.provider === "spotify",
-      );
+      const storedSpotifyArtwork = releaseExternalIdRows
+        .filter((row) => row.releaseId === release?.id && row.provider === "spotify")
+        .map((row) => parseSpotifyReleaseArtwork(providerField(row.providerFields, "spotify")))
+        .find((artwork) => artwork !== null);
       const spotifyArtwork = hasSpotifyEvidence
-        ? (parseSpotifyReleaseArtwork(
-            providerField(spotifyReleaseExternalId?.providerFields, "spotify"),
-          ) ?? parseSpotifyReleaseArtwork(providerField(candidate.rawPayload, "spotifyRelease")))
+        ? (storedSpotifyArtwork ??
+          parseSpotifyReleaseArtwork(providerField(candidate.rawPayload, "spotifyRelease")))
         : null;
       const availabilities = availabilityRows.filter((row) => row.trackId === feed.trackId);
       const spotify = availabilities.find((row) => row.provider === "spotify");

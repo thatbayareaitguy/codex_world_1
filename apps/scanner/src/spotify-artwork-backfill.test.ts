@@ -109,6 +109,24 @@ describe("Spotify artwork backfill", () => {
     expect(fixture.client.getAlbum).toHaveBeenCalledWith(albumId("2"));
   });
 
+  it("selects distinct canonical releases when provider IDs converge", async () => {
+    const fixture = setup([
+      release("row-1", "release-1", albumId("1"), "UNTAMED"),
+      release("row-2", "release-1", albumId("2"), "UNTAMED"),
+      release("row-3", "release-2", albumId("3"), "Hold On"),
+    ]);
+    const summary = await runSpotifyArtworkBackfill(
+      { apply: false, limit: 2, resume: false },
+      fixture,
+    );
+
+    expect(summary.selected).toEqual([
+      { internalReleaseId: "release-1", title: "UNTAMED" },
+      { internalReleaseId: "release-2", title: "Hold On" },
+    ]);
+    expect(fixture.client.getAlbum).toHaveBeenCalledTimes(2);
+  });
+
   it("is idempotent when stored artwork is already valid", async () => {
     const fixture = setup([
       release("row-1", "release-1", albumId("1"), "Existing", validProviderFields()),

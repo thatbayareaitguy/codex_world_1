@@ -216,6 +216,34 @@ describe("SpotifyClient", () => {
     );
   });
 
+  it("resolves a possibly refreshing token before acquiring an API request permit", async () => {
+    const order: string[] = [];
+    const requestGate: SpotifyRequestGate = {
+      acquire: vi.fn(() => {
+        order.push("permit");
+        return Promise.resolve({
+          eventId: "event",
+          leaseToken: "lease",
+          queueLength: 0,
+          queueWaitMs: 0,
+          startedAt: new Date("2026-07-21T00:00:00Z"),
+        });
+      }),
+      complete: vi.fn().mockResolvedValue(undefined),
+    };
+    const client = new SpotifyClient({
+      accessToken: () => {
+        order.push("token");
+        return Promise.resolve("token");
+      },
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(artist("artist-1"))),
+      requestGate,
+    });
+
+    await client.getArtist("artist-1");
+    expect(order).toEqual(["token", "permit"]);
+  });
+
   it("reports request telemetry without exposing authorization data", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(artist("artist-1")));
     const onTelemetry = vi.fn(() => Promise.resolve());

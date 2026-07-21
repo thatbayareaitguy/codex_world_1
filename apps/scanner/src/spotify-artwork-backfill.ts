@@ -83,9 +83,12 @@ export async function runSpotifyArtworkBackfill(
   const startedAt = Date.now();
   const now = dependencies.now ?? (() => new Date());
   const all = await dependencies.repository.listReleases();
+  const releases = canonicalBackfillWork(all);
   const cursor = options.resume ? await dependencies.repository.loadCursor() : null;
-  const cursorIndex = cursor ? all.findIndex((release) => release.externalRowId === cursor) : -1;
-  const candidates = all
+  const cursorIndex = cursor
+    ? releases.findIndex((release) => release.externalRowId === cursor)
+    : -1;
+  const candidates = releases
     .slice(cursorIndex + 1)
     .filter((release) => !artworkBackfillCompleted(release.providerFields))
     .slice(0, options.limit);
@@ -95,10 +98,11 @@ export async function runSpotifyArtworkBackfill(
     failed: 0,
     processed: 0,
     queueWaitMs: 0,
-    remaining: all.filter((release) => !artworkBackfillCompleted(release.providerFields)).length,
+    remaining: releases.filter((release) => !artworkBackfillCompleted(release.providerFields))
+      .length,
     requests: 0,
     selected: candidates.map(({ releaseId, title }) => ({ internalReleaseId: releaseId, title })),
-    skipped: all.filter((release) => hasValidSpotifyArtwork(release.providerFields)).length,
+    skipped: releases.filter((release) => hasValidSpotifyArtwork(release.providerFields)).length,
     stoppedReason: "completed",
     unavailable: 0,
     updated: 0,
@@ -147,6 +151,23 @@ export async function runSpotifyArtworkBackfill(
   summary.queueWaitMs = dependencies.client.metrics.queueWaitMs;
   summary.durationMs = Date.now() - startedAt;
   return summary;
+}
+
+function canonicalBackfillWork(
+  rows: SpotifyArtworkBackfillRelease[],
+): SpotifyArtworkBackfillRelease[] {
+  const groups = new Map<string, SpotifyArtworkBackfillRelease[]>();
+  for (const row of rows) {
+    const group = groups.get(row.releaseId);
+    if (group) group.push(row);
+    else groups.set(row.releaseId, [row]);
+  }
+  return [...groups.values()].flatMap((group) => {
+    const withArtwork = group.find((release) => hasValidSpotifyArtwork(release.providerFields));
+    if (withArtwork) return [withArtwork];
+    const incomplete = group.find((release) => !artworkBackfillCompleted(release.providerFields));
+    return incomplete ? [incomplete] : [group[0]!];
+  });
 }
 
 function albumArtwork(

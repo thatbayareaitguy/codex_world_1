@@ -1,13 +1,13 @@
 # AI Handoff
 
-Updated: 2026-07-21 00:47:25 PDT (UTC-07:00)
+Updated: 2026-07-21 01:00:22 PDT (UTC-07:00)
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`.
-- Latest commit: the current `feat: add Spotify artwork to discovery feed` checkpoint (hash finalized by the amend that includes this handoff update).
-- Current milestone: Spotify album and single artwork plus a bounded historical artwork backfill command are implemented and credential-free verification is complete. The approved five-release live validation has not started.
-- Git state: the verified artwork, backfill, and previously reviewed feed/review changes are included in the current artwork checkpoint on `codex/release-radar-hardening`.
+- Latest commit: the current `fix: validate Spotify artwork backfill` commit (hash finalized by the amend that includes this handoff update). Previous pushed artwork checkpoint: `88404da`.
+- Current milestone: Spotify album and single artwork plus the bounded historical artwork backfill are implemented. The approved five-release live validation and final credential-free verification passed.
+- Git state: clean after the validation-fix amend on `codex/release-radar-hardening`; normal push remains.
 
 ## Confirmed Working
 
@@ -25,6 +25,7 @@ Updated: 2026-07-21 00:47:25 PDT (UTC-07:00)
 - New Spotify candidates retain validated album artwork URL and dimensions from the already-fetched official album response without another Spotify request. Release metadata is namespaced under `release_external_ids.provider_fields.spotify`.
 - The Discovery Feed loads Spotify artwork directly from `i.scdn.co`, preserves aspect ratio, links to the matching Spotify album, shows one cover per grouped release, and uses the existing fallback for missing or failed images.
 - `pnpm spotify:backfill-artwork` defaults to dry-run, requires a limit from 1 through 25, requires `--apply` for writes, uses only stored album IDs, shares the global Spotify request gate, and persists a resumable cursor after each completed release.
+- The live backfill selects distinct canonical releases even when several Spotify album IDs converge on one canonical release. Feed projection chooses a valid stored artwork record across those IDs.
 - The running feed displayed new Au5, BARELY ALIVE, and Dom Dolla-related records with Spotify evidence and release grouping without a page reload.
 - Feed artist credits use commas and expanded or collapsed headings use `Artist(s) - Song`.
 - Expanded and collapsed feed headings append a precision-aware release date at normal weight. Day-precision dates use `Weekday, M/D/YY`; the redundant released-date fact is removed and remaining metadata aligns with the title.
@@ -34,7 +35,7 @@ Updated: 2026-07-21 00:47:25 PDT (UTC-07:00)
 
 ## Implemented, Not Live-Tested
 
-- The artwork pipeline and bounded backfill are verified with synthetic provider responses, PostgreSQL integration tests, and Playwright. The approved five-release live backfill has not run yet.
+- The automatic feed-revision polling path remains covered by Playwright; live UI verification used a newly opened tab after apply, so the no-reload transition itself was not directly observed in that tab.
 - Spotify playlist safeguards exist, but writes remain disabled and have never been exercised against the real account.
 - Deep reconciliation and the remaining watchlist scan have not run.
 - A 10-artist MusicBrainz batch remains deferred because only 6 artists have confirmed mappings.
@@ -44,7 +45,7 @@ Updated: 2026-07-21 00:47:25 PDT (UTC-07:00)
 - One-page scans cannot prove catalog completeness; all 50 approved artists remain partial.
 - One initial artist-albums request failed while refreshing an expired access token, then retried successfully. Safe telemetry preserves both events.
 - Spotify availability can show unavailable for the configured region while a protected evidence link exists.
-- Existing releases continue to use the generic initials fallback until the bounded live backfill runs.
+- 59 canonical Spotify-backed releases still lack artwork after the approved five-release limit. They continue to use the initials fallback.
 - One historical Spotify timestamp-binding failure remains resolved and preserved.
 - The real `Want It - Mefjus Remix` review remains unresolved because no prior manual decision existed in PostgreSQL.
 
@@ -58,7 +59,8 @@ Updated: 2026-07-21 00:47:25 PDT (UTC-07:00)
 ## Database
 
 - Applied migrations: 10 through `0009_first_white_queen`. Artwork uses existing JSONB provider fields, so no migration was required.
-- Before live backfill: 0 Spotify release rows have valid artwork, 75 lack artwork, all 75 have usable stored Spotify album IDs, and 0 require rediscovery before they can be queried.
+- Before live backfill: 0 Spotify release rows had valid artwork, 75 lacked artwork, all 75 had usable stored Spotify album IDs, and 0 required rediscovery before querying.
+- After live backfill: 5 provider release rows and 5 canonical releases have valid artwork; 70 provider rows remain without artwork, representing 59 eligible canonical releases. Canonical totals remain 64 releases and 148 tracks; evidence remains 166 and feed items remain 149 with 0 duplicate feed keys.
 - Post-validation totals: 64 releases, 148 tracks, 166 candidates, 166 evidence rows, and 149 feed rows.
 - Duplicate provider candidates, evidence identities, and feed dedupe keys: 0.
 - Active operation locks: 0. Active scan locks: 0.
@@ -77,11 +79,15 @@ Updated: 2026-07-21 00:47:25 PDT (UTC-07:00)
 - Spotify artwork unit coverage: URL and album-link validation, closest-size selection, malformed metadata, missing images, provider candidate propagation, and safe schema filtering passed.
 - Spotify artwork PostgreSQL coverage: namespaced persistence, shared album records, idempotent URL refresh, evidence/feed dedupe, missing/unsafe handling, and non-Spotify isolation passed.
 - Artwork backfill coverage: dry-run write isolation, apply persistence, existing-artwork and malformed-ID skips, unsafe URL rejection, resume, idempotency, cooldown and 429 stops, sequential processing, canonical identity stability, and feed revision updates passed.
+- Live dry-run: selected `UNTAMED`, `Hold On`, `Under The Lights`, `Just Love`, and `DARE TO DREAM`; predicted 5 updates and wrote 0. An expired-token refresh exposed token acquisition occurring after the album lease; 6 album attempts plus 1 OAuth request completed without 429.
+- The token path now refreshes before acquiring an API permit or starting the request timeout. Focused regression tests passed.
+- Live apply after correction: 5 album requests, 20.328 seconds, 5.009-second minimum request-start interval, 19.135 seconds aggregate queue wait, 5 updates, 0 unavailable, 0 failures, 0 HTTP 429, and 0 playlist requests.
+- Live UI: all five images projected; `Hold On` loaded at 300 by 300 pixels; grouped `UNTAMED` rendered one image; links use the matching Spotify album with `_blank` and `noopener noreferrer`; object fit is `contain`; collapse works; no horizontal overflow; and non-artwork records retain initials.
 - Spotify artwork Playwright coverage: direct rendering, safe album link, refresh persistence, one grouped image, collapse, failure fallback, and 480px layout passed.
 - Format: passed.
 - Lint: passed with zero warnings.
 - Strict TypeScript: passed across all workspace projects.
-- Unit tests: 222 passed in 31 files.
+- Unit tests: 224 passed in 31 files.
 - PostgreSQL integration tests: 32 passed in 6 files.
 - Production build: passed; 23 application pages/routes generated.
 - Playwright: 17 passed.
@@ -90,7 +96,7 @@ Updated: 2026-07-21 00:47:25 PDT (UTC-07:00)
 
 ## Uncommitted Files
 
-- None after the artwork checkpoint amend.
+- None after the validation-fix amend.
 
 ## Security And Policy
 
@@ -101,7 +107,7 @@ Updated: 2026-07-21 00:47:25 PDT (UTC-07:00)
 
 ## Next Action
 
-Create and push the verified artwork checkpoint. Then run only the approved five-release dry-run and apply backfill, verify automatic feed refresh and fallbacks, rerun the credential-free gate, and record the live result. Do not start deeper pagination or the remaining watchlist scan.
+Push the validation-fix commit normally. The deeper pagination milestone may then begin only with a separately reviewed and explicitly approved bounded plan; do not backfill another release or scan the remaining watchlist as part of this milestone.
 
 ## User Decisions Needed
 
