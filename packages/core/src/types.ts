@@ -71,6 +71,20 @@ export interface ArtistCreditInput {
   role: "primary" | "featured" | "remixer" | "producer";
 }
 
+export interface SpotifyArtworkImage {
+  height: number | null;
+  url: string;
+  width: number | null;
+}
+
+export interface SpotifyReleaseArtwork {
+  albumId: string;
+  albumUrl: string;
+  image: SpotifyArtworkImage;
+  lastObservedAt: string;
+  sourceProvider: "spotify";
+}
+
 export interface TrackCandidate {
   provider: ProviderName;
   externalReleaseId: string;
@@ -101,6 +115,7 @@ export interface TrackCandidate {
   evidenceType: string;
   payloadHash: string;
   isUpcoming?: boolean;
+  spotifyRelease?: SpotifyReleaseArtwork;
 }
 
 export interface CanonicalTrack {
@@ -169,6 +184,7 @@ export interface FeedFixtureItem {
   firstSeenAt: string;
   sources: Array<{ provider: string; href: string; evidenceHref: string }>;
   spotify: AvailabilityState;
+  spotifyArtwork?: SpotifyReleaseArtwork;
   soundcloudState: SoundCloudLinkState;
   links: Array<{ label: string; href: string }>;
   confidence: number;

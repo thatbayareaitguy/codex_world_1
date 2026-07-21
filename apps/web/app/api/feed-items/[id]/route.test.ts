@@ -1,14 +1,16 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { end, updateFeedPreferences } = vi.hoisted(() => ({
+const { end, resolveFeedReview, updateFeedPreferences } = vi.hoisted(() => ({
   end: vi.fn(() => Promise.resolve()),
+  resolveFeedReview: vi.fn(),
   updateFeedPreferences: vi.fn(),
 }));
 
 vi.mock("@radar/db", () => ({
   createDatabase: vi.fn(() => ({ client: { end }, db: {} })),
   ensureLocalOwner: vi.fn(() => Promise.resolve("11111111-1111-4111-8111-111111111111")),
+  resolveFeedReview,
   updateFeedPreferences,
 }));
 vi.mock("@radar/providers", () => ({
@@ -38,6 +40,12 @@ beforeEach(() => {
     saved: true,
     state: "new",
   });
+  resolveFeedReview.mockResolvedValue({
+    decision: "confirm",
+    feedItemId,
+    removed: true,
+    state: "new",
+  });
 });
 
 describe("feed item preferences", () => {
@@ -65,5 +73,30 @@ describe("feed item preferences", () => {
     updateFeedPreferences.mockResolvedValue(undefined);
     const response = await PATCH(request({ saved: true }), context);
     expect(response.status).toBe(404);
+  });
+
+  it("persists a manual match confirmation", async () => {
+    const response = await PATCH(request({ reviewDecision: "confirm" }), context);
+    expect(response.status).toBe(200);
+    expect(resolveFeedReview).toHaveBeenCalledWith(
+      expect.anything(),
+      "11111111-1111-4111-8111-111111111111",
+      feedItemId,
+      "confirm",
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      resolution: { decision: "confirm", removed: true },
+    });
+  });
+
+  it("persists a decision to keep recordings separate", async () => {
+    const response = await PATCH(request({ reviewDecision: "separate" }), context);
+    expect(response.status).toBe(200);
+    expect(resolveFeedReview).toHaveBeenCalledWith(
+      expect.anything(),
+      "11111111-1111-4111-8111-111111111111",
+      feedItemId,
+      "separate",
+    );
   });
 });

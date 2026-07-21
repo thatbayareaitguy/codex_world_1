@@ -12,6 +12,7 @@ The product optimizes for recall but never guarantees completeness. It has no au
 - Preview and explicitly confirm followed-artist imports into canonical records.
 - Preserve manually entered artists and aliases.
 - Store confirmed Spotify IDs and MusicBrainz MBIDs separately.
+- Display validated Spotify album or single artwork for Spotify-backed discoveries, linked to the corresponding Spotify album. Store only provider URLs and dimensions; do not download, proxy, transform, or reuse the image for another provider.
 - Discover primary releases, album tracks, featured appearances, compilations, and future MusicBrainz dates.
 - Match by same-provider ID, ISRC, MusicBrainz IDs, then strict metadata.
 - Keep Reddit disabled until explicit Data API approval exists; exact canonical artist and title corroboration may attach evidence, while every other Reddit candidate enters review.
@@ -25,4 +26,4 @@ YouTube, SoundCloud API and OAuth, SoundCloud playlists, Apple Music, TIDAL, pla
 
 ## Acceptance Boundary
 
-The app starts without provider credentials and uses MockProvider. Real provider data stays namespaced with evidence. Scan and playlist operations are idempotent. Spotify Development Mode scans are globally serialized, cooldown-aware, bounded by mode-specific page limits, persisted after each artist, and resumable without restarting completed work. Tokens are encrypted and server-only. Database tests run against provisioned PostgreSQL and never silently skip. All standard provider tests use synthetic responses.
+The app starts without provider credentials and uses MockProvider. Real provider data stays namespaced with evidence. Spotify artwork is optional and never required for canonical matching; existing records without artwork retain a generic fallback. Scan and playlist operations are idempotent. Spotify Development Mode scans are globally serialized, cooldown-aware, bounded by mode-specific page limits, persisted after each artist, and resumable without restarting completed work. Tokens are encrypted and server-only. Database tests run against provisioned PostgreSQL and never silently skip. All standard provider tests use synthetic responses.

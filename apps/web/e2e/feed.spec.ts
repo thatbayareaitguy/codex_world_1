@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { feedFixtures } from "@radar/testing";
 
 test("shows externally persisted discoveries without reloading the page", async ({ page }) => {
   let revision = "revision-1";
@@ -47,7 +48,7 @@ test("shows externally persisted discoveries without reloading the page", async 
     await route.fulfill({
       json: {
         count: revision === "revision-1" ? 4 : 5,
-        items: revision === "revision-1" ? [] : [externalItem],
+        items: revision === "revision-1" ? feedFixtures : [...feedFixtures, externalItem],
         revision,
       },
     });
@@ -56,7 +57,7 @@ test("shows externally persisted discoveries without reloading the page", async 
   await page.goto("/?e2e-scan-status=database#feed");
   await expect.poll(() => revisionChecks).toBeGreaterThan(0);
   const glassHorizon = page.getByRole("article").filter({
-    has: page.getByRole("heading", { name: "Glass Horizon" }),
+    has: page.getByRole("heading", { name: "Lumen Field - Glass Horizon" }),
   });
   await glassHorizon.getByRole("button", { name: "Collapse Glass Horizon" }).click();
   await page.getByRole("tab", { name: "New" }).click();
@@ -70,7 +71,7 @@ test("shows externally persisted discoveries without reloading the page", async 
   revision = "revision-2";
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
 
-  await expect(page.getByRole("heading", { name: "Glass Signal" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Lumen Field - Glass Signal" })).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "1 new release added." })).toBeVisible();
   await expect(page.getByRole("searchbox", { name: "Search discoveries" })).toHaveValue("Glass");
   await expect(page.getByRole("tab", { name: "New" })).toHaveAttribute("aria-selected", "true");
@@ -79,13 +80,48 @@ test("shows externally persisted discoveries without reloading the page", async 
   await expect
     .poll(() => page.evaluate(() => Reflect.get(window, "feedRefreshMarker") === "still-here"))
     .toBe(true);
-  await expect(page.getByRole("heading", { name: "Glass Signal" })).toHaveCount(1);
+  await expect(page.getByRole("heading", { name: "Lumen Field - Glass Signal" })).toHaveCount(1);
 
   refreshFails = true;
   await page.getByRole("button", { name: "Refresh feed" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "Feed refresh failed" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Glass Signal" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Lumen Field - Glass Signal" })).toBeVisible();
 });
+
+test("includes the artist in grouped release headings", async ({ page }) => {
+  const groupedBase = feedFixtures[0]!;
+  const groupedItems = [
+    {
+      ...groupedBase,
+      artist: "Au5",
+      id: "grouped-release-track-1",
+      releaseTitle: "Inverse",
+      releaseType: "ep" as const,
+      title: "Primordium",
+    },
+    {
+      ...groupedBase,
+      artist: "Au5",
+      id: "grouped-release-track-2",
+      releaseTitle: "Inverse",
+      releaseType: "ep" as const,
+      title: "Scission",
+    },
+  ];
+
+  await page.route("**/api/feed**", async (route) => {
+    await route.fulfill({
+      json: { count: groupedItems.length, items: groupedItems, revision: "grouped-release" },
+    });
+  });
+
+  await page.goto("/?e2e-scan-status=database#feed");
+  const group = page.getByRole("region", { name: "Au5 - Inverse Ep" });
+  await expect(group.locator(".release-feed-group-title strong")).toHaveText("Au5 - Inverse");
+  await group.getByRole("button", { name: "Collapse Au5 - Inverse Ep" }).click();
+  await expect(group.getByRole("button", { name: "Expand Au5 - Inverse Ep" })).toBeVisible();
+});
+
 test("defaults scan history to the meaningful batch and inspects other run types", async ({
   page,
 }) => {
@@ -291,11 +327,24 @@ test("runs a mock scan, opens evidence, changes status, and filters the feed", a
   await expect(summaryMetrics.nth(1).locator("strong")).toHaveText("1");
 
   const glassHorizon = page.getByRole("article").filter({
-    has: page.getByRole("heading", { name: "Glass Horizon" }),
+    has: page.getByRole("heading", { name: "Lumen Field - Glass Horizon" }),
   });
+  await expect(glassHorizon.locator(".item-heading > .artist")).toHaveCount(0);
+  await expect(glassHorizon.locator(".item-title-date")).toHaveText("| Saturday, 7/11/26");
+  await expect(glassHorizon.locator(".item-facts")).not.toContainText("Released");
+  const alignedCardRows = await glassHorizon.evaluate((element) => {
+    const heading = element.querySelector(".item-heading")?.getBoundingClientRect();
+    const facts = element.querySelector(".item-facts")?.getBoundingClientRect();
+    const evidence = element.querySelector(".evidence-row")?.getBoundingClientRect();
+    return {
+      evidenceAligned: Boolean(heading && evidence && Math.abs(heading.left - evidence.left) < 1),
+      factsAligned: Boolean(heading && facts && Math.abs(heading.left - facts.left) < 1),
+    };
+  });
+  expect(alignedCardRows).toEqual({ evidenceAligned: true, factsAligned: true });
   await expect(glassHorizon.locator(".badges").getByText("Spotify", { exact: true })).toBeVisible();
   const afterimage = page.getByRole("article").filter({
-    has: page.getByRole("heading", { name: "Afterimage" }),
+    has: page.getByRole("heading", { name: "Juniper Vale - Afterimage" }),
   });
   await expect(afterimage.locator(".badges").getByText("Spotify", { exact: true })).toHaveCount(0);
 
@@ -306,7 +355,7 @@ test("runs a mock scan, opens evidence, changes status, and filters the feed", a
   await scanButton.click();
   await expect(scanButton).toBeDisabled();
   await expect(page.getByRole("progressbar", { name: "Release update progress" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Signal Fires" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "North Arcade - Signal Fires" })).toBeVisible();
   await expect(page.getByRole("article")).toHaveCount(5);
   await expect(page.getByRole("progressbar", { name: "Release update progress" })).toHaveCount(0);
   await expect(page.getByRole("status")).toContainText("Signal Fires was added");
@@ -314,7 +363,7 @@ test("runs a mock scan, opens evidence, changes status, and filters the feed", a
   await expect(summaryMetrics.nth(0).locator("small")).toHaveText("+1 since last scan");
 
   const signalFires = page.getByRole("article").filter({
-    has: page.getByRole("heading", { name: "Signal Fires" }),
+    has: page.getByRole("heading", { name: "North Arcade - Signal Fires" }),
   });
   const expandedHeight = await signalFires.evaluate(
     (element) => element.getBoundingClientRect().height,
@@ -367,9 +416,9 @@ test("runs a mock scan, opens evidence, changes status, and filters the feed", a
   await expect(signalFires.getByText("Listened", { exact: true })).toBeVisible();
 
   await page.getByRole("tab", { name: "Saved" }).click();
-  await expect(page.getByRole("heading", { name: "Signal Fires" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "North Arcade - Signal Fires" })).toBeVisible();
   await page.getByRole("tab", { name: "Listened" }).click();
-  await expect(page.getByRole("heading", { name: "Signal Fires" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "North Arcade - Signal Fires" })).toBeVisible();
 
   await page.getByRole("tab", { name: "All" }).click();
   await signalFires.getByRole("button", { name: "Unsave Signal Fires" }).click();
@@ -381,9 +430,9 @@ test("runs a mock scan, opens evidence, changes status, and filters the feed", a
     signalFires.getByRole("button", { name: "Mark Signal Fires unlistened" }),
   ).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("tab", { name: "Saved" }).click();
-  await expect(page.getByRole("heading", { name: "Signal Fires" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "North Arcade - Signal Fires" })).toHaveCount(0);
   await page.getByRole("tab", { name: "Listened" }).click();
-  await expect(page.getByRole("heading", { name: "Signal Fires" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "North Arcade - Signal Fires" })).toBeVisible();
 
   await page.getByRole("tab", { name: "All" }).click();
   await signalFires.getByRole("button", { name: "Mark Signal Fires unlistened" }).click();
@@ -394,14 +443,14 @@ test("runs a mock scan, opens evidence, changes status, and filters the feed", a
 
   await page.getByRole("button", { name: "Filters" }).click();
   await page.getByLabel("Exact matches only").check();
-  await expect(page.getByRole("heading", { name: "Static Bloom" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Oxide Echo - Static Bloom" })).toHaveCount(0);
   await page.getByLabel("Exact matches only").uncheck();
   await page.getByLabel("Spotify availability").selectOption("unavailable");
-  await expect(page.getByRole("heading", { name: "Glass Horizon" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Lumen Field - Glass Horizon" })).toHaveCount(0);
   await page.getByLabel("Spotify availability").selectOption("all");
   await page.getByLabel("Evidence source").selectOption("musicbrainz");
-  await expect(page.getByRole("heading", { name: "Afterimage" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Glass Horizon" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Juniper Vale - Afterimage" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Lumen Field - Glass Horizon" })).toHaveCount(0);
 
   await page.getByRole("searchbox", { name: "Search discoveries" }).fill("No such release");
   await expect(page.getByText("No discoveries match this view.")).toBeVisible();
@@ -810,8 +859,62 @@ test("navigates every primary view and resolves manual review", async ({ page })
   ).toBeVisible();
   await page.getByLabel("Discovery digest").check();
 
-  await navigation.getByRole("link", { name: "Discovery feed 4" }).click();
+  await navigation.getByRole("link", { name: /^Discovery feed/ }).click();
   await expect(page.getByRole("heading", { name: "Discovery feed" })).toBeVisible();
+});
+
+test("persists a manual review decision across feed refresh and page reload", async ({ page }) => {
+  let decisionRequestCount = 0;
+  let resolved = false;
+  await page.route("**/api/musicbrainz/mappings", async (route) => {
+    await route.fulfill({ json: { mappings: [], reviews: [] } });
+  });
+  await page.route("**/api/feed**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.startsWith("/api/feed-items/")) {
+      decisionRequestCount += 1;
+      resolved = true;
+      expect(route.request().postDataJSON()).toEqual({ reviewDecision: "confirm" });
+      await route.fulfill({
+        json: {
+          resolution: {
+            decision: "confirm",
+            feedItemId: "22222222-2222-4222-8222-222222222222",
+            removed: true,
+            state: "new",
+          },
+        },
+      });
+      return;
+    }
+    if (url.searchParams.get("mode") === "revision") {
+      await route.fulfill({
+        json: {
+          count: resolved ? 3 : 4,
+          revision: resolved ? "review-resolved" : "review-pending",
+        },
+      });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        count: resolved ? 3 : 4,
+        items: resolved ? [] : feedFixtures,
+        revision: resolved ? "review-resolved" : "review-pending",
+      },
+    });
+  });
+
+  await page.goto("/?e2e-scan-status=database#review");
+  await expect(page.getByRole("heading", { name: "Static Bloom" })).toBeVisible();
+  await page.getByRole("button", { name: "Confirm match" }).click();
+  await expect(page.getByText("No items need review.")).toBeVisible();
+  expect(decisionRequestCount).toBe(1);
+
+  await page.reload();
+  await expect(page.getByText("No items need review.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Static Bloom" })).toHaveCount(0);
+  expect(decisionRequestCount).toBe(1);
 });
 
 test("adds, pauses, enables, and removes a Reddit source without a Reddit request", async ({
@@ -909,6 +1012,7 @@ test("changes, persists, and follows the system appearance", async ({ page }) =>
 test("controls persisted Spotify batches without bypassing cooldown state", async ({ page }) => {
   const batchId = "11111111-1111-4111-8111-111111111111";
   const artistScanId = "22222222-2222-4222-8222-222222222222";
+  const runId = "44444444-4444-4444-8444-444444444444";
   const actions: string[] = [];
   let batchStatus = "running";
   let cooldownActive = false;
@@ -933,6 +1037,30 @@ test("controls persisted Spotify batches without bypassing cooldown state", asyn
             totalUnits: 15,
           }
         : null,
+    defaultHistoryId: runId,
+    history: [
+      {
+        artistCount: 15,
+        artistFilter: null,
+        batchId,
+        batchMode: "initial",
+        completedAt:
+          batchStatus === "running" || batchStatus === "paused" ? null : "2026-07-17T21:15:00.000Z",
+        createdCount: 12,
+        dryRun: false,
+        failureCount: 0,
+        id: runId,
+        partialArtistCount: 0,
+        provider: "spotify",
+        providersRequested: ["spotify"],
+        requestCount: 35,
+        reviewCount: 1,
+        startedAt: "2026-07-17T20:00:00.000Z",
+        status: batchStatus,
+        triggerType: "provider_manual",
+        updatedCount: 0,
+      },
+    ],
     latest: null,
     running: batchStatus === "running",
     runs: [],
@@ -1012,7 +1140,6 @@ test("controls persisted Spotify batches without bypassing cooldown state", asyn
   await expect(spotifyStatus.getByText("Synthetic Artist")).toBeVisible();
   await page.getByRole("button", { name: "Pause after current request" }).click();
   await page.getByRole("button", { name: "Cancel future work" }).click();
-  const runId = "44444444-4444-4444-8444-444444444444";
   expect(actions).toEqual(["pause", "cancel"]);
 
   batchStatus = "paused";
@@ -1033,27 +1160,3 @@ test("controls persisted Spotify batches without bypassing cooldown state", asyn
   await page.getByRole("button", { name: "Deep reconciliation" }).click();
   expect(actions).toContain("start_reconciliation");
 });
-    defaultHistoryId: runId,
-    history: [
-      {
-        artistCount: 15,
-        artistFilter: null,
-        batchId,
-        batchMode: "initial",
-        completedAt:
-          batchStatus === "running" || batchStatus === "paused" ? null : "2026-07-17T21:15:00.000Z",
-        createdCount: 12,
-        dryRun: false,
-        failureCount: 0,
-        id: runId,
-        partialArtistCount: 0,
-        provider: "spotify",
-        providersRequested: ["spotify"],
-        requestCount: 35,
-        reviewCount: 1,
-        startedAt: "2026-07-17T20:00:00.000Z",
-        status: batchStatus,
-        triggerType: "provider_manual",
-        updatedCount: 0,
-      },
-    ],

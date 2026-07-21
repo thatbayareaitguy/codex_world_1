@@ -6,6 +6,8 @@ import {
   type SoundCloudLinkRecord,
   buildSoundCloudSearchUrl,
   feedStates,
+  normalizeSpotifyAlbumUrl,
+  normalizeSpotifyArtworkUrl,
   releaseTypes,
   soundCloudLinkStates,
   validateSoundCloudUrl,
@@ -289,12 +291,13 @@ export function RadarShell({
   const [syncing, setSyncing] = useState(false);
   const [mockLastScanInsertedCount, setMockLastScanInsertedCount] = useState(0);
   const [pendingFeedActions, setPendingFeedActions] = useState<string[]>([]);
+  const [pendingReviewActions, setPendingReviewActions] = useState<string[]>([]);
   const [cancellingScan, setCancellingScan] = useState(false);
   const [scanStatus, setScanStatus] = useState<ScanApiStatus | null>(null);
-  const [filtersOpen, setFiltersOpen] = useState(false);
   const [scanStatusState, setScanStatusState] = useState<"idle" | "loading" | "loaded" | "error">(
     "idle",
   );
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [exactOnly, setExactOnly] = useState(false);
   const [advancedFilters, setAdvancedFilters] = useState<FeedAdvancedFilters>({
     artist: "all",
@@ -350,8 +353,8 @@ export function RadarShell({
     if (feedMode !== "database") return;
     let cancelled = false;
     const loadScanStatus = async () => {
-      try {
       if (!cancelled) setScanStatusState((current) => (current === "idle" ? "loading" : current));
+      try {
         const response = await fetch("/api/scans", { cache: "no-store" });
         const status = scanStatusSchema.parse(await response.json());
         if (!cancelled && response.ok) {
@@ -646,6 +649,33 @@ export function RadarShell({
       setNotice(`Unable to update ${item.title}. Try again.`);
     } finally {
       setPendingFeedActions((current) => current.filter((key) => key !== actionKey));
+    }
+  };
+
+  const resolveReviewItem = async (item: FeedFixtureItem, decision: "confirm" | "separate") => {
+    if (pendingReviewActions.includes(item.id)) return;
+    setPendingReviewActions((current) => [...current, item.id]);
+    try {
+      if (feedMode === "database") {
+        const response = await fetch(`/api/feed-items/${encodeURIComponent(item.id)}`, {
+          body: JSON.stringify({ reviewDecision: decision }),
+          headers: { "Content-Type": "application/json" },
+          method: "PATCH",
+        });
+        reviewResolutionResponseSchema.parse(await response.json());
+        if (!response.ok) throw new Error("Unable to persist review decision");
+      }
+      setItems((current) => current.filter((currentItem) => currentItem.id !== item.id));
+      setNotice(
+        decision === "confirm"
+          ? `${item.title} was manually confirmed and removed from review.`
+          : `${item.title} was kept separate and removed from review.`,
+      );
+      if (feedMode === "database") await refreshDatabaseFeed({ force: true });
+    } catch {
+      setNotice(`Unable to resolve ${item.title}. Try again.`);
+    } finally {
+      setPendingReviewActions((current) => current.filter((id) => id !== item.id));
     }
   };
 
@@ -1034,6 +1064,7 @@ export function RadarShell({
             ready={hydrated}
             reviewCount={reviewItems.length}
             scanStatus={scanStatus}
+            scanStatusState={scanStatusState}
             summaryItems={items}
             cancellingScan={cancellingScan}
             soundCloudManualLinksEnabled={providerConfiguration.soundcloudManualLinksEnabled}
@@ -1062,7 +1093,6 @@ export function RadarShell({
             watchlistMode={activeWatchlistMode}
           />
         )}
-            scanStatusState={scanStatusState}
         {activeView === "exports" && (
           <ExportsView
             items={items}
@@ -1075,7 +1105,12 @@ export function RadarShell({
             <SoundCloudLinksView items={items} links={verifiedSoundCloudLinks} />
           )}
         {activeView === "review" && (
-          <ReviewView items={reviewItems} onItemChange={updateItem} query={query} />
+          <ReviewView
+            items={reviewItems}
+            onDecision={(item, decision) => void resolveReviewItem(item, decision)}
+            pendingItemIds={pendingReviewActions}
+            query={query}
+          />
         )}
         {activeView === "status" && <SystemStatusView />}
         {activeView === "settings" && (
@@ -1228,6 +1263,7 @@ interface FeedViewProps {
   ready: boolean;
   reviewCount: number;
   scanStatus: ScanApiStatus | null;
+  scanStatusState: "idle" | "loading" | "loaded" | "error";
   summaryItems: FeedFixtureItem[];
   cancellingScan: boolean;
   soundCloudManualLinksEnabled: boolean;
@@ -1261,8 +1297,8 @@ function FeedView({
   pendingFeedActions,
   ready,
   reviewCount,
-  scanStatusState: "idle" | "loading" | "loaded" | "error";
   scanStatus,
+  scanStatusState,
   summaryItems,
   cancellingScan,
   soundCloudManualLinksEnabled,
@@ -1270,6 +1306,7 @@ function FeedView({
 }: FeedViewProps) {
   const [collapsedReleaseGroups, setCollapsedReleaseGroups] = useState<string[]>([]);
   const [spotifyStatusCollapsed, setSpotifyStatusCollapsed] = useState(false);
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const feedSummary = useMemo(() => calculateFeedSummary(summaryItems), [summaryItems]);
   const scanInProgress = syncing || Boolean(scanStatus?.running);
   const activeScan = scanStatus?.active;
@@ -1277,6 +1314,19 @@ function FeedView({
   const spotifyBatch = scanStatus?.spotify.batch;
   const musicbrainzBatch = scanStatus?.musicbrainz.batch;
   const spotifyCooldown = Boolean(spotifyOperational?.cooldownActive);
+  const scanHistory = scanStatus?.history ?? [];
+  const selectedHistoryRun =
+    scanHistory.find((run) => run.id === selectedHistoryId) ??
+    scanHistory.find((run) => run.id === scanStatus?.defaultHistoryId) ??
+    scanHistory[0] ??
+    null;
+  useEffect(() => {
+    setSelectedHistoryId((current) =>
+      current && scanHistory.some((run) => run.id === current)
+        ? current
+        : (scanStatus?.defaultHistoryId ?? scanHistory[0]?.id ?? null),
+    );
+  }, [scanHistory, scanStatus?.defaultHistoryId]);
   const spotifyRemaining = spotifyBatch
     ? Math.max(
         0,
@@ -1291,12 +1341,17 @@ function FeedView({
   const retryableArtist = spotifyBatch?.artistScans.find((artist) =>
     ["failed", "rate_limited", "cancelled"].includes(artist.status),
   );
+  const showSpotifyOperationalPanel = Boolean(
+    spotifyBatch &&
+    (scanStatus?.running ||
+      ["pending", "running", "paused", "rate_limited"].includes(spotifyBatch.status) ||
+      retryableArtist),
+  );
   const estimatedRemainingRequests = spotifyBatch
     ? Math.ceil(
         (spotifyBatch.estimatedRequests / Math.max(spotifyBatch.totalArtists, 1)) *
           spotifyRemaining,
       )
-  scanStatusState,
     : 0;
   const estimatedMinimumMs =
     estimatedRemainingRequests * (scanStatus?.spotify.limiter.minRequestIntervalMs ?? 5_000);
@@ -1304,7 +1359,6 @@ function FeedView({
   const observedRequestRate =
     activeScan?.heartbeatAt && activeScan.requests > 0
       ? activeScan.requests /
-  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
         Math.max(
           (new Date(activeScan.heartbeatAt).getTime() - new Date(activeScan.startedAt).getTime()) /
             60_000,
@@ -1312,19 +1366,6 @@ function FeedView({
         )
       : 0;
   const finishedProviderCount = activeScan
-  const scanHistory = scanStatus?.history ?? [];
-  const selectedHistoryRun =
-    scanHistory.find((run) => run.id === selectedHistoryId) ??
-    scanHistory.find((run) => run.id === scanStatus?.defaultHistoryId) ??
-    scanHistory[0] ??
-    null;
-  useEffect(() => {
-    setSelectedHistoryId((current) =>
-      current && scanHistory.some((run) => run.id === current)
-        ? current
-        : (scanStatus?.defaultHistoryId ?? scanHistory[0]?.id ?? null),
-    );
-  }, [scanHistory, scanStatus?.defaultHistoryId]);
     ? new Set([...activeScan.providersCompleted, ...activeScan.providersFailed]).size
     : 0;
   const providerCount = activeScan?.providersRequested.length ?? 0;
@@ -1339,12 +1380,6 @@ function FeedView({
       ? "Cancellation requested"
       : activeScan?.phase === "rate_limit_wait" && activeScan.currentProvider
         ? `${titleCase(activeScan.currentProvider)} rate limit wait | retrying in ${Math.ceil(
-  const showSpotifyOperationalPanel = Boolean(
-    spotifyBatch &&
-    (scanStatus?.running ||
-      ["pending", "running", "paused", "rate_limited"].includes(spotifyBatch.status) ||
-      retryableArtist),
-  );
             activeScan.retryAfterMs / 1_000,
           )} seconds`
         : activeScan?.totalUnits && activeScan.currentProvider
@@ -1910,9 +1945,10 @@ function FeedView({
             }
 
             const collapsed = collapsedReleaseGroups.includes(group.key);
+            const groupTitle = `${group.artist} - ${group.releaseTitle}`;
             return (
               <section
-                aria-label={`${group.releaseTitle} ${titleCase(group.releaseType)}`}
+                aria-label={`${groupTitle} ${titleCase(group.releaseType)}`}
                 className={`release-feed-group ${collapsed ? "is-collapsed" : ""}`}
                 data-feed-anchor={group.key}
                 key={group.key}
@@ -1920,7 +1956,7 @@ function FeedView({
                 <div className="release-feed-group-heading">
                   <button
                     aria-expanded={!collapsed}
-                    aria-label={`${collapsed ? "Expand" : "Collapse"} ${group.releaseTitle} ${titleCase(group.releaseType)}`}
+                    aria-label={`${collapsed ? "Expand" : "Collapse"} ${groupTitle} ${titleCase(group.releaseType)}`}
                     className="release-group-disclosure"
                     onClick={() =>
                       setCollapsedReleaseGroups((current) =>
@@ -1934,12 +1970,13 @@ function FeedView({
                   >
                     {collapsed ? <ChevronRight size={17} /> : <ChevronDown size={17} />}
                   </button>
-                  <div className="release-feed-group-icon" aria-hidden="true">
-                    <Disc3 size={20} />
-                  </div>
+                  <FeedArtwork
+                    compact
+                    item={group.items.find((item) => item.spotifyArtwork) ?? group.items[0]!}
+                  />
                   <div className="release-feed-group-title">
                     <span>{titleCase(group.releaseType)}</span>
-                    <strong>{group.releaseTitle}</strong>
+                    <strong>{groupTitle}</strong>
                     <small>Released {formatDate(group.releaseDate)}</small>
                   </div>
                   <span className="release-feed-group-count">{group.items.length} tracks</span>
@@ -1950,6 +1987,7 @@ function FeedView({
                       <FeedItem
                         item={item}
                         key={item.id}
+                        showArtwork={false}
                         onItemChange={onItemChange}
                         onTogglePreference={onTogglePreference}
                         pendingFeedActions={pendingFeedActions}
@@ -1975,40 +2013,6 @@ function FeedView({
   );
 }
 
-function ArtistsView({
-  artistProfiles,
-  artists,
-  onAddArtist,
-  onEditArtist,
-  onNotice,
-  onRefreshArtists,
-  onRemoveArtist,
-  onRemoveProfile,
-  onSaveProfile,
-  onScanArtist,
-  musicbrainzConfigured,
-  soundCloudManualLinksEnabled,
-  watchlistMode,
-}: {
-  artistProfiles: Record<string, string>;
-  artists: WatchedArtist[];
-  onAddArtist: (name: string) => boolean;
-  onEditArtist: (id: string, name: string) => boolean;
-  onNotice: (message: string) => void;
-  onRefreshArtists: () => Promise<void>;
-  onRemoveArtist: (id: string, name: string) => void;
-  onRemoveProfile: (id: string) => void;
-  onSaveProfile: (id: string, url: string) => void;
-  onScanArtist: (id: string) => void;
-  musicbrainzConfigured: boolean;
-  soundCloudManualLinksEnabled: boolean;
-  watchlistMode: "database" | "error" | "mock";
-}) {
-  const [addingArtist, setAddingArtist] = useState(false);
-  const [artistName, setArtistName] = useState("");
-  const [formError, setFormError] = useState<string | null>(null);
-  const [artistSearch, setArtistSearch] = useState("");
-  const [sortOrder, setSortOrder] = useState<ArtistSort>("name-asc");
 function ScanHistoryPanel({
   history,
   onSelect,
@@ -2155,6 +2159,40 @@ function ScanHistoryPanel({
   );
 }
 
+function ArtistsView({
+  artistProfiles,
+  artists,
+  onAddArtist,
+  onEditArtist,
+  onNotice,
+  onRefreshArtists,
+  onRemoveArtist,
+  onRemoveProfile,
+  onSaveProfile,
+  onScanArtist,
+  musicbrainzConfigured,
+  soundCloudManualLinksEnabled,
+  watchlistMode,
+}: {
+  artistProfiles: Record<string, string>;
+  artists: WatchedArtist[];
+  onAddArtist: (name: string) => boolean;
+  onEditArtist: (id: string, name: string) => boolean;
+  onNotice: (message: string) => void;
+  onRefreshArtists: () => Promise<void>;
+  onRemoveArtist: (id: string, name: string) => void;
+  onRemoveProfile: (id: string) => void;
+  onSaveProfile: (id: string, url: string) => void;
+  onScanArtist: (id: string) => void;
+  musicbrainzConfigured: boolean;
+  soundCloudManualLinksEnabled: boolean;
+  watchlistMode: "database" | "error" | "mock";
+}) {
+  const [addingArtist, setAddingArtist] = useState(false);
+  const [artistName, setArtistName] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [artistSearch, setArtistSearch] = useState("");
+  const [sortOrder, setSortOrder] = useState<ArtistSort>("name-asc");
   const [editingArtistId, setEditingArtistId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
   const [profileArtistId, setProfileArtistId] = useState<string | null>(null);
@@ -3023,11 +3061,13 @@ function SoundCloudLinksView({
 
 function ReviewView({
   items,
-  onItemChange,
+  onDecision,
+  pendingItemIds,
   query,
 }: {
   items: FeedFixtureItem[];
-  onItemChange: (id: string, changes: Partial<FeedFixtureItem>, message: string) => void;
+  onDecision: (item: FeedFixtureItem, decision: "confirm" | "separate") => void;
+  pendingItemIds: string[];
   query: string;
 }) {
   const [reviewFilter, setReviewFilter] = useState<"all" | "matches" | "musicbrainz_mappings">(
@@ -3154,51 +3194,39 @@ function ReviewView({
             </article>
           ))}
         {reviewFilter !== "musicbrainz_mappings" && visibleItems.length ? (
-          visibleItems.map((item) => (
-            <article className="review-card" key={item.id}>
-              <div>
-                <span className="state state-needs_review">Needs review</span>
-                <h2>{item.title}</h2>
-                <p>{item.artist}</p>
-                <small>
-                  {Math.round(item.confidence * 100)}% confidence · {item.matchReason}
-                </small>
-              </div>
-              <div className="review-actions">
-                <button
-                  className="secondary-button"
-                  onClick={() =>
-                    onItemChange(
-                      item.id,
-                      { state: "dismissed", exportStatus: "blocked" },
-                      `${item.title} was kept as a separate recording.`,
-                    )
-                  }
-                >
-                  Keep separate
-                </button>
-                <button
-                  className="primary-button"
-                  onClick={() =>
-                    onItemChange(
-                      item.id,
-                      {
-                        state: "new",
-                        confidence: 1,
-                        matchReason: "Manually confirmed match",
-                        exportStatus: item.spotify === "playable" ? "eligible" : "blocked",
-                      },
-                      item.spotify === "playable"
-                        ? `${item.title} was manually confirmed and is eligible for Spotify export.`
-                        : `${item.title} was manually confirmed; Spotify export remains unavailable.`,
-                    )
-                  }
-                >
-                  <Check size={15} /> Confirm match
-                </button>
-              </div>
-            </article>
-          ))
+          visibleItems.map((item) => {
+            const pending = pendingItemIds.includes(item.id);
+            return (
+              <article className="review-card" key={item.id}>
+                <div>
+                  <span className="state state-needs_review">Needs review</span>
+                  <h2>{item.title}</h2>
+                  <p>{item.artist}</p>
+                  <small>
+                    {Math.round(item.confidence * 100)}% confidence · {item.matchReason}
+                  </small>
+                </div>
+                <div className="review-actions">
+                  <button
+                    className="secondary-button"
+                    disabled={pending}
+                    onClick={() => onDecision(item, "separate")}
+                    type="button"
+                  >
+                    {pending ? "Resolving..." : "Keep separate"}
+                  </button>
+                  <button
+                    className="primary-button"
+                    disabled={pending}
+                    onClick={() => onDecision(item, "confirm")}
+                    type="button"
+                  >
+                    <Check size={15} /> {pending ? "Resolving..." : "Confirm match"}
+                  </button>
+                </div>
+              </article>
+            );
+          })
         ) : reviewFilter !== "musicbrainz_mappings" && mappingReviews.length === 0 ? (
           <div className="empty-state">
             <Check size={22} />
@@ -3661,7 +3689,29 @@ function SettingsView({
   );
 }
 
+const scanHistoryEntrySchema = z.object({
+  artistCount: z.number().int().nonnegative().nullable(),
+  artistFilter: z.string().nullable(),
+  batchId: z.string().uuid().nullable(),
+  batchMode: z.string().nullable(),
+  completedAt: z.string().datetime().nullable(),
+  createdCount: z.number().int().nonnegative(),
+  dryRun: z.boolean(),
+  failureCount: z.number().int().nonnegative().nullable(),
+  id: z.string().uuid(),
+  partialArtistCount: z.number().int().nonnegative().nullable(),
+  provider: z.string().nullable(),
+  providersRequested: z.array(z.string()),
+  requestCount: z.number().int().nonnegative().nullable(),
+  reviewCount: z.number().int().nonnegative(),
+  startedAt: z.string().datetime(),
+  status: z.string(),
+  triggerType: z.string(),
+  updatedCount: z.number().int().nonnegative(),
+});
+
 const scanHistorySchema = z.object({
+  history: z.array(scanHistoryEntrySchema),
   runs: z.array(
     z.object({
       completedAt: z.string().nullable(),
@@ -3685,29 +3735,7 @@ function ScanHistory({ databaseConfigured }: { databaseConfigured: boolean }) {
     setState("loading");
     try {
       const response = await fetch("/api/scans");
-const scanHistoryEntrySchema = z.object({
-  artistCount: z.number().int().nonnegative().nullable(),
-  artistFilter: z.string().nullable(),
-  batchId: z.string().uuid().nullable(),
-  batchMode: z.string().nullable(),
-  completedAt: z.string().datetime().nullable(),
-  createdCount: z.number().int().nonnegative(),
-  dryRun: z.boolean(),
-  failureCount: z.number().int().nonnegative().nullable(),
-  id: z.string().uuid(),
-  partialArtistCount: z.number().int().nonnegative().nullable(),
-  provider: z.string().nullable(),
-  providersRequested: z.array(z.string()),
-  requestCount: z.number().int().nonnegative().nullable(),
-  reviewCount: z.number().int().nonnegative(),
-  startedAt: z.string().datetime(),
-  status: z.string(),
-  triggerType: z.string(),
-  updatedCount: z.number().int().nonnegative(),
-});
-
       if (!response.ok) throw new Error("History request failed");
-  history: z.array(scanHistoryEntrySchema),
       const payload = scanHistorySchema.parse(await response.json());
       setRuns(payload.runs);
       setState("loaded");
@@ -4352,6 +4380,24 @@ const feedItemResponseSchema = z.object({
     z.object({ evidenceHref: z.string().url(), href: z.string().url(), provider: z.string() }),
   ),
   spotify: z.enum(["playable", "preview", "blocked", "unavailable"]),
+  spotifyArtwork: z
+    .object({
+      albumId: z.string().min(1),
+      albumUrl: z.string(),
+      image: z.object({
+        height: z.number().int().positive().nullable(),
+        url: z.string().refine((value) => normalizeSpotifyArtworkUrl(value) !== null),
+        width: z.number().int().positive().nullable(),
+      }),
+      lastObservedAt: z.string().datetime(),
+      sourceProvider: z.literal("spotify"),
+    })
+    .superRefine((value, context) => {
+      if (normalizeSpotifyAlbumUrl(value.albumUrl, value.albumId) === null) {
+        context.addIssue({ code: "custom", message: "Invalid Spotify album URL" });
+      }
+    })
+    .optional(),
   state: z.enum(feedStates),
   title: z.string(),
 });
@@ -4491,6 +4537,8 @@ const scanStatusSchema = z.object({
       totalUnits: z.number().int().nonnegative(),
     })
     .nullable(),
+  defaultHistoryId: z.string().uuid().nullable(),
+  history: z.array(scanHistoryEntrySchema),
   latest: scanRunStatusSchema.nullable(),
   musicbrainz: z
     .object({
@@ -4515,8 +4563,6 @@ const scanStatusSchema = z.object({
     .default({
       batch: null,
       operational: {
-  defaultHistoryId: z.string().uuid().nullable(),
-  history: z.array(scanHistoryEntrySchema),
         lastRequestStartedAt: null,
         nextRequestAt: null,
         queueDepth: 0,
@@ -4550,6 +4596,15 @@ const feedPreferenceResponseSchema = z.object({
   }),
 });
 
+const reviewResolutionResponseSchema = z.object({
+  resolution: z.object({
+    decision: z.enum(["confirm", "separate"]),
+    feedItemId: z.string().uuid(),
+    removed: z.boolean(),
+    state: z.enum(["dismissed", "new"]),
+  }),
+});
+
 const watchlistResponseSchema = z.object({
   activeCount: z.number().int().nonnegative(),
   artists: z.array(
@@ -4575,39 +4630,6 @@ function formatDuration(milliseconds: number): string {
   return `${hours < 10 ? hours.toFixed(1) : Math.ceil(hours)} hr`;
 }
 
-function scanRunLabel(run: ScanRunStatus): string {
-  const providers = run.providersCompleted.length
-    ? run.providersCompleted
-    : run.providersRequested.length
-      ? run.providersRequested
-      : run.provider
-        ? [run.provider]
-        : [];
-  const providerLabel = providers.length
-    ? providers.map((provider) => titleCase(provider)).join(", ")
-    : "Provider scan";
-  if (run.status === "failed") return `${providerLabel} | failed`;
-  if (run.status === "partial") return `${providerLabel} | completed with warnings`;
-  return `${providerLabel} | ${run.insertedCount} added`;
-}
-
-function mergeFeedItems(
-  currentItems: FeedFixtureItem[],
-  refreshedItems: FeedFixtureItem[],
-): FeedFixtureItem[] {
-  const itemsById = new Map(currentItems.map((item) => [item.id, item]));
-  for (const item of refreshedItems) itemsById.set(item.id, item);
-  return Array.from(itemsById.values());
-}
-
-interface FeedScrollAnchor {
-  id: string;
-  top: number;
-}
-
-function captureVisibleFeedAnchor(): FeedScrollAnchor | null {
-  const anchor = Array.from(document.querySelectorAll<HTMLElement>("[data-feed-anchor]")).find(
-    (element) => element.getBoundingClientRect().bottom > 0,
 function formatKnownCount(value: number | null): string {
   return value === null ? "Unavailable" : String(value);
 }
@@ -4648,6 +4670,38 @@ function scanHistoryOptionLabel(run: ScanHistoryEntry): string {
   ).toLocaleString()}`;
 }
 
+function scanRunLabel(run: ScanRunStatus): string {
+  const providers = run.providersCompleted.length
+    ? run.providersCompleted
+    : run.providersRequested.length
+      ? run.providersRequested
+      : run.provider
+        ? [run.provider]
+        : [];
+  const providerLabel = providers.length
+    ? providers.map((provider) => titleCase(provider)).join(", ")
+    : "Provider scan";
+  if (run.status === "failed") return `${providerLabel} | failed`;
+  if (run.status === "partial") return `${providerLabel} | completed with warnings`;
+  return `${providerLabel} | ${run.insertedCount} added`;
+}
+
+function mergeFeedItems(
+  currentItems: FeedFixtureItem[],
+  refreshedItems: FeedFixtureItem[],
+): FeedFixtureItem[] {
+  const currentById = new Map(currentItems.map((item) => [item.id, item]));
+  return refreshedItems.map((item) => ({ ...currentById.get(item.id), ...item }));
+}
+
+interface FeedScrollAnchor {
+  id: string;
+  top: number;
+}
+
+function captureVisibleFeedAnchor(): FeedScrollAnchor | null {
+  const anchor = Array.from(document.querySelectorAll<HTMLElement>("[data-feed-anchor]")).find(
+    (element) => element.getBoundingClientRect().bottom > 0,
   );
   return anchor?.dataset.feedAnchor
     ? { id: anchor.dataset.feedAnchor, top: anchor.getBoundingClientRect().top }
@@ -4676,6 +4730,7 @@ function FeedItem({
   onSoundCloudLinkChange,
   soundCloudManualLinksEnabled,
   soundCloudLink,
+  showArtwork = true,
 }: {
   item: FeedFixtureItem;
   onItemChange: (id: string, changes: Partial<FeedFixtureItem>, message: string) => void;
@@ -4684,6 +4739,7 @@ function FeedItem({
   onSoundCloudLinkChange: (feedItemId: string, record?: SoundCloudLinkRecord) => void;
   soundCloudManualLinksEnabled: boolean;
   soundCloudLink: SoundCloudLinkRecord | undefined;
+  showArtwork?: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const stateLabel = item.state === "needs_review" ? "Needs review" : titleCase(item.state);
@@ -4691,17 +4747,11 @@ function FeedItem({
   const listenedPending = pendingFeedActions.includes(`${item.id}:listened`);
   const streamingSources = getStreamingSourceTags(item, soundCloudLink);
   return (
-    <article className={`feed-item ${collapsed ? "is-collapsed" : ""}`} data-feed-anchor={item.id}>
-      <div className={`cover cover-${item.accent}`} aria-hidden="true">
-        {item.releaseType === "ep" ? (
-          <Disc3 size={30} />
-        ) : item.releaseType === "feature" ? (
-          <Sparkles size={29} />
-        ) : (
-          <Radio size={29} />
-        )}
-        <span>{item.artist.slice(0, 2).toLocaleUpperCase("en-US")}</span>
-      </div>
+    <article
+      className={`feed-item ${showArtwork ? "" : "without-cover"} ${collapsed ? "is-collapsed" : ""}`}
+      data-feed-anchor={item.id}
+    >
+      {showArtwork && <FeedArtwork item={item} />}
 
       <div className="item-main">
         <div className="item-title-row">
@@ -4736,8 +4786,14 @@ function FeedItem({
                   </span>
                 ))}
               </div>
-              <h2>{item.title}</h2>
-              <p className="artist">{item.artist}</p>
+              <div className="item-heading-line">
+                <h2>
+                  {item.artist} - {item.title}
+                </h2>
+                <span className="item-title-date">
+                  | {formatReleaseTitleDate(item.releaseDate, item.releaseDatePrecision)}
+                </span>
+              </div>
             </div>
           </div>
           <div className="item-actions">
@@ -4779,10 +4835,6 @@ function FeedItem({
         <div className="item-facts">
           <span>
             <Disc3 size={14} /> {item.releaseTitle}
-          </span>
-          <span>
-            <Clock3 size={14} /> Released {formatDate(item.releaseDate)}
-            {item.releaseDatePrecision ? ` (${item.releaseDatePrecision} precision)` : ""}
           </span>
           <span>First seen {formatTimestamp(item.firstSeenAt)}</span>
           <span>{item.region}</span>
@@ -4853,10 +4905,58 @@ function FeedItem({
   );
 }
 
+function FeedArtwork({ compact = false, item }: { compact?: boolean; item: FeedFixtureItem }) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const artwork = item.spotifyArtwork;
+  if (artwork && failedUrl !== artwork.image.url) {
+    return (
+      <a
+        aria-label={`Open ${item.releaseTitle} by ${item.artist} on Spotify`}
+        className={
+          compact ? "release-feed-group-icon spotify-group-artwork" : "cover spotify-artwork-cover"
+        }
+        href={artwork.albumUrl}
+        rel="noopener noreferrer"
+        target="_blank"
+      >
+        {/* Spotify artwork must load directly from the provider without image optimization. */}
+        <img
+          alt={`Album artwork for ${item.releaseTitle} by ${item.artist}`}
+          height={artwork.image.height ?? 300}
+          loading="lazy"
+          onError={() => setFailedUrl(artwork.image.url)}
+          src={artwork.image.url}
+          width={artwork.image.width ?? 300}
+        />
+      </a>
+    );
+  }
+  if (compact) {
+    return (
+      <div className="release-feed-group-icon" aria-hidden="true">
+        <Disc3 size={20} />
+      </div>
+    );
+  }
+  return (
+    <div className={`cover cover-${item.accent}`} aria-hidden="true">
+      {item.releaseType === "ep" ? (
+        <Disc3 size={30} />
+      ) : item.releaseType === "feature" ? (
+        <Sparkles size={29} />
+      ) : (
+        <Radio size={29} />
+      )}
+      <span>{item.artist.slice(0, 2).toLocaleUpperCase("en-US")}</span>
+    </div>
+  );
+}
+
 function groupFeedItems(items: FeedFixtureItem[]) {
   const groups = new Map<
     string,
     {
+      artist: string;
       items: FeedFixtureItem[];
       key: string;
       releaseDate: string;
@@ -4871,6 +4971,7 @@ function groupFeedItems(items: FeedFixtureItem[]) {
       group.items.push(item);
     } else {
       groups.set(key, {
+        artist: item.artist,
         items: [item],
         key,
         releaseDate: item.releaseDate,
@@ -5072,6 +5173,32 @@ function titleCase(value: string): string {
 function formatDate(value: string): string {
   const [year, month, day] = value.split("-");
   return `${month}/${day}/${year}`;
+}
+
+function formatReleaseTitleDate(
+  value: string,
+  precision: FeedFixtureItem["releaseDatePrecision"] = "day",
+): string {
+  const [yearValue, monthValue, dayValue] = value.split("-").map(Number);
+  const year = yearValue ?? 1970;
+  const month = monthValue ?? 1;
+  const day = dayValue ?? 1;
+  if (precision === "year") return String(year);
+
+  const releaseDate = new Date(Date.UTC(year, month - 1, day));
+  if (precision === "month") {
+    return new Intl.DateTimeFormat("en-US", {
+      month: "long",
+      timeZone: "UTC",
+      year: "numeric",
+    }).format(releaseDate);
+  }
+
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    weekday: "long",
+  }).format(releaseDate);
+  return `${weekday}, ${month}/${day}/${String(year).slice(-2)}`;
 }
 
 function formatTimestamp(value: string): string {

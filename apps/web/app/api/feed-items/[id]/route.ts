@@ -1,16 +1,23 @@
-import { createDatabase, ensureLocalOwner, updateFeedPreferences } from "@radar/db";
+import {
+  createDatabase,
+  ensureLocalOwner,
+  resolveFeedReview,
+  updateFeedPreferences,
+} from "@radar/db";
 import { loadProviderConfiguration } from "@radar/providers";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin, enforceRateLimit } from "../../../../lib/request-security";
 
-const updateSchema = z
+const preferenceUpdateSchema = z
   .object({
     listened: z.boolean().optional(),
     saved: z.boolean().optional(),
   })
   .refine((value) => value.saved !== undefined || value.listened !== undefined);
+const reviewUpdateSchema = z.object({ reviewDecision: z.enum(["confirm", "separate"]) });
+const updateSchema = z.union([preferenceUpdateSchema, reviewUpdateSchema]);
 
 export async function PATCH(
   request: NextRequest,
@@ -29,6 +36,13 @@ export async function PATCH(
     const connection = createDatabase(configuration.databaseUrl);
     try {
       const userId = await ensureLocalOwner(connection.db);
+      if ("reviewDecision" in input) {
+        const resolution = await resolveFeedReview(connection.db, userId, id, input.reviewDecision);
+        if (!resolution) {
+          return NextResponse.json({ error: "Review item not found" }, { status: 404 });
+        }
+        return NextResponse.json({ resolution });
+      }
       const item = await updateFeedPreferences(connection.db, userId, id, {
         ...(input.listened !== undefined ? { listened: input.listened } : {}),
         ...(input.saved !== undefined ? { saved: input.saved } : {}),

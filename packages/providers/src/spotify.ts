@@ -1,4 +1,4 @@
-import { log } from "@radar/core";
+import { log, normalizeSpotifyArtworkUrl } from "@radar/core";
 import { z } from "zod";
 import {
   abbreviateSpotifyPlaylistId,
@@ -21,13 +21,21 @@ const simplifiedArtistSchema = z
   .passthrough();
 const imageSchema = z
   .object({
-    height: z.number().int().nullable(),
-    url: spotifyUrl,
-    width: z.number().int().nullable(),
+    height: z.number().int().positive().nullable(),
+    url: z.string(),
+    width: z.number().int().positive().nullable(),
   })
   .passthrough();
+export const spotifyImagesSchema = z.unknown().transform((value) =>
+  (Array.isArray(value) ? value : []).flatMap((image) => {
+    const parsed = imageSchema.safeParse(image);
+    if (!parsed.success) return [];
+    const url = normalizeSpotifyArtworkUrl(parsed.data.url);
+    return url ? [{ height: parsed.data.height, url, width: parsed.data.width }] : [];
+  }),
+);
 const artistSchema = simplifiedArtistSchema
-  .extend({ images: z.array(imageSchema).default([]) })
+  .extend({ images: spotifyImagesSchema.default([]) })
   .passthrough();
 const pagingBaseSchema = z.object({
   href: spotifyUrl,
@@ -44,6 +52,7 @@ const albumSummarySchema = z
     artists: z.array(simplifiedArtistSchema),
     external_urls: externalUrlsSchema,
     id: z.string().min(1),
+    images: spotifyImagesSchema.default([]),
     name: z.string(),
     release_date: z.string().min(4),
     release_date_precision: z.enum(["year", "month", "day"]),

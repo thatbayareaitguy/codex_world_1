@@ -3,6 +3,7 @@ import {
   matchCandidate,
   normalizeIdentifier,
   normalizeText,
+  parseSpotifyReleaseArtwork,
   type CanonicalTrack,
   type MatchDecision,
   type TrackCandidate,
@@ -1045,9 +1046,55 @@ async function persistCandidatesUnlocked(
             eq(releaseCandidates.providerReleaseId, candidate.externalReleaseId),
             eq(releaseCandidates.providerTrackId, candidate.externalTrackId),
           ),
-          columns: { id: true },
+          columns: { id: true, matchedTrackId: true },
         });
         if (existing) {
+          const artwork = parseSpotifyReleaseArtwork(candidate.spotifyRelease);
+          if (candidate.provider === "spotify" && artwork) {
+            const existingReleaseExternalId = await tx.query.releaseExternalIds.findFirst({
+              where: and(
+                eq(releaseExternalIds.provider, candidate.provider),
+                eq(releaseExternalIds.externalId, candidate.externalReleaseId),
+              ),
+            });
+            let existingReleaseId = existingReleaseExternalId?.releaseId;
+            if (!existingReleaseId && existing.matchedTrackId) {
+              const matchedTrack = await tx.query.tracks.findFirst({
+                where: eq(tracks.id, existing.matchedTrackId),
+                columns: { releaseId: true },
+              });
+              existingReleaseId = matchedTrack?.releaseId ?? undefined;
+            }
+            if (existingReleaseId) {
+              await tx
+                .insert(releaseExternalIds)
+                .values({
+                  externalId: candidate.externalReleaseId,
+                  provider: candidate.provider,
+                  providerFields: releaseProviderFields(
+                    candidate,
+                    existingReleaseExternalId?.providerFields,
+                  ),
+                  providerUrl: artwork.albumUrl,
+                  releaseId: existingReleaseId,
+                })
+                .onConflictDoUpdate({
+                  target: [releaseExternalIds.provider, releaseExternalIds.externalId],
+                  set: {
+                    providerFields: releaseProviderFields(
+                      candidate,
+                      existingReleaseExternalId?.providerFields,
+                    ),
+                    providerUrl: artwork.albumUrl,
+                    updatedAt: new Date(),
+                  },
+                });
+              await tx
+                .update(feedItems)
+                .set({ updatedAt: new Date() })
+                .where(eq(feedItems.candidateId, existing.id));
+            }
+          }
           summary.skipped += 1;
           continue;
         }
@@ -1172,29 +1219,34 @@ async function persistCandidatesUnlocked(
               },
             });
           if (releaseId) {
+            const existingReleaseExternalId = await tx.query.releaseExternalIds.findFirst({
+              where: and(
+                eq(releaseExternalIds.provider, candidate.provider),
+                eq(releaseExternalIds.externalId, candidate.externalReleaseId),
+              ),
+              columns: { providerFields: true },
+            });
+            const artwork = parseSpotifyReleaseArtwork(candidate.spotifyRelease);
             await tx
               .insert(releaseExternalIds)
               .values({
                 externalId: candidate.externalReleaseId,
                 provider: candidate.provider,
-                providerFields: {
-                  releaseDate: candidate.releaseDate,
-                  releaseDatePrecision: candidate.releaseDatePrecision,
-                  releaseType: candidate.releaseType,
-                  sourceLabel: candidate.sourceLabel,
-                },
-                providerUrl: providerReleaseUrl(candidate),
+                providerFields: releaseProviderFields(
+                  candidate,
+                  existingReleaseExternalId?.providerFields,
+                ),
+                providerUrl: artwork?.albumUrl ?? providerReleaseUrl(candidate),
                 releaseId,
               })
               .onConflictDoUpdate({
                 target: [releaseExternalIds.provider, releaseExternalIds.externalId],
                 set: {
-                  providerFields: {
-                    releaseDate: candidate.releaseDate,
-                    releaseDatePrecision: candidate.releaseDatePrecision,
-                    releaseType: candidate.releaseType,
-                    sourceLabel: candidate.sourceLabel,
-                  },
+                  providerFields: releaseProviderFields(
+                    candidate,
+                    existingReleaseExternalId?.providerFields,
+                  ),
+                  providerUrl: artwork?.albumUrl ?? providerReleaseUrl(candidate),
                   updatedAt: new Date(),
                 },
               });
@@ -1315,6 +1367,26 @@ async function persistCandidatesUnlocked(
       .where(eq(scanRuns.id, run.id));
     throw error;
   }
+}
+
+function releaseProviderFields(
+  candidate: TrackCandidate,
+  currentFields: unknown,
+): Record<string, unknown> {
+  const current = isRecord(currentFields) ? currentFields : {};
+  const artwork = parseSpotifyReleaseArtwork(candidate.spotifyRelease);
+  return {
+    ...current,
+    releaseDate: candidate.releaseDate,
+    releaseDatePrecision: candidate.releaseDatePrecision,
+    releaseType: candidate.releaseType,
+    sourceLabel: candidate.sourceLabel,
+    ...(candidate.provider === "spotify" && artwork ? { spotify: artwork } : {}),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function createProviderScanRun(

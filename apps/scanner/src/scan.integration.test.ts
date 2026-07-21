@@ -19,6 +19,7 @@ import {
   listRedditSources,
   heartbeatOperationLock,
   listFollowedArtists,
+  manualMatchDecisions,
   operationCancellationRequested,
   operationLocks,
   musicbrainzArtistScans,
@@ -36,11 +37,13 @@ import {
   redditCandidateMatches,
   redditExternalLinks,
   releaseOperationLock,
+  resolveFeedReview,
   requestOperationCancellation,
   scanLocks,
   sourceEvidence,
   tracks,
   trackAvailabilities,
+  trackExternalIds,
   persistRedditListing,
   purgeDeletedRedditSubmissions,
   scanRuns,
@@ -911,5 +914,46 @@ describe.sequential("complete deterministic fake-provider workflow", () => {
       sourceState: "deleted",
       title: null,
     });
+  });
+
+  it("persists a review confirmation and removes the duplicate review feed row", async () => {
+    const userId = await ensureLocalOwner(connection.db);
+    const reviewFeed = await connection.db.query.feedItems.findFirst({
+      where: (table, { eq }) => eq(table.state, "needs_review"),
+    });
+    expect(reviewFeed?.candidateId).toBeDefined();
+
+    const candidate = await connection.db.query.releaseCandidates.findFirst({
+      where: (table, { eq }) => eq(table.id, reviewFeed!.candidateId!),
+    });
+    expect(candidate?.matchedTrackId).toBeDefined();
+
+    const resolution = await resolveFeedReview(connection.db, userId, reviewFeed!.id, "confirm");
+    expect(resolution).toMatchObject({ decision: "confirm", removed: true, state: "new" });
+
+    const persistedCandidate = await connection.db.query.releaseCandidates.findFirst({
+      where: (table, { eq }) => eq(table.id, candidate!.id),
+    });
+    expect(persistedCandidate).toMatchObject({
+      matchConfidence: "1.000",
+      matchRule: "manual_confirmation",
+      matchStatus: "matched",
+    });
+    expect(
+      (await connection.db.select().from(manualMatchDecisions)).filter(
+        (decision) => decision.candidateId === candidate!.id,
+      ),
+    ).toHaveLength(1);
+    expect(
+      (await connection.db.select().from(feedItems)).filter((item) => item.id === reviewFeed!.id),
+    ).toHaveLength(0);
+    expect(
+      (await connection.db.select().from(trackExternalIds)).some(
+        (externalId) =>
+          externalId.provider === candidate!.provider &&
+          externalId.externalId === candidate!.providerTrackId &&
+          externalId.trackId === candidate!.matchedTrackId,
+      ),
+    ).toBe(true);
   });
 });

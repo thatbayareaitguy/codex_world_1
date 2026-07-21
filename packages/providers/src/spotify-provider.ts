@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  createSpotifyReleaseArtwork,
   extractVersion,
   normalizeText,
   type ArtistCreditInput,
@@ -190,6 +191,12 @@ function spotifyCandidate(
   const releaseType = watchedPrimary ? classifySpotifyRelease(album, track.name) : "feature";
   const providerUrl = track.external_urls.spotify;
   const version = extractVersion(track.name);
+  const spotifyRelease = createSpotifyReleaseArtwork({
+    albumId: album.id,
+    albumUrl: album.external_urls.spotify,
+    images: album.images,
+    observedAt: firstSeen,
+  });
   const base = {
     artistExternalId: mapping.spotifyArtistId,
     artistName: mapping.name,
@@ -217,6 +224,7 @@ function spotifyCandidate(
     sourceLabel: "Spotify catalog",
     title: track.name,
     trackNumber: track.track_number,
+    ...(spotifyRelease ? { spotifyRelease } : {}),
     ...(album.external_ids?.upc ? { upc: album.external_ids.upc } : {}),
     ...(album.external_ids?.ean ? { ean: album.external_ids.ean } : {}),
     ...(version ? { version } : {}),

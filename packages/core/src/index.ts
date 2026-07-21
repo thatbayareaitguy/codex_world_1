@@ -3,4 +3,5 @@ export * from "./matching";
 export * from "./normalize";
 export * from "./retry";
 export * from "./soundcloud-links";
+export * from "./spotify-artwork";
 export * from "./types";

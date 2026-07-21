@@ -1,9 +1,10 @@
-import type { FeedFixtureItem } from "@radar/core";
+import { parseSpotifyReleaseArtwork, type FeedFixtureItem } from "@radar/core";
 import {
   createDatabase,
   feedItems,
   playlistExports,
   releaseCandidates,
+  releaseExternalIds,
   releases,
   sourceEvidence,
   trackAvailabilities,
@@ -47,6 +48,7 @@ export async function loadDatabaseFeedSnapshot(databaseUrl: string): Promise<Dat
       candidateRows,
       trackRows,
       releaseRows,
+      releaseExternalIdRows,
       creditRows,
       evidenceRows,
       availabilityRows,
@@ -57,6 +59,7 @@ export async function loadDatabaseFeedSnapshot(databaseUrl: string): Promise<Dat
       connection.db.select().from(releaseCandidates),
       connection.db.select().from(tracks),
       connection.db.select().from(releases),
+      connection.db.select().from(releaseExternalIds),
       connection.db.select().from(trackCredits),
       connection.db.select().from(sourceEvidence),
       connection.db.select().from(trackAvailabilities),
@@ -80,6 +83,15 @@ export async function loadDatabaseFeedSnapshot(databaseUrl: string): Promise<Dat
           .map((row) => row.id),
       );
       const evidence = evidenceRows.filter((row) => relatedCandidateIds.has(row.candidateId));
+      const hasSpotifyEvidence = evidence.some((row) => row.provider === "spotify");
+      const spotifyReleaseExternalId = releaseExternalIdRows.find(
+        (row) => row.releaseId === release?.id && row.provider === "spotify",
+      );
+      const spotifyArtwork = hasSpotifyEvidence
+        ? (parseSpotifyReleaseArtwork(
+            providerField(spotifyReleaseExternalId?.providerFields, "spotify"),
+          ) ?? parseSpotifyReleaseArtwork(providerField(candidate.rawPayload, "spotifyRelease")))
+        : null;
       const availabilities = availabilityRows.filter((row) => row.trackId === feed.trackId);
       const spotify = availabilities.find((row) => row.provider === "spotify");
       const exported = exportRows.some(
@@ -124,6 +136,7 @@ export async function loadDatabaseFeedSnapshot(databaseUrl: string): Promise<Dat
           soundcloudState: "NOT_CHECKED",
           sources,
           spotify: spotifyState,
+          ...(spotifyArtwork ? { spotifyArtwork } : {}),
           state: primaryState,
           title: track?.title ?? candidate.title,
         },
@@ -133,6 +146,14 @@ export async function loadDatabaseFeedSnapshot(databaseUrl: string): Promise<Dat
   } finally {
     await connection.client.end();
   }
+}
+
+function providerField(value: unknown, key: string): unknown {
+  return isRecord(value) ? value[key] : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function toFeedRevision(row: { count: number; updatedAt: Date | null } | undefined) {

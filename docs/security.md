@@ -20,9 +20,13 @@ Reddit source mutation routes have the same origin, validation, and rate-limit c
 
 Disconnect deletes encrypted Spotify tokens and personal Spotify import history, marks the account disconnected, and preserves the canonical watchlist. Delete all application data requires a separate explicit confirmation and truncates local watchlist, provider, feed, evidence, scan, and export data. It does not remove items already hosted in a Spotify playlist.
 
-## Provider Boundary
+## Provider Artwork Boundary
 
-No provider playback, preview, embed, widget, artwork transfer, audio request, or mixed queue exists. Spotify payloads are not sent to MusicBrainz. MusicBrainz starts from canonical user-approved names, aliases, and confirmed MBIDs. Spotify does not endorse this application and its broad cross-service policy interpretation remains unresolved.
+No provider playback, preview, embed, widget, artwork transfer, audio request, or mixed queue exists. Spotify-backed feed items may render an official Spotify cover URL directly from the exact `i.scdn.co` host. The application stores only the URL, dimensions, Spotify album ID and URL, provider, and last-observed timestamp. It does not download, proxy, cache, rehost, crop, distort, overlay, or transform the image. Every rendered cover links to the matching Spotify album, uses `noopener noreferrer`, and falls back locally after a load failure.
+
+Artwork input must be HTTPS, contain no credentials, port, query, or fragment, match `/image/[A-Za-z0-9]+`, and use the exact allowed host. The album destination must be the exact `open.spotify.com/album/{stored-album-id}` path. MusicBrainz-only and other non-Spotify evidence cannot receive Spotify artwork. Spotify payloads are not sent to MusicBrainz. MusicBrainz starts from canonical user-approved names, aliases, and confirmed MBIDs. Spotify does not endorse this application and its broad cross-service policy interpretation remains unresolved.
+
+Historical artwork backfill is bounded to 25 releases per invocation, defaults to dry-run, requires explicit apply mode for writes, and uses only stored Spotify album IDs. It shares the database-backed cooldown and five-second request gate with every other Spotify path. It has no search or playlist capability and never logs full image URLs or response payloads.
 
 Manual SoundCloud links are disabled by default. When enabled for development, fields allow only absolute HTTPS SoundCloud domains, reject credentials and unsafe schemes, open with `noopener noreferrer`, and trigger no API, HTML, metadata, artwork, oEmbed, or audio request.
 

@@ -18,7 +18,7 @@
   https://musicbrainz.org/doc/MusicBrainz_API/Search (verified 2026-07-17). The official API
   reference confirms `track_artist` release browsing for appearances and supports release media,
   recordings, release groups, artist credits, and ISRC includes.
-  Verified: 2026-07-17
+  Verified: 2026-07-20
 
 The only permitted paid prerequisite is the owner's existing Spotify Premium subscription. No provider adapter may require a paid developer membership, API subscription, or commercial plan.
 
@@ -42,6 +42,8 @@ The only permitted paid prerequisite is the owner's existing Spotify Premium sub
 - [Authorization Code](https://developer.spotify.com/documentation/web-api/tutorials/code-flow) and [PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow): server token exchange and S256 challenge.
 - [Followed artists](https://developer.spotify.com/documentation/web-api/reference/get-followed): `user-follow-read`, cursor pagination, maximum 50.
 - [Artist albums](https://developer.spotify.com/documentation/web-api/reference/get-an-artists-albums): album, single, appears_on, and compilation groups, current maximum 10.
+- [Get Album](https://developer.spotify.com/documentation/web-api/reference/get-an-album): the official album response includes cover-art URLs and dimensions; Spotify documents the images in widest-first order.
+- [Spotify design guidelines](https://developer.spotify.com/documentation/design): Spotify visual content must remain in its original form and should link back to Spotify. The feed uses the original aspect ratio, no crop, overlay, download, proxy, or transformation, and a direct album link.
 - [Rate limits](https://developer.spotify.com/documentation/web-api/concepts/rate-limits) and [quota modes](https://developer.spotify.com/documentation/web-api/concepts/quota-modes): rolling 30-second application limit, integer-second `Retry-After`, unpublished Development Mode threshold, and Premium requirement.
 - [Scopes](https://developer.spotify.com/documentation/web-api/concepts/scopes): `playlist-read-private` permits private playlist reads. `playlist-modify-private` grants account-level private-playlist mutation capabilities including creation, additions, removal, replacement, reordering, detail changes, cover upload, follow, and unfollow. Spotify does not offer a playlist-specific write scope.
 - [Get playlist](https://developer.spotify.com/documentation/web-api/reference/get-playlist), [read items](https://developer.spotify.com/documentation/web-api/reference/get-playlists-items), and [add items](https://developer.spotify.com/documentation/web-api/reference/add-items-to-playlist): current playlist paths use `/items`; additions accept at most 100 item URIs per request.
@@ -50,7 +52,7 @@ The only permitted paid prerequisite is the owner's existing Spotify Premium sub
 
 Developer credentials require a Spotify developer account but no separate fee is documented. A paid Premium consumer account is required for the Development Mode app owner under the current rules. Initial authorization requests only `user-follow-read` and `playlist-read-private`. Playlist writes default off. Future add-only support requires `playlist-modify-private`, `SPOTIFY_PLAYLIST_WRITES_ENABLED=true`, and one valid `SPOTIFY_ALLOWED_PLAYLIST_ID`. The server and provider client both reject every other target and verify that the configured playlist is owned, private, and non-collaborative. The application never creates, renames, changes visibility, uploads artwork, follows, unfollows, removes, replaces, or reorders. This does not establish conclusive policy approval for the whole product.
 
-Spotify traffic is serialized through one database-backed client-ID gate at one request every five seconds. A 429 blocks every Spotify path until the persisted cooldown expires. Normal artist-album scans are bounded and marked partial when they reach a page limit because the endpoint documentation does not guarantee newest-first ordering. See [Spotify Development Mode Scanning](spotify-development-mode-scanning.md).
+Spotify traffic is serialized through one database-backed client-ID gate at one request every five seconds. A 429 blocks every Spotify path until the persisted cooldown expires. Normal artist-album scans are bounded and marked partial when they reach a page limit because the endpoint documentation does not guarantee newest-first ordering. Full album responses already retrieved for new releases supply optional artwork metadata, so artwork adds no discovery request. Only validated HTTPS `i.scdn.co/image/...` URLs are retained, and the artwork link must be the matching `open.spotify.com/album/...` URL. See [Spotify Development Mode Scanning](spotify-development-mode-scanning.md).
 
 ## MusicBrainz Verification
 
@@ -73,4 +75,4 @@ No consumer subscription is required by the cited documentation, but free access
 
 ## Policy Uncertainty
 
-Spotify's phrase about integration with streams or content from another service remains broad. This application has no playback, preview, embed, audio handling, cross-provider artwork, or transfer of Spotify metadata to MusicBrainz. MusicBrainz starts from user-approved canonical artists and confirmed mappings, not raw Spotify responses. Plain outbound SoundCloud links are disabled by default. These controls reduce risk but do not prove Spotify has approved the architecture.
+Spotify's phrase about integration with streams or content from another service remains broad. This application has no playback, preview, embed, audio handling, cross-provider artwork, or transfer of Spotify metadata to MusicBrainz. Spotify cover art appears only when Spotify is evidence for the release, remains Spotify-namespaced, and links directly back to that Spotify album. MusicBrainz starts from user-approved canonical artists and confirmed mappings, not raw Spotify responses. Plain outbound SoundCloud links are disabled by default. These controls reduce risk but do not prove Spotify has approved the architecture.

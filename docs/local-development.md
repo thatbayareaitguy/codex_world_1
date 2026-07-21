@@ -46,11 +46,15 @@ pnpm scan -- --dry-run
 pnpm scan -- --full
 pnpm scan:status
 pnpm scan:unlock-stale
+pnpm spotify:backfill-artwork --dry-run --limit 5
+pnpm spotify:backfill-artwork --apply --limit 5
 ```
 
 Normal scans use one global database lock. Each provider records an independent run and failure, and a provider failure does not stop the remaining providers. Detailed errors and provider metrics expire after `SCAN_DETAIL_RETENTION_DAYS`; aggregate counts and timestamps remain.
 
 Spotify uses one database-backed queue across web and scanner processes. The default interval is five seconds with concurrency one. A provider 429 persists a client-wide cooldown across restart; do not clear or bypass a valid integer-second wait. Initial scans are limited to 15 artists per batch and begin paused for confirmation. See [Spotify Development Mode Scanning](spotify-development-mode-scanning.md).
+
+The artwork backfill reads only stored Spotify album IDs and calls the official album endpoint. It defaults to dry-run, requires an explicit limit from 1 through 25, and needs `--apply` before it writes provider metadata. Apply mode saves a provider cursor after every completed release; add `--resume` to continue after that cursor. The command never searches Spotify, inspects playlists, or changes canonical release and track identity.
 
 ## Tests
 

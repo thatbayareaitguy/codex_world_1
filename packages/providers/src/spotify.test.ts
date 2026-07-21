@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   parseSpotifyRetryAfter,
+  spotifyArtistAlbumsSchema,
   SpotifyClient,
   SpotifyHttpError,
   SpotifyOAuthClient,
@@ -44,6 +45,76 @@ const jsonResponse = (body: unknown, status = 200, headers?: HeadersInit) =>
   });
 
 describe("SpotifyClient", () => {
+  it("keeps safe album artwork and ignores absent, malformed, or unsafe image entries", () => {
+    const page = {
+      href: "https://api.spotify.com/v1/artists/artist/albums",
+      items: [
+        {
+          album_type: "single",
+          artists: [artist("artist")],
+          external_urls: { spotify: "https://open.spotify.com/album/album" },
+          id: "album",
+          images: [
+            { height: 300, url: "https://i.scdn.co/image/safe", width: 300 },
+            { height: 640, url: "https://example.com/unsafe", width: 640 },
+            { height: "bad", url: "https://i.scdn.co/image/malformed", width: 64 },
+            {
+              embeddedPayload: "must-not-survive",
+              height: 300,
+              url: "https://i.scdn.co/image/stripped",
+              width: 300,
+            },
+          ],
+          name: "Album",
+          release_date: "2026-07-20",
+          release_date_precision: "day",
+          total_tracks: 1,
+          type: "album",
+          uri: "spotify:album:album",
+        },
+        {
+          album_type: "album",
+          artists: [artist("artist")],
+          external_urls: { spotify: "https://open.spotify.com/album/no-art" },
+          id: "no-art",
+          name: "No artwork",
+          release_date: "2026",
+          release_date_precision: "year",
+          total_tracks: 1,
+          type: "album",
+          uri: "spotify:album:no-art",
+        },
+        {
+          album_type: "single",
+          artists: [artist("artist")],
+          external_urls: { spotify: "https://open.spotify.com/album/malformed-art" },
+          id: "malformed-art",
+          images: "not-an-array",
+          name: "Malformed artwork",
+          release_date: "2026-07",
+          release_date_precision: "month",
+          total_tracks: 1,
+          type: "album",
+          uri: "spotify:album:malformed-art",
+        },
+      ],
+      limit: 10,
+      next: null,
+      offset: 0,
+      previous: null,
+      total: 3,
+    };
+
+    const parsed = spotifyArtistAlbumsSchema.parse(page);
+
+    expect(parsed.items[0]?.images).toEqual([
+      { height: 300, url: "https://i.scdn.co/image/safe", width: 300 },
+      { height: 300, url: "https://i.scdn.co/image/stripped", width: 300 },
+    ]);
+    expect(parsed.items[1]?.images).toEqual([]);
+    expect(parsed.items[2]?.images).toEqual([]);
+  });
+
   it("validates profile responses", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse({

@@ -115,6 +115,47 @@ describe("SpotifyProvider incremental scanning", () => {
       }),
     );
   });
+
+  it("attaches the same validated Spotify album artwork to every track candidate", async () => {
+    const summary = albumSummary("album-art", "Artwork Release", "2026-07-16");
+    const album = albumWithTrack(summary);
+    album.images = [
+      { height: 640, url: "https://i.scdn.co/image/large", width: 640 },
+      { height: 300, url: "https://i.scdn.co/image/medium", width: 300 },
+    ];
+    album.tracks.items.push({
+      ...album.tracks.items[0]!,
+      external_urls: { spotify: "https://open.spotify.com/track/track-2" },
+      id: "track-2",
+      name: "Second Track",
+      track_number: 2,
+      uri: "spotify:track:track-2",
+    });
+    const client = {
+      getAlbum: vi.fn().mockResolvedValue(album),
+      getArtistAlbumsBounded: vi
+        .fn()
+        .mockResolvedValue({ items: [summary], pagesScanned: 1, partial: false }),
+      metrics: { failures: 0, rateLimitWaitMs: 0, requests: 2 },
+    } as unknown as SpotifyClient;
+    const provider = new SpotifyProvider({
+      client,
+      mappings: [{ artistId: "artist-1", name: "YUSSI", spotifyArtistId: "spotify-yussi" }],
+      now: () => new Date("2026-07-20T12:00:00.000Z"),
+    });
+
+    const result = await provider.scan({ filter: { provider: "spotify" } });
+
+    expect(result.candidates).toHaveLength(2);
+    expect(result.candidates[0]?.spotifyRelease).toEqual({
+      albumId: "album-art",
+      albumUrl: "https://open.spotify.com/album/album-art",
+      image: { height: 300, url: "https://i.scdn.co/image/medium", width: 300 },
+      lastObservedAt: "2026-07-20T12:00:00.000Z",
+      sourceProvider: "spotify",
+    });
+    expect(result.candidates[1]?.spotifyRelease).toEqual(result.candidates[0]?.spotifyRelease);
+  });
 });
 
 function albumSummary(id: string, name: string, releaseDate: string): SpotifyAlbumSummary {
@@ -123,6 +164,7 @@ function albumSummary(id: string, name: string, releaseDate: string): SpotifyAlb
     artists: [spotifyArtist],
     external_urls: { spotify: `https://open.spotify.com/album/${id}` },
     id,
+    images: [],
     name,
     release_date: releaseDate,
     release_date_precision: "day",

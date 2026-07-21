@@ -13,7 +13,7 @@
 ## Catalog and Evidence
 
 - `releases` and `tracks`: canonical titles, date precision, classification, barcodes, ISRC, version, duration, position, and MusicBrainz relationships.
-- `release_external_ids` and `track_external_ids`: provider-specific IDs, URLs, and namespaced fields. Multiple provider IDs may point at one canonical entity.
+- `release_external_ids` and `track_external_ids`: provider-specific IDs, URLs, and namespaced fields. Multiple provider IDs may point at one canonical entity. Spotify release rows may store `provider_fields.spotify` with the album ID, canonical album URL, selected artwork URL, width, height, source provider, and last-observed timestamp. The database stores no image bytes.
 - `track_credits`: ordered credited names and explicit roles without erasing source spelling.
 - `track_availabilities`: provider, region, state, URL, and provider track ID.
 - `release_candidates`: immutable normalized observations, raw minimized fields, payload hash, match rule, confidence, reasons, algorithm version, and canonical target.
@@ -33,7 +33,7 @@
 - `spotify_artist_scans`: persisted per-artist position, timing, request/candidate/page counts, result state, retry eligibility, and heartbeat.
 - `operation_locks`: one global expiring operation lock for scan serialization and interruption recovery.
 - `scan_locks`: one expiring lock per provider.
-- `provider_cursors` and `provider_cache`: scoped checkpoints and sanitized cached metadata.
+- `provider_cursors` and `provider_cache`: scoped checkpoints and sanitized cached metadata. Spotify artwork backfill uses a dedicated cursor scope and advances it only after a release is updated or confirmed to have no usable artwork, so `--resume` starts after the last completed release without changing scan history.
 - `playlist_targets`: application export ledger target for the single server-configured Spotify playlist, including name, provider ID, snapshot, and last sync. Environment configuration remains the write authority.
 - `playlist_exports`: one app-owned addition per target and Spotify track with status and timestamp.
 - `manual_match_decisions`: explicit track match decisions.
