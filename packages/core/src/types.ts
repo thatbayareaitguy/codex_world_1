@@ -181,6 +181,22 @@ export interface FeedFixtureItem {
   releaseType: ReleaseType;
   releaseDate: string;
   releaseDatePrecision?: "day" | "month" | "year";
+  releaseCompleteness?: {
+    expectedTracks: number;
+    fetchedTracks: number;
+    missingTracks: number;
+    status:
+      | "not_started"
+      | "in_progress"
+      | "partial"
+      | "completed"
+      | "paused"
+      | "rate_limited"
+      | "failed";
+  };
+  discNumber?: number;
+  trackNumber?: number;
+  providerOrder?: number;
   firstSeenAt: string;
   sources: Array<{ provider: string; href: string; evidenceHref: string }>;
   spotify: AvailabilityState;

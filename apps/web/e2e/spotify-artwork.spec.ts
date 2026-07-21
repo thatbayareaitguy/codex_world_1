@@ -37,7 +37,9 @@ test("renders direct Spotify artwork with a safe album link and preserves it on 
   await expect(image).toBeVisible();
 });
 
-test("shows grouped release artwork once and keeps it compact when collapsed", async ({ page }) => {
+test("shows artwork on every grouped track and keeps the header artwork when collapsed", async ({
+  page,
+}) => {
   const groupedItems = [
     spotifyArtworkItem("group-track-one", "First Track", "Grouped Album"),
     spotifyArtworkItem("group-track-two", "Second Track", "Grouped Album"),
@@ -48,12 +50,13 @@ test("shows grouped release artwork once and keeps it compact when collapsed", a
   await page.goto("/?e2e-scan-status=database#feed");
 
   const group = page.getByRole("region", { name: "Artwork Artist - Grouped Album Album" });
-  await expect(group.getByRole("img")).toHaveCount(1);
-  await expect(group.locator(".release-feed-group-items .spotify-artwork-cover")).toHaveCount(0);
+  await expect(group.getByRole("img")).toHaveCount(3);
+  await expect(group.locator(".release-feed-group-items .spotify-artwork-cover")).toHaveCount(2);
   await group
     .getByRole("button", { name: "Collapse Artwork Artist - Grouped Album Album" })
     .click();
-  await expect(group.getByRole("img")).toBeVisible();
+  await expect(group.getByRole("img")).toHaveCount(1);
+  await expect(group.locator(".spotify-group-artwork")).toBeVisible();
   await expect(group).toHaveClass(/is-collapsed/);
 });
 

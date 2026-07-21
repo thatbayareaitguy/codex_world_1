@@ -78,6 +78,13 @@
       "when": 1784660976585,
       "tag": "0010_chubby_talkback",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1784669550003,
+      "tag": "0011_gigantic_power_man",
+      "breakpoints": true
     }
   ]
 }

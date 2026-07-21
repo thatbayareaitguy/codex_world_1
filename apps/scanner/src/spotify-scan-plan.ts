@@ -1,9 +1,11 @@
 import {
   createSpotifyScanBatch,
   loadSpotifyCatalogSummaries,
+  loadSpotifyReleaseTrackResume,
   latestSpotifyBatch,
   prepareSpotifyCoverage,
   recoverSpotifyBatch,
+  reconcileSpotifyBatchMappings,
   releaseCandidates,
   releaseExternalIds,
   resumeSpotifyBatch,
@@ -11,6 +13,7 @@ import {
   spotifyCoverageByArtist,
   type RadarDatabase,
   type SpotifyScanMode,
+  type SpotifyReleaseTrackResume,
 } from "@radar/db";
 import type { ProviderConfiguration, SpotifyArtistMapping } from "@radar/providers";
 import { desc, eq, inArray } from "drizzle-orm";
@@ -27,6 +30,8 @@ export interface PreparedSpotifyWork {
   reconciliationCycleIds: ReadonlyMap<string, string | null>;
   startOffsets: ReadonlyMap<string, number>;
   knownReleaseSummaries: ReadonlyMap<string, string>;
+  incompleteReleaseIds: ReadonlySet<string>;
+  releaseTrackResume: ReadonlyMap<string, SpotifyReleaseTrackResume>;
 }
 
 interface ReconciliationCoverage {
@@ -43,13 +48,15 @@ export async function prepareSpotifyWork(
   options: ScannerOptions,
 ): Promise<PreparedSpotifyWork> {
   const knownReleaseIds = await loadKnownSpotifyReleaseIds(db);
+  const releaseTrackResume = await loadSpotifyReleaseTrackResume(db);
+  const incompleteReleaseIds = new Set(releaseTrackResume.keys());
   if (options.artistId) {
     const mapping = mappings.find((entry) => entry.artistId === options.artistId);
     if (!mapping) throw new Error("The requested artist has no confirmed Spotify mapping.");
     const mode = options.spotifyMode ?? "daily";
     const maxPagesPerArtist = pageLimit(configuration, mode, options.spotifyMaxPages);
     const batchId = await createSpotifyScanBatch(db, {
-      artists: [{ artistId: mapping.artistId }],
+      artists: [{ artistId: mapping.artistId, spotifyArtistId: mapping.spotifyArtistId }],
       confirmationRequired: false,
       estimatedRequests: estimateRequests(1, maxPagesPerArtist),
       mode,
@@ -65,11 +72,13 @@ export async function prepareSpotifyWork(
       batchId,
       knownReleaseIds,
       knownReleaseSummaries: await loadSpotifyCatalogSummaries(db),
+      incompleteReleaseIds,
       mappings: [mapping],
       maxPagesPerArtist,
       maxRequestsPerRun: configuration.spotify.maxRequestsPerRun,
       mode,
       paused: false,
+      releaseTrackResume,
       reconciliationCycleIds: new Map(
         coverage.map((entry) => [entry.artistId, entry.cycleId] as const),
       ),
@@ -77,11 +86,16 @@ export async function prepareSpotifyWork(
     };
   }
 
-  const latest = options.spotifyBatchId
+  let latest = options.spotifyBatchId
     ? await loadBatch(db, options.spotifyBatchId)
     : await latestSpotifyBatch(db);
-  if (latest && ["pending", "running", "paused", "rate_limited"].includes(latest.status)) {
+  if (
+    latest &&
+    ["pending", "running", "paused", "rate_limited", "blocked_mapping"].includes(latest.status)
+  ) {
     await recoverSpotifyBatch(db, latest.id);
+    await reconcileSpotifyBatchMappings(db, latest.id, mappings);
+    latest = await loadBatch(db, latest.id);
     if (options.spotifyConfirmBatch) await resumeSpotifyBatch(db, latest.id);
     const selected = latest.artistScans
       .filter((progress) =>
@@ -100,11 +114,13 @@ export async function prepareSpotifyWork(
       batchId: latest.id,
       knownReleaseIds,
       knownReleaseSummaries: await loadSpotifyCatalogSummaries(db),
+      incompleteReleaseIds,
       mappings: selected,
       maxPagesPerArtist: latest.pageLimit,
       maxRequestsPerRun: configuration.spotify.maxRequestsPerRun,
       mode,
       paused: latest.status === "paused" && !options.spotifyConfirmBatch,
+      releaseTrackResume,
       reconciliationCycleIds: new Map(
         coverage.map((entry) => [entry.artistId, entry.cycleId] as const),
       ),
@@ -190,11 +206,13 @@ export async function prepareSpotifyWork(
     batchId,
     knownReleaseIds,
     knownReleaseSummaries: await loadSpotifyCatalogSummaries(db),
+    incompleteReleaseIds,
     mappings: selected,
     maxPagesPerArtist,
     maxRequestsPerRun: configuration.spotify.maxRequestsPerRun,
     mode,
     paused: firstStagedBatch,
+    releaseTrackResume,
     reconciliationCycleIds: new Map(
       coverage.map((entry) => [entry.artistId, entry.cycleId] as const),
     ),

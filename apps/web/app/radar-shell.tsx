@@ -258,6 +258,7 @@ interface SpotifyArtistScanStatus {
 }
 
 interface SpotifyBatchStatus {
+  blockedMappingArtists: number;
   cancelledArtists: number;
   completedArtists: number;
   confirmationRequired: boolean;
@@ -1362,16 +1363,19 @@ function FeedView({
           spotifyBatch.partialArtists -
           spotifyBatch.failedArtists -
           spotifyBatch.cancelledArtists -
-          spotifyBatch.rateLimitedArtists,
+          spotifyBatch.rateLimitedArtists -
+          spotifyBatch.blockedMappingArtists,
       )
     : 0;
   const retryableArtist = spotifyBatch?.artistScans.find((artist) =>
-    ["failed", "rate_limited", "cancelled"].includes(artist.status),
+    ["failed", "rate_limited", "cancelled", "blocked_mapping"].includes(artist.status),
   );
   const showSpotifyOperationalPanel = Boolean(
     spotifyBatch &&
     (scanStatus?.running ||
-      ["pending", "running", "paused", "rate_limited"].includes(spotifyBatch.status) ||
+      ["pending", "running", "paused", "rate_limited", "blocked_mapping"].includes(
+        spotifyBatch.status,
+      ) ||
       retryableArtist),
   );
   const estimatedRemainingRequests = spotifyBatch
@@ -1745,6 +1749,10 @@ function FeedView({
                   <dd>{spotifyBatch.rateLimitedArtists}</dd>
                 </div>
                 <div>
+                  <dt>Blocked mapping</dt>
+                  <dd>{spotifyBatch.blockedMappingArtists}</dd>
+                </div>
+                <div>
                   <dt>Partial</dt>
                   <dd>{spotifyBatch.partialArtists}</dd>
                 </div>
@@ -2027,6 +2035,7 @@ function FeedView({
                     <small>Released {formatDate(group.releaseDate)}</small>
                   </div>
                   <span className="release-feed-group-count">{group.items.length} tracks</span>
+                  <ReleaseCompletenessBadge item={group.items[0]!} />
                 </div>
                 {!collapsed && (
                   <div className="release-feed-group-items">
@@ -2034,7 +2043,6 @@ function FeedView({
                       <FeedItem
                         item={item}
                         key={item.id}
-                        showArtwork={false}
                         onItemChange={onItemChange}
                         onTogglePreference={onTogglePreference}
                         pendingFeedActions={pendingFeedActions}
@@ -4405,12 +4413,14 @@ const feedItemResponseSchema = z.object({
   accent: z.enum(["coral", "cyan", "lime", "gold"]),
   artist: z.string(),
   confidence: z.number().min(0).max(1),
+  discNumber: z.number().int().positive().optional(),
   exportStatus: z.enum(["eligible", "exported", "blocked", "review_required"]),
   firstSeenAt: z.string().datetime(),
   id: z.string(),
   links: z.array(z.object({ href: z.string().url(), label: z.string() })),
   listened: z.boolean(),
   matchReason: z.string(),
+  providerOrder: z.number().int().positive().optional(),
   reddit: z
     .object({
       artistMatchConfidence: z.number(),
@@ -4426,6 +4436,22 @@ const feedItemResponseSchema = z.object({
   region: z.string(),
   releaseDate: z.string(),
   releaseDatePrecision: z.enum(["day", "month", "year"]).optional(),
+  releaseCompleteness: z
+    .object({
+      expectedTracks: z.number().int().nonnegative(),
+      fetchedTracks: z.number().int().nonnegative(),
+      missingTracks: z.number().int().nonnegative(),
+      status: z.enum([
+        "not_started",
+        "in_progress",
+        "partial",
+        "completed",
+        "paused",
+        "rate_limited",
+        "failed",
+      ]),
+    })
+    .optional(),
   releaseId: z.string().optional(),
   releaseTitle: z.string(),
   releaseType: z.enum(releaseTypes),
@@ -4455,6 +4481,7 @@ const feedItemResponseSchema = z.object({
     .optional(),
   state: z.enum(feedStates),
   title: z.string(),
+  trackNumber: z.number().int().positive().optional(),
 });
 
 const feedRevisionResponseSchema = z.object({
@@ -4555,6 +4582,7 @@ const spotifyArtistScanSchema = z.object({
 const spotifyBatchSchema = z
   .object({
     artistScans: z.array(spotifyArtistScanSchema),
+    blockedMappingArtists: z.number().int().nonnegative(),
     cancelledArtists: z.number().int().nonnegative(),
     completedArtists: z.number().int().nonnegative(),
     confirmationRequired: z.boolean(),
@@ -4824,6 +4852,29 @@ function restoreVisibleFeedAnchor(anchor: FeedScrollAnchor | null): void {
   });
 }
 
+function ReleaseCompletenessBadge({ item }: { item: FeedFixtureItem }) {
+  const completeness = item.releaseCompleteness;
+  if (!completeness) return null;
+  if (completeness.status === "completed") {
+    return (
+      <span
+        className="release-completeness is-complete"
+        title="All provider album tracks persisted"
+      >
+        Complete
+      </span>
+    );
+  }
+  const label = completeness.missingTracks
+    ? `${completeness.missingTracks} tracks missing`
+    : `${titleCase(completeness.status)} album`;
+  return (
+    <span className="release-completeness is-incomplete" role="status">
+      {label}
+    </span>
+  );
+}
+
 function FeedItem({
   item,
   onItemChange,
@@ -4887,6 +4938,7 @@ function FeedItem({
                     {source.label}
                   </span>
                 ))}
+                <ReleaseCompletenessBadge item={item} />
               </div>
               <div className="item-heading-line">
                 <h2>
@@ -5082,7 +5134,22 @@ function groupFeedItems(items: FeedFixtureItem[]) {
       });
     }
   }
-  return [...groups.values()];
+  return [...groups.values()].map((group) => ({
+    ...group,
+    items: [...group.items].sort((left, right) => compareAppearanceOrder(left, right)),
+  }));
+}
+
+function compareAppearanceOrder(left: FeedFixtureItem, right: FeedFixtureItem): number {
+  return (
+    (left.discNumber ?? 1) - (right.discNumber ?? 1) ||
+    (left.trackNumber ?? left.providerOrder ?? Number.MAX_SAFE_INTEGER) -
+      (right.trackNumber ?? right.providerOrder ?? Number.MAX_SAFE_INTEGER) ||
+    (left.providerOrder ?? Number.MAX_SAFE_INTEGER) -
+      (right.providerOrder ?? Number.MAX_SAFE_INTEGER) ||
+    left.title.localeCompare(right.title, "en-US") ||
+    left.id.localeCompare(right.id, "en-US")
+  );
 }
 
 function calculateFeedSummary(items: FeedFixtureItem[], now = new Date()) {

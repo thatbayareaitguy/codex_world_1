@@ -27,9 +27,14 @@ interface SpotifyProviderOptions {
   maxPagesPerArtist?: number;
   knownReleaseIds?: ReadonlySet<string>;
   knownReleaseSummaries?: ReadonlyMap<string, string>;
+  incompleteReleaseIds?: ReadonlySet<string>;
   now?: () => Date;
   region?: string;
   startOffsets?: ReadonlyMap<string, number>;
+  releaseTrackResume?: ReadonlyMap<
+    string,
+    { nextOffset: number; status: "partial" | "paused" | "rate_limited" | "failed" }
+  >;
 }
 
 export class SpotifyProvider implements DiscoveryProvider {
@@ -39,9 +44,14 @@ export class SpotifyProvider implements DiscoveryProvider {
   private readonly maxPagesPerArtist: number;
   private readonly knownReleaseIds: ReadonlySet<string>;
   private readonly knownReleaseSummaries: ReadonlyMap<string, string>;
+  private readonly incompleteReleaseIds: ReadonlySet<string>;
   private readonly now: () => Date;
   private readonly region: string;
   private readonly startOffsets: ReadonlyMap<string, number>;
+  private readonly releaseTrackResume: ReadonlyMap<
+    string,
+    { nextOffset: number; status: "partial" | "paused" | "rate_limited" | "failed" }
+  >;
 
   constructor(options: SpotifyProviderOptions) {
     this.client = options.client;
@@ -49,9 +59,11 @@ export class SpotifyProvider implements DiscoveryProvider {
     this.maxPagesPerArtist = options.maxPagesPerArtist ?? 1;
     this.knownReleaseIds = options.knownReleaseIds ?? new Set();
     this.knownReleaseSummaries = options.knownReleaseSummaries ?? new Map();
+    this.incompleteReleaseIds = options.incompleteReleaseIds ?? new Set();
     this.now = options.now ?? (() => new Date());
     this.region = options.region ?? "US";
     this.startOffsets = options.startOffsets ?? new Map();
+    this.releaseTrackResume = options.releaseTrackResume ?? new Map();
   }
 
   async scan(context: ScanContext): Promise<{
@@ -99,6 +111,7 @@ export class SpotifyProvider implements DiscoveryProvider {
             this.knownReleaseSummaries,
             context.filter,
             seenReleaseIds.has(album.id),
+            this.incompleteReleaseIds.has(album.id),
           ),
         );
         const pageCandidates: TrackCandidate[] = [];
@@ -107,7 +120,7 @@ export class SpotifyProvider implements DiscoveryProvider {
           const release = releases.find((entry) => entry.externalReleaseId === album.id);
           if (!release?.selectedForDetails) continue;
           const requestsBeforeAlbum = this.client.metrics.requests;
-          const candidates = await this.scanAlbum(mapping, album, context.signal);
+          const candidates = await this.scanAlbum(mapping, album, context);
           albumDetailRequests += this.client.metrics.requests - requestsBeforeAlbum;
           pageCandidates.push(...candidates);
           release.candidateCount += candidates.length;
@@ -174,24 +187,129 @@ export class SpotifyProvider implements DiscoveryProvider {
   private async scanAlbum(
     mapping: SpotifyArtistMapping,
     summary: SpotifyAlbumSummary,
-    signal?: AbortSignal,
+    context: ScanContext,
   ): Promise<TrackCandidate[]> {
-    const album = await this.client.getAlbum(summary.id, signal);
-    const tracks = [...album.tracks.items];
-    if (album.tracks.next) {
-      tracks.push(...(await this.client.getAlbumTracks(summary.id, signal, tracks.length)));
+    const resume = this.releaseTrackResume.get(summary.id);
+    const resumeOffset = resume?.nextOffset ?? 0;
+    await context.onReleaseTrackStart?.({
+      currentUnitId: mapping.artistId,
+      expectedTotalTracks: summary.total_tracks,
+      externalReleaseId: summary.id,
+      resumeOffset,
+    });
+    let album: SpotifyAlbum;
+    try {
+      album = await this.client.getAlbum(summary.id, context.signal);
+    } catch (error) {
+      await context.onReleaseTrackError?.({
+        classification: releaseTrackErrorClassification(error),
+        externalReleaseId: summary.id,
+        status: releaseTrackErrorStatus(error),
+      });
+      throw error;
     }
     const releasePrimarilyWatched = album.artists.some(
       (artist) => artist.id === mapping.spotifyArtistId,
     );
-    return tracks
-      .filter(
-        (track) =>
-          releasePrimarilyWatched ||
-          track.artists.some((artist) => artist.id === mapping.spotifyArtistId),
-      )
-      .map((track) => spotifyCandidate(mapping, album, track, this.now(), this.region));
+    const candidates: TrackCandidate[] = [];
+    let offset = resumeOffset;
+    let firstPage = true;
+    while (true) {
+      const startedAt = this.now();
+      let tracks: SpotifyTrackSummary[];
+      let rawNext: string | null;
+      if (firstPage && offset === 0) {
+        tracks = album.tracks.items;
+        rawNext = album.tracks.next;
+        offset = album.tracks.offset ?? 0;
+      } else {
+        try {
+          const page = await this.client.getAlbumTracksPage(summary.id, offset, context.signal);
+          tracks = page.items;
+          rawNext = page.next;
+          offset = page.offset;
+        } catch (error) {
+          await context.onReleaseTrackError?.({
+            classification: releaseTrackErrorClassification(error),
+            externalReleaseId: summary.id,
+            status: releaseTrackErrorStatus(error),
+          });
+          throw error;
+        }
+      }
+      firstPage = false;
+      const pageCandidates = tracks
+        .filter(
+          (track) =>
+            releasePrimarilyWatched ||
+            track.artists.some((artist) => artist.id === mapping.spotifyArtistId),
+        )
+        .map((track) => spotifyCandidate(mapping, album, track, this.now(), this.region));
+      candidates.push(...pageCandidates);
+      let nextOffset: number | null = null;
+      let errorClassification: string | undefined;
+      try {
+        nextOffset = spotifyTrackNextOffset(rawNext, offset);
+      } catch {
+        errorClassification = "malformed_next_cursor";
+      }
+      await context.onReleaseTrackPage?.({
+        candidates: pageCandidates,
+        currentUnitId: mapping.artistId,
+        ...(errorClassification ? { errorClassification } : {}),
+        expectedTotalTracks: album.total_tracks,
+        externalReleaseId: summary.id,
+        finishedAt: this.now(),
+        items: tracks.map((track) => ({
+          discNumber: track.disc_number,
+          providerTrackId: track.id,
+          trackNumber: track.track_number,
+        })),
+        nextOffset,
+        offset,
+        pageNumber: Math.floor(offset / Math.max(1, album.tracks.limit || 50)) + 1,
+        startedAt,
+        terminal: rawNext === null && !errorClassification,
+      });
+      if (errorClassification) throw new Error("Spotify returned a malformed album track cursor.");
+      if (nextOffset === null || tracks.length === 0) break;
+      offset = nextOffset;
+    }
+    return candidates;
   }
+}
+
+export function spotifyTrackNextOffset(next: string | null, currentOffset: number): number | null {
+  if (!next) return null;
+  const parsed = new URL(next);
+  const value = parsed.searchParams.get("offset");
+  const offset = value === null ? Number.NaN : Number(value);
+  if (!Number.isInteger(offset) || offset <= currentOffset) {
+    throw new Error("Spotify returned an invalid album track next-page offset.");
+  }
+  return offset;
+}
+
+function releaseTrackErrorStatus(error: unknown): "failed" | "paused" | "rate_limited" {
+  if (isNamedError(error, "SpotifyRequestBudgetError")) return "paused";
+  if (isNamedError(error, "SpotifyCooldownError")) return "rate_limited";
+  if (isRecord(error) && error.status === 429) return "rate_limited";
+  return "failed";
+}
+
+function releaseTrackErrorClassification(error: unknown): string {
+  const status = releaseTrackErrorStatus(error);
+  if (status === "paused") return "request_budget_exhausted";
+  if (status === "rate_limited") return "rate_limited";
+  return "provider_failure";
+}
+
+function isNamedError(error: unknown, name: string): boolean {
+  return error instanceof Error && error.name === name;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function releaseObservation(
@@ -201,6 +319,7 @@ function releaseObservation(
   knownReleaseSummaries: ReadonlyMap<string, string>,
   filter: ScanContext["filter"],
   duplicateInRun: boolean,
+  incompleteTrackRetrieval: boolean,
 ): ProviderReleaseObservation {
   const releaseDate = normalizeSpotifyDate(album.release_date).date;
   const backfillEligible = !filter.since || releaseDate >= filter.since;
@@ -208,13 +327,14 @@ function releaseObservation(
   const summaryChanged = Boolean(knownSummary && knownSummary !== spotifySummaryHash(album));
   const known = knownReleaseIds.has(album.id) || Boolean(knownSummary);
   const selectedForDetails = Boolean(
-    backfillEligible && !duplicateInRun && (!known || summaryChanged),
+    backfillEligible && !duplicateInRun && (!known || summaryChanged || incompleteTrackRetrieval),
   );
   const reasons = selectedForDetails
     ? [
         `Release date is on or after backfill start ${filter.since ?? "unbounded"}`,
         ...(known ? ["Provider release ID is already known"] : ["Provider release ID is new"]),
         ...(summaryChanged ? ["Observed Spotify release summary changed"] : []),
+        ...(incompleteTrackRetrieval ? ["Album track retrieval is incomplete"] : []),
       ]
     : [
         ...(duplicateInRun ? ["Provider release ID already appeared earlier in this run"] : []),

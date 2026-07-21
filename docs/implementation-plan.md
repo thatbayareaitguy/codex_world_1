@@ -1,5 +1,15 @@
 # Spotify and MusicBrainz Milestone Plan
 
+## Pre-sync data integrity and release completeness
+
+- Normalize release membership through provenance-backed `release_track_appearances`; retain `tracks.release_id` only as a deprecated compatibility pointer.
+- Repair proven historical Spotify associations without changing canonical recording IDs, feed preferences, evidence, artwork, or manual decisions. Leave unprovable relationships unresolved.
+- Persist every Spotify release-track page and unique provider track ID before requesting the next page. Resume from the stored offset after restart, rate limit, request-budget pause, or failure.
+- Mark a release complete only after a terminal page, exact unique-count agreement with `total_tracks`, and no unresolved page error. Surface partial and discrepancy states in the feed and doctor diagnostics.
+- Block persisted artist work when its expected Spotify mapping is missing or changed. Retry only after that exact mapping is restored.
+- Treat `Keep separate` as creation or preservation of a distinct recording and feed discovery, never as candidate rejection.
+- Complete credential-free unit, PostgreSQL upgrade/clean-migration, and Playwright verification. Do not make live provider or playlist requests and do not begin the watchlist sync.
+
 ## Resumable Spotify Completeness
 
 - Keep daily discovery at one page for fast recent-release checks, while preserving a deeper cursor and a partial status whenever more catalog pages remain.

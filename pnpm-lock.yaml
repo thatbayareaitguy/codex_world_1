@@ -52,6 +52,9 @@ importers:
       drizzle-orm:
         specifier: ^0.44.7
         version: 0.44.7(postgres@3.4.9)
+      postgres:
+        specifier: ^3.4.7
+        version: 3.4.9
 
   apps/web:
     dependencies:

@@ -917,7 +917,7 @@ describe.sequential("complete deterministic fake-provider workflow", () => {
     });
   });
 
-  it("persists a review confirmation and removes the duplicate review feed row", async () => {
+  it("persists a review confirmation and retains its release appearance", async () => {
     const userId = await ensureLocalOwner(connection.db);
     const reviewFeed = await connection.db.query.feedItems.findFirst({
       where: (table, { eq }) => eq(table.state, "needs_review"),
@@ -930,7 +930,7 @@ describe.sequential("complete deterministic fake-provider workflow", () => {
     expect(candidate?.matchedTrackId).toBeDefined();
 
     const resolution = await resolveFeedReview(connection.db, userId, reviewFeed!.id, "confirm");
-    expect(resolution).toMatchObject({ decision: "confirm", removed: true, state: "new" });
+    expect(resolution).toMatchObject({ decision: "confirm", removed: false, state: "new" });
 
     const persistedCandidate = await connection.db.query.releaseCandidates.findFirst({
       where: (table, { eq }) => eq(table.id, candidate!.id),
@@ -945,9 +945,11 @@ describe.sequential("complete deterministic fake-provider workflow", () => {
         (decision) => decision.candidateId === candidate!.id,
       ),
     ).toHaveLength(1);
-    expect(
-      (await connection.db.select().from(feedItems)).filter((item) => item.id === reviewFeed!.id),
-    ).toHaveLength(0);
+    const resolvedFeed = (await connection.db.select().from(feedItems)).find(
+      (item) => item.id === reviewFeed!.id,
+    );
+    expect(typeof resolvedFeed?.appearanceId).toBe("string");
+    expect(resolvedFeed?.state).toBe("new");
     expect(
       (await connection.db.select().from(trackExternalIds)).some(
         (externalId) =>

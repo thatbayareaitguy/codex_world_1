@@ -12,6 +12,7 @@
     "@radar/db": "workspace:*",
     "@radar/providers": "workspace:*",
     "@radar/testing": "workspace:*",
-    "drizzle-orm": "^0.44.7"
+    "drizzle-orm": "^0.44.7",
+    "postgres": "^3.4.7"
   }
 }

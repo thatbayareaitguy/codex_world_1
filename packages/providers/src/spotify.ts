@@ -185,6 +185,13 @@ export interface SpotifyArtistAlbumsPage {
   total: number;
 }
 
+export interface SpotifyAlbumTracksPage {
+  items: SpotifyTrackSummary[];
+  next: string | null;
+  offset: number;
+  total: number;
+}
+
 export const SPOTIFY_READ_SCOPES = ["user-follow-read", "playlist-read-private"] as const;
 export const SPOTIFY_PRIVATE_PLAYLIST_WRITE_SCOPE = "playlist-modify-private" as const;
 export const SPOTIFY_SCOPES = SPOTIFY_READ_SCOPES;
@@ -409,6 +416,27 @@ export class SpotifyClient {
       offset += page.items.length;
     }
     return results;
+  }
+
+  async getAlbumTracksPage(
+    id: string,
+    offset: number,
+    signal?: AbortSignal,
+  ): Promise<SpotifyAlbumTracksPage> {
+    if (!Number.isInteger(offset) || offset < 0) {
+      throw new Error("Spotify album track offset is invalid.");
+    }
+    const page = await this.request(
+      `/albums/${encodeURIComponent(id)}/tracks?limit=50&offset=${offset}`,
+      spotifyAlbumTracksSchema,
+      { signal },
+    );
+    return {
+      items: page.items,
+      next: page.next,
+      offset: page.offset ?? offset,
+      total: page.total,
+    };
   }
 
   getTrack(id: string, signal?: AbortSignal): Promise<SpotifyTrack> {

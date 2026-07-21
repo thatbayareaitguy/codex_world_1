@@ -31,8 +31,8 @@ Drizzle is used because it keeps the schema and SQL migrations explicit, has a s
 1. A user manually creates a canonical artist or explicitly approves a Spotify import preview.
 2. Provider IDs are attached to that canonical artist with provenance, confidence, and confirmation state.
 3. The scanner loads only confirmed mappings and invokes providers independently.
-4. Typed provider candidates are matched to canonical tracks.
-5. A transaction preserves provider IDs, source evidence, upcoming history, feed state, availability, and match reasons.
+4. Typed provider candidates are matched to canonical tracks independently from canonical releases.
+5. A transaction preserves provider IDs, source evidence, upcoming history, feed state, availability, match reasons, and the provenance-backed release-to-track appearance.
 6. Spotify playlist planning selects only exact or manually confirmed Spotify tracks and compares them with current playlist items. Writes default off. When explicitly enabled, route and client guards allow additions only to the server-configured owned private playlist and record them in the export ledger.
 7. Reddit text is parsed locally, matched only against the canonical watchlist, and enters review unless exact canonical artist and title are corroborated by existing Spotify availability. Reddit content is never sent to AI.
 
@@ -53,3 +53,9 @@ The scheduled strategy uses persisted 15-artist batches. Daily discovery checks 
 Spotify catalog coverage is separate from canonical music data. `spotify_artist_coverage` stores the current cycle, next offset, status, page counts, and reconciliation timestamps. `spotify_page_scans` retains page-level operational history. `spotify_catalog_releases` retains validated provider summaries so old or unchanged releases do not require full album requests and do not create feed records. The artist becomes fully reconciled only after Spotify omits the next-page cursor.
 
 All scan modes share the global operation lock, the PostgreSQL Spotify request gate, and the configured request budget. A budget stop is paused work, not a provider failure. Completed pages and their next cursor remain committed, and a later process resumes the same artist. A 429 still stops all Spotify activity and persists the provider cooldown.
+
+Spotify artist-catalog pagination and release-track pagination have independent checkpoints. Each selected release persists its expected track total, completed track-page offsets, unique provider track IDs, disc and track positions, next offset, status, discrepancy, and optional reconciliation cycle. The scanner awaits each database checkpoint before requesting another track page. A terminal provider page marks the release complete only when the unique persisted count equals `total_tracks` and no page error remains.
+
+Canonical recording identity does not imply one release. `release_track_appearances` associates one canonical track with every provenance-proven single, EP, album, deluxe, compilation, remix, live, or reissue presentation. `release_track_appearance_sources` retains the candidate and provider IDs that prove each relationship. The feed shows every distinct release appearance and deduplicates repeated observations of the same appearance. Group ordering uses disc number, track number, provider order, title, and stable ID in that order.
+
+Persisted Spotify artist work stores the expected confirmed Spotify artist ID. If that mapping disappears or changes before resume, the artist becomes `blocked_mapping`; other artists can continue, and retry becomes eligible only after the expected mapping is restored. No replacement mapping is selected automatically.

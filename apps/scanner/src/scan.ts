@@ -31,6 +31,8 @@ import {
   providerCursors,
   releaseCandidates,
   releaseExternalIds,
+  releaseTrackAppearances,
+  releaseTrackAppearanceSources,
   releases,
   scanLocks,
   scanRuns,
@@ -51,10 +53,13 @@ import {
   type RadarDatabase,
   SpotifyCooldownError,
   markSpotifyCoverageInterrupted,
+  markSpotifyReleaseTrackInterrupted,
   pauseSpotifyArtistForBudget,
   recordSpotifyPage,
+  recordSpotifyReleaseTrackPage,
   requestSpotifyBatchPause,
   spotifyScanBatches,
+  startSpotifyReleaseTrackRetrieval,
 } from "@radar/db";
 import {
   loadProviderConfiguration,
@@ -69,6 +74,7 @@ import {
   type DiscoveryProvider,
   type ProviderReleaseObservation,
   type ProviderScanPage,
+  type ProviderReleaseTrackPage,
   type SpotifyArtistMapping,
   type SpotifyRequestTelemetry,
   type SpotifyRequestGate,
@@ -452,7 +458,7 @@ async function runScanUnlocked(
                   }
                   batchPersisted = true;
                   currentSpotifyPagesScanned += 1;
-                  currentSpotifyCandidateCount += page.candidates.length;
+                  if (options.dryRun) currentSpotifyCandidateCount += page.candidates.length;
                   const pageRequestCount = Math.max(
                     0,
                     page.providerMetrics.requests - spotifyPageRequestBase,
@@ -481,21 +487,6 @@ async function runScanUnlocked(
                       needsReview: 0,
                       skipped: 0,
                     });
-                  } else {
-                    const pageSummary = await persistCandidates(
-                      db,
-                      page.candidates,
-                      { ...options, provider: "spotify" },
-                      undefined,
-                      page.providerMetrics,
-                      {
-                        artistsProcessedCount,
-                        cumulativeBase: incrementalSummary,
-                        id: providerRunId!,
-                        status: "running",
-                      },
-                    );
-                    incrementalSummary = addScanSummaries(incrementalSummary, pageSummary);
                   }
                   await recordSpotifyPage(db, {
                     albumDetailRequests: page.albumDetailRequests,
@@ -537,6 +528,70 @@ async function runScanUnlocked(
                     },
                     true,
                   );
+                },
+                onReleaseTrackStart: async (release) => {
+                  if (options.dryRun) return;
+                  await startSpotifyReleaseTrackRetrieval(db, {
+                    expectedTotalTracks: release.expectedTotalTracks,
+                    reconciliationCycleId:
+                      spotifyWork!.reconciliationCycleIds.get(release.currentUnitId) ?? null,
+                    spotifyAlbumId: release.externalReleaseId,
+                  });
+                },
+                onReleaseTrackPage: async (releasePage: ProviderReleaseTrackPage) => {
+                  if (options.dryRun) return;
+                  if (!currentSpotifyArtistScan) {
+                    throw new Error(
+                      "Spotify album track page completed without claimed artist progress.",
+                    );
+                  }
+                  const pageSummary = await persistCandidates(
+                    db,
+                    releasePage.candidates,
+                    { ...options, provider: "spotify" },
+                    undefined,
+                    undefined,
+                    {
+                      artistsProcessedCount,
+                      cumulativeBase: incrementalSummary,
+                      id: providerRunId!,
+                      status: "running",
+                    },
+                  );
+                  incrementalSummary = addScanSummaries(incrementalSummary, pageSummary);
+                  currentSpotifyCandidateCount += releasePage.candidates.length;
+                  await recordSpotifyReleaseTrackPage(db, {
+                    ...(releasePage.errorClassification
+                      ? { errorClassification: releasePage.errorClassification }
+                      : {}),
+                    expectedTotalTracks: releasePage.expectedTotalTracks,
+                    finishedAt: releasePage.finishedAt,
+                    items: releasePage.items,
+                    nextOffset: releasePage.nextOffset,
+                    offset: releasePage.offset,
+                    reconciliationCycleId:
+                      spotifyWork!.reconciliationCycleIds.get(releasePage.currentUnitId) ?? null,
+                    spotifyAlbumId: releasePage.externalReleaseId,
+                    startedAt: releasePage.startedAt,
+                    terminal: releasePage.terminal,
+                  });
+                  batchPersisted = true;
+                  await runtime?.reportProgress(
+                    {
+                      currentStage: `album_tracks_${releasePage.offset}_persisted`,
+                      lastPersistedResult: `${releasePage.items.length} album tracks persisted`,
+                      phase: "scanning",
+                    },
+                    true,
+                  );
+                },
+                onReleaseTrackError: async (releaseError) => {
+                  if (options.dryRun) return;
+                  await markSpotifyReleaseTrackInterrupted(db, {
+                    errorClassification: releaseError.classification,
+                    spotifyAlbumId: releaseError.externalReleaseId,
+                    status: releaseError.status,
+                  });
                 },
                 onBatch: async (batch) => {
                   batchPersisted = true;
@@ -938,10 +993,12 @@ async function buildProviders(
       providers.push(
         new SpotifyProvider({
           client,
+          incompleteReleaseIds: spotifyWork.incompleteReleaseIds,
           knownReleaseIds: spotifyWork.knownReleaseIds,
           knownReleaseSummaries: spotifyWork.knownReleaseSummaries,
           mappings: spotifyWork.mappings,
           maxPagesPerArtist: spotifyWork.maxPagesPerArtist,
+          releaseTrackResume: spotifyWork.releaseTrackResume,
           startOffsets: spotifyWork.startOffsets,
         }),
       );
@@ -1233,6 +1290,8 @@ async function persistCandidatesUnlocked(
           .values({ userId, artistId: primaryArtistId })
           .onConflictDoNothing();
 
+        const releaseId = await resolveCanonicalRelease(tx, candidate);
+
         const providerMatch = await tx.query.trackExternalIds.findFirst({
           where: and(
             eq(trackExternalIds.provider, candidate.provider),
@@ -1255,17 +1314,9 @@ async function persistCandidatesUnlocked(
           decision,
           primaryArtistId,
           canonicalTracks,
+          releaseId,
         );
         if (decision.kind === "review") summary.needsReview += 1;
-
-        let releaseId: string | undefined;
-        if (trackId) {
-          const trackRow = await tx.query.tracks.findFirst({
-            where: eq(tracks.id, trackId),
-            columns: { releaseId: true },
-          });
-          releaseId = trackRow?.releaseId ?? undefined;
-        }
 
         const [candidateRow] = await tx
           .insert(releaseCandidates)
@@ -1309,6 +1360,13 @@ async function persistCandidatesUnlocked(
           })
           .onConflictDoNothing();
 
+        await upsertReleaseExternalId(tx, candidate, releaseId);
+
+        const appearanceId =
+          trackId && decision.kind !== "review"
+            ? await upsertReleaseAppearance(tx, candidate, candidateRow.id, releaseId, trackId)
+            : undefined;
+
         if (trackId && decision.kind !== "review") {
           await tx
             .insert(trackAvailabilities)
@@ -1346,39 +1404,6 @@ async function persistCandidatesUnlocked(
                 updatedAt: new Date(),
               },
             });
-          if (releaseId) {
-            const existingReleaseExternalId = await tx.query.releaseExternalIds.findFirst({
-              where: and(
-                eq(releaseExternalIds.provider, candidate.provider),
-                eq(releaseExternalIds.externalId, candidate.externalReleaseId),
-              ),
-              columns: { providerFields: true },
-            });
-            const artwork = parseSpotifyReleaseArtwork(candidate.spotifyRelease);
-            await tx
-              .insert(releaseExternalIds)
-              .values({
-                externalId: candidate.externalReleaseId,
-                provider: candidate.provider,
-                providerFields: releaseProviderFields(
-                  candidate,
-                  existingReleaseExternalId?.providerFields,
-                ),
-                providerUrl: artwork?.albumUrl ?? providerReleaseUrl(candidate),
-                releaseId,
-              })
-              .onConflictDoUpdate({
-                target: [releaseExternalIds.provider, releaseExternalIds.externalId],
-                set: {
-                  providerFields: releaseProviderFields(
-                    candidate,
-                    existingReleaseExternalId?.providerFields,
-                  ),
-                  providerUrl: artwork?.albumUrl ?? providerReleaseUrl(candidate),
-                  updatedAt: new Date(),
-                },
-              });
-          }
         }
 
         if (candidate.isUpcoming && releaseId) {
@@ -1424,7 +1449,8 @@ async function persistCandidatesUnlocked(
             userId,
             candidateId: candidateRow.id,
             ...(trackId ? { trackId } : {}),
-            ...(releaseId ? { releaseId } : {}),
+            releaseId,
+            ...(appearanceId ? { appearanceId } : {}),
             state: candidate.isUpcoming
               ? "upcoming"
               : decision.kind === "review"
@@ -1734,52 +1760,15 @@ async function resolveTrack(
   decision: MatchDecision,
   primaryArtistId: string,
   canonicalTracks: CanonicalTrack[],
+  releaseId: string,
 ): Promise<string | undefined> {
   if (decision.kind === "automatic") return decision.canonicalTrackId;
   if (decision.kind === "review") return decision.canonicalTrackId;
 
-  const providerRelease = await db.query.releaseExternalIds.findFirst({
-    where: and(
-      eq(releaseExternalIds.provider, candidate.provider),
-      eq(releaseExternalIds.externalId, candidate.externalReleaseId),
-    ),
-    columns: { releaseId: true },
-  });
-  const normalizedUpc = candidate.upc ? normalizeIdentifier(candidate.upc) : undefined;
-  const normalizedEan = candidate.ean ? normalizeIdentifier(candidate.ean) : undefined;
-  const barcodeRelease =
-    providerRelease || (!normalizedUpc && !normalizedEan)
-      ? undefined
-      : await db.query.releases.findFirst({
-          where: or(
-            ...(normalizedUpc ? [eq(releases.upc, normalizedUpc)] : []),
-            ...(normalizedEan ? [eq(releases.ean, normalizedEan)] : []),
-          ),
-          columns: { id: true },
-        });
-  const existingReleaseId = providerRelease?.releaseId ?? barcodeRelease?.id;
-  const [createdRelease] = existingReleaseId
-    ? []
-    : await db
-        .insert(releases)
-        .values({
-          title: candidate.releaseTitle,
-          normalizedTitle: normalizeText(candidate.releaseTitle),
-          releaseType: candidate.releaseType,
-          releaseDate: candidate.releaseDate,
-          releaseDatePrecision: candidate.releaseDatePrecision,
-          ...(normalizedUpc ? { upc: normalizedUpc } : {}),
-          ...(normalizedEan ? { ean: normalizedEan } : {}),
-          ...(candidate.version ? { version: candidate.version } : {}),
-        })
-        .returning({ id: releases.id });
-  const release = existingReleaseId ? { id: existingReleaseId } : createdRelease;
-  if (!release) throw new Error("Failed to create release");
-
   const [track] = await db
     .insert(tracks)
     .values({
-      releaseId: release.id,
+      releaseId,
       title: candidate.title,
       normalizedTitle: normalizeText(candidate.title),
       ...(candidate.durationMs ? { durationMs: candidate.durationMs } : {}),
@@ -1825,6 +1814,160 @@ async function resolveTrack(
     ...(candidate.version ? { version: candidate.version } : {}),
   });
   return track.id;
+}
+
+async function resolveCanonicalRelease(
+  db: DatabaseExecutor,
+  candidate: TrackCandidate,
+): Promise<string> {
+  const providerRelease = await db.query.releaseExternalIds.findFirst({
+    where: and(
+      eq(releaseExternalIds.provider, candidate.provider),
+      eq(releaseExternalIds.externalId, candidate.externalReleaseId),
+    ),
+    columns: { releaseId: true },
+  });
+  if (providerRelease) return providerRelease.releaseId;
+
+  const normalizedUpc = candidate.upc ? normalizeIdentifier(candidate.upc) : undefined;
+  const normalizedEan = candidate.ean ? normalizeIdentifier(candidate.ean) : undefined;
+  const barcodeRelease =
+    !normalizedUpc && !normalizedEan
+      ? undefined
+      : await db.query.releases.findFirst({
+          where: or(
+            ...(normalizedUpc ? [eq(releases.upc, normalizedUpc)] : []),
+            ...(normalizedEan ? [eq(releases.ean, normalizedEan)] : []),
+          ),
+          columns: { id: true },
+        });
+  if (barcodeRelease) return barcodeRelease.id;
+
+  const exactRelease = await db.query.releases.findFirst({
+    where: and(
+      eq(releases.normalizedTitle, normalizeText(candidate.releaseTitle)),
+      eq(releases.releaseDate, candidate.releaseDate),
+      eq(releases.releaseType, candidate.releaseType),
+    ),
+    columns: { id: true },
+  });
+  if (exactRelease) return exactRelease.id;
+
+  const [createdRelease] = await db
+    .insert(releases)
+    .values({
+      title: candidate.releaseTitle,
+      normalizedTitle: normalizeText(candidate.releaseTitle),
+      releaseType: candidate.releaseType,
+      releaseDate: candidate.releaseDate,
+      releaseDatePrecision: candidate.releaseDatePrecision,
+      ...(normalizedUpc ? { upc: normalizedUpc } : {}),
+      ...(normalizedEan ? { ean: normalizedEan } : {}),
+      ...(candidate.version ? { version: candidate.version } : {}),
+    })
+    .returning({ id: releases.id });
+  if (!createdRelease) throw new Error("Failed to create release");
+  return createdRelease.id;
+}
+
+async function upsertReleaseExternalId(
+  db: DatabaseExecutor,
+  candidate: TrackCandidate,
+  releaseId: string,
+): Promise<void> {
+  const existing = await db.query.releaseExternalIds.findFirst({
+    where: and(
+      eq(releaseExternalIds.provider, candidate.provider),
+      eq(releaseExternalIds.externalId, candidate.externalReleaseId),
+    ),
+    columns: { providerFields: true },
+  });
+  const artwork = parseSpotifyReleaseArtwork(candidate.spotifyRelease);
+  await db
+    .insert(releaseExternalIds)
+    .values({
+      externalId: candidate.externalReleaseId,
+      provider: candidate.provider,
+      providerFields: releaseProviderFields(candidate, existing?.providerFields),
+      providerUrl: artwork?.albumUrl ?? providerReleaseUrl(candidate),
+      releaseId,
+    })
+    .onConflictDoUpdate({
+      target: [releaseExternalIds.provider, releaseExternalIds.externalId],
+      set: {
+        providerFields: releaseProviderFields(candidate, existing?.providerFields),
+        providerUrl: artwork?.albumUrl ?? providerReleaseUrl(candidate),
+        releaseId,
+        updatedAt: new Date(),
+      },
+    });
+}
+
+async function upsertReleaseAppearance(
+  db: DatabaseExecutor,
+  candidate: TrackCandidate,
+  candidateId: string,
+  releaseId: string,
+  trackId: string,
+): Promise<string> {
+  const discNumber = candidate.discNumber ?? 1;
+  const trackNumber = candidate.trackNumber ?? 1;
+  const [appearance] = await db
+    .insert(releaseTrackAppearances)
+    .values({
+      discNumber,
+      firstObservedAt: new Date(candidate.firstSeenAt),
+      lastObservedAt: new Date(candidate.firstSeenAt),
+      presentationMetadata: {
+        releaseTitle: candidate.releaseTitle,
+        ...(candidate.version ? { version: candidate.version } : {}),
+      },
+      providerOrder: candidate.trackNumber,
+      releaseId,
+      trackId,
+      trackNumber,
+    })
+    .onConflictDoUpdate({
+      target: [
+        releaseTrackAppearances.releaseId,
+        releaseTrackAppearances.trackId,
+        releaseTrackAppearances.discNumber,
+        releaseTrackAppearances.trackNumber,
+      ],
+      set: {
+        lastObservedAt: new Date(candidate.firstSeenAt),
+        presentationMetadata: {
+          releaseTitle: candidate.releaseTitle,
+          ...(candidate.version ? { version: candidate.version } : {}),
+        },
+        providerOrder: candidate.trackNumber,
+        updatedAt: new Date(),
+      },
+    })
+    .returning({ id: releaseTrackAppearances.id });
+  if (!appearance) throw new Error("Failed to create release track appearance");
+  await db
+    .insert(releaseTrackAppearanceSources)
+    .values({
+      appearanceId: appearance.id,
+      candidateId,
+      firstObservedAt: new Date(candidate.firstSeenAt),
+      lastObservedAt: new Date(candidate.firstSeenAt),
+      observedCredit: candidate.credits,
+      provider: candidate.provider,
+      providerReleaseId: candidate.externalReleaseId,
+      providerTrackId: candidate.externalTrackId,
+    })
+    .onConflictDoUpdate({
+      target: releaseTrackAppearanceSources.candidateId,
+      set: {
+        appearanceId: appearance.id,
+        lastObservedAt: new Date(candidate.firstSeenAt),
+        observedCredit: candidate.credits,
+        updatedAt: new Date(),
+      },
+    });
+  return appearance.id;
 }
 
 async function ensureCreditArtist(db: DatabaseExecutor, name: string): Promise<string> {

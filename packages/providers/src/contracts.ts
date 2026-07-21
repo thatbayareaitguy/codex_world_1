@@ -5,8 +5,43 @@ export interface ScanContext {
   filter: ScanFilter;
   onBatch?: (batch: ProviderScanBatch) => Promise<void>;
   onPage?: (page: ProviderScanPage) => Promise<void>;
+  onReleaseTrackError?: (error: ProviderReleaseTrackError) => Promise<void>;
+  onReleaseTrackPage?: (page: ProviderReleaseTrackPage) => Promise<void>;
+  onReleaseTrackStart?: (release: ProviderReleaseTrackStart) => Promise<void>;
   onUnitStart?: (unit: ProviderScanUnit) => Promise<boolean>;
   signal?: AbortSignal;
+}
+
+export interface ProviderReleaseTrackStart {
+  currentUnitId: string;
+  expectedTotalTracks: number;
+  externalReleaseId: string;
+  resumeOffset: number;
+}
+
+export interface ProviderReleaseTrackPage {
+  candidates: TrackCandidate[];
+  currentUnitId: string;
+  errorClassification?: string;
+  expectedTotalTracks: number;
+  externalReleaseId: string;
+  finishedAt: Date;
+  items: Array<{
+    discNumber: number;
+    providerTrackId: string;
+    trackNumber: number;
+  }>;
+  nextOffset: number | null;
+  offset: number;
+  pageNumber: number;
+  startedAt: Date;
+  terminal: boolean;
+}
+
+export interface ProviderReleaseTrackError {
+  classification: string;
+  externalReleaseId: string;
+  status: "failed" | "paused" | "rate_limited";
 }
 
 export interface ProviderScanPage {

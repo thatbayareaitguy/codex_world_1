@@ -75,6 +75,7 @@ export const spotifyBatchStatusEnum = pgEnum("spotify_batch_status", [
   "paused",
   "cancelled",
   "rate_limited",
+  "blocked_mapping",
   "failed",
 ]);
 export const spotifyArtistScanStatusEnum = pgEnum("spotify_artist_scan_status", [
@@ -84,6 +85,16 @@ export const spotifyArtistScanStatusEnum = pgEnum("spotify_artist_scan_status", 
   "partial",
   "paused",
   "cancelled",
+  "rate_limited",
+  "blocked_mapping",
+  "failed",
+]);
+export const spotifyReleaseTrackStatusEnum = pgEnum("spotify_release_track_status", [
+  "not_started",
+  "in_progress",
+  "partial",
+  "completed",
+  "paused",
   "rate_limited",
   "failed",
 ]);
@@ -698,6 +709,7 @@ export const spotifyScanBatches = pgTable(
     partialArtists: integer("partial_artists").notNull().default(0),
     cancelledArtists: integer("cancelled_artists").notNull().default(0),
     rateLimitedArtists: integer("rate_limited_artists").notNull().default(0),
+    blockedMappingArtists: integer("blocked_mapping_artists").notNull().default(0),
     estimatedRequests: integer("estimated_requests").notNull().default(0),
     pauseRequested: boolean("pause_requested").notNull().default(false),
     cancelRequested: boolean("cancel_requested").notNull().default(false),
@@ -720,6 +732,7 @@ export const spotifyArtistScans = pgTable(
     artistId: uuid("artist_id")
       .notNull()
       .references(() => artists.id, { onDelete: "cascade" }),
+    providerArtistId: text("provider_artist_id"),
     position: integer("position").notNull(),
     status: spotifyArtistScanStatusEnum("status").notNull().default("pending"),
     startedAt: timestamp("started_at", { withTimezone: true }),
@@ -793,6 +806,83 @@ export const spotifyCatalogReleases = pgTable(
       table.externalReleaseId,
     ),
     index("spotify_catalog_releases_observed_idx").on(table.artistId, table.lastObservedAt),
+  ],
+);
+
+export const spotifyReleaseTrackRetrievals = pgTable(
+  "spotify_release_track_retrievals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    releaseId: uuid("release_id").references(() => releases.id, { onDelete: "set null" }),
+    spotifyAlbumId: text("spotify_album_id").notNull(),
+    expectedTotalTracks: integer("expected_total_tracks").notNull(),
+    fetchedTrackCount: integer("fetched_track_count").notNull().default(0),
+    nextOffset: integer("next_offset"),
+    pagesCompleted: integer("pages_completed").notNull().default(0),
+    status: spotifyReleaseTrackStatusEnum("status").notNull().default("not_started"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    lastPageCompletedAt: timestamp("last_page_completed_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    lastErrorClassification: text("last_error_classification"),
+    retryEligibleAt: timestamp("retry_eligible_at", { withTimezone: true }),
+    discrepancy: text("discrepancy"),
+    reconciliationCycleId: uuid("reconciliation_cycle_id"),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("spotify_release_track_retrieval_album_unique").on(table.spotifyAlbumId),
+    index("spotify_release_track_retrieval_status_idx").on(table.status, table.updatedAt),
+  ],
+);
+
+export const spotifyReleaseTrackPages = pgTable(
+  "spotify_release_track_pages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    retrievalId: uuid("retrieval_id")
+      .notNull()
+      .references(() => spotifyReleaseTrackRetrievals.id, { onDelete: "cascade" }),
+    offset: integer("offset").notNull(),
+    itemCount: integer("item_count").notNull(),
+    uniqueItemCount: integer("unique_item_count").notNull(),
+    nextOffset: integer("next_offset"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }).notNull(),
+    createdAt,
+  },
+  (table) => [
+    uniqueIndex("spotify_release_track_pages_retrieval_offset_unique").on(
+      table.retrievalId,
+      table.offset,
+    ),
+  ],
+);
+
+export const spotifyReleaseTrackItems = pgTable(
+  "spotify_release_track_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    retrievalId: uuid("retrieval_id")
+      .notNull()
+      .references(() => spotifyReleaseTrackRetrievals.id, { onDelete: "cascade" }),
+    providerTrackId: text("provider_track_id").notNull(),
+    pageOffset: integer("page_offset").notNull(),
+    discNumber: integer("disc_number").notNull(),
+    trackNumber: integer("track_number").notNull(),
+    firstObservedAt: timestamp("first_observed_at", { withTimezone: true }).notNull().defaultNow(),
+    lastObservedAt: timestamp("last_observed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("spotify_release_track_items_retrieval_track_unique").on(
+      table.retrievalId,
+      table.providerTrackId,
+    ),
+    index("spotify_release_track_items_order_idx").on(
+      table.retrievalId,
+      table.discNumber,
+      table.trackNumber,
+    ),
   ],
 );
 
@@ -918,6 +1008,75 @@ export const sourceEvidence = pgTable(
   ],
 );
 
+export const releaseTrackAppearances = pgTable(
+  "release_track_appearances",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    releaseId: uuid("release_id")
+      .notNull()
+      .references(() => releases.id, { onDelete: "cascade" }),
+    trackId: uuid("track_id")
+      .notNull()
+      .references(() => tracks.id, { onDelete: "cascade" }),
+    discNumber: integer("disc_number").notNull().default(1),
+    trackNumber: integer("track_number").notNull().default(1),
+    providerOrder: integer("provider_order"),
+    presentationMetadata: jsonb("presentation_metadata")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    firstObservedAt: timestamp("first_observed_at", { withTimezone: true }).notNull().defaultNow(),
+    lastObservedAt: timestamp("last_observed_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("release_track_appearance_identity_unique").on(
+      table.releaseId,
+      table.trackId,
+      table.discNumber,
+      table.trackNumber,
+    ),
+    index("release_track_appearance_release_order_idx").on(
+      table.releaseId,
+      table.discNumber,
+      table.trackNumber,
+    ),
+    index("release_track_appearance_track_idx").on(table.trackId),
+  ],
+);
+
+export const releaseTrackAppearanceSources = pgTable(
+  "release_track_appearance_sources",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    appearanceId: uuid("appearance_id")
+      .notNull()
+      .references(() => releaseTrackAppearances.id, { onDelete: "cascade" }),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => releaseCandidates.id, { onDelete: "cascade" }),
+    provider: providerEnum("provider").notNull(),
+    providerReleaseId: text("provider_release_id").notNull(),
+    providerTrackId: text("provider_track_id").notNull(),
+    observedCredit: jsonb("observed_credit")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    firstObservedAt: timestamp("first_observed_at", { withTimezone: true }).notNull().defaultNow(),
+    lastObservedAt: timestamp("last_observed_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("release_track_appearance_source_candidate_unique").on(table.candidateId),
+    uniqueIndex("release_track_appearance_source_provider_unique").on(
+      table.provider,
+      table.providerReleaseId,
+      table.providerTrackId,
+    ),
+    index("release_track_appearance_source_appearance_idx").on(table.appearanceId),
+  ],
+);
+
 export const upcomingAnnouncements = pgTable(
   "upcoming_announcements",
   {
@@ -973,6 +1132,9 @@ export const feedItems = pgTable(
     }),
     releaseId: uuid("release_id").references(() => releases.id, { onDelete: "set null" }),
     trackId: uuid("track_id").references(() => tracks.id, { onDelete: "set null" }),
+    appearanceId: uuid("appearance_id").references(() => releaseTrackAppearances.id, {
+      onDelete: "set null",
+    }),
     state: feedStateEnum("state").notNull(),
     dedupeKey: text("dedupe_key").notNull(),
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull(),
@@ -984,9 +1146,9 @@ export const feedItems = pgTable(
   },
   (table) => [
     uniqueIndex("feed_user_dedupe_unique").on(table.userId, table.dedupeKey),
-    uniqueIndex("feed_user_track_unique")
-      .on(table.userId, table.trackId)
-      .where(sql`${table.trackId} is not null and ${table.state} <> 'needs_review'`),
+    uniqueIndex("feed_user_appearance_unique")
+      .on(table.userId, table.appearanceId)
+      .where(sql`${table.appearanceId} is not null and ${table.state} <> 'needs_review'`),
     index("feed_user_state_seen_idx").on(table.userId, table.state, table.firstSeenAt),
   ],
 );

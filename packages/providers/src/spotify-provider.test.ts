@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ProviderScanPage } from "./contracts";
+import type { ProviderReleaseTrackPage, ProviderScanPage } from "./contracts";
 import { SpotifyProvider } from "./spotify-provider";
 import type { SpotifyAlbum, SpotifyAlbumSummary, SpotifyClient } from "./spotify";
 
@@ -246,7 +246,224 @@ describe("SpotifyProvider incremental scanning", () => {
 
     expect(onBatch).toHaveBeenCalledWith(expect.objectContaining({ partial: true }));
   });
+
+  it("persists every page of a 25-track release before continuing", async () => {
+    const summary = albumSummary("album-25", "Twenty Five", "2026-07-20");
+    summary.total_tracks = 25;
+    const album = albumWithTrack(summary);
+    album.tracks.items = Array.from({ length: 20 }, (_, index) => spotifyTrack(index + 1));
+    album.tracks.limit = 20;
+    album.tracks.total = 25;
+    album.tracks.next = "https://api.spotify.com/v1/albums/album-25/tracks?offset=20&limit=20";
+    const persistedOffsets: number[] = [];
+    const getAlbumTracksPage = vi.fn().mockImplementation(() => {
+      expect(persistedOffsets).toEqual([0]);
+      return Promise.resolve({
+        items: Array.from({ length: 5 }, (_, index) => spotifyTrack(index + 21)),
+        next: null,
+        offset: 20,
+        total: 25,
+      });
+    });
+    const client = {
+      getAlbum: vi.fn().mockResolvedValue(album),
+      getAlbumTracksPage,
+      getArtistAlbumsPage: vi
+        .fn()
+        .mockResolvedValue({ items: [summary], nextOffset: null, offset: 0, total: 1 }),
+      metrics: { failures: 0, rateLimitWaitMs: 0, requests: 3 },
+    } as unknown as SpotifyClient;
+    const onReleaseTrackPage = vi.fn((page: ProviderReleaseTrackPage) => {
+      persistedOffsets.push(page.offset);
+      return Promise.resolve();
+    });
+    const provider = new SpotifyProvider({
+      client,
+      mappings: [{ artistId: "artist-1", name: "YUSSI", spotifyArtistId: "spotify-yussi" }],
+    });
+
+    const result = await provider.scan({
+      filter: { provider: "spotify" },
+      onReleaseTrackPage,
+    });
+
+    expect(result.candidates).toHaveLength(25);
+    expect(persistedOffsets).toEqual([0, 20]);
+    expect(onReleaseTrackPage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ nextOffset: null, offset: 20, terminal: true }),
+    );
+    expect(getAlbumTracksPage).toHaveBeenCalledWith("album-25", 20, undefined);
+  });
+
+  it("resumes a partial release without replaying its completed first page", async () => {
+    const summary = albumSummary("album-resume", "Resume Album", "2026-07-20");
+    summary.total_tracks = 25;
+    const album = albumWithTrack(summary);
+    album.tracks.items = Array.from({ length: 20 }, (_, index) => spotifyTrack(index + 1));
+    album.tracks.limit = 20;
+    album.tracks.total = 25;
+    album.tracks.next = "https://api.spotify.com/v1/albums/album-resume/tracks?offset=20&limit=20";
+    const getAlbumTracksPage = vi.fn().mockResolvedValue({
+      items: Array.from({ length: 5 }, (_, index) => spotifyTrack(index + 21)),
+      next: null,
+      offset: 20,
+      total: 25,
+    });
+    const client = {
+      getAlbum: vi.fn().mockResolvedValue(album),
+      getAlbumTracksPage,
+      getArtistAlbumsPage: vi
+        .fn()
+        .mockResolvedValue({ items: [summary], nextOffset: null, offset: 0, total: 1 }),
+      metrics: { failures: 0, rateLimitWaitMs: 0, requests: 2 },
+    } as unknown as SpotifyClient;
+    const onReleaseTrackPage = vi.fn<(page: ProviderReleaseTrackPage) => Promise<void>>();
+    onReleaseTrackPage.mockResolvedValue(undefined);
+    const provider = new SpotifyProvider({
+      client,
+      incompleteReleaseIds: new Set([summary.id]),
+      knownReleaseIds: new Set([summary.id]),
+      mappings: [{ artistId: "artist-1", name: "YUSSI", spotifyArtistId: "spotify-yussi" }],
+      releaseTrackResume: new Map([[summary.id, { nextOffset: 20, status: "partial" }]]),
+    });
+
+    const result = await provider.scan({ filter: { provider: "spotify" }, onReleaseTrackPage });
+
+    expect(result.candidates).toHaveLength(5);
+    expect(onReleaseTrackPage).toHaveBeenCalledOnce();
+    expect(onReleaseTrackPage).toHaveBeenCalledWith(expect.objectContaining({ offset: 20 }));
+    expect(getAlbumTracksPage).toHaveBeenCalledOnce();
+  });
+
+  it("persists a fetched page but leaves the release incomplete for a malformed cursor", async () => {
+    const summary = albumSummary("album-malformed", "Malformed Album", "2026-07-20");
+    summary.total_tracks = 2;
+    const album = albumWithTrack(summary);
+    album.tracks.total = 2;
+    album.tracks.next = "https://api.spotify.com/v1/albums/album-malformed/tracks?offset=nope";
+    const client = {
+      getAlbum: vi.fn().mockResolvedValue(album),
+      getArtistAlbumsPage: vi
+        .fn()
+        .mockResolvedValue({ items: [summary], nextOffset: null, offset: 0, total: 1 }),
+      metrics: { failures: 0, rateLimitWaitMs: 0, requests: 2 },
+    } as unknown as SpotifyClient;
+    const onReleaseTrackPage = vi.fn<(page: ProviderReleaseTrackPage) => Promise<void>>();
+    onReleaseTrackPage.mockResolvedValue(undefined);
+    const provider = new SpotifyProvider({
+      client,
+      mappings: [{ artistId: "artist-1", name: "YUSSI", spotifyArtistId: "spotify-yussi" }],
+    });
+
+    await expect(
+      provider.scan({ filter: { provider: "spotify" }, onReleaseTrackPage }),
+    ).rejects.toThrow("malformed album track cursor");
+    expect(onReleaseTrackPage).toHaveBeenCalledWith(
+      expect.objectContaining({ errorClassification: "malformed_next_cursor", terminal: false }),
+    );
+  });
+
+  it.each([
+    ["SpotifyRequestBudgetError", "paused", "request_budget_exhausted"],
+    ["SpotifyHttpError", "rate_limited", "rate_limited"],
+  ] as const)(
+    "preserves the next album cursor when %s interrupts the next page",
+    async (errorName, status, classification) => {
+      const summary = albumSummary(`album-${errorName}`, "Interrupted Album", "2026-07-20");
+      summary.total_tracks = 2;
+      const album = albumWithTrack(summary);
+      album.tracks.total = 2;
+      album.tracks.next = `https://api.spotify.com/v1/albums/${summary.id}/tracks?offset=1&limit=50`;
+      const error = Object.assign(new Error(errorName), {
+        name: errorName,
+        ...(errorName === "SpotifyHttpError" ? { status: 429 } : {}),
+      });
+      const client = {
+        getAlbum: vi.fn().mockResolvedValue(album),
+        getAlbumTracksPage: vi.fn().mockRejectedValue(error),
+        getArtistAlbumsPage: vi
+          .fn()
+          .mockResolvedValue({ items: [summary], nextOffset: null, offset: 0, total: 1 }),
+        metrics: { failures: 1, rateLimitWaitMs: 0, requests: 3 },
+      } as unknown as SpotifyClient;
+      const onReleaseTrackError = vi.fn().mockResolvedValue(undefined);
+      const onReleaseTrackPage = vi.fn().mockResolvedValue(undefined);
+      const provider = new SpotifyProvider({
+        client,
+        mappings: [{ artistId: "artist-1", name: "YUSSI", spotifyArtistId: "spotify-yussi" }],
+      });
+
+      await expect(
+        provider.scan({
+          filter: { provider: "spotify" },
+          onReleaseTrackError,
+          onReleaseTrackPage,
+        }),
+      ).rejects.toThrow(errorName);
+      expect(onReleaseTrackPage).toHaveBeenCalledWith(
+        expect.objectContaining({ nextOffset: 1, offset: 0, terminal: false }),
+      );
+      expect(onReleaseTrackError).toHaveBeenCalledWith(
+        expect.objectContaining({ classification, status }),
+      );
+    },
+  );
+
+  it("does not treat a short intermediate album page as complete", async () => {
+    const summary = albumSummary("album-short", "Short Page Album", "2026-07-20");
+    summary.total_tracks = 2;
+    const album = albumWithTrack(summary);
+    album.tracks.limit = 50;
+    album.tracks.total = 2;
+    album.tracks.next = "https://api.spotify.com/v1/albums/album-short/tracks?offset=50&limit=50";
+    const client = {
+      getAlbum: vi.fn().mockResolvedValue(album),
+      getAlbumTracksPage: vi.fn().mockResolvedValue({
+        items: [spotifyTrack(2)],
+        next: null,
+        offset: 50,
+        total: 2,
+      }),
+      getArtistAlbumsPage: vi
+        .fn()
+        .mockResolvedValue({ items: [summary], nextOffset: null, offset: 0, total: 1 }),
+      metrics: { failures: 0, rateLimitWaitMs: 0, requests: 3 },
+    } as unknown as SpotifyClient;
+    const onReleaseTrackPage = vi.fn<(page: ProviderReleaseTrackPage) => Promise<void>>();
+    onReleaseTrackPage.mockResolvedValue(undefined);
+    const provider = new SpotifyProvider({
+      client,
+      mappings: [{ artistId: "artist-1", name: "YUSSI", spotifyArtistId: "spotify-yussi" }],
+    });
+
+    await provider.scan({ filter: { provider: "spotify" }, onReleaseTrackPage });
+
+    const firstPage = onReleaseTrackPage.mock.calls[0]?.[0];
+    expect(Array.isArray(firstPage?.items)).toBe(true);
+    expect(firstPage?.terminal).toBe(false);
+    expect(onReleaseTrackPage).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ offset: 50, terminal: true }),
+    );
+  });
 });
+
+function spotifyTrack(position: number) {
+  return {
+    artists: [spotifyArtist],
+    disc_number: position > 20 ? 2 : 1,
+    duration_ms: 180_000,
+    explicit: false,
+    external_urls: { spotify: `https://open.spotify.com/track/track-${position}` },
+    id: `track-${position}`,
+    is_local: false,
+    is_playable: true,
+    name: `Track ${position}`,
+    track_number: position > 20 ? position - 20 : position,
+    type: "track" as const,
+    uri: `spotify:track:track-${position}`,
+  };
+}
 
 function albumSummary(id: string, name: string, releaseDate: string): SpotifyAlbumSummary {
   return {

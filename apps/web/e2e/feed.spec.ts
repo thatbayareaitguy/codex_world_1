@@ -98,6 +98,7 @@ test("includes the artist in grouped release headings", async ({ page }) => {
       releaseTitle: "Inverse",
       releaseType: "ep" as const,
       title: "Primordium",
+      trackNumber: 2,
     },
     {
       ...groupedBase,
@@ -106,6 +107,7 @@ test("includes the artist in grouped release headings", async ({ page }) => {
       releaseTitle: "Inverse",
       releaseType: "ep" as const,
       title: "Scission",
+      trackNumber: 1,
     },
   ];
 
@@ -118,8 +120,83 @@ test("includes the artist in grouped release headings", async ({ page }) => {
   await page.goto("/?e2e-scan-status=database#feed");
   const group = page.getByRole("region", { name: "Au5 - Inverse Ep" });
   await expect(group.locator(".release-feed-group-title strong")).toHaveText("Au5 - Inverse");
+  await expect(group.getByRole("article").getByRole("heading")).toHaveText([
+    "Au5 - Scission",
+    "Au5 - Primordium",
+  ]);
   await group.getByRole("button", { name: "Collapse Au5 - Inverse Ep" }).click();
   await expect(group.getByRole("button", { name: "Expand Au5 - Inverse Ep" })).toBeVisible();
+});
+
+test("shows one canonical recording in each distinct release appearance", async ({ page }) => {
+  const sharedRecording = feedFixtures[0]!;
+  const appearances = [
+    {
+      ...sharedRecording,
+      id: "single-appearance",
+      releaseId: "single-release",
+      releaseTitle: "Signal Single",
+      releaseType: "single" as const,
+      title: "Shared Signal",
+    },
+    {
+      ...sharedRecording,
+      id: "album-appearance",
+      releaseId: "album-release",
+      releaseTitle: "Signal Album",
+      releaseType: "album" as const,
+      title: "Shared Signal",
+    },
+  ];
+  await page.route("**/api/feed**", async (route) => {
+    await route.fulfill({
+      json: { count: appearances.length, items: appearances, revision: "release-appearances" },
+    });
+  });
+
+  await page.goto("/?e2e-scan-status=database#feed");
+  await expect(page.getByRole("heading", { name: /Shared Signal/ })).toHaveCount(2);
+  await expect(page.getByText("Signal Single", { exact: true })).toBeVisible();
+  await expect(page.getByText("Signal Album", { exact: true })).toBeVisible();
+});
+
+test("labels complete and incomplete Spotify album retrievals", async ({ page }) => {
+  const base = feedFixtures[0]!;
+  const items = [
+    {
+      ...base,
+      id: "partial-album-item",
+      releaseCompleteness: {
+        expectedTracks: 25,
+        fetchedTracks: 20,
+        missingTracks: 5,
+        status: "partial" as const,
+      },
+      releaseId: "partial-album",
+      releaseTitle: "Partial Album",
+      title: "Partial Track",
+    },
+    {
+      ...base,
+      id: "complete-album-item",
+      releaseCompleteness: {
+        expectedTracks: 25,
+        fetchedTracks: 25,
+        missingTracks: 0,
+        status: "completed" as const,
+      },
+      releaseId: "complete-album",
+      releaseTitle: "Complete Album",
+      title: "Complete Track",
+    },
+  ];
+  await page.route("**/api/feed**", async (route) => {
+    await route.fulfill({ json: { count: items.length, items, revision: "album-completeness" } });
+  });
+
+  await page.goto("/?e2e-scan-status=database#feed");
+  await expect(page.getByRole("status").filter({ hasText: "5 tracks missing" })).toBeVisible();
+  await expect(page.getByTitle("All provider album tracks persisted")).toHaveText("Complete");
 });
 
 test("defaults scan history to the meaningful batch and inspects other run types", async ({
@@ -954,6 +1031,71 @@ test("persists a manual review decision across feed refresh and page reload", as
   expect(decisionRequestCount).toBe(1);
 });
 
+test("Keep separate retains the existing and newly separated discoveries", async ({ page }) => {
+  let resolved = false;
+  const review = {
+    ...feedFixtures[1]!,
+    id: "55555555-5555-4555-8555-555555555555",
+  };
+  const existing = {
+    ...feedFixtures[1]!,
+    id: "66666666-6666-4666-8666-666666666666",
+    releaseTitle: "Static Bloom",
+    state: "new" as const,
+    title: "Static Bloom",
+  };
+  const separated = { ...review, state: "new" as const };
+  await page.route("**/api/musicbrainz/mappings", async (route) => {
+    await route.fulfill({ json: { mappings: [], reviews: [] } });
+  });
+  await page.route("**/api/feed**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.startsWith("/api/feed-items/")) {
+      expect(route.request().postDataJSON()).toEqual({ reviewDecision: "separate" });
+      resolved = true;
+      await route.fulfill({
+        json: {
+          resolution: {
+            decision: "separate",
+            feedItemId: review.id,
+            removed: false,
+            state: "new",
+          },
+        },
+      });
+      return;
+    }
+    const items = resolved ? [existing, separated] : [existing, review];
+    if (url.searchParams.get("mode") === "revision") {
+      await route.fulfill({
+        json: { count: items.length, revision: resolved ? "separate-resolved" : "separate-open" },
+      });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        count: items.length,
+        items,
+        revision: resolved ? "separate-resolved" : "separate-open",
+      },
+    });
+  });
+
+  await page.goto("/?e2e-scan-status=database#review");
+  await page.getByRole("button", { name: "Keep separate" }).click();
+  await expect(page.getByText("No items need review.")).toBeVisible();
+  await page.getByRole("link", { name: /^Discovery feed/ }).click();
+  await expect(
+    page.getByRole("heading", { exact: true, name: "Oxide Echo - Static Bloom" }),
+  ).toHaveCount(2);
+  await expect(page.locator(".item-facts").getByText("Static Bloom", { exact: true })).toHaveCount(
+    1,
+  );
+  await expect(
+    page.locator(".item-facts").getByText("Static Bloom (session take)", { exact: true }),
+  ).toHaveCount(1);
+});
+
 test("adds, pauses, enables, and removes a Reddit source without a Reddit request", async ({
   page,
 }) => {
@@ -1052,6 +1194,7 @@ test("controls persisted Spotify batches without bypassing cooldown state", asyn
   const runId = "44444444-4444-4444-8444-444444444444";
   const actions: string[] = [];
   let batchStatus = "running";
+  let blockedMappingArtists = 0;
   let cooldownActive = false;
   const scanPayload = () => ({
     active:
@@ -1093,7 +1236,7 @@ test("controls persisted Spotify batches without bypassing cooldown state", asyn
         requestCount: 35,
         reviewCount: 1,
         startedAt: "2026-07-17T20:00:00.000Z",
-        status: batchStatus,
+        status: batchStatus === "blocked_mapping" ? "partial" : batchStatus,
         triggerType: "provider_manual",
         updatedCount: 0,
       },
@@ -1106,12 +1249,13 @@ test("controls persisted Spotify batches without bypassing cooldown state", asyn
         artistScans: [
           {
             artistId: "33333333-3333-4333-8333-333333333333",
-            errorClassification: null,
+            errorClassification: blockedMappingArtists ? "spotify_mapping_missing" : null,
             id: artistScanId,
             position: 0,
-            status: batchStatus,
+            status: blockedMappingArtists ? "blocked_mapping" : batchStatus,
           },
         ],
+        blockedMappingArtists,
         cancelledArtists: 0,
         completedArtists: batchStatus === "completed" ? 15 : 3,
         confirmationRequired: batchStatus === "paused",
@@ -1215,4 +1359,11 @@ test("controls persisted Spotify batches without bypassing cooldown state", asyn
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Deep reconciliation" }).click();
   expect(actions).toContain("start_reconciliation");
+
+  blockedMappingArtists = 1;
+  batchStatus = "blocked_mapping";
+  await page.reload();
+  await expect(spotifyStatus.locator(".spotify-scan-grid")).toContainText("Blocked mapping");
+  await expect(spotifyStatus.locator(".spotify-scan-grid")).toContainText("1");
+  await expect(page.getByRole("button", { name: "Retry one artist" })).toBeVisible();
 });

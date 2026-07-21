@@ -903,6 +903,22 @@ select:focus-visible {
   font-weight: 700;
   white-space: nowrap;
 }
+.release-completeness {
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.release-completeness.is-complete {
+  color: #3d6a30;
+  background: #e6f0df;
+}
+.release-completeness.is-incomplete {
+  color: #745112;
+  background: #f3e2bc;
+}
 .release-feed-group-items {
   display: grid;
   gap: 8px;

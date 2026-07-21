@@ -11,10 +11,12 @@ export type SpotifyArtistProgressStatus =
   | "paused"
   | "cancelled"
   | "rate_limited"
+  | "blocked_mapping"
   | "failed";
 
 export interface SpotifyBatchArtistInput {
   artistId: string;
+  spotifyArtistId?: string;
 }
 
 export async function createSpotifyScanBatch(
@@ -47,6 +49,7 @@ export async function createSpotifyScanBatch(
       artistId: artist.artistId,
       batchId: batch.id,
       position,
+      providerArtistId: artist.spotifyArtistId,
       status: input.confirmationRequired ? ("paused" as const) : ("pending" as const),
     })),
   );
@@ -222,11 +225,69 @@ export async function retrySpotifyArtist(
     .where(
       and(
         eq(spotifyArtistScans.id, artistScanId),
-        inArray(spotifyArtistScans.status, ["failed", "rate_limited", "cancelled"]),
+        inArray(spotifyArtistScans.status, [
+          "failed",
+          "rate_limited",
+          "cancelled",
+          "blocked_mapping",
+        ]),
       ),
     )
     .returning({ id: spotifyArtistScans.id });
   return rows.length === 1;
+}
+
+export async function reconcileSpotifyBatchMappings(
+  db: RadarDatabase,
+  batchId: string,
+  mappings: Array<{ artistId: string; spotifyArtistId: string }>,
+): Promise<void> {
+  const currentByArtist = new Map(
+    mappings.map((mapping) => [mapping.artistId, mapping.spotifyArtistId] as const),
+  );
+  const rows = await db.query.spotifyArtistScans.findMany({
+    where: and(
+      eq(spotifyArtistScans.batchId, batchId),
+      inArray(spotifyArtistScans.status, [
+        "pending",
+        "running",
+        "paused",
+        "rate_limited",
+        "blocked_mapping",
+      ]),
+    ),
+  });
+  for (const row of rows) {
+    const current = currentByArtist.get(row.artistId);
+    const expected = row.providerArtistId;
+    if (!current || (expected !== null && expected !== current)) {
+      await db
+        .update(spotifyArtistScans)
+        .set({
+          errorClassification: current ? "spotify_mapping_changed" : "spotify_mapping_missing",
+          finishedAt: new Date(),
+          lastHeartbeatAt: new Date(),
+          status: "blocked_mapping",
+          updatedAt: new Date(),
+        })
+        .where(eq(spotifyArtistScans.id, row.id));
+      continue;
+    }
+    if (row.status === "blocked_mapping" || expected === null) {
+      await db
+        .update(spotifyArtistScans)
+        .set({
+          errorClassification: null,
+          finishedAt: null,
+          providerArtistId: current,
+          startedAt: null,
+          status: "pending",
+          updatedAt: new Date(),
+        })
+        .where(eq(spotifyArtistScans.id, row.id));
+    }
+  }
+  await refreshSpotifyBatchCounts(db, batchId);
 }
 
 export async function latestSpotifyBatch(db: RadarDatabase) {
@@ -262,13 +323,16 @@ async function refreshSpotifyBatchCounts(db: RadarDatabase, batchId: string): Pr
         ? "rate_limited"
         : remaining > 0
           ? "running"
-          : count("failed") > 0
-            ? "failed"
-            : "completed";
+          : count("blocked_mapping") > 0
+            ? "blocked_mapping"
+            : count("failed") > 0
+              ? "failed"
+              : "completed";
   await db
     .update(spotifyScanBatches)
     .set({
       cancelledArtists: count("cancelled"),
+      blockedMappingArtists: count("blocked_mapping"),
       completedArtists: count("completed"),
       failedArtists: count("failed"),
       finishedAt: remaining === 0 ? new Date() : null,

@@ -5,8 +5,11 @@ import {
   playlistExports,
   releaseCandidates,
   releaseExternalIds,
+  releaseTrackAppearances,
+  releaseTrackAppearanceSources,
   releases,
   sourceEvidence,
+  spotifyReleaseTrackRetrievals,
   trackAvailabilities,
   trackCredits,
   tracks,
@@ -49,10 +52,13 @@ export async function loadDatabaseFeedSnapshot(databaseUrl: string): Promise<Dat
       trackRows,
       releaseRows,
       releaseExternalIdRows,
+      appearanceRows,
+      appearanceSourceRows,
       creditRows,
       evidenceRows,
       availabilityRows,
       exportRows,
+      releaseTrackRetrievalRows,
       revisionRows,
     ] = await Promise.all([
       connection.db.select().from(feedItems),
@@ -60,10 +66,13 @@ export async function loadDatabaseFeedSnapshot(databaseUrl: string): Promise<Dat
       connection.db.select().from(tracks),
       connection.db.select().from(releases),
       connection.db.select().from(releaseExternalIds),
+      connection.db.select().from(releaseTrackAppearances),
+      connection.db.select().from(releaseTrackAppearanceSources),
       connection.db.select().from(trackCredits),
       connection.db.select().from(sourceEvidence),
       connection.db.select().from(trackAvailabilities),
       connection.db.select().from(playlistExports),
+      connection.db.select().from(spotifyReleaseTrackRetrievals),
       connection.db.select({ count: count(), updatedAt: max(feedItems.updatedAt) }).from(feedItems),
     ]);
 
@@ -71,16 +80,26 @@ export async function loadDatabaseFeedSnapshot(databaseUrl: string): Promise<Dat
       const candidate = candidateRows.find((row) => row.id === feed.candidateId);
       if (!candidate) return [];
       const track = trackRows.find((row) => row.id === feed.trackId);
-      const release = releaseRows.find((row) => row.id === (feed.releaseId ?? track?.releaseId));
+      const appearance = appearanceRows.find((row) => row.id === feed.appearanceId);
+      const release = releaseRows.find(
+        (row) => row.id === (appearance?.releaseId ?? feed.releaseId ?? track?.releaseId),
+      );
       const credits = creditRows
         .filter((row) => row.trackId === feed.trackId)
         .sort((left, right) => left.creditOrder - right.creditOrder);
+      const appearanceCandidateIds = appearance
+        ? appearanceSourceRows
+            .filter((row) => row.appearanceId === appearance.id)
+            .map((row) => row.candidateId)
+        : [];
       const relatedCandidateIds = new Set(
-        candidateRows
-          .filter((row) =>
-            feed.trackId ? row.matchedTrackId === feed.trackId : row.id === candidate.id,
-          )
-          .map((row) => row.id),
+        appearanceCandidateIds.length > 0
+          ? appearanceCandidateIds
+          : candidateRows
+              .filter((row) =>
+                feed.trackId ? row.matchedTrackId === feed.trackId : row.id === candidate.id,
+              )
+              .map((row) => row.id),
       );
       const evidence = evidenceRows.filter((row) => relatedCandidateIds.has(row.candidateId));
       const hasSpotifyEvidence = evidence.some((row) => row.provider === "spotify");
@@ -92,6 +111,9 @@ export async function loadDatabaseFeedSnapshot(databaseUrl: string): Promise<Dat
         ? (storedSpotifyArtwork ??
           parseSpotifyReleaseArtwork(providerField(candidate.rawPayload, "spotifyRelease")))
         : null;
+      const releaseCompleteness = releaseTrackRetrievalRows.find(
+        (row) => row.releaseId === release?.id,
+      );
       const availabilities = availabilityRows.filter((row) => row.trackId === feed.trackId);
       const spotify = availabilities.find((row) => row.provider === "spotify");
       const exported = exportRows.some(
@@ -118,6 +140,7 @@ export async function loadDatabaseFeedSnapshot(databaseUrl: string): Promise<Dat
               : spotifyState === "playable" && exact
                 ? "eligible"
                 : "blocked",
+          ...(appearance ? { discNumber: appearance.discNumber } : {}),
           firstSeenAt: feed.firstSeenAt.toISOString(),
           id: feed.id,
           listened: feed.listenedAt !== null || feed.state === "listened",
@@ -130,8 +153,24 @@ export async function loadDatabaseFeedSnapshot(databaseUrl: string): Promise<Dat
             release?.releaseDatePrecision === "year" || release?.releaseDatePrecision === "month"
               ? release.releaseDatePrecision
               : "day",
+          ...(releaseCompleteness
+            ? {
+                releaseCompleteness: {
+                  expectedTracks: releaseCompleteness.expectedTotalTracks,
+                  fetchedTracks: releaseCompleteness.fetchedTrackCount,
+                  missingTracks: Math.max(
+                    0,
+                    releaseCompleteness.expectedTotalTracks - releaseCompleteness.fetchedTrackCount,
+                  ),
+                  status: releaseCompleteness.status,
+                },
+              }
+            : {}),
           releaseTitle: release?.title ?? candidate.title,
           releaseType: release?.releaseType ?? "other",
+          ...(appearance?.providerOrder !== null && appearance?.providerOrder !== undefined
+            ? { providerOrder: appearance.providerOrder }
+            : {}),
           saved: feed.savedAt !== null || feed.state === "saved",
           soundcloudState: "NOT_CHECKED",
           sources,
@@ -139,6 +178,7 @@ export async function loadDatabaseFeedSnapshot(databaseUrl: string): Promise<Dat
           ...(spotifyArtwork ? { spotifyArtwork } : {}),
           state: primaryState,
           title: track?.title ?? candidate.title,
+          ...(appearance ? { trackNumber: appearance.trackNumber } : {}),
         },
       ];
     });
