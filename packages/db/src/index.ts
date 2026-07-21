@@ -4,6 +4,7 @@ export * from "./feed-preferences";
 export * from "./reddit-repositories";
 export * from "./operations";
 export * from "./schema";
+export * from "./scan-history";
 export * from "./spotify-tokens";
 export * from "./spotify-request-gate";
 export * from "./spotify-batches";

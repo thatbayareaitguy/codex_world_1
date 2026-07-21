@@ -129,6 +129,27 @@ interface ScanRunStatus {
   status: "running" | "completed" | "partial" | "failed" | "cancelled" | "paused" | "rate_limited";
 }
 
+interface ScanHistoryEntry {
+  artistCount: number | null;
+  artistFilter: string | null;
+  batchId: string | null;
+  batchMode: string | null;
+  completedAt: string | null;
+  createdCount: number;
+  dryRun: boolean;
+  failureCount: number | null;
+  id: string;
+  partialArtistCount: number | null;
+  provider: string | null;
+  providersRequested: string[];
+  requestCount: number | null;
+  reviewCount: number;
+  startedAt: string;
+  status: string;
+  triggerType: string;
+  updatedCount: number;
+}
+
 interface ActiveScanStatus {
   cancelRequested: boolean;
   completedUnits: number;
@@ -151,6 +172,8 @@ interface ActiveScanStatus {
 
 interface ScanApiStatus {
   active: ActiveScanStatus | null;
+  defaultHistoryId: string | null;
+  history: ScanHistoryEntry[];
   latest: ScanRunStatus | null;
   running: boolean;
   runs: ScanRunStatus[];
@@ -269,6 +292,9 @@ export function RadarShell({
   const [cancellingScan, setCancellingScan] = useState(false);
   const [scanStatus, setScanStatus] = useState<ScanApiStatus | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [scanStatusState, setScanStatusState] = useState<"idle" | "loading" | "loaded" | "error">(
+    "idle",
+  );
   const [exactOnly, setExactOnly] = useState(false);
   const [advancedFilters, setAdvancedFilters] = useState<FeedAdvancedFilters>({
     artist: "all",
@@ -325,11 +351,15 @@ export function RadarShell({
     let cancelled = false;
     const loadScanStatus = async () => {
       try {
+      if (!cancelled) setScanStatusState((current) => (current === "idle" ? "loading" : current));
         const response = await fetch("/api/scans", { cache: "no-store" });
         const status = scanStatusSchema.parse(await response.json());
-        if (!cancelled && response.ok) setScanStatus(status);
+        if (!cancelled && response.ok) {
+          setScanStatus(status);
+          setScanStatusState("loaded");
+        }
       } catch {
-        // The feed remains usable when scan status is temporarily unavailable.
+        if (!cancelled) setScanStatusState("error");
       }
     };
     void loadScanStatus();
@@ -1032,6 +1062,7 @@ export function RadarShell({
             watchlistMode={activeWatchlistMode}
           />
         )}
+            scanStatusState={scanStatusState}
         {activeView === "exports" && (
           <ExportsView
             items={items}
@@ -1230,6 +1261,7 @@ function FeedView({
   pendingFeedActions,
   ready,
   reviewCount,
+  scanStatusState: "idle" | "loading" | "loaded" | "error";
   scanStatus,
   summaryItems,
   cancellingScan,
@@ -1264,6 +1296,7 @@ function FeedView({
         (spotifyBatch.estimatedRequests / Math.max(spotifyBatch.totalArtists, 1)) *
           spotifyRemaining,
       )
+  scanStatusState,
     : 0;
   const estimatedMinimumMs =
     estimatedRemainingRequests * (scanStatus?.spotify.limiter.minRequestIntervalMs ?? 5_000);
@@ -1271,6 +1304,7 @@ function FeedView({
   const observedRequestRate =
     activeScan?.heartbeatAt && activeScan.requests > 0
       ? activeScan.requests /
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
         Math.max(
           (new Date(activeScan.heartbeatAt).getTime() - new Date(activeScan.startedAt).getTime()) /
             60_000,
@@ -1278,6 +1312,19 @@ function FeedView({
         )
       : 0;
   const finishedProviderCount = activeScan
+  const scanHistory = scanStatus?.history ?? [];
+  const selectedHistoryRun =
+    scanHistory.find((run) => run.id === selectedHistoryId) ??
+    scanHistory.find((run) => run.id === scanStatus?.defaultHistoryId) ??
+    scanHistory[0] ??
+    null;
+  useEffect(() => {
+    setSelectedHistoryId((current) =>
+      current && scanHistory.some((run) => run.id === current)
+        ? current
+        : (scanStatus?.defaultHistoryId ?? scanHistory[0]?.id ?? null),
+    );
+  }, [scanHistory, scanStatus?.defaultHistoryId]);
     ? new Set([...activeScan.providersCompleted, ...activeScan.providersFailed]).size
     : 0;
   const providerCount = activeScan?.providersRequested.length ?? 0;
@@ -1292,6 +1339,12 @@ function FeedView({
       ? "Cancellation requested"
       : activeScan?.phase === "rate_limit_wait" && activeScan.currentProvider
         ? `${titleCase(activeScan.currentProvider)} rate limit wait | retrying in ${Math.ceil(
+  const showSpotifyOperationalPanel = Boolean(
+    spotifyBatch &&
+    (scanStatus?.running ||
+      ["pending", "running", "paused", "rate_limited"].includes(spotifyBatch.status) ||
+      retryableArtist),
+  );
             activeScan.retryAfterMs / 1_000,
           )} seconds`
         : activeScan?.totalUnits && activeScan.currentProvider
@@ -1467,32 +1520,55 @@ function FeedView({
         </div>
       )}
 
-      {feedMode === "database" && musicbrainzBatch && (
-        <section className="spotify-scan-status" aria-label="MusicBrainz scan status">
-          <div className="spotify-scan-status-heading">
-            <div>
-              <strong>MusicBrainz discovery</strong>
-              <span>
-                {musicbrainzBatch.completedArtists} of {musicbrainzBatch.totalArtists} artists |{" "}
-                {titleCase(musicbrainzBatch.status)}
-              </span>
-            </div>
-            {["paused", "cancelled", "failed"].includes(musicbrainzBatch.status) &&
-              musicbrainzBatch.completedArtists < musicbrainzBatch.totalArtists && (
-                <button
-                  className="primary-button"
-                  disabled={Boolean(scanStatus?.running)}
-                  onClick={() => onMusicBrainzResume(musicbrainzBatch.id)}
-                  type="button"
-                >
-                  Resume MusicBrainz
-                </button>
-              )}
-          </div>
-        </section>
+      {feedMode === "database" && !scanInProgress && (
+        <ScanHistoryPanel
+          history={scanHistory}
+          onSelect={setSelectedHistoryId}
+          onStartReconciliation={() => {
+            if (
+              window.confirm(
+                "Start a deep reconciliation batch? It may inspect up to 10 album pages per artist and will use the five-second global request interval.",
+              )
+            ) {
+              onSpotifyBatchAction("start_reconciliation", "");
+            }
+          }}
+          selectedRun={selectedHistoryRun}
+          state={scanStatusState}
+          spotifyCooldown={spotifyCooldown}
+        />
       )}
 
-      {feedMode === "database" && spotifyBatch && (
+      {feedMode === "database" &&
+        musicbrainzBatch &&
+        (scanStatus?.running ||
+          (["paused", "cancelled", "failed"].includes(musicbrainzBatch.status) &&
+            musicbrainzBatch.completedArtists < musicbrainzBatch.totalArtists)) && (
+          <section className="spotify-scan-status" aria-label="MusicBrainz scan status">
+            <div className="spotify-scan-status-heading">
+              <div>
+                <strong>MusicBrainz discovery</strong>
+                <span>
+                  {musicbrainzBatch.completedArtists} of {musicbrainzBatch.totalArtists} artists |{" "}
+                  {titleCase(musicbrainzBatch.status)}
+                </span>
+              </div>
+              {["paused", "cancelled", "failed"].includes(musicbrainzBatch.status) &&
+                musicbrainzBatch.completedArtists < musicbrainzBatch.totalArtists && (
+                  <button
+                    className="primary-button"
+                    disabled={Boolean(scanStatus?.running)}
+                    onClick={() => onMusicBrainzResume(musicbrainzBatch.id)}
+                    type="button"
+                  >
+                    Resume MusicBrainz
+                  </button>
+                )}
+            </div>
+          </section>
+        )}
+
+      {feedMode === "database" && showSpotifyOperationalPanel && spotifyBatch && (
         <section
           className={`spotify-scan-status ${spotifyStatusCollapsed ? "is-collapsed" : ""}`}
           aria-label="Spotify scan status"
@@ -1933,6 +2009,152 @@ function ArtistsView({
   const [formError, setFormError] = useState<string | null>(null);
   const [artistSearch, setArtistSearch] = useState("");
   const [sortOrder, setSortOrder] = useState<ArtistSort>("name-asc");
+function ScanHistoryPanel({
+  history,
+  onSelect,
+  onStartReconciliation,
+  selectedRun,
+  spotifyCooldown,
+  state,
+}: {
+  history: ScanHistoryEntry[];
+  onSelect: (id: string) => void;
+  onStartReconciliation: () => void;
+  selectedRun: ScanHistoryEntry | null;
+  spotifyCooldown: boolean;
+  state: "idle" | "loading" | "loaded" | "error";
+}) {
+  return (
+    <section className="spotify-scan-status scan-history-panel" aria-label="Scan history status">
+      <div className="spotify-scan-status-heading">
+        <div>
+          <strong>Scan history</strong>
+          <span>
+            {selectedRun ? scanHistoryRunLabel(selectedRun) : "Previously persisted scan results"}
+          </span>
+        </div>
+        {history.length > 0 && selectedRun && (
+          <div className="scan-history-actions">
+            <label>
+              <span>Inspect scan</span>
+              <select
+                aria-label="Inspect scan history"
+                onChange={(event) => onSelect(event.target.value)}
+                value={selectedRun.id}
+              >
+                {history.map((run) => (
+                  <option key={run.id} value={run.id}>
+                    {scanHistoryOptionLabel(run)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selectedRun.provider === "spotify" &&
+              ["completed", "failed", "cancelled"].includes(selectedRun.status) && (
+                <button
+                  className="secondary-button"
+                  disabled={spotifyCooldown}
+                  onClick={onStartReconciliation}
+                  type="button"
+                >
+                  Deep reconciliation
+                </button>
+              )}
+          </div>
+        )}
+      </div>
+
+      {(state === "idle" || state === "loading") && (
+        <div className="scan-history-state" role="status">
+          Loading scan history...
+        </div>
+      )}
+      {state === "error" && (
+        <div className="scan-history-state form-error" role="alert">
+          Scan history is temporarily unavailable. The application will retry automatically.
+        </div>
+      )}
+      {state === "loaded" && history.length === 0 && (
+        <div className="scan-history-state empty-inline">No scan history is recorded.</div>
+      )}
+      {state === "loaded" && selectedRun && (
+        <>
+          <dl className="spotify-scan-grid scan-history-grid">
+            <div>
+              <dt>Scan ID</dt>
+              <dd className="monospace-value">{selectedRun.id}</dd>
+            </div>
+            <div>
+              <dt>Status</dt>
+              <dd>{titleCase(selectedRun.status)}</dd>
+            </div>
+            <div>
+              <dt>Trigger</dt>
+              <dd>{titleCase(selectedRun.triggerType)}</dd>
+            </div>
+            <div>
+              <dt>Provider</dt>
+              <dd>{scanHistoryProviderLabel(selectedRun)}</dd>
+            </div>
+            <div>
+              <dt>Artists</dt>
+              <dd>{formatKnownCount(selectedRun.artistCount)}</dd>
+            </div>
+            <div>
+              <dt>Started</dt>
+              <dd>{new Date(selectedRun.startedAt).toLocaleString()}</dd>
+            </div>
+            <div>
+              <dt>Finished</dt>
+              <dd>
+                {selectedRun.completedAt
+                  ? new Date(selectedRun.completedAt).toLocaleString()
+                  : "Unavailable"}
+              </dd>
+            </div>
+            <div>
+              <dt>Duration</dt>
+              <dd>{formatScanHistoryDuration(selectedRun)}</dd>
+            </div>
+            <div>
+              <dt>Requests</dt>
+              <dd>{formatKnownCount(selectedRun.requestCount)}</dd>
+            </div>
+            <div>
+              <dt>Created records</dt>
+              <dd>{selectedRun.createdCount}</dd>
+            </div>
+            <div>
+              <dt>Updated records</dt>
+              <dd>{selectedRun.updatedCount}</dd>
+            </div>
+            <div>
+              <dt>Partial artists</dt>
+              <dd>{formatKnownCount(selectedRun.partialArtistCount)}</dd>
+            </div>
+            <div>
+              <dt>Failures</dt>
+              <dd>{formatKnownCount(selectedRun.failureCount)}</dd>
+            </div>
+            <div>
+              <dt>Review items</dt>
+              <dd>{selectedRun.reviewCount}</dd>
+            </div>
+            <div>
+              <dt>Dry run</dt>
+              <dd>{selectedRun.dryRun ? "Yes" : "No"}</dd>
+            </div>
+          </dl>
+          <small>
+            Historical values come from persisted scan and batch records. Unavailable values were
+            not stored by that scan.
+          </small>
+        </>
+      )}
+    </section>
+  );
+}
+
   const [editingArtistId, setEditingArtistId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
   const [profileArtistId, setProfileArtistId] = useState<string | null>(null);
@@ -3463,7 +3685,29 @@ function ScanHistory({ databaseConfigured }: { databaseConfigured: boolean }) {
     setState("loading");
     try {
       const response = await fetch("/api/scans");
+const scanHistoryEntrySchema = z.object({
+  artistCount: z.number().int().nonnegative().nullable(),
+  artistFilter: z.string().nullable(),
+  batchId: z.string().uuid().nullable(),
+  batchMode: z.string().nullable(),
+  completedAt: z.string().datetime().nullable(),
+  createdCount: z.number().int().nonnegative(),
+  dryRun: z.boolean(),
+  failureCount: z.number().int().nonnegative().nullable(),
+  id: z.string().uuid(),
+  partialArtistCount: z.number().int().nonnegative().nullable(),
+  provider: z.string().nullable(),
+  providersRequested: z.array(z.string()),
+  requestCount: z.number().int().nonnegative().nullable(),
+  reviewCount: z.number().int().nonnegative(),
+  startedAt: z.string().datetime(),
+  status: z.string(),
+  triggerType: z.string(),
+  updatedCount: z.number().int().nonnegative(),
+});
+
       if (!response.ok) throw new Error("History request failed");
+  history: z.array(scanHistoryEntrySchema),
       const payload = scanHistorySchema.parse(await response.json());
       setRuns(payload.runs);
       setState("loaded");
@@ -4271,6 +4515,8 @@ const scanStatusSchema = z.object({
     .default({
       batch: null,
       operational: {
+  defaultHistoryId: z.string().uuid().nullable(),
+  history: z.array(scanHistoryEntrySchema),
         lastRequestStartedAt: null,
         nextRequestAt: null,
         queueDepth: 0,
@@ -4362,6 +4608,46 @@ interface FeedScrollAnchor {
 function captureVisibleFeedAnchor(): FeedScrollAnchor | null {
   const anchor = Array.from(document.querySelectorAll<HTMLElement>("[data-feed-anchor]")).find(
     (element) => element.getBoundingClientRect().bottom > 0,
+function formatKnownCount(value: number | null): string {
+  return value === null ? "Unavailable" : String(value);
+}
+
+function formatScanHistoryDuration(run: ScanHistoryEntry): string {
+  if (!run.completedAt) return "Unavailable";
+  const milliseconds = new Date(run.completedAt).getTime() - new Date(run.startedAt).getTime();
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return "Unavailable";
+  const seconds = Math.round(milliseconds / 1_000);
+  if (seconds < 60) return `${seconds} sec`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60) return `${minutes} min ${remainingSeconds} sec`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours} hr ${minutes % 60} min`;
+}
+
+function scanHistoryProviderLabel(run: ScanHistoryEntry): string {
+  const providers = run.provider ? [run.provider] : run.providersRequested;
+  return providers.length > 0
+    ? providers.map((provider) => titleCase(provider)).join(", ")
+    : "Unavailable";
+}
+
+function scanHistoryRunLabel(run: ScanHistoryEntry): string {
+  const kind =
+    run.artistCount === 1
+      ? "single-artist scan"
+      : run.artistCount && run.artistCount > 1
+        ? `${run.artistCount}-artist batch`
+        : "provider scan";
+  return `${scanHistoryProviderLabel(run)} ${kind}${run.dryRun ? " | dry run" : ""}`;
+}
+
+function scanHistoryOptionLabel(run: ScanHistoryEntry): string {
+  return `${scanHistoryRunLabel(run)} | ${titleCase(run.status)} | ${new Date(
+    run.startedAt,
+  ).toLocaleString()}`;
+}
+
   );
   return anchor?.dataset.feedAnchor
     ? { id: anchor.dataset.feedAnchor, top: anchor.getBoundingClientRect().top }

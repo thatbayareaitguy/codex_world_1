@@ -2,12 +2,14 @@ import {
   createDatabase,
   getSpotifyOperationalStatus,
   latestSpotifyBatch,
+  listScanHistory,
   musicbrainzArtistScans,
   musicbrainzProviderState,
   musicbrainzScanBatches,
   operationLocks,
   requestOperationCancellation,
   scanRuns,
+  selectDefaultScanHistoryEntry,
 } from "@radar/db";
 import { loadProviderConfiguration } from "@radar/providers";
 import { and, asc, desc, eq, gt } from "drizzle-orm";
@@ -53,6 +55,7 @@ export async function GET(): Promise<NextResponse> {
       activeScanLock,
       spotifyOperational,
       spotifyBatch,
+      history,
       musicbrainzState,
       musicbrainzBatch,
     ] = await Promise.all([
@@ -66,6 +69,7 @@ export async function GET(): Promise<NextResponse> {
       }),
       getSpotifyOperationalStatus(connection.db),
       latestSpotifyBatch(connection.db),
+      listScanHistory(connection.db),
       connection.db.query.musicbrainzProviderState.findFirst({
         where: eq(musicbrainzProviderState.id, "global"),
       }),
@@ -80,12 +84,15 @@ export async function GET(): Promise<NextResponse> {
           .where(eq(musicbrainzArtistScans.batchId, musicbrainzBatch.id))
           .orderBy(asc(musicbrainzArtistScans.position))
       : [];
+    const defaultHistory = selectDefaultScanHistoryEntry(history);
     const requestedProviders = configuredScanProviders(configuration, activeScanLock?.metadata);
     return NextResponse.json(
       {
         active: activeScanLock
           ? describeActiveScan(activeScanLock, runs, requestedProviders)
           : null,
+        defaultHistoryId: defaultHistory?.id ?? null,
+        history,
         latest: runs[0] ?? null,
         musicbrainz: {
           batch: musicbrainzBatch

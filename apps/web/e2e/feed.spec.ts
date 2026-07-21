@@ -86,6 +86,197 @@ test("shows externally persisted discoveries without reloading the page", async 
   await expect(page.getByRole("alert").filter({ hasText: "Feed refresh failed" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Glass Signal" })).toBeVisible();
 });
+test("defaults scan history to the meaningful batch and inspects other run types", async ({
+  page,
+}) => {
+  const batchRunId = "10000000-0000-4000-8000-000000000001";
+  const singleRunId = "10000000-0000-4000-8000-000000000002";
+  const dryRunId = "10000000-0000-4000-8000-000000000003";
+  const cancelledRunId = "10000000-0000-4000-8000-000000000004";
+  const pausedRunId = "10000000-0000-4000-8000-000000000005";
+  const history = [
+    {
+      artistCount: 1,
+      artistFilter: "20000000-0000-4000-8000-000000000001",
+      batchId: "30000000-0000-4000-8000-000000000001",
+      batchMode: "daily",
+      completedAt: "2026-07-21T04:15:17.792Z",
+      createdCount: 0,
+      dryRun: false,
+      failureCount: 0,
+      id: singleRunId,
+      partialArtistCount: 1,
+      provider: "spotify",
+      providersRequested: ["spotify"],
+      requestCount: 1,
+      reviewCount: 0,
+      startedAt: "2026-07-21T04:15:17.400Z",
+      status: "completed",
+      triggerType: "provider_manual",
+      updatedCount: 0,
+    },
+    {
+      artistCount: 50,
+      artistFilter: null,
+      batchId: "30000000-0000-4000-8000-000000000002",
+      batchMode: "daily",
+      completedAt: "2026-07-21T04:13:51.904Z",
+      createdCount: 90,
+      dryRun: false,
+      failureCount: 0,
+      id: batchRunId,
+      partialArtistCount: 50,
+      provider: "spotify",
+      providersRequested: ["spotify"],
+      requestCount: 102,
+      reviewCount: 1,
+      startedAt: "2026-07-21T04:04:55.085Z",
+      status: "completed",
+      triggerType: "provider_manual",
+      updatedCount: 0,
+    },
+    {
+      artistCount: 1,
+      artistFilter: "20000000-0000-4000-8000-000000000002",
+      batchId: null,
+      batchMode: null,
+      completedAt: "2026-07-20T02:00:01.000Z",
+      createdCount: 0,
+      dryRun: true,
+      failureCount: 1,
+      id: dryRunId,
+      partialArtistCount: null,
+      provider: "spotify",
+      providersRequested: ["spotify"],
+      requestCount: null,
+      reviewCount: 0,
+      startedAt: "2026-07-20T02:00:00.000Z",
+      status: "failed",
+      triggerType: "manual",
+      updatedCount: 0,
+    },
+    {
+      artistCount: 5,
+      artistFilter: null,
+      batchId: "30000000-0000-4000-8000-000000000003",
+      batchMode: "initial",
+      completedAt: "2026-07-19T18:31:06.474Z",
+      createdCount: 0,
+      dryRun: false,
+      failureCount: 0,
+      id: cancelledRunId,
+      partialArtistCount: 0,
+      provider: "spotify",
+      providersRequested: ["spotify"],
+      requestCount: 3,
+      reviewCount: 0,
+      startedAt: "2026-07-19T18:30:31.476Z",
+      status: "cancelled",
+      triggerType: "provider_manual",
+      updatedCount: 0,
+    },
+    {
+      artistCount: 15,
+      artistFilter: null,
+      batchId: "30000000-0000-4000-8000-000000000004",
+      batchMode: "initial",
+      completedAt: null,
+      createdCount: 0,
+      dryRun: false,
+      failureCount: 0,
+      id: pausedRunId,
+      partialArtistCount: 0,
+      provider: "spotify",
+      providersRequested: ["spotify"],
+      requestCount: 4,
+      reviewCount: 0,
+      startedAt: "2026-07-18T20:00:00.000Z",
+      status: "paused",
+      triggerType: "provider_manual",
+      updatedCount: 0,
+    },
+  ];
+
+  await page.route("**/api/scans", async (route) => {
+    await route.fulfill({
+      json: {
+        active: null,
+        defaultHistoryId: batchRunId,
+        history,
+        latest: null,
+        running: false,
+        runs: [],
+        spotify: {
+          batch: null,
+          limiter: {
+            artistsPerBatch: 15,
+            batchPauseSeconds: 60,
+            distributionHours: 24,
+            minRequestIntervalMs: 5000,
+          },
+          operational: {
+            canManualClear: false,
+            cooldownActive: false,
+            cooldownEndpointCategory: null,
+            cooldownErrorClassification: null,
+            cooldownIndefinite: false,
+            cooldownObservedAt: null,
+            cooldownUntil: null,
+            lastRequestStartedAt: null,
+            nextRequestAt: null,
+            parsedRetryAfterSeconds: null,
+            queueDepth: 0,
+            rawRetryAfter: null,
+            requestCount: 0,
+          },
+        },
+      },
+    });
+  });
+
+  await page.goto("/?e2e-scan-status=database#feed");
+  const panel = page.getByRole("region", { name: "Scan history status" });
+  const selector = panel.getByLabel("Inspect scan history");
+  const metric = (label: string) =>
+    panel
+      .locator(".scan-history-grid > div")
+      .filter({ has: page.getByText(label, { exact: true }) })
+      .locator("dd");
+
+  await expect(selector).toHaveValue(batchRunId);
+  await expect(panel.getByText("Spotify 50-artist batch", { exact: true })).toBeVisible();
+  await expect(metric("Scan ID")).toHaveText(batchRunId);
+  await expect(metric("Artists")).toHaveText("50");
+  await expect(metric("Requests")).toHaveText("102");
+  await expect(metric("Created records")).toHaveText("90");
+  await expect(metric("Updated records")).toHaveText("0");
+  await expect(metric("Partial artists")).toHaveText("50");
+  await expect(metric("Failures")).toHaveText("0");
+  await expect(metric("Dry run")).toHaveText("No");
+
+  await selector.selectOption(singleRunId);
+  await expect(panel.getByText("Spotify single-artist scan", { exact: true })).toBeVisible();
+  await expect(metric("Artists")).toHaveText("1");
+  await expect(metric("Requests")).toHaveText("1");
+
+  await selector.selectOption(dryRunId);
+  await expect(
+    panel.getByText("Spotify single-artist scan | dry run", { exact: true }),
+  ).toBeVisible();
+  await expect(metric("Status")).toHaveText("Failed");
+  await expect(metric("Requests")).toHaveText("Unavailable");
+  await expect(metric("Partial artists")).toHaveText("Unavailable");
+  await expect(metric("Failures")).toHaveText("1");
+  await expect(metric("Dry run")).toHaveText("Yes");
+
+  await expect(selector.locator("option")).toContainText([
+    "single-artist scan",
+    "50-artist batch",
+    "dry run",
+    "Cancelled",
+    "Paused",
+  ]);
+});
 
 test("runs a mock scan, opens evidence, changes status, and filters the feed", async ({ page }) => {
   await page.clock.setFixedTime(new Date("2026-07-19T12:00:00-07:00"));
@@ -821,6 +1012,7 @@ test("controls persisted Spotify batches without bypassing cooldown state", asyn
   await expect(spotifyStatus.getByText("Synthetic Artist")).toBeVisible();
   await page.getByRole("button", { name: "Pause after current request" }).click();
   await page.getByRole("button", { name: "Cancel future work" }).click();
+  const runId = "44444444-4444-4444-8444-444444444444";
   expect(actions).toEqual(["pause", "cancel"]);
 
   batchStatus = "paused";
@@ -841,3 +1033,27 @@ test("controls persisted Spotify batches without bypassing cooldown state", asyn
   await page.getByRole("button", { name: "Deep reconciliation" }).click();
   expect(actions).toContain("start_reconciliation");
 });
+    defaultHistoryId: runId,
+    history: [
+      {
+        artistCount: 15,
+        artistFilter: null,
+        batchId,
+        batchMode: "initial",
+        completedAt:
+          batchStatus === "running" || batchStatus === "paused" ? null : "2026-07-17T21:15:00.000Z",
+        createdCount: 12,
+        dryRun: false,
+        failureCount: 0,
+        id: runId,
+        partialArtistCount: 0,
+        provider: "spotify",
+        providersRequested: ["spotify"],
+        requestCount: 35,
+        reviewCount: 1,
+        startedAt: "2026-07-17T20:00:00.000Z",
+        status: batchStatus,
+        triggerType: "provider_manual",
+        updatedCount: 0,
+      },
+    ],

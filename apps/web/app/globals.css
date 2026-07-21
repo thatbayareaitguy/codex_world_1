@@ -639,10 +639,55 @@ select:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.scan-history-actions {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.scan-history-actions label {
+  min-width: min(390px, 100%);
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.scan-history-actions select {
+  width: 100%;
+  min-width: 0;
+}
+
+.scan-history-state {
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.scan-history-grid {
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+}
+
+.monospace-value {
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+}
+
 @media (max-width: 720px) {
   .spotify-scan-status-heading {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .scan-history-actions {
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .scan-history-actions label,
+  .scan-history-actions .secondary-button {
+    width: 100%;
   }
 }
 

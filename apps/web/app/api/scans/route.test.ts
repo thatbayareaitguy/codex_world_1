@@ -1,14 +1,60 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { end, findFirst, launchScanNow, requestOperationCancellation } = vi.hoisted(() => ({
-  end: vi.fn(() => Promise.resolve()),
-  findFirst: vi.fn(),
-  launchScanNow: vi.fn(() => Promise.resolve({ pid: 4242 })),
-  requestOperationCancellation: vi.fn(() => Promise.resolve(true)),
-}));
+const {
+  end,
+  findFirst,
+  getSpotifyOperationalStatus,
+  history,
+  launchScanNow,
+  latestSpotifyBatch,
+  listScanHistory,
+  requestOperationCancellation,
+  select,
+  selectDefaultScanHistoryEntry,
+} = vi.hoisted(() => {
+  const history = [
+    {
+      artistCount: 50,
+      artistFilter: null,
+      batchId: "11111111-1111-4111-8111-111111111111",
+      batchMode: "daily",
+      completedAt: new Date("2026-07-21T04:13:51.904Z"),
+      createdCount: 90,
+      dryRun: false,
+      failureCount: 0,
+      id: "22222222-2222-4222-8222-222222222222",
+      partialArtistCount: 50,
+      provider: "spotify",
+      providersRequested: ["spotify"],
+      requestCount: 102,
+      reviewCount: 1,
+      startedAt: new Date("2026-07-21T04:04:55.085Z"),
+      status: "completed",
+      triggerType: "provider_manual",
+      updatedCount: 0,
+    },
+  ];
+  return {
+    end: vi.fn(() => Promise.resolve()),
+    findFirst: vi.fn(),
+    getSpotifyOperationalStatus: vi.fn(() => Promise.resolve({ queueDepth: 0 })),
+    history,
+    launchScanNow: vi.fn(() => Promise.resolve({ pid: 4242 })),
+    latestSpotifyBatch: vi.fn(() => Promise.resolve(null)),
+    listScanHistory: vi.fn(() => Promise.resolve(history)),
+    requestOperationCancellation: vi.fn(() => Promise.resolve(true)),
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        orderBy: vi.fn(() => ({ limit: vi.fn(() => Promise.resolve([])) })),
+      })),
+    })),
+    selectDefaultScanHistoryEntry: vi.fn(() => history[0]),
+  };
+});
 
 vi.mock("drizzle-orm", () => ({
+  asc: vi.fn(() => "ascending"),
   and: vi.fn(() => "where"),
   desc: vi.fn(() => "order"),
   eq: vi.fn(() => "eq"),
@@ -17,14 +63,39 @@ vi.mock("drizzle-orm", () => ({
 vi.mock("@radar/db", () => ({
   createDatabase: vi.fn(() => ({
     client: { end },
-    db: { query: { operationLocks: { findFirst } } },
+    db: {
+      query: {
+        musicbrainzProviderState: { findFirst },
+        musicbrainzScanBatches: { findFirst },
+        operationLocks: { findFirst },
+      },
+      select,
+    },
   })),
+  getSpotifyOperationalStatus,
+  latestSpotifyBatch,
+  listScanHistory,
+  musicbrainzArtistScans: {},
+  musicbrainzProviderState: {},
+  musicbrainzScanBatches: {},
   operationLocks: { expiresAt: "expiresAt", lockKey: "lockKey" },
   requestOperationCancellation,
   scanRuns: { startedAt: "startedAt" },
+  selectDefaultScanHistoryEntry,
 }));
 vi.mock("@radar/providers", () => ({
-  loadProviderConfiguration: vi.fn(() => ({ databaseUrl: "postgres://synthetic" })),
+  loadProviderConfiguration: vi.fn(() => ({
+    databaseUrl: "postgres://synthetic",
+    musicbrainz: { configured: false },
+    spotify: {
+      artistsPerBatch: 15,
+      batchPauseSeconds: 60,
+      configured: true,
+      distributionHours: 24,
+      minRequestIntervalMs: 5000,
+      scanDistributionHours: 24,
+    },
+  })),
 }));
 vi.mock("../../../lib/request-security", () => ({
   assertSameOrigin: vi.fn(),
@@ -32,7 +103,7 @@ vi.mock("../../../lib/request-security", () => ({
 }));
 vi.mock("../../../lib/scan-launcher", () => ({ launchScanNow }));
 
-import { DELETE, describeActiveScan, POST } from "./route";
+import { DELETE, describeActiveScan, GET, POST } from "./route";
 
 const request = (method = "POST") =>
   new NextRequest("http://127.0.0.1:3000/api/scans", {
@@ -53,6 +124,25 @@ beforeEach(() => {
 });
 
 describe("on-demand scan route", () => {
+  it("returns persisted history with the meaningful batch selected by default", async () => {
+    const response = await GET();
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      defaultHistoryId: history[0]!.id,
+      history: [
+        {
+          artistCount: 50,
+          id: history[0]!.id,
+          partialArtistCount: 50,
+          requestCount: 102,
+        },
+      ],
+    });
+    expect(listScanHistory).toHaveBeenCalledOnce();
+    expect(selectDefaultScanHistoryEntry).toHaveBeenCalledWith(history);
+  });
+
   it("launches one background scan", async () => {
     const response = await POST(request());
 
