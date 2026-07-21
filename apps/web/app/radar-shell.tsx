@@ -105,6 +105,15 @@ interface WatchedArtist {
   providers: string[];
   releases: FeedFixtureItem[];
   source: string;
+  spotifyCoverage?: {
+    catalogPagesCompleted: number;
+    dailyScanCompletedAt: string | null;
+    lastFullReconciliationAt: string | null;
+    nextOffset: number;
+    pagesScannedInCycle: number;
+    partial: boolean;
+    status: string;
+  } | null;
 }
 
 interface ImportSummary {
@@ -197,11 +206,28 @@ interface ScanApiStatus {
   };
   spotify: {
     batch: SpotifyBatchStatus | null;
+    coverage: {
+      currentCycleCompletedPages: number;
+      estimatedRemainingPages: number;
+      estimatedRemainingRequests: number;
+      failedArtists: number;
+      fullyReconciledArtists: number;
+      inProgressArtists: number;
+      partialArtists: number;
+      pausedArtists: number;
+      queuedArtists: number;
+      rateLimitedArtists: number;
+      totalArtists: number;
+    };
     limiter: {
       artistsPerBatch: number;
       batchPauseSeconds: number;
       distributionHours: number;
+      maxRequestsPerRun: number;
       minRequestIntervalMs: number;
+      reconciliationArtistsPerBatch: number;
+      reconciliationCycleDays: number;
+      reconciliationMaxPagesPerRun: number;
     };
     operational: SpotifyOperationalStatus;
   };
@@ -553,6 +579,7 @@ export function RadarShell({
     providers: artist.providers,
     releases: items.filter((item) => item.artist === artist.name),
     source: artist.source,
+    spotifyCoverage: artist.spotifyCoverage,
   }));
   const artists: WatchedArtist[] = [
     ...(activeWatchlistMode === "mock" ? fixtureArtists : databaseArtists),
@@ -1765,6 +1792,26 @@ function FeedView({
                       : "None"}
                   </dd>
                 </div>
+                <div>
+                  <dt>Fully reconciled artists</dt>
+                  <dd>{scanStatus.spotify.coverage.fullyReconciledArtists}</dd>
+                </div>
+                <div>
+                  <dt>Partial catalogs</dt>
+                  <dd>{scanStatus.spotify.coverage.partialArtists}</dd>
+                </div>
+                <div>
+                  <dt>Awaiting reconciliation</dt>
+                  <dd>{scanStatus.spotify.coverage.queuedArtists}</dd>
+                </div>
+                <div>
+                  <dt>Estimated remaining pages</dt>
+                  <dd>{scanStatus.spotify.coverage.estimatedRemainingPages}</dd>
+                </div>
+                <div>
+                  <dt>Reconciliation cycle progress</dt>
+                  <dd>{scanStatus.spotify.coverage.currentCycleCompletedPages} pages</dd>
+                </div>
               </dl>
               <small>
                 Distributed across {scanStatus.spotify.limiter.distributionHours} hours, about{" "}
@@ -2653,6 +2700,14 @@ function ArtistsView({
                     {provider}
                   </span>
                 ))
+              )}
+              {artist.providers.includes("spotify") && (
+                <span
+                  className="provider-tag"
+                  title={spotifyCoverageDetail(artist.spotifyCoverage ?? null)}
+                >
+                  {spotifyCoverageLabel(artist.spotifyCoverage ?? null)}
+                </span>
               )}
               {soundCloudManualLinksEnabled && artistProfiles[artist.id] && (
                 <a
@@ -4573,11 +4628,28 @@ const scanStatusSchema = z.object({
   runs: z.array(scanRunStatusSchema),
   spotify: z.object({
     batch: spotifyBatchSchema,
+    coverage: z.object({
+      currentCycleCompletedPages: z.number().int().nonnegative(),
+      estimatedRemainingPages: z.number().int().nonnegative(),
+      estimatedRemainingRequests: z.number().int().nonnegative(),
+      failedArtists: z.number().int().nonnegative(),
+      fullyReconciledArtists: z.number().int().nonnegative(),
+      inProgressArtists: z.number().int().nonnegative(),
+      partialArtists: z.number().int().nonnegative(),
+      pausedArtists: z.number().int().nonnegative(),
+      queuedArtists: z.number().int().nonnegative(),
+      rateLimitedArtists: z.number().int().nonnegative(),
+      totalArtists: z.number().int().nonnegative(),
+    }),
     limiter: z.object({
       artistsPerBatch: z.number().int().positive(),
       batchPauseSeconds: z.number().int().nonnegative(),
       distributionHours: z.number().positive(),
+      maxRequestsPerRun: z.number().int().positive(),
       minRequestIntervalMs: z.number().int().positive(),
+      reconciliationArtistsPerBatch: z.number().int().positive(),
+      reconciliationCycleDays: z.number().int().positive(),
+      reconciliationMaxPagesPerRun: z.number().int().positive(),
     }),
     operational: spotifyOperationalSchema,
   }),
@@ -4615,12 +4687,42 @@ const watchlistResponseSchema = z.object({
       name: z.string().min(1),
       providers: z.array(z.string()),
       source: z.string(),
+      spotifyCoverage: z
+        .object({
+          catalogPagesCompleted: z.number().int().nonnegative(),
+          dailyScanCompletedAt: z.string().datetime().nullable(),
+          lastFullReconciliationAt: z.string().datetime().nullable(),
+          nextOffset: z.number().int().nonnegative(),
+          pagesScannedInCycle: z.number().int().nonnegative(),
+          partial: z.boolean(),
+          status: z.string(),
+        })
+        .nullable(),
     }),
   ),
 });
 
 function formatScanTime(value: string): string {
   return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function spotifyCoverageLabel(coverage: WatchedArtist["spotifyCoverage"]): string {
+  if (!coverage) return "Reconciliation queued";
+  if (coverage.status === "fully_reconciled") return "Fully reconciled";
+  if (coverage.status === "reconciliation_in_progress") return "Reconciling catalog";
+  if (coverage.status === "rate_limited") return "Rate limited";
+  if (coverage.status === "failed") return "Reconciliation failed";
+  if (coverage.status === "paused") return "Reconciliation paused";
+  if (coverage.partial) return "Partial catalog";
+  return "Daily scan current";
+}
+
+function spotifyCoverageDetail(coverage: WatchedArtist["spotifyCoverage"]): string {
+  if (!coverage) return "No catalog pages have been reconciled yet.";
+  const fullDate = coverage.lastFullReconciliationAt
+    ? new Date(coverage.lastFullReconciliationAt).toLocaleDateString()
+    : "never";
+  return `${coverage.pagesScannedInCycle} pages scanned in this cycle; next offset ${coverage.nextOffset}; last fully reconciled ${fullDate}.`;
 }
 
 function formatDuration(milliseconds: number): string {

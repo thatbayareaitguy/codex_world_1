@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   parseSpotifyRetryAfter,
   spotifyArtistAlbumsSchema,
+  spotifyNextOffset,
   SpotifyClient,
   SpotifyHttpError,
   SpotifyOAuthClient,
@@ -43,6 +44,24 @@ const jsonResponse = (body: unknown, status = 200, headers?: HeadersInit) =>
     status,
     headers: { "Content-Type": "application/json", ...headers },
   });
+
+describe("Spotify pagination cursors", () => {
+  it("uses the provider next URL instead of the number of returned items", () => {
+    expect(
+      spotifyNextOffset("https://api.spotify.com/v1/artists/artist/albums?limit=10&offset=100", 90),
+    ).toBe(100);
+  });
+
+  it("rejects missing, stale, and malformed next offsets", () => {
+    expect(spotifyNextOffset(null, 90)).toBeNull();
+    expect(() =>
+      spotifyNextOffset("https://api.spotify.com/v1/artists/artist/albums?offset=90", 90),
+    ).toThrow("invalid next-page offset");
+    expect(() =>
+      spotifyNextOffset("https://api.spotify.com/v1/artists/artist/albums?offset=nope", 90),
+    ).toThrow("invalid next-page offset");
+  });
+});
 
 describe("SpotifyClient", () => {
   it("keeps safe album artwork and ignores absent, malformed, or unsafe image entries", () => {
@@ -104,7 +123,6 @@ describe("SpotifyClient", () => {
       previous: null,
       total: 3,
     };
-
     const parsed = spotifyArtistAlbumsSchema.parse(page);
 
     expect(parsed.items[0]?.images).toEqual([

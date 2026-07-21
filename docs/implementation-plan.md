@@ -1,5 +1,16 @@
 # Spotify and MusicBrainz Milestone Plan
 
+## Resumable Spotify Completeness
+
+- Keep daily discovery at one page for fast recent-release checks, while preserving a deeper cursor and a partial status whenever more catalog pages remain.
+- Resume initial and periodic reconciliation from the stored offset in bounded two-page work units.
+- Persist page telemetry and provider catalog summaries after each page without creating canonical records for old out-of-window releases.
+- Limit each run to 150 Spotify requests and pause cleanly with the current cursor retained.
+- Revisit fully reconciled artists only after a 30-day cycle expires or an explicit new cycle is requested.
+- Expose per-artist and provider-level coverage without claiming exact completion time or guaranteed completeness.
+- Validate only the approved six-artist dry-run sample. Do not start distributed reconciliation or the full watchlist scan.
+- Current live result: 20 page requests in the corrected sample, 31 total milestone requests, a 5.007-second minimum interval, no 429, no later-page backfill release, and no canonical writes.
+
 ## MusicBrainz hardening checkpoint
 
 - Add a database-backed global one-request-per-second MusicBrainz gate and safe endpoint telemetry.

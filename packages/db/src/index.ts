@@ -9,6 +9,7 @@ export * from "./schema";
 export * from "./spotify-tokens";
 export * from "./spotify-request-gate";
 export * from "./spotify-batches";
+export * from "./spotify-coverage";
 export * from "./spotify-artwork-backfill";
 export * from "./musicbrainz-request-gate";
 export * from "./musicbrainz-batches";

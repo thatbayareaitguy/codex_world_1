@@ -83,7 +83,6 @@ describe("Spotify Development Mode configuration", () => {
       initialMaxPagesPerArtist: 2,
       maxConcurrency: 1,
       minRequestIntervalMs: 5_000,
-      reconciliationMaxPagesPerArtist: 10,
       scanDistributionHours: 24,
     });
   });

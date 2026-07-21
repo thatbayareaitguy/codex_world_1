@@ -12,6 +12,7 @@ describe("parseArgs", () => {
       artistId: "artist-1",
       spotifyConfirmBatch: false,
       spotifyMode: "reconciliation",
+      spotifyNewReconciliationCycle: false,
     });
   });
 
@@ -27,6 +28,7 @@ describe("parseArgs", () => {
         "--confirm-spotify-batch",
         "--spotify-max-pages",
         "1",
+        "--spotify-new-reconciliation-cycle",
       ]),
     ).toMatchObject({
       provider: "spotify",
@@ -34,6 +36,7 @@ describe("parseArgs", () => {
       spotifyConfirmBatch: true,
       spotifyMaxPages: 1,
       spotifyMode: "initial",
+      spotifyNewReconciliationCycle: true,
     });
   });
 

@@ -1,11 +1,14 @@
 import {
   createSpotifyScanBatch,
+  loadSpotifyCatalogSummaries,
   latestSpotifyBatch,
+  prepareSpotifyCoverage,
   recoverSpotifyBatch,
   releaseCandidates,
   releaseExternalIds,
   resumeSpotifyBatch,
   spotifyArtistScans,
+  spotifyCoverageByArtist,
   type RadarDatabase,
   type SpotifyScanMode,
 } from "@radar/db";
@@ -18,8 +21,19 @@ export interface PreparedSpotifyWork {
   knownReleaseIds: ReadonlySet<string>;
   mappings: SpotifyArtistMapping[];
   maxPagesPerArtist: number;
+  maxRequestsPerRun: number;
   mode: SpotifyScanMode;
   paused: boolean;
+  reconciliationCycleIds: ReadonlyMap<string, string | null>;
+  startOffsets: ReadonlyMap<string, number>;
+  knownReleaseSummaries: ReadonlyMap<string, string>;
+}
+
+interface ReconciliationCoverage {
+  artistId: string;
+  lastFullReconciliationAt: Date | null;
+  partial: boolean;
+  status: string;
 }
 
 export async function prepareSpotifyWork(
@@ -41,13 +55,25 @@ export async function prepareSpotifyWork(
       mode,
       pageLimit: maxPagesPerArtist,
     });
+    const coverage = await prepareSpotifyCoverage(db, {
+      artistIds: [mapping.artistId],
+      cycleDays: configuration.spotify.reconciliationCycleDays,
+      mode,
+      newCycle: options.spotifyNewReconciliationCycle ?? false,
+    });
     return {
       batchId,
       knownReleaseIds,
+      knownReleaseSummaries: await loadSpotifyCatalogSummaries(db),
       mappings: [mapping],
       maxPagesPerArtist,
+      maxRequestsPerRun: configuration.spotify.maxRequestsPerRun,
       mode,
       paused: false,
+      reconciliationCycleIds: new Map(
+        coverage.map((entry) => [entry.artistId, entry.cycleId] as const),
+      ),
+      startOffsets: new Map(coverage.map((entry) => [entry.artistId, entry.startOffset] as const)),
     };
   }
 
@@ -63,13 +89,26 @@ export async function prepareSpotifyWork(
       )
       .map((progress) => mappings.find((mapping) => mapping.artistId === progress.artistId))
       .filter((mapping): mapping is SpotifyArtistMapping => Boolean(mapping));
+    const mode = latest.mode as SpotifyScanMode;
+    const coverage = await prepareSpotifyCoverage(db, {
+      artistIds: selected.map((mapping) => mapping.artistId),
+      cycleDays: configuration.spotify.reconciliationCycleDays,
+      mode,
+      newCycle: false,
+    });
     return {
       batchId: latest.id,
       knownReleaseIds,
+      knownReleaseSummaries: await loadSpotifyCatalogSummaries(db),
       mappings: selected,
       maxPagesPerArtist: latest.pageLimit,
-      mode: latest.mode as SpotifyScanMode,
+      maxRequestsPerRun: configuration.spotify.maxRequestsPerRun,
+      mode,
       paused: latest.status === "paused" && !options.spotifyConfirmBatch,
+      reconciliationCycleIds: new Map(
+        coverage.map((entry) => [entry.artistId, entry.cycleId] as const),
+      ),
+      startOffsets: new Map(coverage.map((entry) => [entry.artistId, entry.startOffset] as const)),
     };
   }
 
@@ -113,7 +152,23 @@ export async function prepareSpotifyWork(
     if (leftRank !== rightRank) return leftRank - rightRank;
     return (leftHistory?.finishedAt?.getTime() ?? 0) - (rightHistory?.finishedAt?.getTime() ?? 0);
   });
-  const selected = ordered.slice(0, configuration.spotify.artistsPerBatch);
+  const requestedMode = options.spotifyMode ?? "daily";
+  const batchSize =
+    requestedMode === "reconciliation"
+      ? configuration.spotify.reconciliationArtistsPerBatch
+      : configuration.spotify.artistsPerBatch;
+  const eligibleMappings =
+    requestedMode === "reconciliation"
+      ? selectSpotifyReconciliationMappings(
+          ordered,
+          await spotifyCoverageByArtist(
+            db,
+            ordered.map((mapping) => mapping.artistId),
+          ),
+          configuration.spotify.reconciliationCycleDays,
+        )
+      : ordered;
+  const selected = eligibleMappings.slice(0, batchSize);
   if (selected.length === 0) throw new Error("No active Spotify artist mappings are available.");
   const firstStagedBatch = history.length === 0;
   const mode = firstStagedBatch ? "initial" : (options.spotifyMode ?? "daily");
@@ -125,14 +180,43 @@ export async function prepareSpotifyWork(
     mode,
     pageLimit: maxPagesPerArtist,
   });
+  const coverage = await prepareSpotifyCoverage(db, {
+    artistIds: selected.map((mapping) => mapping.artistId),
+    cycleDays: configuration.spotify.reconciliationCycleDays,
+    mode,
+    newCycle: options.spotifyNewReconciliationCycle ?? false,
+  });
   return {
     batchId,
     knownReleaseIds,
+    knownReleaseSummaries: await loadSpotifyCatalogSummaries(db),
     mappings: selected,
     maxPagesPerArtist,
+    maxRequestsPerRun: configuration.spotify.maxRequestsPerRun,
     mode,
     paused: firstStagedBatch,
+    reconciliationCycleIds: new Map(
+      coverage.map((entry) => [entry.artistId, entry.cycleId] as const),
+    ),
+    startOffsets: new Map(coverage.map((entry) => [entry.artistId, entry.startOffset] as const)),
   };
+}
+
+export function selectSpotifyReconciliationMappings(
+  mappings: SpotifyArtistMapping[],
+  coverage: ReconciliationCoverage[],
+  cycleDays: number,
+  now = new Date(),
+): SpotifyArtistMapping[] {
+  const byArtist = new Map(coverage.map((row) => [row.artistId, row] as const));
+  const cycleCutoff = now.getTime() - cycleDays * 86_400_000;
+  return mappings.filter((mapping) => {
+    const row = byArtist.get(mapping.artistId);
+    if (!row || row.partial || row.status !== "fully_reconciled") return true;
+    return (
+      row.lastFullReconciliationAt === null || row.lastFullReconciliationAt.getTime() <= cycleCutoff
+    );
+  });
 }
 
 export function spotifyScheduleEstimate(
@@ -169,7 +253,7 @@ function pageLimit(
 ): number {
   if (override) return override;
   if (mode === "initial") return configuration.spotify.initialMaxPagesPerArtist;
-  if (mode === "reconciliation") return configuration.spotify.reconciliationMaxPagesPerArtist;
+  if (mode === "reconciliation") return configuration.spotify.reconciliationMaxPagesPerRun;
   return configuration.spotify.dailyMaxPagesPerArtist;
 }
 

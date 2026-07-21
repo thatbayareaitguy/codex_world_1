@@ -595,6 +595,7 @@ describe.sequential("complete deterministic fake-provider workflow", () => {
           releaseType: "album",
           selectedForDetails: true,
           title: "Integration Album",
+          totalTracks: 2,
         },
       ],
       requestCount: 3,

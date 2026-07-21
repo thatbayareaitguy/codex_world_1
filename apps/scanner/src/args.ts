@@ -11,6 +11,7 @@ export interface ScannerOptions {
   spotifyConfirmBatch?: boolean;
   spotifyMaxPages?: number;
   spotifyMode?: "initial" | "daily" | "reconciliation";
+  spotifyNewReconciliationCycle?: boolean;
   since?: string;
 }
 
@@ -20,6 +21,7 @@ export function parseArgs(args: string[]): ScannerOptions {
     full: false,
     spotifyConfirmBatch: false,
     spotifyMode: "daily",
+    spotifyNewReconciliationCycle: false,
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -74,6 +76,10 @@ export function parseArgs(args: string[]): ScannerOptions {
       }
       options.spotifyMaxPages = value;
       index += 1;
+      continue;
+    }
+    if (arg === "--spotify-new-reconciliation-cycle") {
+      options.spotifyNewReconciliationCycle = true;
       continue;
     }
     if (arg === "--since") {

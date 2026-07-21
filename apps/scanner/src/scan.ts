@@ -50,6 +50,10 @@ import {
   releaseOperationLock,
   type RadarDatabase,
   SpotifyCooldownError,
+  markSpotifyCoverageInterrupted,
+  pauseSpotifyArtistForBudget,
+  recordSpotifyPage,
+  requestSpotifyBatchPause,
   spotifyScanBatches,
 } from "@radar/db";
 import {
@@ -64,14 +68,21 @@ import {
   type CanonicalArtistMappingInput,
   type DiscoveryProvider,
   type ProviderReleaseObservation,
+  type ProviderScanPage,
   type SpotifyArtistMapping,
   type SpotifyRequestTelemetry,
+  type SpotifyRequestGate,
 } from "@radar/providers";
 import { mockProviderFixture } from "@radar/testing";
 import { and, eq, lt, or } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { ScannerOptions } from "./args";
-import { buildDryRunReport, candidateKey, type DryRunReport } from "./dry-run-report";
+import {
+  buildDryRunReport,
+  candidateKey,
+  type DryRunPageReport,
+  type DryRunReport,
+} from "./dry-run-report";
 import { runRedditScan } from "./reddit-scan";
 import { prepareSpotifyWork, type PreparedSpotifyWork } from "./spotify-scan-plan";
 
@@ -93,6 +104,13 @@ export class DryRunOperationalError extends Error {
   ) {
     super(message);
     this.name = "DryRunOperationalError";
+  }
+}
+
+export class SpotifyRequestBudgetError extends Error {
+  constructor(readonly maximumRequests: number) {
+    super(`Spotify request budget of ${maximumRequests} requests was reached.`);
+    this.name = "SpotifyRequestBudgetError";
   }
 }
 
@@ -356,10 +374,15 @@ async function runScanUnlocked(
       let providerRunId: string | undefined;
       let currentSpotifyArtistScan: Awaited<ReturnType<typeof claimNextSpotifyArtist>> | undefined;
       let previousSpotifyRequestCount = 0;
+      let spotifyArtistRequestBase = 0;
+      let spotifyPageRequestBase = 0;
+      let currentSpotifyPagesScanned = 0;
+      let currentSpotifyCandidateCount = 0;
       let musicBrainzArtistRequestBase = 0;
       let previousMusicBrainzRequestCount = 0;
       const dryRunCandidates: TrackCandidate[] = [];
       const dryRunReleases: ProviderReleaseObservation[] = [];
+      const dryRunPages: DryRunPageReport[] = [];
       let dryRunPagesScanned = 0;
       let dryRunPartial = false;
       try {
@@ -407,6 +430,10 @@ async function runScanUnlocked(
                       "Spotify batch order no longer matches the provider work list.",
                     );
                   }
+                  spotifyArtistRequestBase = previousSpotifyRequestCount;
+                  spotifyPageRequestBase = previousSpotifyRequestCount;
+                  currentSpotifyPagesScanned = 0;
+                  currentSpotifyCandidateCount = 0;
                   await runtime?.reportProgress(
                     {
                       completedUnits: unit.position,
@@ -419,42 +446,106 @@ async function runScanUnlocked(
                   );
                   return true;
                 },
+                onPage: async (page: ProviderScanPage) => {
+                  if (!currentSpotifyArtistScan) {
+                    throw new Error("Spotify page completed without claimed artist progress.");
+                  }
+                  batchPersisted = true;
+                  currentSpotifyPagesScanned += 1;
+                  currentSpotifyCandidateCount += page.candidates.length;
+                  const pageRequestCount = Math.max(
+                    0,
+                    page.providerMetrics.requests - spotifyPageRequestBase,
+                  );
+                  spotifyPageRequestBase = page.providerMetrics.requests;
+                  if (options.dryRun) {
+                    dryRunCandidates.push(...page.candidates);
+                    dryRunReleases.push(...page.releases);
+                    dryRunPagesScanned += 1;
+                    dryRunPartial = page.nextOffset !== null;
+                    dryRunPages.push({
+                      albumDetailRequests: page.albumDetailRequests,
+                      candidateTracks: page.candidates.length,
+                      durationMs: page.durationMs,
+                      nextOffset: page.nextOffset,
+                      offset: page.offset,
+                      pageNumber: page.pageNumber,
+                      releases: page.releases,
+                      requestCount: pageRequestCount,
+                      totalItems: page.totalItems,
+                    });
+                    incrementalSummary = addScanSummaries(incrementalSummary, {
+                      discovered: page.candidates.length,
+                      dryRun: true,
+                      inserted: 0,
+                      needsReview: 0,
+                      skipped: 0,
+                    });
+                  } else {
+                    const pageSummary = await persistCandidates(
+                      db,
+                      page.candidates,
+                      { ...options, provider: "spotify" },
+                      undefined,
+                      page.providerMetrics,
+                      {
+                        artistsProcessedCount,
+                        cumulativeBase: incrementalSummary,
+                        id: providerRunId!,
+                        status: "running",
+                      },
+                    );
+                    incrementalSummary = addScanSummaries(incrementalSummary, pageSummary);
+                  }
+                  await recordSpotifyPage(db, {
+                    albumDetailRequests: page.albumDetailRequests,
+                    artistId: page.currentUnitId,
+                    artistScanId: currentSpotifyArtistScan.id,
+                    backfillReleaseCount: page.releases.filter(
+                      (release) => release.backfillEligible,
+                    ).length,
+                    batchId: spotifyWork!.batchId,
+                    candidateCount: page.candidates.length,
+                    cycleId: spotifyWork!.reconciliationCycleIds.get(page.currentUnitId) ?? null,
+                    dryRun: options.dryRun,
+                    durationMs: page.durationMs,
+                    finishedAt: page.finishedAt,
+                    itemCount: page.itemCount,
+                    mode: spotifyWork!.mode,
+                    nextOffset: page.nextOffset,
+                    offset: page.offset,
+                    pageNumber: page.pageNumber,
+                    releases: page.releases.map((release) => ({
+                      externalReleaseId: release.externalReleaseId,
+                      releaseDate: release.releaseDate,
+                      releaseDatePrecision: release.releaseDatePrecision,
+                      releaseType: release.releaseType,
+                      title: release.title,
+                      totalTracks: release.totalTracks,
+                    })),
+                    requestCount: pageRequestCount,
+                    startedAt: page.startedAt,
+                    totalItems: page.totalItems,
+                  });
+                  await runtime?.reportProgress(
+                    {
+                      currentStage: `page_${page.pageNumber}_persisted`,
+                      currentUnit: page.currentUnit,
+                      lastPersistedResult: `${page.itemCount} release summaries at offset ${page.offset}`,
+                      phase: "scanning",
+                      requests: page.providerMetrics.requests,
+                    },
+                    true,
+                  );
+                },
                 onBatch: async (batch) => {
                   batchPersisted = true;
                   artistsProcessedCount = batch.completedUnits;
-                  if (options.dryRun) {
-                    dryRunCandidates.push(...batch.candidates);
-                    dryRunReleases.push(...(batch.releases ?? []));
-                    dryRunPagesScanned += batch.pagesScanned ?? 0;
-                    dryRunPartial ||= batch.partial ?? false;
-                  }
-                  const batchSummary = options.dryRun
-                    ? {
-                        discovered: batch.candidates.length,
-                        dryRun: true,
-                        inserted: 0,
-                        needsReview: 0,
-                        skipped: 0,
-                      }
-                    : await persistCandidates(
-                        db,
-                        batch.candidates,
-                        { ...options, provider: provider.name },
-                        undefined,
-                        batch.providerMetrics,
-                        {
-                          artistsProcessedCount: batch.completedUnits,
-                          cumulativeBase: incrementalSummary,
-                          id: providerRunId!,
-                          status: "running",
-                        },
-                      );
-                  incrementalSummary = addScanSummaries(incrementalSummary, batchSummary);
                   if (currentSpotifyArtistScan) {
                     const requestCount = Math.max(
                       0,
-                      (batch.providerMetrics?.requests ?? previousSpotifyRequestCount) -
-                        previousSpotifyRequestCount,
+                      (batch.providerMetrics?.requests ?? spotifyArtistRequestBase) -
+                        spotifyArtistRequestBase,
                     );
                     previousSpotifyRequestCount = batch.providerMetrics?.requests ?? 0;
                     await finishSpotifyArtistScan(db, {
@@ -593,6 +684,7 @@ async function runScanUnlocked(
             pagesScanned: dryRunPagesScanned,
             partial: dryRunPartial,
             releases: dryRunReleases,
+            pages: dryRunPages,
             requestCount: result.providerMetrics?.requests ?? 0,
           });
         }
@@ -691,28 +783,37 @@ async function runScanUnlocked(
         if (provider.name === "spotify" && currentSpotifyArtistScan) {
           const rateLimited = outcomeStatus === "rate_limited";
           const cancelled = outcomeStatus === "cancelled";
-          await finishSpotifyArtistScan(db, {
-            artistScanId: currentSpotifyArtistScan.id,
-            candidateCount: 0,
-            errorClassification: rateLimited
-              ? "rate_limited"
-              : cancelled
-                ? "cancelled_by_user"
-                : "provider_failure",
-            pagesScanned: 0,
-            requestCount: 0,
-            ...(error instanceof SpotifyCooldownError && error.cooldownUntil
-              ? { retryEligibleAt: error.cooldownUntil }
-              : error instanceof SpotifyHttpError && error.retryAfter?.cooldownUntil
-                ? { retryEligibleAt: error.retryAfter.cooldownUntil }
-                : {}),
-            status: rateLimited ? "rate_limited" : cancelled ? "cancelled" : "failed",
-          });
+          if (outcomeStatus === "paused") {
+            await requestSpotifyBatchPause(db, spotifyWork!.batchId);
+            await pauseSpotifyArtistForBudget(db, currentSpotifyArtistScan.id);
+          } else {
+            await finishSpotifyArtistScan(db, {
+              artistScanId: currentSpotifyArtistScan.id,
+              candidateCount: currentSpotifyCandidateCount,
+              errorClassification: rateLimited
+                ? "rate_limited"
+                : cancelled
+                  ? "cancelled_by_user"
+                  : "provider_failure",
+              pagesScanned: currentSpotifyPagesScanned,
+              requestCount: Math.max(0, spotifyPageRequestBase - spotifyArtistRequestBase),
+              ...(error instanceof SpotifyCooldownError && error.cooldownUntil
+                ? { retryEligibleAt: error.cooldownUntil }
+                : error instanceof SpotifyHttpError && error.retryAfter?.cooldownUntil
+                  ? { retryEligibleAt: error.retryAfter.cooldownUntil }
+                  : {}),
+              status: rateLimited ? "rate_limited" : cancelled ? "cancelled" : "failed",
+            });
+            await markSpotifyCoverageInterrupted(db, {
+              artistId: currentSpotifyArtistScan.artistId,
+              error: safeScanError(error),
+              status: rateLimited ? "rate_limited" : "failed",
+            });
+          }
           currentSpotifyArtistScan = undefined;
         }
         const failure =
           error instanceof DryRunOperationalError ? error : new Error(safeScanError(error));
-        failures.push(failure);
         aggregate.providerResults![provider.name] = {
           discovered:
             options.dryRun && aggregate.dryRunReport
@@ -721,6 +822,7 @@ async function runScanUnlocked(
           error: failure.message,
           inserted: 0,
         };
+        if (outcomeStatus !== "paused") failures.push(failure);
         if (outcomeStatus === "failed") providersFailed.push(provider.name);
         await recordProviderFailure(
           db,
@@ -810,11 +912,16 @@ async function buildProviders(
         );
       }
       const ownerId = await ensureLocalOwner(db);
+      if (!spotifyWork) throw new Error("Spotify scan work was not prepared.");
+      const requestGate = budgetSpotifyRequestGate(
+        createSpotifyRequestGate(db, configuration.spotify.minRequestIntervalMs),
+        spotifyWork.maxRequestsPerRun,
+      );
       const oauthClient = new SpotifyOAuthClient({
         clientId: configuration.spotify.clientId,
         clientSecret: configuration.spotify.clientSecret,
         redirectUri: configuration.spotify.redirectUri,
-        requestGate: createSpotifyRequestGate(db, configuration.spotify.minRequestIntervalMs),
+        requestGate,
       });
       const tokenManager = new SpotifyTokenManager(
         db,
@@ -825,16 +932,17 @@ async function buildProviders(
       const client = new SpotifyClient({
         accessToken: () => tokenManager.getAccessToken(),
         onUnauthorized: () => tokenManager.refresh().then(() => undefined),
-        requestGate: createSpotifyRequestGate(db, configuration.spotify.minRequestIntervalMs),
+        requestGate,
         ...(onSpotifyTelemetry ? { onTelemetry: onSpotifyTelemetry } : {}),
       });
-      if (!spotifyWork) throw new Error("Spotify scan work was not prepared.");
       providers.push(
         new SpotifyProvider({
           client,
           knownReleaseIds: spotifyWork.knownReleaseIds,
+          knownReleaseSummaries: spotifyWork.knownReleaseSummaries,
           mappings: spotifyWork.mappings,
           maxPagesPerArtist: spotifyWork.maxPagesPerArtist,
+          startOffsets: spotifyWork.startOffsets,
         }),
       );
       continue;
@@ -853,6 +961,25 @@ async function buildProviders(
     );
   }
   return providers;
+}
+
+export function budgetSpotifyRequestGate(
+  gate: SpotifyRequestGate,
+  maximumRequests: number,
+): SpotifyRequestGate {
+  if (!Number.isInteger(maximumRequests) || maximumRequests < 1) {
+    throw new Error("Spotify request budget must be a positive integer.");
+  }
+  let issued = 0;
+  return {
+    acquire: async (input) => {
+      if (issued >= maximumRequests) throw new SpotifyRequestBudgetError(maximumRequests);
+      const permit = await gate.acquire(input);
+      issued += 1;
+      return permit;
+    },
+    complete: (permit, result) => gate.complete(permit, result),
+  };
 }
 
 async function spotifyMappings(db: RadarDatabase): Promise<SpotifyArtistMapping[]> {
@@ -902,7 +1029,7 @@ async function recordProviderFailure(
   options: ScannerOptions,
   error: Error,
   runId?: string,
-  status: "failed" | "cancelled" | "rate_limited" = "failed",
+  status: "failed" | "cancelled" | "paused" | "rate_limited" = "failed",
   summary?: ScanSummary,
 ): Promise<void> {
   const errorEvidence = {
@@ -958,8 +1085,9 @@ export async function runDryRunFinalOperationalStep(
 function scanOutcomeStatus(
   error: unknown,
   signal?: AbortSignal,
-): "failed" | "cancelled" | "rate_limited" {
+): "failed" | "cancelled" | "paused" | "rate_limited" {
   if (signal?.aborted) return "cancelled";
+  if (error instanceof SpotifyRequestBudgetError) return "paused";
   if (
     error instanceof SpotifyCooldownError ||
     (error instanceof SpotifyHttpError && error.status === 429)
@@ -1531,6 +1659,7 @@ export async function createSpotifyDryRunReport(
     backfillStart: string;
     candidates: TrackCandidate[];
     pagesScanned: number;
+    pages?: DryRunPageReport[];
     partial: boolean;
     releases: ProviderReleaseObservation[];
     requestCount: number;

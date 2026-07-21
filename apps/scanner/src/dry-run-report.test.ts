@@ -20,6 +20,7 @@ const releases: ProviderReleaseObservation[] = [
     releaseType: "single",
     selectedForDetails: true,
     title: "July Release",
+    totalTracks: 1,
   },
   {
     backfillEligible: false,
@@ -31,6 +32,7 @@ const releases: ProviderReleaseObservation[] = [
     releaseType: "album",
     selectedForDetails: false,
     title: "Old Release",
+    totalTracks: 10,
   },
 ];
 

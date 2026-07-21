@@ -35,9 +35,22 @@ export interface DryRunReport {
     | { status: "pending" | "completed" }
     | { classification: string; message: string; status: "failed" };
   persistence: { canonicalWrites: 0; status: "skipped" };
+  pages: DryRunPageReport[];
   rejectedCandidates: DryRunCandidateReport[];
   releases: ProviderReleaseObservation[];
   trackCandidates: DryRunCandidateReport[];
+}
+
+export interface DryRunPageReport {
+  albumDetailRequests: number;
+  candidateTracks: number;
+  durationMs: number;
+  nextOffset: number | null;
+  offset: number;
+  pageNumber: number;
+  releases: ProviderReleaseObservation[];
+  requestCount: number;
+  totalItems: number;
 }
 
 interface BuildDryRunReportInput {
@@ -46,6 +59,7 @@ interface BuildDryRunReportInput {
   canonicalTracks: CanonicalTrack[];
   existingCandidateKeys: ReadonlySet<string>;
   pagesScanned: number;
+  pages?: DryRunPageReport[];
   partial: boolean;
   providerTrackMatches: ReadonlyMap<string, string>;
   releases: ProviderReleaseObservation[];
@@ -102,6 +116,7 @@ export function buildDryRunReport(input: BuildDryRunReportInput): DryRunReport {
     },
     finalOperationalStep: { status: "pending" },
     persistence: { canonicalWrites: 0, status: "skipped" },
+    pages: input.pages ?? [],
     rejectedCandidates: trackCandidates.filter(
       (candidate) =>
         !candidate.backfillEligible || candidate.persistenceAction === "would_skip_existing",

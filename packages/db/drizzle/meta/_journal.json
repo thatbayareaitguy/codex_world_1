@@ -71,6 +71,13 @@
       "when": 1784448005694,
       "tag": "0009_first_white_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1784660976585,
+      "tag": "0010_chubby_talkback",
+      "breakpoints": true
     }
   ]
 }

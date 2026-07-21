@@ -26,8 +26,10 @@ interface SpotifyProviderOptions {
   mappings: SpotifyArtistMapping[];
   maxPagesPerArtist?: number;
   knownReleaseIds?: ReadonlySet<string>;
+  knownReleaseSummaries?: ReadonlyMap<string, string>;
   now?: () => Date;
   region?: string;
+  startOffsets?: ReadonlyMap<string, number>;
 }
 
 export class SpotifyProvider implements DiscoveryProvider {
@@ -36,16 +38,20 @@ export class SpotifyProvider implements DiscoveryProvider {
   private readonly mappings: SpotifyArtistMapping[];
   private readonly maxPagesPerArtist: number;
   private readonly knownReleaseIds: ReadonlySet<string>;
+  private readonly knownReleaseSummaries: ReadonlyMap<string, string>;
   private readonly now: () => Date;
   private readonly region: string;
+  private readonly startOffsets: ReadonlyMap<string, number>;
 
   constructor(options: SpotifyProviderOptions) {
     this.client = options.client;
     this.mappings = options.mappings;
     this.maxPagesPerArtist = options.maxPagesPerArtist ?? 1;
     this.knownReleaseIds = options.knownReleaseIds ?? new Set();
+    this.knownReleaseSummaries = options.knownReleaseSummaries ?? new Map();
     this.now = options.now ?? (() => new Date());
     this.region = options.region ?? "US";
+    this.startOffsets = options.startOffsets ?? new Map();
   }
 
   async scan(context: ScanContext): Promise<{
@@ -71,24 +77,69 @@ export class SpotifyProvider implements DiscoveryProvider {
       ) {
         break;
       }
-      const albums = await this.client.getArtistAlbumsBounded(
-        mapping.spotifyArtistId,
-        this.maxPagesPerArtist,
-        context.signal,
-      );
-      const releases = albums.items.map((album) =>
-        releaseObservation(album, this.knownReleaseIds, context.filter),
-      );
-      const selected = albums.items.filter(
-        (album) =>
-          releases.find((release) => release.externalReleaseId === album.id)?.selectedForDetails,
-      );
       const batchCandidates: TrackCandidate[] = [];
-      for (const album of selected) {
-        const candidates = await this.scanAlbum(mapping, album, context.signal);
-        batchCandidates.push(...candidates);
-        const release = releases.find((entry) => entry.externalReleaseId === album.id);
-        if (release) release.candidateCount += candidates.length;
+      const batchReleases: ProviderReleaseObservation[] = [];
+      const seenReleaseIds = new Set<string>();
+      let offset = this.startOffsets.get(mapping.artistId) ?? 0;
+      let pagesScanned = 0;
+      let partial = false;
+      while (pagesScanned < this.maxPagesPerArtist) {
+        const pageStartedAt = this.now();
+        const page = await this.client.getArtistAlbumsPage(
+          mapping.spotifyArtistId,
+          offset,
+          context.signal,
+        );
+        const pageNumber = Math.floor(offset / 10) + 1;
+        const releases = page.items.map((album) =>
+          releaseObservation(
+            mapping.artistId,
+            album,
+            this.knownReleaseIds,
+            this.knownReleaseSummaries,
+            context.filter,
+            seenReleaseIds.has(album.id),
+          ),
+        );
+        const pageCandidates: TrackCandidate[] = [];
+        let albumDetailRequests = 0;
+        for (const album of page.items) {
+          const release = releases.find((entry) => entry.externalReleaseId === album.id);
+          if (!release?.selectedForDetails) continue;
+          const requestsBeforeAlbum = this.client.metrics.requests;
+          const candidates = await this.scanAlbum(mapping, album, context.signal);
+          albumDetailRequests += this.client.metrics.requests - requestsBeforeAlbum;
+          pageCandidates.push(...candidates);
+          release.candidateCount += candidates.length;
+        }
+        page.items.forEach((album) => seenReleaseIds.add(album.id));
+        batchCandidates.push(...pageCandidates);
+        batchReleases.push(...releases);
+        pagesScanned += 1;
+        const pageFinishedAt = this.now();
+        await context.onPage?.({
+          albumDetailRequests,
+          candidates: pageCandidates,
+          currentUnit: mapping.name,
+          currentUnitId: mapping.artistId,
+          durationMs: Math.max(0, pageFinishedAt.getTime() - pageStartedAt.getTime()),
+          finishedAt: pageFinishedAt,
+          itemCount: page.items.length,
+          nextOffset: page.nextOffset,
+          offset,
+          pageNumber,
+          providerMetrics: {
+            failures: this.client.metrics.failures,
+            requests: this.client.metrics.requests,
+            waitMs: this.client.metrics.rateLimitWaitMs,
+          },
+          releases,
+          startedAt: pageStartedAt,
+          totalItems: page.total,
+        });
+        partial = page.nextOffset !== null;
+        if (page.nextOffset === null || page.items.length === 0) break;
+        offset = page.nextOffset;
       }
       if (context.onBatch) {
         await context.onBatch({
@@ -96,14 +147,14 @@ export class SpotifyProvider implements DiscoveryProvider {
           completedUnits: index + 1,
           currentUnit: mapping.name,
           currentUnitId: mapping.artistId,
-          pagesScanned: albums.pagesScanned,
-          partial: albums.partial,
+          pagesScanned,
+          partial,
           providerMetrics: {
             failures: this.client.metrics.failures,
             requests: this.client.metrics.requests,
             waitMs: this.client.metrics.rateLimitWaitMs,
           },
-          releases,
+          releases: batchReleases,
           totalUnits: mappings.length,
         });
       } else {
@@ -144,22 +195,29 @@ export class SpotifyProvider implements DiscoveryProvider {
 }
 
 function releaseObservation(
+  artistId: string,
   album: SpotifyAlbumSummary,
   knownReleaseIds: ReadonlySet<string>,
+  knownReleaseSummaries: ReadonlyMap<string, string>,
   filter: ScanContext["filter"],
+  duplicateInRun: boolean,
 ): ProviderReleaseObservation {
   const releaseDate = normalizeSpotifyDate(album.release_date).date;
   const backfillEligible = !filter.since || releaseDate >= filter.since;
-  const known = knownReleaseIds.has(album.id);
-  const selectedForDetails = Boolean(filter.full || (!known && backfillEligible));
+  const knownSummary = knownReleaseSummaries.get(`${artistId}:${album.id}`);
+  const summaryChanged = Boolean(knownSummary && knownSummary !== spotifySummaryHash(album));
+  const known = knownReleaseIds.has(album.id) || Boolean(knownSummary);
+  const selectedForDetails = Boolean(
+    backfillEligible && !duplicateInRun && (!known || summaryChanged),
+  );
   const reasons = selectedForDetails
     ? [
-        filter.full
-          ? "Explicit reconciliation includes the release"
-          : `Release date is on or after backfill start ${filter.since ?? "unbounded"}`,
+        `Release date is on or after backfill start ${filter.since ?? "unbounded"}`,
         ...(known ? ["Provider release ID is already known"] : ["Provider release ID is new"]),
+        ...(summaryChanged ? ["Observed Spotify release summary changed"] : []),
       ]
     : [
+        ...(duplicateInRun ? ["Provider release ID already appeared earlier in this run"] : []),
         ...(known ? ["Provider release ID is already known"] : []),
         ...(!backfillEligible && filter.since
           ? [`Release date is before backfill start ${filter.since}`]
@@ -175,7 +233,22 @@ function releaseObservation(
     releaseType: album.album_type,
     selectedForDetails,
     title: album.name,
+    totalTracks: album.total_tracks,
   };
+}
+
+function spotifySummaryHash(album: SpotifyAlbumSummary): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        releaseDate: normalizeSpotifyDate(album.release_date).date,
+        releaseDatePrecision: album.release_date_precision,
+        releaseType: album.album_type,
+        title: album.name,
+        totalTracks: album.total_tracks,
+      }),
+    )
+    .digest("hex");
 }
 
 function spotifyCandidate(

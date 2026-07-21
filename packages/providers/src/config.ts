@@ -42,7 +42,10 @@ const environmentSchema = z.object({
   SPOTIFY_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(1).default(1),
   SPOTIFY_MIN_REQUEST_INTERVAL_MS: z.coerce.number().int().min(5_000).max(300_000).default(5_000),
   SPOTIFY_PLAYLIST_WRITES_ENABLED: booleanFlag(false),
-  SPOTIFY_RECONCILIATION_MAX_PAGES_PER_ARTIST: z.coerce.number().int().min(1).max(50).default(10),
+  SPOTIFY_MAX_REQUESTS_PER_RUN: z.coerce.number().int().min(1).max(10_000).default(150),
+  SPOTIFY_RECONCILIATION_ARTISTS_PER_BATCH: z.coerce.number().int().min(1).max(100).default(15),
+  SPOTIFY_RECONCILIATION_CYCLE_DAYS: z.coerce.number().int().min(1).max(3650).default(30),
+  SPOTIFY_RECONCILIATION_MAX_PAGES_PER_RUN: z.coerce.number().int().min(1).max(50).default(2),
   SPOTIFY_REDIRECT_URI: z.url().default("http://127.0.0.1:3000/api/auth/spotify/callback"),
   SPOTIFY_SCAN_DISTRIBUTION_HOURS: z.coerce.number().int().min(1).max(168).default(24),
 });
@@ -84,9 +87,12 @@ export interface ProviderConfiguration {
     enabled: boolean;
     initialMaxPagesPerArtist: number;
     maxConcurrency: number;
+    maxRequestsPerRun: number;
     minRequestIntervalMs: number;
     playlistWritesEnabled: boolean;
-    reconciliationMaxPagesPerArtist: number;
+    reconciliationArtistsPerBatch: number;
+    reconciliationCycleDays: number;
+    reconciliationMaxPagesPerRun: number;
     redirectUri: string;
     scanDistributionHours: number;
   };
@@ -152,9 +158,12 @@ export function loadProviderConfiguration(
       enabled: parsed.SPOTIFY_ENABLED,
       initialMaxPagesPerArtist: parsed.SPOTIFY_INITIAL_MAX_PAGES_PER_ARTIST,
       maxConcurrency: parsed.SPOTIFY_MAX_CONCURRENCY,
+      maxRequestsPerRun: parsed.SPOTIFY_MAX_REQUESTS_PER_RUN,
       minRequestIntervalMs: parsed.SPOTIFY_MIN_REQUEST_INTERVAL_MS,
       playlistWritesEnabled: parsed.SPOTIFY_PLAYLIST_WRITES_ENABLED,
-      reconciliationMaxPagesPerArtist: parsed.SPOTIFY_RECONCILIATION_MAX_PAGES_PER_ARTIST,
+      reconciliationArtistsPerBatch: parsed.SPOTIFY_RECONCILIATION_ARTISTS_PER_BATCH,
+      reconciliationCycleDays: parsed.SPOTIFY_RECONCILIATION_CYCLE_DAYS,
+      reconciliationMaxPagesPerRun: parsed.SPOTIFY_RECONCILIATION_MAX_PAGES_PER_RUN,
       redirectUri: parsed.SPOTIFY_REDIRECT_URI,
       scanDistributionHours: parsed.SPOTIFY_SCAN_DISTRIBUTION_HOURS,
     },

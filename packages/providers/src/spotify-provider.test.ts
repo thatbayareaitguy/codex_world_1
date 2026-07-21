@@ -1,14 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
+import type { ProviderScanPage } from "./contracts";
 import { SpotifyProvider } from "./spotify-provider";
 import type { SpotifyAlbum, SpotifyAlbumSummary, SpotifyClient } from "./spotify";
 
 describe("SpotifyProvider incremental scanning", () => {
   it("reports one persisted batch for every mapped artist, including empty results", async () => {
-    const getArtistAlbumsBounded = vi
+    const getArtistAlbumsPage = vi
       .fn()
-      .mockResolvedValue({ items: [], pagesScanned: 1, partial: false });
+      .mockResolvedValue({ items: [], nextOffset: null, offset: 0, total: 0 });
     const client = {
-      getArtistAlbumsBounded,
+      getArtistAlbumsPage,
       metrics: { failures: 0, rateLimitWaitMs: 0, requests: 2 },
     } as unknown as SpotifyClient;
     const onBatch = vi.fn().mockResolvedValue(undefined);
@@ -26,7 +27,7 @@ describe("SpotifyProvider incremental scanning", () => {
     });
 
     expect(result.candidates).toEqual([]);
-    expect(getArtistAlbumsBounded).toHaveBeenCalledTimes(2);
+    expect(getArtistAlbumsPage).toHaveBeenCalledTimes(2);
     expect(onBatch).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
@@ -49,12 +50,12 @@ describe("SpotifyProvider incremental scanning", () => {
 
   it("stops before the next artist after cancellation", async () => {
     const controller = new AbortController();
-    const getArtistAlbumsBounded = vi.fn().mockImplementation(() => {
+    const getArtistAlbumsPage = vi.fn().mockImplementation(() => {
       controller.abort(new Error("cancelled"));
-      return Promise.resolve({ items: [], pagesScanned: 1, partial: false });
+      return Promise.resolve({ items: [], nextOffset: null, offset: 0, total: 0 });
     });
     const client = {
-      getArtistAlbumsBounded,
+      getArtistAlbumsPage,
       metrics: { failures: 0, rateLimitWaitMs: 0, requests: 1 },
     } as unknown as SpotifyClient;
     const provider = new SpotifyProvider({
@@ -68,7 +69,7 @@ describe("SpotifyProvider incremental scanning", () => {
     await expect(
       provider.scan({ filter: { provider: "spotify" }, signal: controller.signal }),
     ).rejects.toThrow("cancelled");
-    expect(getArtistAlbumsBounded).toHaveBeenCalledOnce();
+    expect(getArtistAlbumsPage).toHaveBeenCalledOnce();
   });
 
   it("reports page releases and backfill decisions without fetching rejected details", async () => {
@@ -77,9 +78,9 @@ describe("SpotifyProvider incremental scanning", () => {
     const getAlbum = vi.fn().mockResolvedValue(albumWithTrack(eligible));
     const client = {
       getAlbum,
-      getArtistAlbumsBounded: vi
+      getArtistAlbumsPage: vi
         .fn()
-        .mockResolvedValue({ items: [eligible, old], pagesScanned: 1, partial: true }),
+        .mockResolvedValue({ items: [eligible, old], nextOffset: 2, offset: 0, total: 20 }),
       metrics: { failures: 0, rateLimitWaitMs: 0, requests: 2 },
     } as unknown as SpotifyClient;
     const onBatch = vi.fn().mockResolvedValue(undefined);
@@ -133,9 +134,9 @@ describe("SpotifyProvider incremental scanning", () => {
     });
     const client = {
       getAlbum: vi.fn().mockResolvedValue(album),
-      getArtistAlbumsBounded: vi
+      getArtistAlbumsPage: vi
         .fn()
-        .mockResolvedValue({ items: [summary], pagesScanned: 1, partial: false }),
+        .mockResolvedValue({ items: [summary], nextOffset: null, offset: 0, total: 1 }),
       metrics: { failures: 0, rateLimitWaitMs: 0, requests: 2 },
     } as unknown as SpotifyClient;
     const provider = new SpotifyProvider({
@@ -155,6 +156,95 @@ describe("SpotifyProvider incremental scanning", () => {
       sourceProvider: "spotify",
     });
     expect(result.candidates[1]?.spotifyRelease).toEqual(result.candidates[0]?.spotifyRelease);
+  });
+
+  it("resumes at a later offset and discovers a recent release there", async () => {
+    const recent = albumSummary("later-release", "Later Release", "2026-07-20");
+    const getArtistAlbumsPage = vi.fn().mockResolvedValue({
+      items: [recent],
+      nextOffset: null,
+      offset: 10,
+      total: 11,
+    });
+    const client = {
+      getAlbum: vi.fn().mockResolvedValue(albumWithTrack(recent)),
+      getArtistAlbumsPage,
+      metrics: { failures: 0, rateLimitWaitMs: 0, requests: 2 },
+    } as unknown as SpotifyClient;
+    const onPage = vi.fn<(page: ProviderScanPage) => Promise<void>>().mockResolvedValue(undefined);
+    const provider = new SpotifyProvider({
+      client,
+      mappings: [{ artistId: "artist-1", name: "YUSSI", spotifyArtistId: "spotify-yussi" }],
+      startOffsets: new Map([["artist-1", 10]]),
+    });
+
+    const result = await provider.scan({
+      filter: { provider: "spotify", since: "2026-05-22" },
+      onPage,
+    });
+
+    expect(getArtistAlbumsPage).toHaveBeenCalledWith("spotify-yussi", 10, undefined);
+    expect(result.candidates).toHaveLength(1);
+    expect(onPage).toHaveBeenCalledWith(
+      expect.objectContaining({ nextOffset: null, offset: 10, pageNumber: 2 }),
+    );
+  });
+
+  it("fetches duplicate releases from multiple pages only once", async () => {
+    const duplicate = albumSummary("duplicate-release", "Duplicate Release", "2026-07-20");
+    const getArtistAlbumsPage = vi
+      .fn()
+      .mockResolvedValueOnce({ items: [duplicate], nextOffset: 10, offset: 0, total: 2 })
+      .mockResolvedValueOnce({ items: [duplicate], nextOffset: null, offset: 10, total: 2 });
+    const getAlbum = vi.fn().mockResolvedValue(albumWithTrack(duplicate));
+    const client = {
+      getAlbum,
+      getArtistAlbumsPage,
+      metrics: { failures: 0, rateLimitWaitMs: 0, requests: 3 },
+    } as unknown as SpotifyClient;
+    const onPage = vi.fn<(page: ProviderScanPage) => Promise<void>>().mockResolvedValue(undefined);
+    const provider = new SpotifyProvider({
+      client,
+      mappings: [{ artistId: "artist-1", name: "YUSSI", spotifyArtistId: "spotify-yussi" }],
+      maxPagesPerArtist: 2,
+    });
+
+    const result = await provider.scan({
+      filter: { provider: "spotify", since: "2026-05-22" },
+      onPage,
+    });
+
+    expect(result.candidates).toHaveLength(1);
+    expect(getAlbum).toHaveBeenCalledTimes(1);
+    const secondPage = onPage.mock.calls[1]?.[0];
+    expect(secondPage?.candidates).toEqual([]);
+    expect(secondPage?.releases[0]?.selectedForDetails).toBe(false);
+    expect(secondPage?.releases[0]?.reasons).toContain(
+      "Provider release ID already appeared earlier in this run",
+    );
+  });
+
+  it("keeps an artist partial when its configured page limit leaves a next cursor", async () => {
+    const getArtistAlbumsPage = vi.fn().mockResolvedValue({
+      items: [],
+      nextOffset: 10,
+      offset: 0,
+      total: 20,
+    });
+    const onBatch = vi.fn().mockResolvedValue(undefined);
+    const client = {
+      getArtistAlbumsPage,
+      metrics: { failures: 0, rateLimitWaitMs: 0, requests: 1 },
+    } as unknown as SpotifyClient;
+    const provider = new SpotifyProvider({
+      client,
+      mappings: [{ artistId: "artist-1", name: "YUSSI", spotifyArtistId: "spotify-yussi" }],
+      maxPagesPerArtist: 1,
+    });
+
+    await provider.scan({ filter: { provider: "spotify" }, onBatch });
+
+    expect(onBatch).toHaveBeenCalledWith(expect.objectContaining({ partial: true }));
   });
 });
 

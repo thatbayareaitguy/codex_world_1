@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { spotifyScheduleEstimate } from "./spotify-scan-plan";
+import { selectSpotifyReconciliationMappings, spotifyScheduleEstimate } from "./spotify-scan-plan";
 import { spotifyBatchPauseMilliseconds, spotifyReleaseTelemetry } from "./scan";
 
 describe("Spotify scan scheduling", () => {
@@ -31,5 +31,43 @@ describe("Spotify scan scheduling", () => {
         { backfillEligible: true },
       ] as Parameters<typeof spotifyReleaseTelemetry>[0]),
     ).toEqual({ backfillReleaseCount: 2, releaseCount: 3 });
+  });
+});
+
+describe("selectSpotifyReconciliationMappings", () => {
+  const mappings = ["missing", "partial", "recent", "expired"].map((artistId) => ({
+    artistId,
+    name: artistId,
+    spotifyArtistId: `spotify-${artistId}`,
+  }));
+
+  it("selects incomplete and expired artists without reopening a current full cycle", () => {
+    const selected = selectSpotifyReconciliationMappings(
+      mappings,
+      [
+        {
+          artistId: "partial",
+          lastFullReconciliationAt: null,
+          partial: true,
+          status: "reconciliation_queued",
+        },
+        {
+          artistId: "recent",
+          lastFullReconciliationAt: new Date("2026-07-15T00:00:00.000Z"),
+          partial: false,
+          status: "fully_reconciled",
+        },
+        {
+          artistId: "expired",
+          lastFullReconciliationAt: new Date("2026-05-01T00:00:00.000Z"),
+          partial: false,
+          status: "fully_reconciled",
+        },
+      ],
+      30,
+      new Date("2026-07-21T00:00:00.000Z"),
+    );
+
+    expect(selected.map((mapping) => mapping.artistId)).toEqual(["missing", "partial", "expired"]);
   });
 });

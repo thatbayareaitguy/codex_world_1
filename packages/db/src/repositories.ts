@@ -10,6 +10,7 @@ import {
   artists,
   oauthAccounts,
   oauthStates,
+  spotifyArtistCoverage,
   users,
 } from "./schema";
 
@@ -187,6 +188,15 @@ export interface FollowedArtistRecord {
   name: string;
   providers: Array<(typeof artistExternalIds.$inferSelect)["provider"]>;
   source: string;
+  spotifyCoverage: {
+    catalogPagesCompleted: number;
+    dailyScanCompletedAt: Date | null;
+    lastFullReconciliationAt: Date | null;
+    nextOffset: number;
+    pagesScannedInCycle: number;
+    partial: boolean;
+    status: string;
+  } | null;
 }
 
 export async function listFollowedArtists(
@@ -223,10 +233,21 @@ export async function listFollowedArtists(
     if (!providers.includes(mapping.provider)) providers.push(mapping.provider);
     providersByArtist.set(mapping.artistId, providers);
   }
+  const coverageRows = await db
+    .select()
+    .from(spotifyArtistCoverage)
+    .where(
+      inArray(
+        spotifyArtistCoverage.artistId,
+        followed.map((artist) => artist.artistId),
+      ),
+    );
+  const coverageByArtist = new Map(coverageRows.map((row) => [row.artistId, row] as const));
 
   return followed.map((artist) => ({
     ...artist,
     providers: providersByArtist.get(artist.artistId) ?? [],
+    spotifyCoverage: coverageByArtist.get(artist.artistId) ?? null,
   }));
 }
 

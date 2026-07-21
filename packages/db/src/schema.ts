@@ -742,6 +742,100 @@ export const spotifyArtistScans = pgTable(
   ],
 );
 
+export const spotifyArtistCoverage = pgTable(
+  "spotify_artist_coverage",
+  {
+    artistId: uuid("artist_id")
+      .primaryKey()
+      .references(() => artists.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("reconciliation_queued"),
+    dailyScanCompletedAt: timestamp("daily_scan_completed_at", { withTimezone: true }),
+    reconciliationStartedAt: timestamp("reconciliation_started_at", { withTimezone: true }),
+    reconciliationCompletedAt: timestamp("reconciliation_completed_at", { withTimezone: true }),
+    nextOffset: integer("next_offset").notNull().default(0),
+    pagesScannedInCycle: integer("pages_scanned_in_cycle").notNull().default(0),
+    catalogPagesCompleted: integer("catalog_pages_completed").notNull().default(0),
+    estimatedTotalPages: integer("estimated_total_pages"),
+    partial: boolean("partial").notNull().default(true),
+    lastPageScannedAt: timestamp("last_page_scanned_at", { withTimezone: true }),
+    lastFullReconciliationAt: timestamp("last_full_reconciliation_at", { withTimezone: true }),
+    lastReconciliationError: text("last_reconciliation_error"),
+    reconciliationCycleId: uuid("reconciliation_cycle_id"),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [index("spotify_artist_coverage_status_idx").on(table.status, table.updatedAt)],
+);
+
+export const spotifyCatalogReleases = pgTable(
+  "spotify_catalog_releases",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    artistId: uuid("artist_id")
+      .notNull()
+      .references(() => artists.id, { onDelete: "cascade" }),
+    externalReleaseId: text("external_release_id").notNull(),
+    title: text("title").notNull(),
+    releaseDate: date("release_date").notNull(),
+    releaseDatePrecision: text("release_date_precision").notNull(),
+    releaseType: text("release_type").notNull(),
+    totalTracks: integer("total_tracks").notNull(),
+    summaryHash: text("summary_hash").notNull(),
+    firstObservedAt: timestamp("first_observed_at", { withTimezone: true }).notNull().defaultNow(),
+    lastObservedAt: timestamp("last_observed_at", { withTimezone: true }).notNull().defaultNow(),
+    detailsFetchedAt: timestamp("details_fetched_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("spotify_catalog_releases_artist_release_unique").on(
+      table.artistId,
+      table.externalReleaseId,
+    ),
+    index("spotify_catalog_releases_observed_idx").on(table.artistId, table.lastObservedAt),
+  ],
+);
+
+export const spotifyPageScans = pgTable(
+  "spotify_page_scans",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    batchId: uuid("batch_id")
+      .notNull()
+      .references(() => spotifyScanBatches.id, { onDelete: "cascade" }),
+    artistScanId: uuid("artist_scan_id")
+      .notNull()
+      .references(() => spotifyArtistScans.id, { onDelete: "cascade" }),
+    artistId: uuid("artist_id")
+      .notNull()
+      .references(() => artists.id, { onDelete: "cascade" }),
+    reconciliationCycleId: uuid("reconciliation_cycle_id"),
+    mode: text("mode").notNull(),
+    dryRun: boolean("dry_run").notNull().default(false),
+    pageNumber: integer("page_number").notNull(),
+    spotifyOffset: integer("spotify_offset").notNull(),
+    itemCount: integer("item_count").notNull(),
+    totalItems: integer("total_items").notNull(),
+    nextOffset: integer("next_offset"),
+    anotherPage: boolean("another_page").notNull(),
+    backfillReleaseCount: integer("backfill_release_count").notNull().default(0),
+    candidateCount: integer("candidate_count").notNull().default(0),
+    albumDetailRequests: integer("album_detail_requests").notNull().default(0),
+    requestCount: integer("request_count").notNull().default(0),
+    durationMs: integer("duration_ms").notNull().default(0),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }).notNull(),
+    createdAt,
+  },
+  (table) => [
+    uniqueIndex("spotify_page_scans_artist_offset_unique").on(
+      table.artistScanId,
+      table.spotifyOffset,
+    ),
+    index("spotify_page_scans_cycle_idx").on(table.artistId, table.reconciliationCycleId),
+  ],
+);
+
 export const operationLocks = pgTable(
   "operation_locks",
   {

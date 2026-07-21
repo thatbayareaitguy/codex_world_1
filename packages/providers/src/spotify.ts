@@ -178,6 +178,13 @@ export type SpotifyTrack = z.infer<typeof trackSchema>;
 export type SpotifyTrackSummary = z.infer<typeof trackSummarySchema>;
 export type SpotifyTokenResponse = z.infer<typeof spotifyTokenSchema>;
 
+export interface SpotifyArtistAlbumsPage {
+  items: SpotifyAlbumSummary[];
+  nextOffset: number | null;
+  offset: number;
+  total: number;
+}
+
 export const SPOTIFY_READ_SCOPES = ["user-follow-read", "playlist-read-private"] as const;
 export const SPOTIFY_PRIVATE_PLAYLIST_WRITE_SCOPE = "playlist-modify-private" as const;
 export const SPOTIFY_SCOPES = SPOTIFY_READ_SCOPES;
@@ -339,29 +346,45 @@ export class SpotifyClient {
     id: string,
     maxPages: number,
     signal?: AbortSignal,
+    startOffset = 0,
   ): Promise<{ items: SpotifyAlbumSummary[]; pagesScanned: number; partial: boolean }> {
     const results: SpotifyAlbumSummary[] = [];
-    let offset = 0;
+    let offset = startOffset;
     let pages = 0;
     let hasNext = false;
     while (pages < maxPages) {
-      const query = new URLSearchParams({
-        include_groups: "album,single,appears_on,compilation",
-        limit: "10",
-        offset: String(offset),
-      });
-      const page = await this.request(
-        `/artists/${encodeURIComponent(id)}/albums?${query}`,
-        spotifyArtistAlbumsSchema,
-        { signal },
-      );
+      const page = await this.getArtistAlbumsPage(id, offset, signal);
       pages += 1;
       results.push(...page.items);
-      hasNext = Boolean(page.next);
-      if (!hasNext || page.items.length === 0) break;
-      offset += page.items.length;
+      hasNext = page.nextOffset !== null;
+      if (page.nextOffset === null || page.items.length === 0) break;
+      offset = page.nextOffset;
     }
     return { items: results, pagesScanned: pages, partial: hasNext && pages >= maxPages };
+  }
+
+  async getArtistAlbumsPage(
+    id: string,
+    offset: number,
+    signal?: AbortSignal,
+  ): Promise<SpotifyArtistAlbumsPage> {
+    if (!Number.isInteger(offset) || offset < 0) throw new Error("Spotify offset is invalid.");
+    const query = new URLSearchParams({
+      include_groups: "album,single,appears_on,compilation",
+      limit: "10",
+      offset: String(offset),
+    });
+    const page = await this.request(
+      `/artists/${encodeURIComponent(id)}/albums?${query}`,
+      spotifyArtistAlbumsSchema,
+      { signal },
+    );
+    return {
+      items: page.items,
+      nextOffset: spotifyNextOffset(page.next, offset),
+      offset,
+      total: page.total,
+    };
   }
 
   getAlbum(id: string, signal?: AbortSignal): Promise<SpotifyAlbum> {
@@ -597,6 +620,15 @@ export class SpotifyClient {
       ...(event.retryAfterMs === undefined ? {} : { retryAfterMs: event.retryAfterMs }),
     });
   }
+}
+
+export function spotifyNextOffset(nextUrl: string | null, currentOffset: number): number | null {
+  if (!nextUrl) return null;
+  const value = Number(new URL(nextUrl).searchParams.get("offset"));
+  if (!Number.isInteger(value) || value <= currentOffset) {
+    throw new Error("Spotify returned an invalid next-page offset.");
+  }
+  return value;
 }
 
 interface SpotifyOAuthClientOptions {

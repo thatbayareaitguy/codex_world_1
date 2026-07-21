@@ -4,8 +4,30 @@ export interface ScanContext {
   cursor?: string;
   filter: ScanFilter;
   onBatch?: (batch: ProviderScanBatch) => Promise<void>;
+  onPage?: (page: ProviderScanPage) => Promise<void>;
   onUnitStart?: (unit: ProviderScanUnit) => Promise<boolean>;
   signal?: AbortSignal;
+}
+
+export interface ProviderScanPage {
+  albumDetailRequests: number;
+  candidates: TrackCandidate[];
+  currentUnit: string;
+  currentUnitId: string;
+  durationMs: number;
+  finishedAt: Date;
+  itemCount: number;
+  nextOffset: number | null;
+  offset: number;
+  pageNumber: number;
+  providerMetrics: {
+    failures: number;
+    requests: number;
+    waitMs: number;
+  };
+  releases: ProviderReleaseObservation[];
+  startedAt: Date;
+  totalItems: number;
 }
 
 export interface ProviderScanBatch {
@@ -38,6 +60,7 @@ export interface ProviderReleaseObservation {
   releaseType: string;
   selectedForDetails: boolean;
   title: string;
+  totalTracks: number;
 }
 
 export interface ProviderScanUnit {

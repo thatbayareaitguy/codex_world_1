@@ -244,11 +244,28 @@ test("defaults scan history to the meaningful batch and inspects other run types
         runs: [],
         spotify: {
           batch: null,
+          coverage: {
+            currentCycleCompletedPages: 50,
+            estimatedRemainingPages: 50,
+            estimatedRemainingRequests: 50,
+            failedArtists: 0,
+            fullyReconciledArtists: 0,
+            inProgressArtists: 0,
+            partialArtists: 50,
+            pausedArtists: 0,
+            queuedArtists: 50,
+            rateLimitedArtists: 0,
+            totalArtists: 50,
+          },
           limiter: {
             artistsPerBatch: 15,
             batchPauseSeconds: 60,
             distributionHours: 24,
+            maxRequestsPerRun: 150,
             minRequestIntervalMs: 5000,
+            reconciliationArtistsPerBatch: 15,
+            reconciliationCycleDays: 30,
+            reconciliationMaxPagesPerRun: 2,
           },
           operational: {
             canManualClear: false,
@@ -609,6 +626,15 @@ test("shows a confirmed Spotify import from the persisted watchlist response", a
             name: "Regression Artist",
             providers: ["spotify"],
             source: "spotify_import",
+            spotifyCoverage: {
+              catalogPagesCompleted: 1,
+              dailyScanCompletedAt: "2026-07-17T12:10:00.000Z",
+              lastFullReconciliationAt: null,
+              nextOffset: 10,
+              pagesScannedInCycle: 1,
+              partial: true,
+              status: "reconciliation_queued",
+            },
           },
         ],
       },
@@ -625,6 +651,7 @@ test("shows a confirmed Spotify import from the persisted watchlist response", a
   await expect(page.getByRole("heading", { name: "Followed artists" })).toBeVisible();
   await expect(page.getByText("Regression Artist", { exact: true })).toBeVisible();
   await expect(page.getByText("Imported from Spotify", { exact: true })).toBeVisible();
+  await expect(page.getByText("Partial catalog", { exact: true })).toBeVisible();
   await expect(page.getByRole("status")).toContainText("Spotify import persisted 1 active artists");
 });
 
@@ -698,6 +725,15 @@ test("persists and displays a confirmed MusicBrainz mapping before replacement",
             name: "Regression Artist",
             providers: confirmedMbid ? ["spotify", "musicbrainz"] : ["spotify"],
             source: "spotify_import",
+            spotifyCoverage: {
+              catalogPagesCompleted: 3,
+              dailyScanCompletedAt: "2026-07-17T12:10:00.000Z",
+              lastFullReconciliationAt: "2026-07-17T12:20:00.000Z",
+              nextOffset: 0,
+              pagesScannedInCycle: 3,
+              partial: false,
+              status: "fully_reconciled",
+            },
           },
         ],
       },
@@ -774,6 +810,7 @@ test("persists and displays a confirmed MusicBrainz mapping before replacement",
   };
 
   await importArtist();
+  await expect(page.getByText("Fully reconciled", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Map Regression Artist MusicBrainz mapping" }).click();
   await page.getByRole("button", { name: "Confirm mapping" }).first().click();
   const modal = page.getByRole("region", { name: "MusicBrainz mapping candidates" });
@@ -1088,11 +1125,28 @@ test("controls persisted Spotify batches without bypassing cooldown state", asyn
         status: batchStatus,
         totalArtists: 15,
       },
+      coverage: {
+        currentCycleCompletedPages: 50,
+        estimatedRemainingPages: 50,
+        estimatedRemainingRequests: 50,
+        failedArtists: 0,
+        fullyReconciledArtists: 0,
+        inProgressArtists: 0,
+        partialArtists: 50,
+        pausedArtists: 0,
+        queuedArtists: 50,
+        rateLimitedArtists: 0,
+        totalArtists: 50,
+      },
       limiter: {
         artistsPerBatch: 15,
         batchPauseSeconds: 60,
         distributionHours: 24,
+        maxRequestsPerRun: 150,
         minRequestIntervalMs: 5000,
+        reconciliationArtistsPerBatch: 15,
+        reconciliationCycleDays: 30,
+        reconciliationMaxPagesPerRun: 2,
       },
       operational: {
         canManualClear: false,
@@ -1124,6 +1178,8 @@ test("controls persisted Spotify batches without bypassing cooldown state", asyn
   await page.goto("/?e2e-scan-status=database#feed");
   const spotifyStatus = page.getByRole("region", { name: "Spotify scan status" });
   await expect(spotifyStatus).toContainText("Synthetic Artist");
+  await expect(spotifyStatus).toContainText("Partial catalogs");
+  await expect(spotifyStatus).toContainText("Awaiting reconciliation");
   const collapseStatus = spotifyStatus.getByRole("button", {
     name: "Collapse Spotify scan status",
   });

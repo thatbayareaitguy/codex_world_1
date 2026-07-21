@@ -12,6 +12,7 @@ const {
   requestOperationCancellation,
   select,
   selectDefaultScanHistoryEntry,
+  spotifyCoverageSummary,
 } = vi.hoisted(() => {
   const history = [
     {
@@ -50,6 +51,21 @@ const {
       })),
     })),
     selectDefaultScanHistoryEntry: vi.fn(() => history[0]),
+    spotifyCoverageSummary: vi.fn(() =>
+      Promise.resolve({
+        currentCycleCompletedPages: 50,
+        estimatedRemainingPages: 50,
+        estimatedRemainingRequests: 50,
+        failedArtists: 0,
+        fullyReconciledArtists: 0,
+        inProgressArtists: 0,
+        partialArtists: 50,
+        pausedArtists: 0,
+        queuedArtists: 50,
+        rateLimitedArtists: 0,
+        totalArtists: 50,
+      }),
+    ),
   };
 });
 
@@ -82,6 +98,7 @@ vi.mock("@radar/db", () => ({
   requestOperationCancellation,
   scanRuns: { startedAt: "startedAt" },
   selectDefaultScanHistoryEntry,
+  spotifyCoverageSummary,
 }));
 vi.mock("@radar/providers", () => ({
   loadProviderConfiguration: vi.fn(() => ({
@@ -93,6 +110,10 @@ vi.mock("@radar/providers", () => ({
       configured: true,
       distributionHours: 24,
       minRequestIntervalMs: 5000,
+      maxRequestsPerRun: 150,
+      reconciliationArtistsPerBatch: 15,
+      reconciliationCycleDays: 30,
+      reconciliationMaxPagesPerRun: 2,
       scanDistributionHours: 24,
     },
   })),

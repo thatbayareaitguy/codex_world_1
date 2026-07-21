@@ -5,4 +5,13 @@ export interface WatchlistArtistViewModel {
   name: string;
   providers: string[];
   source: string;
+  spotifyCoverage: {
+    catalogPagesCompleted: number;
+    dailyScanCompletedAt: string | null;
+    lastFullReconciliationAt: string | null;
+    nextOffset: number;
+    pagesScannedInCycle: number;
+    partial: boolean;
+    status: string;
+  } | null;
 }

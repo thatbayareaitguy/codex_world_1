@@ -10,6 +10,7 @@ import {
   requestOperationCancellation,
   scanRuns,
   selectDefaultScanHistoryEntry,
+  spotifyCoverageSummary,
 } from "@radar/db";
 import { loadProviderConfiguration } from "@radar/providers";
 import { and, asc, desc, eq, gt } from "drizzle-orm";
@@ -58,6 +59,7 @@ export async function GET(): Promise<NextResponse> {
       history,
       musicbrainzState,
       musicbrainzBatch,
+      spotifyCoverage,
     ] = await Promise.all([
       connection.db.select().from(scanRuns).orderBy(desc(scanRuns.startedAt)).limit(20),
       connection.db.query.operationLocks.findFirst({
@@ -76,6 +78,7 @@ export async function GET(): Promise<NextResponse> {
       connection.db.query.musicbrainzScanBatches.findFirst({
         orderBy: [desc(musicbrainzScanBatches.createdAt)],
       }),
+      spotifyCoverageSummary(connection.db),
     ]);
     const musicbrainzArtistRows = musicbrainzBatch
       ? await connection.db
@@ -109,11 +112,16 @@ export async function GET(): Promise<NextResponse> {
         runs,
         spotify: {
           batch: spotifyBatch,
+          coverage: spotifyCoverage,
           limiter: {
             artistsPerBatch: configuration.spotify.artistsPerBatch,
             batchPauseSeconds: configuration.spotify.batchPauseSeconds,
             distributionHours: configuration.spotify.scanDistributionHours,
             minRequestIntervalMs: configuration.spotify.minRequestIntervalMs,
+            maxRequestsPerRun: configuration.spotify.maxRequestsPerRun,
+            reconciliationArtistsPerBatch: configuration.spotify.reconciliationArtistsPerBatch,
+            reconciliationCycleDays: configuration.spotify.reconciliationCycleDays,
+            reconciliationMaxPagesPerRun: configuration.spotify.reconciliationMaxPagesPerRun,
           },
           operational: spotifyOperational,
         },

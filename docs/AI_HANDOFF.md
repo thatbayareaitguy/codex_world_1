@@ -1,115 +1,88 @@
 # AI Handoff
 
-Updated: 2026-07-21 01:00:22 PDT (UTC-07:00)
+Updated: 2026-07-21 12:45 PDT (UTC-07:00)
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`.
-- Latest commit: the current `fix: validate Spotify artwork backfill` commit (hash finalized by the amend that includes this handoff update). Previous pushed artwork checkpoint: `88404da`.
-- Current milestone: Spotify album and single artwork plus the bounded historical artwork backfill are implemented. The approved five-release live validation and final credential-free verification passed.
-- Git state: clean after the validation-fix amend on `codex/release-radar-hardening`; normal push remains.
+- Latest committed and pushed checkpoint: `7d520e4b28aba5d137b9b6db6ee1a40f7d59d343`.
+- Current milestone: resumable Spotify catalog pagination and completeness coverage.
+- Git state: milestone implementation, migration, tests, and documentation are uncommitted for user review.
 
 ## Confirmed Working
 
-- PostgreSQL, both Docker database services, ten forward migrations, the local web application, and doctor checks.
-- Database-backed canonical watchlist with 593 active follows.
-- Spotify OAuth, followed-artist import, global cooldown, one shared request gate, bounded pagination, persisted per-artist progress, safe telemetry, and partial-scan reporting.
-- Earlier YUSSI, five-artist, and 15-artist validations completed without HTTP 429 or playlist access.
-- Approved batch `03290ef4-4fd3-4086-bf4a-d69379514837` processed exactly 50 artists serially from 2026-07-20 21:04:55 to 21:13:51 PDT.
-- The batch made 102 accounted requests, observed a 5.004-second minimum request-start interval, and made no playlist, MusicBrainz, or Reddit request.
-- The batch inspected 500 release summaries, found 51 backfill releases, and persisted 90 candidates, 46 new releases, 83 new tracks, 90 evidence rows, 84 feed rows, and 1 review row.
-- All 50 artists persisted after completion; 22 had legitimate zero-result scans and all 50 are partial because another page existed beyond the approved one-page limit.
-- The Alison Wonderland idempotency rerun made one artist-albums request and created zero canonical, candidate, evidence, feed, or review duplicates.
-- The idle Discovery Feed defaults to the most recent meaningful multi-artist batch while preserving later single-artist scans, dry runs, and failed, cancelled, paused, and completed history in an accessible selector.
-- The live status panel displays the 50-artist batch with scan ID, timing, duration, trigger, provider, artist count, 102 requests, 90 created records, 0 updated records, 50 partial artists, 0 failures, 1 review item, and non-dry-run status.
-- New Spotify candidates retain validated album artwork URL and dimensions from the already-fetched official album response without another Spotify request. Release metadata is namespaced under `release_external_ids.provider_fields.spotify`.
-- The Discovery Feed loads Spotify artwork directly from `i.scdn.co`, preserves aspect ratio, links to the matching Spotify album, shows one cover per grouped release, and uses the existing fallback for missing or failed images.
-- `pnpm spotify:backfill-artwork` defaults to dry-run, requires a limit from 1 through 25, requires `--apply` for writes, uses only stored album IDs, shares the global Spotify request gate, and persists a resumable cursor after each completed release.
-- The live backfill selects distinct canonical releases even when several Spotify album IDs converge on one canonical release. Feed projection chooses a valid stored artwork record across those IDs.
-- The running feed displayed new Au5, BARELY ALIVE, and Dom Dolla-related records with Spotify evidence and release grouping without a page reload.
-- Feed artist credits use commas and expanded or collapsed headings use `Artist(s) - Song`.
-- Expanded and collapsed feed headings append a precision-aware release date at normal weight. Day-precision dates use `Weekday, M/D/YY`; the redundant released-date fact is removed and remaining metadata aligns with the title.
-- Multi-track album and EP group headings use `Artist - Release`, including matching accessible collapse and expand labels.
-- Manual match decisions persist transactionally and the feed polls a lightweight database revision before fetching updated feed data.
-- BRANDON is confirmed as MusicBrainz artist `5b9fdf2d-1610-41f9-bc73-3a0cdd289eba` (`German DJ Brandon Hovsepian`) from exact Spotify and Instagram URL relationships. The five unrelated proposals are rejected, the confirmed review is persisted, and the artist page displays the mapping after reload.
+- PostgreSQL and the test database are healthy. Eleven forward migrations are applied through `0010_chubby_talkback`.
+- Spotify is connected. Playlist writes remain disabled. The global client-ID request gate still serializes all requests at a minimum five-second interval.
+- Daily scans start at page one but retain any deeper reconciliation cursor.
+- Initial and reconciliation scans resume at the stored Spotify offset, persist each page, and remain partial until Spotify returns no `next` cursor.
+- Catalog summaries are stored separately from canonical releases, so old pages can be observed without creating feed records or repeatedly fetching details.
+- A per-run request budget pauses work without discarding the unresolved artist or offset.
+- Reconciliation selection includes incomplete artists, artists without coverage, and fully reconciled artists whose configured cycle has expired. A current full cycle is not reopened.
+- Artist and provider UI surfaces distinguish partial, queued, in-progress, fully reconciled, paused, failed, and rate-limited coverage.
+
+## Live Pagination Validation
+
+- Approved artists: BARELY ALIVE, Au5, MUST DIE!, Bensley, Excision, and Tiesto. Only their confirmed Spotify mappings were used.
+- The final corrected runs made 20 `artist_albums` requests from 2026-07-21 12:24:18 to 12:31:03 PDT.
+- Total milestone traffic was 31 requests over 13 minutes 39.505 seconds: 30 `artist_albums` requests plus 1 OAuth refresh. Ten artist-album requests were the earlier BARELY ALIVE run that exposed the cursor calculation defect and were repeated after the fix.
+- Minimum request-start interval: 5.007 seconds. HTTP 429 responses: 0. Cooldowns: 0. Album-detail requests: 0.
+- BARELY ALIVE inspected 10 pages and retained offset 100. The other artists inspected 2 pages and retained offset 20.
+- No page after page one contained a release inside the 60-day backfill. No recovery scan was needed.
+- Spotify ordering was inconsistent on several page-one responses, so the scanner does not stop after seeing an old release.
+- Canonical writes during dry runs: 0 releases, tracks, candidates, evidence rows, and feed items.
+- Current canonical totals: 64 releases, 148 tracks, 166 candidates, 166 evidence rows, and 148 feed items.
+- Current coverage: 71 partial and queued artists, 0 fully reconciled, with 226 estimated remaining pages among rows that have provider totals.
 
 ## Implemented, Not Live-Tested
 
-- The automatic feed-revision polling path remains covered by Playwright; live UI verification used a newly opened tab after apply, so the no-reload transition itself was not directly observed in that tab.
+- The 150-request automatic pause has credential-free coverage but was not intentionally reached against Spotify.
+- A terminal page transition to fully reconciled is covered by PostgreSQL tests; the six live samples all retained another-page cursors.
+- Distributed reconciliation for the remaining watchlist has not started.
 - Spotify playlist safeguards exist, but writes remain disabled and have never been exercised against the real account.
-- Deep reconciliation and the remaining watchlist scan have not run.
-- A 10-artist MusicBrainz batch remains deferred because only 6 artists have confirmed mappings.
 
-## Known Defects And Limitations
+## Known Limitations
 
-- One-page scans cannot prove catalog completeness; all 50 approved artists remain partial.
-- One initial artist-albums request failed while refreshing an expired access token, then retried successfully. Safe telemetry preserves both events.
-- Spotify availability can show unavailable for the configured region while a protected evidence link exists.
-- 59 canonical Spotify-backed releases still lack artwork after the approved five-release limit. They continue to use the initials fallback.
+- Spotify does not guarantee chronological artist-album ordering. A one-page daily scan optimizes speed, not completeness.
+- Estimated remaining pages and requests are planning values derived from provider totals. They are not exact completion promises.
+- Completeness is limited to the catalog Spotify exposes for the connected user's region.
 - One historical Spotify timestamp-binding failure remains resolved and preserved.
-- The real `Want It - Mefjus Remix` review remains unresolved because no prior manual decision existed in PostgreSQL.
 
 ## Provider State
 
-- Spotify: connected; no active cooldown, operation lock, scan lock, or queued request after validation.
-- MusicBrainz: configured; 6 confirmed mappings. The targeted BRANDON investigation made 9 official API requests, all HTTP 200.
+- Spotify: connected; final doctor reports no cooldown or stale lock. Run `pnpm doctor` again before any future live request.
+- MusicBrainz: configured but not called in this milestone.
 - Reddit: disabled pending explicit API approval.
 - SoundCloud API, YouTube, Apple Music, TIDAL, and other providers remain excluded. Manual SoundCloud links remain disabled by default.
 
-## Database
-
-- Applied migrations: 10 through `0009_first_white_queen`. Artwork uses existing JSONB provider fields, so no migration was required.
-- Before live backfill: 0 Spotify release rows had valid artwork, 75 lacked artwork, all 75 had usable stored Spotify album IDs, and 0 required rediscovery before querying.
-- After live backfill: 5 provider release rows and 5 canonical releases have valid artwork; 70 provider rows remain without artwork, representing 59 eligible canonical releases. Canonical totals remain 64 releases and 148 tracks; evidence remains 166 and feed items remain 149 with 0 duplicate feed keys.
-- Post-validation totals: 64 releases, 148 tracks, 166 candidates, 166 evidence rows, and 149 feed rows.
-- Duplicate provider candidates, evidence identities, and feed dedupe keys: 0.
-- Active operation locks: 0. Active scan locks: 0.
-- BRANDON mapping reviews: 1 confirmed, 5 rejected, and 0 pending.
-- Validation details and all 50 per-artist outcomes are in `docs/spotify-validation-sample.md`.
-
 ## Verification
 
-- Live 50-artist batch: completed; HTTP 429: 0; playlist requests: 0; provider failures: 0.
-- Idempotency spot check: completed with zero data writes.
-- Browser feed inspection: passed with new grouped results and no visible error state.
-- Scan-history regression checks: API unit coverage, PostgreSQL-backed default-selection coverage, and two Playwright flows passed. Live browser inspection confirmed the 50-artist batch is the idle default and single-artist scans remain selectable.
-- BRANDON MusicBrainz validation: exact Spotify and Instagram URL relationships resolved to one MBID; persistence, review closure, page reload, and confirmed-state modal passed. Spotify requests during this investigation: 0.
-- Feed title-date layout: lint, strict TypeScript, formatting, targeted Playwright, desktop browser inspection, and 480px responsive inspection passed. Metadata and evidence offsets match the title at 0px; no horizontal page overflow was introduced.
-- Grouped release heading: targeted Playwright passed for expanded and collapsed states; the live database feed rendered `Au5 - Inverse` and the matching accessible region label.
-- Spotify artwork unit coverage: URL and album-link validation, closest-size selection, malformed metadata, missing images, provider candidate propagation, and safe schema filtering passed.
-- Spotify artwork PostgreSQL coverage: namespaced persistence, shared album records, idempotent URL refresh, evidence/feed dedupe, missing/unsafe handling, and non-Spotify isolation passed.
-- Artwork backfill coverage: dry-run write isolation, apply persistence, existing-artwork and malformed-ID skips, unsafe URL rejection, resume, idempotency, cooldown and 429 stops, sequential processing, canonical identity stability, and feed revision updates passed.
-- Live dry-run: selected `UNTAMED`, `Hold On`, `Under The Lights`, `Just Love`, and `DARE TO DREAM`; predicted 5 updates and wrote 0. An expired-token refresh exposed token acquisition occurring after the album lease; 6 album attempts plus 1 OAuth request completed without 429.
-- The token path now refreshes before acquiring an API permit or starting the request timeout. Focused regression tests passed.
-- Live apply after correction: 5 album requests, 20.328 seconds, 5.009-second minimum request-start interval, 19.135 seconds aggregate queue wait, 5 updates, 0 unavailable, 0 failures, 0 HTTP 429, and 0 playlist requests.
-- Live UI: all five images projected; `Hold On` loaded at 300 by 300 pixels; grouped `UNTAMED` rendered one image; links use the matching Spotify album with `_blank` and `noopener noreferrer`; object fit is `contain`; collapse works; no horizontal overflow; and non-artwork records retain initials.
-- Spotify artwork Playwright coverage: direct rendering, safe album link, refresh persistence, one grouped image, collapse, failure fallback, and 480px layout passed.
+- Strict TypeScript: passed across all workspace projects.
+- Unit tests: 232 passed in 32 files.
+- PostgreSQL integration tests: 41 passed in 7 files, including clean migration provisioning and legacy partial-history migration.
 - Format: passed.
 - Lint: passed with zero warnings.
-- Strict TypeScript: passed across all workspace projects.
-- Unit tests: 224 passed in 31 files.
-- PostgreSQL integration tests: 32 passed in 6 files.
-- Production build: passed; 23 application pages/routes generated.
-- Playwright: 17 passed.
-- Doctor: `READY`; 10 migrations, no cooldown, no stale lock, and one resolved historical failure preserved.
+- Production build: passed; 23 application pages and routes generated.
+- Playwright: 17 passed, including partial/full coverage labels, provider progress, pause/resume controls, and recovered-feed fixture behavior.
+- Doctor: `READY`; 11 migrations, no cooldown, no stale lock, and one resolved historical failure preserved.
 - `git diff --check`: passed.
 
-## Uncommitted Files
+## Uncommitted Scope
 
-- None after the validation-fix amend.
+- Forward migration `0010_chubby_talkback.sql` and snapshot/journal updates.
+- Spotify coverage repository, scanner planning, request budget, page reporting, provider pagination, API/UI coverage projection, tests, environment placeholders, and documentation.
+- No credentials, tokens, dumps, backups, logs, screenshots, traces, or temporary files belong in the diff.
 
 ## Security And Policy
 
-- No credential, token, authorization header, personal provider payload, database dump, backup, log, screenshot, or trace is committed or documented.
-- Spotify tokens remain encrypted and server-side. Playlist writes remain disabled.
-- No combined player, mixed queue, scraping, cross-service artwork, audio proxy, or SoundCloud API integration is permitted. Spotify artwork remains Spotify-namespaced, loads directly from the exact allowed host, is not downloaded or transformed, and links back to Spotify.
-- Plain outbound links to another service remain a documented Spotify policy uncertainty.
+- The live validation made no playlist, MusicBrainz, Reddit, or SoundCloud request.
+- Dry runs persisted only provider catalog summaries, page cursors, and operational telemetry. Canonical music and feed records were unchanged.
+- Spotify content remains namespaced and is not used to enrich another service.
 
 ## Next Action
 
-Push the validation-fix commit normally. The deeper pagination milestone may then begin only with a separately reviewed and explicitly approved bounded plan; do not backfill another release or scan the remaining watchlist as part of this milestone.
+Complete credential-free verification and inspect the final diff. Do not begin distributed reconciliation or the full watchlist scan. Do not commit or push until the user reviews the result.
 
 ## User Decisions Needed
 
-- Decide the correct review outcome for `Want It - Mefjus Remix`.
-- Approve a future pagination/reconciliation strategy before any additional Spotify scan.
+- Review the milestone result and decide whether to authorize a later bounded reconciliation batch.
+- Decide whether the uncommitted milestone should be committed after review.
