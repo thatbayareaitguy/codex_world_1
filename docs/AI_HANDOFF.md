@@ -1,13 +1,14 @@
 # AI Handoff
 
-Updated: 2026-07-21 12:45 PDT (UTC-07:00)
+Updated: 2026-07-21 13:24 PDT (UTC-07:00)
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`.
-- Latest committed and pushed checkpoint: `7d520e4b28aba5d137b9b6db6ee1a40f7d59d343`.
-- Current milestone: resumable Spotify catalog pagination and completeness coverage.
-- Git state: milestone implementation, migration, tests, and documentation are uncommitted for user review.
+- Pagination implementation checkpoint: `7545e7df32bdbafde26e86f5560a84706a8396ea`, committed and pushed.
+- Latest repository commit after handoff finalization: `HEAD` (`docs: record pagination and artwork completion`).
+- Current milestone: deeper pagination finalized; existing Spotify release artwork backfill complete.
+- Git state: expected clean after the handoff commit is finalized and pushed.
 
 ## Confirmed Working
 
@@ -19,6 +20,7 @@ Updated: 2026-07-21 12:45 PDT (UTC-07:00)
 - A per-run request budget pauses work without discarding the unresolved artist or offset.
 - Reconciliation selection includes incomplete artists, artists without coverage, and fully reconciled artists whose configured cycle has expired. A current full cycle is not reopened.
 - Artist and provider UI surfaces distinguish partial, queued, in-progress, fully reconciled, paused, failed, and rate-limited coverage.
+- Existing Spotify release artwork is fetched by stored album ID through the shared request gate. The application stores provider metadata only and renders Spotify-hosted images directly without proxying, downloading, or rehosting them.
 
 ## Live Pagination Validation
 
@@ -32,6 +34,16 @@ Updated: 2026-07-21 12:45 PDT (UTC-07:00)
 - Canonical writes during dry runs: 0 releases, tracks, candidates, evidence rows, and feed items.
 - Current canonical totals: 64 releases, 148 tracks, 166 candidates, 166 evidence rows, and 148 feed items.
 - Current coverage: 71 partial and queued artists, 0 fully reconciled, with 226 estimated remaining pages among rows that have provider totals.
+
+## Artwork Backfill Completion
+
+- Initial state: 5 of 75 Spotify provider rows had valid artwork; 70 did not. Five of 64 canonical Spotify releases had artwork and 59 were eligible for backfill.
+- Three bounded dry-run/apply pairs completed with apply batches of 25, 25, and 9 canonical releases.
+- The apply batches made 25, 25, and 9 album requests. Including required dry runs, the milestone made 118 album requests plus one OAuth refresh.
+- Minimum request-start interval: 5.006 seconds. HTTP 429 responses: 0. Cooldowns: 0. Failed or unavailable canonical releases: 0.
+- Final state: all 64 canonical Spotify releases have valid artwork. Sixty-four provider rows contain the selected artwork metadata; 11 alternate provider mappings remain without duplicated artwork because their canonical releases already resolve to a valid primary image.
+- The feed rendered 64 safe Spotify artwork images in the live database. Manual checks covered an EP, a multi-track album, a multi-artist single, and releases that previously displayed initials.
+- Automatic refresh and missing/broken-image fallback behavior passed Playwright coverage. No eligible Spotify-backed release remains on fallback, so there was no legitimate live Spotify fallback sample after completion.
 
 ## Implemented, Not Live-Tested
 
@@ -49,7 +61,7 @@ Updated: 2026-07-21 12:45 PDT (UTC-07:00)
 
 ## Provider State
 
-- Spotify: connected; final doctor reports no cooldown or stale lock. Run `pnpm doctor` again before any future live request.
+- Spotify: connected; final doctor reports no cooldown or stale lock. The artwork operation is complete and no provider process remains active. Run `pnpm doctor` again before any future live request.
 - MusicBrainz: configured but not called in this milestone.
 - Reddit: disabled pending explicit API approval.
 - SoundCloud API, YouTube, Apple Music, TIDAL, and other providers remain excluded. Manual SoundCloud links remain disabled by default.
@@ -62,27 +74,27 @@ Updated: 2026-07-21 12:45 PDT (UTC-07:00)
 - Format: passed.
 - Lint: passed with zero warnings.
 - Production build: passed; 23 application pages and routes generated.
-- Playwright: 17 passed, including partial/full coverage labels, provider progress, pause/resume controls, and recovered-feed fixture behavior.
+- Playwright: 17 passed, including partial/full coverage labels, provider progress, pause/resume controls, automatic feed refresh, artwork rendering, grouped artwork, and fallback behavior.
 - Doctor: `READY`; 11 migrations, no cooldown, no stale lock, and one resolved historical failure preserved.
 - `git diff --check`: passed.
 
 ## Uncommitted Scope
 
-- Forward migration `0010_chubby_talkback.sql` and snapshot/journal updates.
-- Spotify coverage repository, scanner planning, request budget, page reporting, provider pagination, API/UI coverage projection, tests, environment placeholders, and documentation.
-- No credentials, tokens, dumps, backups, logs, screenshots, traces, or temporary files belong in the diff.
+- None after the handoff commit is finalized.
+- No credentials, tokens, dumps, backups, logs, screenshots, traces, or temporary files are present.
 
 ## Security And Policy
 
 - The live validation made no playlist, MusicBrainz, Reddit, or SoundCloud request.
 - Dry runs persisted only provider catalog summaries, page cursors, and operational telemetry. Canonical music and feed records were unchanged.
+- Artwork backfill used stored Spotify album IDs only and did not perform artist discovery, search, or playlist requests.
 - Spotify content remains namespaced and is not used to enrich another service.
 
 ## Next Action
 
-Complete credential-free verification and inspect the final diff. Do not begin distributed reconciliation or the full watchlist scan. Do not commit or push until the user reviews the result.
+Perform the separately authorized read-only architecture audit. Do not begin distributed reconciliation, another artist scan, or the full watchlist sync.
 
 ## User Decisions Needed
 
-- Review the milestone result and decide whether to authorize a later bounded reconciliation batch.
-- Decide whether the uncommitted milestone should be committed after review.
+- Decide when to authorize the read-only architecture audit.
+- A later bounded reconciliation batch still requires separate approval.
