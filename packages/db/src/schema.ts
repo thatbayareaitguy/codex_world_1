@@ -99,6 +99,32 @@ export const spotifyReleaseTrackStatusEnum = pgEnum("spotify_release_track_statu
   "rate_limited",
   "failed",
 ]);
+export const spotifySchedulerModeEnum = pgEnum("spotify_scheduler_mode", [
+  "disabled",
+  "planning",
+  "validation",
+  "automatic",
+  "paused",
+]);
+export const spotifySchedulerWorkTypeEnum = pgEnum("spotify_scheduler_work_type", [
+  "base_artist",
+  "release_detail",
+  "release_tracks",
+  "artist_reconciliation",
+]);
+export const spotifySchedulerWorkStatusEnum = pgEnum("spotify_scheduler_work_status", [
+  "queued",
+  "leased",
+  "blocked",
+  "completed",
+  "cancelled",
+]);
+export const spotifySchedulerWorkSourceEnum = pgEnum("spotify_scheduler_work_source", [
+  "initial",
+  "recurring",
+  "validation",
+  "repair",
+]);
 export const musicbrainzBatchStatusEnum = pgEnum("musicbrainz_batch_status", [
   "pending",
   "running",
@@ -616,6 +642,22 @@ export const spotifyProviderState = pgTable("spotify_provider_state", {
   updatedAt,
 });
 
+export const spotifySchedulerState = pgTable("spotify_scheduler_state", {
+  id: text("id").primaryKey().default("global"),
+  mode: spotifySchedulerModeEnum("mode").notNull().default("disabled"),
+  nextBaseSlotAt: timestamp("next_base_slot_at", { withTimezone: true }),
+  cycleStartedAt: timestamp("cycle_started_at", { withTimezone: true }),
+  cycleTargetArtists: integer("cycle_target_artists").notNull().default(0),
+  lastTickStartedAt: timestamp("last_tick_started_at", { withTimezone: true }),
+  lastTickCompletedAt: timestamp("last_tick_completed_at", { withTimezone: true }),
+  lastTickErrorClassification: text("last_tick_error_classification"),
+  effectiveConfiguration: jsonb("effective_configuration")
+    .notNull()
+    .default(sql`'{}'::jsonb`),
+  createdAt,
+  updatedAt,
+});
+
 export const spotifyRequestEvents = pgTable(
   "spotify_request_events",
   {
@@ -631,9 +673,14 @@ export const spotifyRequestEvents = pgTable(
     cooldownUntil: timestamp("cooldown_until", { withTimezone: true }),
     errorClassification: text("error_classification"),
     responseClassification: text("response_classification"),
+    schedulerWorkId: uuid("scheduler_work_id"),
+    schedulerWorkType: spotifySchedulerWorkTypeEnum("scheduler_work_type"),
     createdAt,
   },
-  (table) => [index("spotify_request_events_started_idx").on(table.startedAt)],
+  (table) => [
+    index("spotify_request_events_started_idx").on(table.startedAt),
+    index("spotify_request_events_scheduler_idx").on(table.schedulerWorkType, table.startedAt),
+  ],
 );
 
 export const musicbrainzProviderState = pgTable("musicbrainz_provider_state", {
@@ -912,6 +959,62 @@ export const spotifyReleaseTrackItems = pgTable(
       table.retrievalId,
       table.discNumber,
       table.trackNumber,
+    ),
+  ],
+);
+
+export const spotifySchedulerWork = pgTable(
+  "spotify_scheduler_work",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workKey: text("work_key").notNull(),
+    workType: spotifySchedulerWorkTypeEnum("work_type").notNull(),
+    status: spotifySchedulerWorkStatusEnum("status").notNull().default("queued"),
+    source: spotifySchedulerWorkSourceEnum("source").notNull(),
+    artistId: uuid("artist_id").references(() => artists.id, { onDelete: "cascade" }),
+    expectedSpotifyArtistId: text("expected_spotify_artist_id"),
+    spotifyAlbumId: text("spotify_album_id"),
+    releaseTrackRetrievalId: uuid("release_track_retrieval_id").references(
+      () => spotifyReleaseTrackRetrievals.id,
+      { onDelete: "cascade" },
+    ),
+    reconciliationCycleId: uuid("reconciliation_cycle_id"),
+    priority: integer("priority").notNull().default(100),
+    dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
+    notBefore: timestamp("not_before", { withTimezone: true }),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    lastErrorClassification: text("last_error_classification"),
+    blockedReason: text("blocked_reason"),
+    lastStartedAt: timestamp("last_started_at", { withTimezone: true }),
+    lastCompletedAt: timestamp("last_completed_at", { withTimezone: true }),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("spotify_scheduler_work_key_unique").on(table.workKey),
+    index("spotify_scheduler_work_due_idx").on(table.status, table.dueAt, table.priority, table.id),
+    index("spotify_scheduler_work_type_due_idx").on(
+      table.workType,
+      table.status,
+      table.dueAt,
+      table.id,
+    ),
+    index("spotify_scheduler_work_lease_idx").on(table.leaseExpiresAt),
+    index("spotify_scheduler_work_artist_idx").on(table.artistId, table.status),
+    index("spotify_scheduler_work_album_idx").on(table.spotifyAlbumId, table.workType),
+    check(
+      "spotify_scheduler_work_target_check",
+      sql`(
+        (${table.workType} in ('base_artist', 'artist_reconciliation') and ${table.artistId} is not null and ${table.expectedSpotifyArtistId} is not null)
+        or (${table.workType} = 'release_detail' and ${table.spotifyAlbumId} is not null)
+        or (${table.workType} = 'release_tracks' and ${table.spotifyAlbumId} is not null and ${table.releaseTrackRetrievalId} is not null)
+      )`,
+    ),
+    check(
+      "spotify_scheduler_work_lease_check",
+      sql`(${table.status} = 'leased' and ${table.leaseOwner} is not null and ${table.leaseExpiresAt} is not null) or (${table.status} <> 'leased' and ${table.leaseOwner} is null and ${table.leaseExpiresAt} is null)`,
     ),
   ],
 );

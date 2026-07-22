@@ -55,6 +55,7 @@ import {
   markSpotifyCoverageInterrupted,
   markSpotifyReleaseTrackInterrupted,
   pauseSpotifyArtistForBudget,
+  queueSpotifyReleaseDetailWork,
   recordSpotifyPage,
   recordSpotifyReleaseTrackPage,
   requestSpotifyBatchPause,
@@ -127,8 +128,15 @@ interface PreparedMusicBrainzWork {
 
 type DatabaseExecutor = Pick<RadarDatabase, "insert" | "query" | "select">;
 
-interface ScanRuntime {
+export interface ScanRuntime {
+  deadlineAt?: number;
+  deferSpotifyReleaseDetails?: boolean;
   reportProgress: (metadata: Record<string, unknown>, force?: boolean) => Promise<void>;
+  requestGateWrapper?: (gate: SpotifyRequestGate) => SpotifyRequestGate;
+  schedulerContext?: {
+    workId: string;
+    workType: "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation";
+  };
   signal: AbortSignal;
 }
 
@@ -233,7 +241,7 @@ export async function runScan(options: ScannerOptions): Promise<ScanSummary> {
   }
 }
 
-async function runScanUnlocked(
+export async function runScanUnlocked(
   options: ScannerOptions,
   configuration: ReturnType<typeof loadProviderConfiguration>,
   runtime?: ScanRuntime,
@@ -372,6 +380,7 @@ async function runScanUnlocked(
       runtime
         ? (telemetry) => runtime.reportProgress(spotifyTelemetryMetadata(telemetry))
         : undefined,
+      runtime,
     );
     const failures: Error[] = [];
     const providersCompleted: string[] = [];
@@ -507,6 +516,8 @@ async function runScanUnlocked(
                     offset: page.offset,
                     pageNumber: page.pageNumber,
                     releases: page.releases.map((release) => ({
+                      detailsFetched:
+                        release.selectedForDetails && !runtime?.deferSpotifyReleaseDetails,
                       externalReleaseId: release.externalReleaseId,
                       releaseDate: release.releaseDate,
                       releaseDatePrecision: release.releaseDatePrecision,
@@ -518,6 +529,17 @@ async function runScanUnlocked(
                     startedAt: page.startedAt,
                     totalItems: page.totalItems,
                   });
+                  if (!options.dryRun && runtime?.deferSpotifyReleaseDetails) {
+                    for (const release of page.releases.filter(
+                      (candidate) => candidate.selectedForDetails,
+                    )) {
+                      await queueSpotifyReleaseDetailWork(db, {
+                        artistId: page.currentUnitId,
+                        dueAt: page.finishedAt,
+                        spotifyAlbumId: release.externalReleaseId,
+                      });
+                    }
+                  }
                   await runtime?.reportProgress(
                     {
                       currentStage: `page_${page.pageNumber}_persisted`,
@@ -960,6 +982,7 @@ async function buildProviders(
   spotifyWork?: PreparedSpotifyWork,
   musicBrainzWork?: PreparedMusicBrainzWork,
   onSpotifyTelemetry?: (telemetry: SpotifyRequestTelemetry) => Promise<void>,
+  runtime?: ScanRuntime,
 ): Promise<DiscoveryProvider[]> {
   const providers: DiscoveryProvider[] = [];
   for (const provider of selected) {
@@ -980,10 +1003,16 @@ async function buildProviders(
       }
       const ownerId = await ensureLocalOwner(db);
       if (!spotifyWork) throw new Error("Spotify scan work was not prepared.");
-      const requestGate = budgetSpotifyRequestGate(
-        createSpotifyRequestGate(db, configuration.spotify.minRequestIntervalMs),
-        spotifyWork.maxRequestsPerRun,
+      const baseGate = createSpotifyRequestGate(
+        db,
+        configuration.spotify.minRequestIntervalMs,
+        runtime?.schedulerContext,
       );
+      const requestGate = runtime?.requestGateWrapper
+        ? runtime.requestGateWrapper(
+            budgetSpotifyRequestGate(baseGate, spotifyWork.maxRequestsPerRun),
+          )
+        : budgetSpotifyRequestGate(baseGate, spotifyWork.maxRequestsPerRun);
       const oauthClient = new SpotifyOAuthClient({
         clientId: configuration.spotify.clientId,
         clientSecret: configuration.spotify.clientSecret,
@@ -1005,6 +1034,7 @@ async function buildProviders(
       providers.push(
         new SpotifyProvider({
           client,
+          ...(runtime?.deferSpotifyReleaseDetails ? { deferReleaseDetails: true } : {}),
           incompleteReleaseIds: spotifyWork.incompleteReleaseIds,
           knownReleaseIds: spotifyWork.knownReleaseIds,
           knownReleaseSummaries: spotifyWork.knownReleaseSummaries,

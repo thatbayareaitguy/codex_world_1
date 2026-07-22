@@ -17,7 +17,7 @@ describe("Spotify scan scheduling", () => {
     const estimate = spotifyScheduleEstimate(593, {
       spotify: {
         dailyMaxPagesPerArtist: 1,
-        minRequestIntervalMs: 5_000,
+        minRequestIntervalMs: 10_000,
         scanDistributionHours: 24,
       },
     } as Parameters<typeof spotifyScheduleEstimate>[1]);

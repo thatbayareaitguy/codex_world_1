@@ -2,6 +2,7 @@ import {
   artistImportRuns,
   artistMappingReviews,
   createDatabase,
+  getSpotifySchedulerStatus,
   oauthAccounts,
   operationLocks,
   playlistTargets,
@@ -37,9 +38,10 @@ export async function GET(): Promise<NextResponse> {
       enabled: configuration.reddit.enabled,
     },
     scheduler: {
+      automaticEnabled: configuration.spotify.scheduler.enabled,
       expectedNextScanAt: expectedNextScan(process.env.DAILY_SCAN_TIME),
       managedByApplication: false,
-      recommendedCommand: "pnpm scan",
+      recommendedCommand: "pnpm spotify:scheduler:tick",
       schedule: process.env.DAILY_SCAN_TIME ?? null,
     },
     spotify: {
@@ -73,6 +75,7 @@ export async function GET(): Promise<NextResponse> {
       mappingReview,
       redditReview,
       reconcile,
+      spotifyScheduler,
     ] = await Promise.all([
       connection.client<{ count: number }[]>`
           select count(*)::int as count from drizzle.__drizzle_migrations
@@ -109,6 +112,7 @@ export async function GET(): Promise<NextResponse> {
         .from(redditReconciliationRuns)
         .orderBy(desc(redditReconciliationRuns.startedAt))
         .limit(1),
+      getSpotifySchedulerStatus(connection.db),
     ]);
     const latest = (provider: "spotify" | "musicbrainz" | "reddit") =>
       recentRuns.find((run) => run.provider === provider);
@@ -166,6 +170,7 @@ export async function GET(): Promise<NextResponse> {
         lastSuccessfulRequestAt: null,
         lastSuccessfulScanAt: successful("spotify")?.completedAt ?? null,
         playlistConfigured: Boolean(configuration.spotify.allowedPlaylistId),
+        scheduler: spotifyScheduler,
       },
     });
   } catch {

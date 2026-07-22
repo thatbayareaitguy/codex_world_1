@@ -73,7 +73,34 @@ describe("doctor", () => {
     );
     const output = formatDoctorReport(report);
     expect(output).toContain("Spotify playlist writes are disabled by default");
+    expect(output).toContain("Automatic Spotify scheduler execution is disabled by default");
     expect(output).not.toContain("1234567890123456789012");
+  });
+
+  it("reports scheduler database state without treating a disabled scheduler as unhealthy", async () => {
+    const report = await collectDoctorReport(
+      {
+        DATABASE_URL: "postgresql://secret:secret@127.0.0.1:5432/radar",
+        MUSICBRAINZ_ENABLED: "false",
+        REDDIT_ENABLED: "false",
+        SPOTIFY_ENABLED: "false",
+      },
+      {
+        databaseProbe: () =>
+          Promise.resolve({
+            ...databaseReady,
+            spotifyScheduler: { activeLease: false, blocked: 0, mode: "disabled", queued: 694 },
+          }),
+        directoryProbe: () => true,
+        expectedMigrationCount: 6,
+        pnpmVersion: "11.9.0",
+        portProbe: () => Promise.resolve("available"),
+      },
+    );
+    expect(report.checks.find((check) => check.name === "Spotify scheduler")).toMatchObject({
+      required: false,
+      state: "READY",
+    });
   });
 
   it("reports migrations and stale locks as actionable", async () => {

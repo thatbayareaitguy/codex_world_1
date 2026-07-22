@@ -280,6 +280,7 @@ it("upgrades the pre-appearance schema through release repair and feed scaling",
 
     await applyMigration(client, 12);
     await applyMigration(client, 13);
+    await applyMigration(client, 14);
     const [revisionBefore] = await client<Array<{ item_count: number; revision: string }>>`
       select item_count, revision from feed_revisions where id = 'global'
     `;
@@ -310,6 +311,12 @@ it("upgrades the pre-appearance schema through release repair and feed scaling",
       "spotify_artist_coverage_reconcile_idx",
       "spotify_release_track_retrieval_release_idx",
       "spotify_release_track_retrieval_resume_idx",
+      "spotify_request_events_scheduler_idx",
+      "spotify_scheduler_work_album_idx",
+      "spotify_scheduler_work_artist_idx",
+      "spotify_scheduler_work_due_idx",
+      "spotify_scheduler_work_lease_idx",
+      "spotify_scheduler_work_type_due_idx",
       "track_availability_track_provider_idx",
       "track_external_track_provider_idx",
     ];
@@ -322,6 +329,10 @@ it("upgrades the pre-appearance schema through release repair and feed scaling",
     expect(indexes.map((row) => row.indexname)).toEqual(expectedIndexes);
     expect(new Set(indexes.map((row) => row.indexname)).size).toBe(expectedIndexes.length);
     expect(indexes.every((row) => row.name_bytes <= 63)).toBe(true);
+    const [schedulerState] = await client<
+      Array<{ cycle_target_artists: number; mode: string }>
+    >`select cycle_target_artists, mode from spotify_scheduler_state where id = 'global'`;
+    expect(schedulerState).toEqual({ cycle_target_artists: 0, mode: "disabled" });
   } finally {
     await client.end();
     await admin.unsafe(`drop database if exists "${databaseName}"`);
@@ -346,6 +357,7 @@ async function applyMigration(client: postgres.Sql, index: number): Promise<void
     "0011_gigantic_power_man.sql",
     "0012_common_newton_destine.sql",
     "0013_moaning_kid_colt.sql",
+    "0014_parallel_quasar.sql",
   ];
   const file = files.find((name) => name.startsWith(prefix));
   if (!file) throw new Error(`Migration ${prefix} was not found`);

@@ -242,7 +242,57 @@ interface ScanApiStatus {
       reconciliationMaxPagesPerRun: number;
     };
     operational: SpotifyOperationalStatus;
+    scheduler?: SpotifySchedulerStatus | undefined;
   };
+}
+
+interface SpotifySchedulerStatus {
+  activeLease: {
+    artistId: string | null;
+    expiresAt: string;
+    workId: string;
+    workType: "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation";
+  } | null;
+  artistsCheckedLast24Hours: number;
+  artistsCheckedLastHour: number;
+  backlog: Record<
+    "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation",
+    number
+  >;
+  blockedCount: number;
+  blockedReasons: string[];
+  cooldownActive: boolean;
+  cooldownUntil: string | null;
+  dueArtistCount: number;
+  eligibleArtistCount: number;
+  estimatedCompletion: {
+    earliest: string | null;
+    latest: string | null;
+    state: "available" | "blocked";
+  };
+  http429Last24Hours: number;
+  mode: "disabled" | "planning" | "validation" | "automatic" | "paused";
+  nextBaseSlotAt: string | null;
+  oldestOverdueAgeMs: number | null;
+  overdueArtistCount: number;
+  partialArtistCount: number;
+  requestCounts: {
+    byWorkType: {
+      artist_reconciliation?: number | undefined;
+      base_artist?: number | undefined;
+      release_detail?: number | undefined;
+      release_tracks?: number | undefined;
+    };
+    last24Hours: number;
+    last30Minutes: number;
+  };
+  recentWork: {
+    artistId: string | null;
+    completedAt: string;
+    workId: string;
+    workType: "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation";
+  } | null;
+  targetArtistCount: number;
 }
 
 interface SpotifyOperationalStatus {
@@ -1476,6 +1526,7 @@ function FeedView({
   loadingOlderHistory,
 }: FeedViewProps) {
   const [collapsedReleaseGroups, setCollapsedReleaseGroups] = useState<string[]>([]);
+  const [spotifySchedulerCollapsed, setSpotifySchedulerCollapsed] = useState(false);
   const [spotifyStatusCollapsed, setSpotifyStatusCollapsed] = useState(false);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const feedSummary = useMemo(
@@ -1485,6 +1536,7 @@ function FeedView({
   const scanInProgress = syncing || Boolean(scanStatus?.running);
   const activeScan = scanStatus?.active;
   const spotifyOperational = scanStatus?.spotify.operational;
+  const spotifyScheduler = scanStatus?.spotify.scheduler;
   const spotifyBatch = scanStatus?.spotify.batch;
   const musicbrainzBatch = scanStatus?.musicbrainz.batch;
   const spotifyCooldown = Boolean(spotifyOperational?.cooldownActive);
@@ -1531,7 +1583,7 @@ function FeedView({
       )
     : 0;
   const estimatedMinimumMs =
-    estimatedRemainingRequests * (scanStatus?.spotify.limiter.minRequestIntervalMs ?? 5_000);
+    estimatedRemainingRequests * (scanStatus?.spotify.limiter.minRequestIntervalMs ?? 10_000);
   const estimatedMaximumMs = Math.ceil(estimatedMinimumMs * 1.5);
   const observedRequestRate =
     activeScan?.heartbeatAt && activeScan.requests > 0
@@ -1742,7 +1794,7 @@ function FeedView({
           onStartReconciliation={() => {
             if (
               window.confirm(
-                "Start a deep reconciliation batch? It may inspect up to 10 album pages per artist and will use the five-second global request interval.",
+                "Start a deep reconciliation batch? It may inspect up to 10 album pages per artist and will use the ten-second global request interval.",
               )
             ) {
               onSpotifyBatchAction("start_reconciliation", "");
@@ -1752,6 +1804,153 @@ function FeedView({
           state={scanStatusState}
           spotifyCooldown={spotifyCooldown}
         />
+      )}
+
+      {feedMode === "database" && spotifyScheduler && (
+        <section
+          className={`spotify-scan-status ${spotifySchedulerCollapsed ? "is-collapsed" : ""}`}
+          aria-label="Spotify rolling scheduler status"
+        >
+          <div className="spotify-scan-status-heading">
+            <div className="spotify-scan-status-summary">
+              <button
+                aria-expanded={!spotifySchedulerCollapsed}
+                aria-label={`${spotifySchedulerCollapsed ? "Expand" : "Collapse"} Spotify rolling scheduler status`}
+                className="feed-item-disclosure"
+                onClick={() => setSpotifySchedulerCollapsed((current) => !current)}
+                title={`${spotifySchedulerCollapsed ? "Expand" : "Collapse"} Spotify rolling scheduler status`}
+                type="button"
+              >
+                {spotifySchedulerCollapsed ? <ChevronRight size={17} /> : <ChevronDown size={17} />}
+              </button>
+              <div>
+                <strong>Spotify rolling scheduler</strong>
+                <span>{titleCase(spotifyScheduler.mode)}</span>
+              </div>
+            </div>
+          </div>
+          {!spotifySchedulerCollapsed && (
+            <>
+              <dl className="spotify-scan-grid scheduler-status-grid">
+                <div>
+                  <dt>Current work</dt>
+                  <dd>
+                    {spotifyScheduler.activeLease
+                      ? `${titleCase(spotifyScheduler.activeLease.workType)} | ${spotifyScheduler.activeLease.artistId ?? "release work"}`
+                      : "Idle"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Recently completed</dt>
+                  <dd>
+                    {spotifyScheduler.recentWork
+                      ? `${titleCase(spotifyScheduler.recentWork.workType)} | ${new Date(spotifyScheduler.recentWork.completedAt).toLocaleString()}`
+                      : "None"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Lease expires</dt>
+                  <dd>
+                    {spotifyScheduler.activeLease
+                      ? new Date(spotifyScheduler.activeLease.expiresAt).toLocaleString()
+                      : "None"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Eligible artists</dt>
+                  <dd>{spotifyScheduler.eligibleArtistCount}</dd>
+                </div>
+                <div>
+                  <dt>Due / overdue</dt>
+                  <dd>
+                    {spotifyScheduler.dueArtistCount} / {spotifyScheduler.overdueArtistCount}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Oldest overdue</dt>
+                  <dd>
+                    {spotifyScheduler.oldestOverdueAgeMs === null
+                      ? "None"
+                      : formatDuration(spotifyScheduler.oldestOverdueAgeMs)}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Checked in 24 hours</dt>
+                  <dd>{spotifyScheduler.artistsCheckedLast24Hours}</dd>
+                </div>
+                <div>
+                  <dt>Base backlog</dt>
+                  <dd>{spotifyScheduler.backlog.base_artist}</dd>
+                </div>
+                <div>
+                  <dt>Release detail / tracks</dt>
+                  <dd>
+                    {spotifyScheduler.backlog.release_detail} /{" "}
+                    {spotifyScheduler.backlog.release_tracks}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Reconciliation backlog</dt>
+                  <dd>{spotifyScheduler.backlog.artist_reconciliation}</dd>
+                </div>
+                <div>
+                  <dt>Blocked / partial</dt>
+                  <dd>
+                    {spotifyScheduler.blockedCount} / {spotifyScheduler.partialArtistCount}
+                    {spotifyScheduler.blockedReasons.length > 0
+                      ? ` | ${spotifyScheduler.blockedReasons.join(", ")}`
+                      : ""}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Requests, 30m / 24h</dt>
+                  <dd>
+                    {spotifyScheduler.requestCounts.last30Minutes} /{" "}
+                    {spotifyScheduler.requestCounts.last24Hours}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Requests by work</dt>
+                  <dd>
+                    B {spotifyScheduler.requestCounts.byWorkType.base_artist ?? 0} | D{" "}
+                    {spotifyScheduler.requestCounts.byWorkType.release_detail ?? 0} | T{" "}
+                    {spotifyScheduler.requestCounts.byWorkType.release_tracks ?? 0} | R{" "}
+                    {spotifyScheduler.requestCounts.byWorkType.artist_reconciliation ?? 0}
+                  </dd>
+                </div>
+                <div>
+                  <dt>HTTP 429, 24h</dt>
+                  <dd>{spotifyScheduler.http429Last24Hours}</dd>
+                </div>
+                <div>
+                  <dt>Cooldown</dt>
+                  <dd>
+                    {spotifyScheduler.cooldownActive
+                      ? spotifyScheduler.cooldownUntil
+                        ? `Until ${new Date(spotifyScheduler.cooldownUntil).toLocaleString()}`
+                        : "Blocked pending manual review"
+                      : "None"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Estimated completion</dt>
+                  <dd>
+                    {spotifyScheduler.estimatedCompletion.state === "blocked"
+                      ? "Blocked"
+                      : spotifyScheduler.estimatedCompletion.earliest &&
+                          spotifyScheduler.estimatedCompletion.latest
+                        ? `${new Date(spotifyScheduler.estimatedCompletion.earliest).toLocaleString()} to ${new Date(spotifyScheduler.estimatedCompletion.latest).toLocaleString()}`
+                        : "Unavailable"}
+                  </dd>
+                </div>
+              </dl>
+              <small>
+                Automatic execution is disabled by default. This panel reads persisted scheduler
+                state and never starts provider work.
+              </small>
+            </>
+          )}
+        </section>
       )}
 
       {feedMode === "database" &&
@@ -1856,7 +2055,7 @@ function FeedView({
                     onClick={() => {
                       if (
                         window.confirm(
-                          "Start a deep reconciliation batch? It may inspect up to 10 album pages per artist and will use the five-second global request interval.",
+                          "Start a deep reconciliation batch? It may inspect up to 10 album pages per artist and will use the ten-second global request interval.",
                         )
                       ) {
                         onSpotifyBatchAction("start_reconciliation", "");
@@ -3559,6 +3758,7 @@ const systemStatusSchema = z.object({
     })
     .optional(),
   scheduler: z.object({
+    automaticEnabled: z.boolean().default(false),
     expectedNextScanAt: z.string().nullable(),
     managedByApplication: z.boolean(),
     recommendedCommand: z.string(),
@@ -3579,6 +3779,7 @@ const systemStatusSchema = z.object({
     playlistWritesEnabled: z.boolean(),
     redirectUriValid: z.boolean(),
     requiredScopes: z.array(z.string()),
+    scheduler: z.lazy(() => spotifySchedulerStatusSchema).optional(),
   }),
 });
 
@@ -4230,7 +4431,7 @@ function ProviderSetting({
             </small>
           )}
           <small>
-            Request interval: {(minRequestIntervalMs ?? 5_000) / 1_000}s | Queue:{" "}
+            Request interval: {(minRequestIntervalMs ?? 10_000) / 1_000}s | Queue:{" "}
             {spotifyStatus.operational?.queueDepth ?? 0}
           </small>
           {spotifyStatus.operational?.canManualClear && (
@@ -4728,6 +4929,7 @@ const spotifyStatusSchema = z.object({
   displayName: z.string().nullable().optional(),
   lastTokenRefreshAt: z.string().nullable().optional(),
   operational: z.lazy(() => spotifyOperationalSchema).optional(),
+  scheduler: z.lazy(() => spotifySchedulerStatusSchema).optional(),
   scopes: z.array(z.string()).optional(),
   state: z.enum([
     "disabled",
@@ -4828,6 +5030,73 @@ const spotifyBatchSchema = z
   })
   .nullable();
 
+const spotifySchedulerStatusSchema = z.object({
+  activeLease: z
+    .object({
+      artistId: z.string().uuid().nullable(),
+      expiresAt: z.string().datetime(),
+      workId: z.string().uuid(),
+      workType: z.enum([
+        "base_artist",
+        "release_detail",
+        "release_tracks",
+        "artist_reconciliation",
+      ]),
+    })
+    .nullable(),
+  artistsCheckedLast24Hours: z.number().int().nonnegative(),
+  artistsCheckedLastHour: z.number().int().nonnegative(),
+  backlog: z.object({
+    artist_reconciliation: z.number().int().nonnegative(),
+    base_artist: z.number().int().nonnegative(),
+    release_detail: z.number().int().nonnegative(),
+    release_tracks: z.number().int().nonnegative(),
+  }),
+  blockedCount: z.number().int().nonnegative(),
+  blockedReasons: z.array(z.string()),
+  cooldownActive: z.boolean(),
+  cooldownUntil: z.string().datetime().nullable(),
+  dueArtistCount: z.number().int().nonnegative(),
+  eligibleArtistCount: z.number().int().nonnegative(),
+  estimatedCompletion: z.object({
+    earliest: z.string().datetime().nullable(),
+    latest: z.string().datetime().nullable(),
+    state: z.enum(["available", "blocked"]),
+  }),
+  http429Last24Hours: z.number().int().nonnegative(),
+  mode: z.enum(["disabled", "planning", "validation", "automatic", "paused"]),
+  nextBaseSlotAt: z.string().datetime().nullable(),
+  oldestOverdueAgeMs: z.number().nonnegative().nullable(),
+  overdueArtistCount: z.number().int().nonnegative(),
+  partialArtistCount: z.number().int().nonnegative(),
+  requestCounts: z.object({
+    byWorkType: z
+      .object({
+        artist_reconciliation: z.number().int().nonnegative().optional(),
+        base_artist: z.number().int().nonnegative().optional(),
+        release_detail: z.number().int().nonnegative().optional(),
+        release_tracks: z.number().int().nonnegative().optional(),
+      })
+      .default({}),
+    last24Hours: z.number().int().nonnegative(),
+    last30Minutes: z.number().int().nonnegative(),
+  }),
+  recentWork: z
+    .object({
+      artistId: z.string().uuid().nullable(),
+      completedAt: z.string().datetime(),
+      workId: z.string().uuid(),
+      workType: z.enum([
+        "base_artist",
+        "release_detail",
+        "release_tracks",
+        "artist_reconciliation",
+      ]),
+    })
+    .nullable(),
+  targetArtistCount: z.number().int().nonnegative(),
+});
+
 const scanStatusSchema = z.object({
   active: z
     .object({
@@ -4912,6 +5181,7 @@ const scanStatusSchema = z.object({
       reconciliationMaxPagesPerRun: z.number().int().positive(),
     }),
     operational: spotifyOperationalSchema,
+    scheduler: spotifySchedulerStatusSchema.optional(),
   }),
 });
 

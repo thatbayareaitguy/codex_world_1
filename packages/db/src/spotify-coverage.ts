@@ -19,6 +19,7 @@ export type SpotifyCoverageStatus =
   | "paused";
 
 export interface SpotifyCatalogReleaseSummary {
+  detailsFetched: boolean;
   externalReleaseId: string;
   releaseDate: string;
   releaseDatePrecision: string;
@@ -173,6 +174,7 @@ export async function recordSpotifyPage(
         .insert(spotifyCatalogReleases)
         .values({
           artistId: input.artistId,
+          detailsFetchedAt: release.detailsFetched ? input.finishedAt : null,
           externalReleaseId: release.externalReleaseId,
           lastObservedAt: input.finishedAt,
           releaseDate: release.releaseDate,
@@ -185,6 +187,7 @@ export async function recordSpotifyPage(
         .onConflictDoUpdate({
           target: [spotifyCatalogReleases.artistId, spotifyCatalogReleases.externalReleaseId],
           set: {
+            ...(release.detailsFetched ? { detailsFetchedAt: input.finishedAt } : {}),
             lastObservedAt: input.finishedAt,
             releaseDate: release.releaseDate,
             releaseDatePrecision: release.releaseDatePrecision,

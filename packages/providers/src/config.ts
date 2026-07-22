@@ -40,7 +40,7 @@ const environmentSchema = z.object({
   SPOTIFY_ENABLED: booleanFlag(true),
   SPOTIFY_INITIAL_MAX_PAGES_PER_ARTIST: z.coerce.number().int().min(1).max(10).default(2),
   SPOTIFY_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(1).default(1),
-  SPOTIFY_MIN_REQUEST_INTERVAL_MS: z.coerce.number().int().min(5_000).max(300_000).default(5_000),
+  SPOTIFY_MIN_REQUEST_INTERVAL_MS: z.coerce.number().int().min(10_000).max(300_000).default(10_000),
   SPOTIFY_PLAYLIST_WRITES_ENABLED: booleanFlag(false),
   SPOTIFY_MAX_REQUESTS_PER_RUN: z.coerce.number().int().min(1).max(10_000).default(150),
   SPOTIFY_RECONCILIATION_ARTISTS_PER_BATCH: z.coerce.number().int().min(1).max(100).default(15),
@@ -48,6 +48,11 @@ const environmentSchema = z.object({
   SPOTIFY_RECONCILIATION_MAX_PAGES_PER_RUN: z.coerce.number().int().min(1).max(50).default(2),
   SPOTIFY_REDIRECT_URI: z.url().default("http://127.0.0.1:3000/api/auth/spotify/callback"),
   SPOTIFY_SCAN_DISTRIBUTION_HOURS: z.coerce.number().int().min(1).max(168).default(24),
+  SPOTIFY_SCHEDULER_ENABLED: booleanFlag(false),
+  SPOTIFY_SCHEDULER_MAX_REQUESTS_PER_TICK: z.coerce.number().int().min(1).max(6).default(6),
+  SPOTIFY_SCHEDULER_MAX_RUNTIME_MS: z.coerce.number().int().min(10_000).max(90_000).default(90_000),
+  SPOTIFY_SCHEDULER_ROLLING_24H_LIMIT: z.coerce.number().int().min(593).max(10_000).default(1200),
+  SPOTIFY_SCHEDULER_ROLLING_30M_LIMIT: z.coerce.number().int().min(1).max(1000).default(30),
 });
 
 export interface ProviderConfiguration {
@@ -95,6 +100,13 @@ export interface ProviderConfiguration {
     reconciliationMaxPagesPerRun: number;
     redirectUri: string;
     scanDistributionHours: number;
+    scheduler: {
+      enabled: boolean;
+      maxRequestsPerTick: number;
+      maxRuntimeMs: number;
+      rolling24HourLimit: number;
+      rolling30MinuteLimit: number;
+    };
   };
 }
 
@@ -166,6 +178,13 @@ export function loadProviderConfiguration(
       reconciliationMaxPagesPerRun: parsed.SPOTIFY_RECONCILIATION_MAX_PAGES_PER_RUN,
       redirectUri: parsed.SPOTIFY_REDIRECT_URI,
       scanDistributionHours: parsed.SPOTIFY_SCAN_DISTRIBUTION_HOURS,
+      scheduler: {
+        enabled: parsed.SPOTIFY_SCHEDULER_ENABLED,
+        maxRequestsPerTick: parsed.SPOTIFY_SCHEDULER_MAX_REQUESTS_PER_TICK,
+        maxRuntimeMs: parsed.SPOTIFY_SCHEDULER_MAX_RUNTIME_MS,
+        rolling24HourLimit: parsed.SPOTIFY_SCHEDULER_ROLLING_24H_LIMIT,
+        rolling30MinuteLimit: parsed.SPOTIFY_SCHEDULER_ROLLING_30M_LIMIT,
+      },
     },
   };
 }

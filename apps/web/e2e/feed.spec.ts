@@ -510,7 +510,7 @@ test("defaults scan history to the meaningful batch and inspects other run types
             batchPauseSeconds: 60,
             distributionHours: 24,
             maxRequestsPerRun: 150,
-            minRequestIntervalMs: 5000,
+            minRequestIntervalMs: 10000,
             reconciliationArtistsPerBatch: 15,
             reconciliationCycleDays: 30,
             reconciliationMaxPagesPerRun: 2,
@@ -529,6 +529,41 @@ test("defaults scan history to the meaningful batch and inspects other run types
             queueDepth: 0,
             rawRetryAfter: null,
             requestCount: 0,
+          },
+          scheduler: {
+            activeLease: null,
+            artistsCheckedLast24Hours: 101,
+            artistsCheckedLastHour: 2,
+            backlog: {
+              artist_reconciliation: 101,
+              base_artist: 593,
+              release_detail: 0,
+              release_tracks: 0,
+            },
+            blockedCount: 0,
+            blockedReasons: [],
+            cooldownActive: false,
+            cooldownUntil: null,
+            dueArtistCount: 102,
+            eligibleArtistCount: 593,
+            estimatedCompletion: {
+              earliest: "2026-07-22T12:00:00.000Z",
+              latest: "2026-07-23T12:00:00.000Z",
+              state: "available",
+            },
+            http429Last24Hours: 0,
+            mode: "disabled",
+            nextBaseSlotAt: null,
+            oldestOverdueAgeMs: 60000,
+            overdueArtistCount: 10,
+            partialArtistCount: 101,
+            requestCounts: {
+              byWorkType: { base_artist: 10, release_tracks: 2 },
+              last24Hours: 12,
+              last30Minutes: 1,
+            },
+            recentWork: null,
+            targetArtistCount: 593,
           },
         },
       },
@@ -577,6 +612,17 @@ test("defaults scan history to the meaningful batch and inspects other run types
     "Cancelled",
     "Paused",
   ]);
+  const scheduler = page.getByRole("region", { name: "Spotify rolling scheduler status" });
+  await expect(scheduler).toContainText("Disabled");
+  await expect(scheduler).toContainText("Eligible artists");
+  await expect(scheduler).toContainText("593");
+  await scheduler
+    .getByRole("button", { name: "Collapse Spotify rolling scheduler status" })
+    .click();
+  await expect(scheduler.getByText("Eligible artists")).toBeHidden();
+  await scheduler.getByRole("button", { name: "Expand Spotify rolling scheduler status" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(scheduler.getByText("Eligible artists")).toBeVisible();
   await panel.getByRole("button", { name: "Load older scans" }).click();
   await expect(selector.locator(`option[value="${olderRunId}"]`)).toHaveCount(1);
 });
@@ -1167,7 +1213,7 @@ test("navigates every primary view and resolves manual review", async ({ page })
   await navigation.getByRole("link", { name: "System status" }).click();
   await expect(page.getByRole("heading", { name: "System status" })).toBeVisible();
   await expect(page.getByText("External scheduler required", { exact: true })).toBeVisible();
-  await expect(page.getByText("pnpm scan", { exact: true })).toBeVisible();
+  await expect(page.getByText("pnpm spotify:scheduler:tick", { exact: true })).toBeVisible();
 
   await navigation.getByRole("link", { name: "Settings" }).click();
   await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
@@ -1500,7 +1546,7 @@ test("controls persisted Spotify batches without bypassing cooldown state", asyn
         batchPauseSeconds: 60,
         distributionHours: 24,
         maxRequestsPerRun: 150,
-        minRequestIntervalMs: 5000,
+        minRequestIntervalMs: 10000,
         reconciliationArtistsPerBatch: 15,
         reconciliationCycleDays: 30,
         reconciliationMaxPagesPerRun: 2,

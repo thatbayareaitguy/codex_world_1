@@ -23,6 +23,7 @@ export interface SpotifyArtistMapping {
 
 interface SpotifyProviderOptions {
   client: SpotifyClient;
+  deferReleaseDetails?: boolean;
   mappings: SpotifyArtistMapping[];
   maxPagesPerArtist?: number;
   knownReleaseIds?: ReadonlySet<string>;
@@ -40,6 +41,7 @@ interface SpotifyProviderOptions {
 export class SpotifyProvider implements DiscoveryProvider {
   readonly name = "spotify" as const;
   private readonly client: SpotifyClient;
+  private readonly deferReleaseDetails: boolean;
   private readonly mappings: SpotifyArtistMapping[];
   private readonly maxPagesPerArtist: number;
   private readonly knownReleaseIds: ReadonlySet<string>;
@@ -55,6 +57,7 @@ export class SpotifyProvider implements DiscoveryProvider {
 
   constructor(options: SpotifyProviderOptions) {
     this.client = options.client;
+    this.deferReleaseDetails = options.deferReleaseDetails ?? false;
     this.mappings = options.mappings;
     this.maxPagesPerArtist = options.maxPagesPerArtist ?? 1;
     this.knownReleaseIds = options.knownReleaseIds ?? new Set();
@@ -118,9 +121,9 @@ export class SpotifyProvider implements DiscoveryProvider {
         let albumDetailRequests = 0;
         for (const album of page.items) {
           const release = releases.find((entry) => entry.externalReleaseId === album.id);
-          if (!release?.selectedForDetails) continue;
+          if (!release?.selectedForDetails || this.deferReleaseDetails) continue;
           const requestsBeforeAlbum = this.client.metrics.requests;
-          const candidates = await this.scanAlbum(mapping, album, context);
+          const candidates = await this.scanReleaseDetails(mapping, album, context);
           albumDetailRequests += this.client.metrics.requests - requestsBeforeAlbum;
           pageCandidates.push(...candidates);
           release.candidateCount += candidates.length;
@@ -184,9 +187,9 @@ export class SpotifyProvider implements DiscoveryProvider {
     };
   }
 
-  private async scanAlbum(
+  async scanReleaseDetails(
     mapping: SpotifyArtistMapping,
-    summary: SpotifyAlbumSummary,
+    summary: Pick<SpotifyAlbumSummary, "id" | "total_tracks">,
     context: ScanContext,
   ): Promise<TrackCandidate[]> {
     const resume = this.releaseTrackResume.get(summary.id);

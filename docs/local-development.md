@@ -86,6 +86,14 @@ The command requires completed browser OAuth and is read-only. It has no playlis
 
 Windows Task Scheduler should invoke `scripts/run-daily-scan.ps1`. The script changes to the repository, relies on the scanner's ignored `.env` loader, uses the scan lock, writes dated logs under `%LOCALAPPDATA%\TSNewMusicRadar\logs`, and returns the scanner exit code. Do not put secrets in task arguments. Configure Run whether user is logged on or not only when that account can start Docker Desktop, then use Task Scheduler's Run command to test it.
 
+The rolling Spotify scheduler supersedes burst-style daily execution after a separate live-validation and activation milestone. Its credential-free planning command is:
+
+```powershell
+pnpm spotify:scheduler:plan
+```
+
+The bounded launcher is `scripts/run-spotify-scheduler-tick.ps1`. It runs exactly one tick and does not register, enable, or start a Windows scheduled task. `SPOTIFY_SCHEDULER_ENABLED` defaults to `false`, and the database scheduler mode also defaults to `disabled`; do not change either during ordinary credential-free verification.
+
 Cron example:
 
 ```cron

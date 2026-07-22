@@ -46,12 +46,16 @@ export interface SpotifyOperationalStatus {
 export function createSpotifyRequestGate(
   db: RadarDatabase,
   minRequestIntervalMs: number,
+  schedulerContext?: {
+    workId: string;
+    workType: "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation";
+  },
 ): SpotifyRequestGate {
-  if (!Number.isInteger(minRequestIntervalMs) || minRequestIntervalMs < 5_000) {
-    throw new Error("Spotify request interval must be at least 5000 milliseconds.");
+  if (!Number.isInteger(minRequestIntervalMs) || minRequestIntervalMs < 10_000) {
+    throw new Error("Spotify request interval must be at least 10000 milliseconds.");
   }
   return {
-    acquire: (input) => acquireSpotifyPermit(db, minRequestIntervalMs, input),
+    acquire: (input) => acquireSpotifyPermit(db, minRequestIntervalMs, input, schedulerContext),
     complete: (permit, result) => completeSpotifyRequest(db, permit, result),
   };
 }
@@ -144,6 +148,10 @@ async function acquireSpotifyPermit(
   db: RadarDatabase,
   minRequestIntervalMs: number,
   input: { endpointCategory: string; method: string; signal?: AbortSignal },
+  schedulerContext?: {
+    workId: string;
+    workType: "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation";
+  },
 ): Promise<SpotifyRequestPermit> {
   await ensureSpotifyState(db);
   await db
@@ -211,6 +219,12 @@ async function acquireSpotifyPermit(
         method: input.method,
         queueWaitMs,
         startedAt,
+        ...(schedulerContext
+          ? {
+              schedulerWorkId: schedulerContext.workId,
+              schedulerWorkType: schedulerContext.workType,
+            }
+          : {}),
       });
       return {
         eventId,

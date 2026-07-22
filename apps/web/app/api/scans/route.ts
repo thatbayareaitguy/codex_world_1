@@ -1,6 +1,7 @@
 import {
   createDatabase,
   getSpotifyOperationalStatus,
+  getSpotifySchedulerStatus,
   latestSpotifyBatch,
   listScanHistoryPage,
   musicbrainzArtistScans,
@@ -68,6 +69,7 @@ export async function GET(request?: NextRequest): Promise<NextResponse> {
       musicbrainzState,
       musicbrainzBatch,
       spotifyCoverage,
+      spotifyScheduler,
     ] = await Promise.all([
       connection.db.select().from(scanRuns).orderBy(desc(scanRuns.startedAt)).limit(20),
       connection.db.query.operationLocks.findFirst({
@@ -90,6 +92,7 @@ export async function GET(request?: NextRequest): Promise<NextResponse> {
         orderBy: [desc(musicbrainzScanBatches.createdAt)],
       }),
       spotifyCoverageSummary(connection.db),
+      getSpotifySchedulerStatus(connection.db),
     ]);
     const musicbrainzArtistRows = musicbrainzBatch
       ? await connection.db
@@ -137,6 +140,7 @@ export async function GET(request?: NextRequest): Promise<NextResponse> {
             reconciliationMaxPagesPerRun: configuration.spotify.reconciliationMaxPagesPerRun,
           },
           operational: spotifyOperational,
+          scheduler: spotifyScheduler,
         },
       },
       { headers: { "Cache-Control": "no-store" } },

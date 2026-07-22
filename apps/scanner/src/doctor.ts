@@ -1,6 +1,7 @@
 import {
   createDatabase,
   getSpotifyOperationalStatus,
+  getSpotifySchedulerStatus,
   operationLocks,
   scanRuns,
   spotifyReleaseTrackCompletenessSummary,
@@ -38,6 +39,12 @@ export interface DoctorDatabaseStatus {
     failed: number;
     missingTracks: number;
     partial: number;
+  };
+  spotifyScheduler?: {
+    activeLease: boolean;
+    blocked: number;
+    mode: string;
+    queued: number;
   };
   staleLocks: number;
 }
@@ -174,6 +181,23 @@ export async function collectDoctorReport(
           ),
         );
       }
+      if (databaseStatus.spotifyScheduler) {
+        const scheduler = databaseStatus.spotifyScheduler;
+        checks.push(
+          scheduler.activeLease
+            ? action(
+                "Spotify scheduler",
+                `Mode ${scheduler.mode}; ${scheduler.queued} queued; ${scheduler.blocked} blocked; one active lease.`,
+                "Confirm the bounded scheduler tick is still running before taking corrective action.",
+                false,
+              )
+            : ready(
+                "Spotify scheduler",
+                `Mode ${scheduler.mode}; ${scheduler.queued} queued; ${scheduler.blocked} blocked; no active lease.`,
+                false,
+              ),
+        );
+      }
     } catch (databaseError) {
       checks.push(
         error(
@@ -300,6 +324,7 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
     let spotifyCooldownActive = false;
     let spotifyCooldownUntil: string | undefined;
     let spotifyReleaseTracks: DoctorDatabaseStatus["spotifyReleaseTracks"];
+    let spotifyScheduler: DoctorDatabaseStatus["spotifyScheduler"];
     try {
       const [failed] = await db
         .select({ count: sql<number>`count(*)::int` })
@@ -331,6 +356,13 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
       spotifyCooldownActive = spotify.cooldownActive;
       spotifyCooldownUntil = spotify.cooldownUntil?.toISOString();
       spotifyReleaseTracks = await spotifyReleaseTrackCompletenessSummary(db);
+      const scheduler = await getSpotifySchedulerStatus(db);
+      spotifyScheduler = {
+        activeLease: Boolean(scheduler.activeLease),
+        blocked: scheduler.blockedCount,
+        mode: scheduler.mode,
+        queued: Object.values(scheduler.backlog).reduce((total, value) => total + value, 0),
+      };
     } catch {
       // Migration status already explains why operational tables cannot be read.
     }
@@ -343,6 +375,7 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
       resolvedScans,
       spotifyCooldownActive,
       ...(spotifyReleaseTracks ? { spotifyReleaseTracks } : {}),
+      ...(spotifyScheduler ? { spotifyScheduler } : {}),
       ...(spotifyCooldownUntil ? { spotifyCooldownUntil } : {}),
       staleLocks,
     };
@@ -376,6 +409,18 @@ function spotifyChecks(
           "Spotify redirect URI",
           "Spotify redirect URI does not match the documented 127.0.0.1 callback.",
           "Register and set http://127.0.0.1:3000/api/auth/spotify/callback.",
+        ),
+  );
+  checks.push(
+    configuration.spotify.scheduler.enabled
+      ? ready(
+          "Spotify scheduler capability",
+          "The production scheduler capability is explicitly enabled.",
+          false,
+        )
+      : optional(
+          "Spotify scheduler capability",
+          "Automatic Spotify scheduler execution is disabled by default.",
         ),
   );
   if (!configuration.spotify.playlistWritesEnabled) {

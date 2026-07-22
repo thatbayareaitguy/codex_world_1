@@ -82,8 +82,15 @@ describe("Spotify Development Mode configuration", () => {
       dailyMaxPagesPerArtist: 1,
       initialMaxPagesPerArtist: 2,
       maxConcurrency: 1,
-      minRequestIntervalMs: 5_000,
+      minRequestIntervalMs: 10_000,
       scanDistributionHours: 24,
+      scheduler: {
+        enabled: false,
+        maxRequestsPerTick: 6,
+        maxRuntimeMs: 90_000,
+        rolling24HourLimit: 1_200,
+        rolling30MinuteLimit: 30,
+      },
     });
   });
 
@@ -91,8 +98,11 @@ describe("Spotify Development Mode configuration", () => {
     { SPOTIFY_MAX_CONCURRENCY: "0" },
     { SPOTIFY_MAX_CONCURRENCY: "2" },
     { SPOTIFY_MIN_REQUEST_INTERVAL_MS: "0" },
-    { SPOTIFY_MIN_REQUEST_INTERVAL_MS: "4999" },
+    { SPOTIFY_MIN_REQUEST_INTERVAL_MS: "9999" },
     { SPOTIFY_DAILY_MAX_PAGES_PER_ARTIST: "0" },
+    { SPOTIFY_SCHEDULER_MAX_REQUESTS_PER_TICK: "7" },
+    { SPOTIFY_SCHEDULER_MAX_RUNTIME_MS: "90001" },
+    { SPOTIFY_SCHEDULER_ROLLING_30M_LIMIT: "0" },
   ])("rejects unsafe Spotify limits: %j", (environment) => {
     expect(() => loadProviderConfiguration(environment)).toThrow();
   });

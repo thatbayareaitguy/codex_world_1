@@ -5,6 +5,7 @@ const {
   end,
   findFirst,
   getSpotifyOperationalStatus,
+  getSpotifySchedulerStatus,
   history,
   launchScanNow,
   latestSpotifyBatch,
@@ -40,6 +41,19 @@ const {
     end: vi.fn(() => Promise.resolve()),
     findFirst: vi.fn(),
     getSpotifyOperationalStatus: vi.fn(() => Promise.resolve({ queueDepth: 0 })),
+    getSpotifySchedulerStatus: vi.fn(() =>
+      Promise.resolve({
+        backlog: {
+          artist_reconciliation: 0,
+          base_artist: 593,
+          release_detail: 0,
+          release_tracks: 0,
+        },
+        cooldownActive: false,
+        eligibleArtistCount: 593,
+        mode: "disabled",
+      }),
+    ),
     history,
     launchScanNow: vi.fn(() => Promise.resolve({ pid: 4242 })),
     latestSpotifyBatch: vi.fn(() => Promise.resolve(null)),
@@ -91,6 +105,7 @@ vi.mock("@radar/db", () => ({
     },
   })),
   getSpotifyOperationalStatus,
+  getSpotifySchedulerStatus,
   latestSpotifyBatch,
   listScanHistoryPage,
   musicbrainzArtistScans: {},
@@ -111,7 +126,7 @@ vi.mock("@radar/providers", () => ({
       batchPauseSeconds: 60,
       configured: true,
       distributionHours: 24,
-      minRequestIntervalMs: 5000,
+      minRequestIntervalMs: 10000,
       maxRequestsPerRun: 150,
       reconciliationArtistsPerBatch: 15,
       reconciliationCycleDays: 30,
@@ -161,8 +176,16 @@ describe("on-demand scan route", () => {
           requestCount: 102,
         },
       ],
+      spotify: {
+        scheduler: {
+          backlog: { base_artist: 593 },
+          eligibleArtistCount: 593,
+          mode: "disabled",
+        },
+      },
     });
     expect(listScanHistoryPage).toHaveBeenCalledOnce();
+    expect(getSpotifySchedulerStatus).toHaveBeenCalledOnce();
     expect(selectDefaultScanHistoryEntry).toHaveBeenCalledWith(history);
   });
 

@@ -12,6 +12,7 @@ export * from "./spotify-batches";
 export * from "./spotify-coverage";
 export * from "./spotify-artwork-backfill";
 export * from "./spotify-release-tracks";
+export * from "./spotify-scheduler";
 export * from "./musicbrainz-request-gate";
 export * from "./musicbrainz-batches";
 export * from "./musicbrainz-mappings";

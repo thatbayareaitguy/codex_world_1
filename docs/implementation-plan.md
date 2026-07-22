@@ -2,15 +2,14 @@
 
 ## Current: rolling 24-hour Spotify scheduler
 
-Design status: complete in [spotify-rolling-scheduler-design.md](spotify-rolling-scheduler-design.md). Implementation has not started.
+Design and credential-free implementation are complete. Production execution and automatic mode remain disabled pending a separately approved ten-artist live validation.
 
-1. Add one forward migration for disabled-by-default scheduler state, claimable typed work, leases, due times, and request-event work context. Do not rewrite migrations `0000` through `0013`.
-2. Implement a short-lived periodic tick that acquires the existing global operation lock and shared Spotify request gate. Bound each invocation to one artist, six requests, 90 seconds, concurrency one, and at least 10 seconds between request starts.
-3. Use one durable queue for never-scanned initial work, recurring base checks, release details, album-track pages, and reconciliation. Preserve current artist and release cursors as the authoritative progress state.
-4. Add planning mode with zero provider-client construction. Keep live scheduling disabled until an explicitly approved ten-artist validation succeeds.
-5. Extend doctor, status APIs, and the existing Spotify status panel with due, overdue, blocked, partial, backlog, lease, rolling request, cooldown, and estimate projections.
-6. Add deterministic fake-time unit tests, PostgreSQL claim and restart tests, and Playwright status and control tests. Normal verification must make zero live provider or playlist requests.
-7. Roll out through separately approved gates: implementation only, ten-artist validation, remaining initial watchlist, three rolling 24-hour feasibility windows, and post-sync cleanup.
+1. Completed in migration `0014`: disabled-by-default scheduler state, claimable typed work, leases, due times, and request-event work context.
+2. Completed: one-artist, six-request, 90-second ticks using the existing global lock, Spotify request gate, cooldown, and a ten-second production minimum.
+3. Completed: one durable queue for initial and recurring base checks, release details, album-track repair, and reconciliation while existing coverage and track checkpoints remain authoritative.
+4. Completed: read-only planning, injected credential-free execution, disabled production capability, doctor diagnostics, status APIs, and a collapsible UI panel.
+5. Completed credential-free: deterministic unit tests, PostgreSQL lease and restart tests, clean and upgrade migrations, and a 593-artist simulated rolling day.
+6. Next approval gate: a separate ten-artist live validation review. Do not activate automatic mode, register Windows Task Scheduler, or use Batch 3 before that review.
 
 Batch 3 remains untouched. Automatic mode and any use of Batch 3 require separate user approval.
 

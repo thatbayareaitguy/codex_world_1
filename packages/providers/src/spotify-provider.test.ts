@@ -117,6 +117,33 @@ describe("SpotifyProvider incremental scanning", () => {
     );
   });
 
+  it("can defer eligible release details for scheduler work", async () => {
+    const eligible = albumSummary("deferred", "Deferred Release", "2026-07-16");
+    const getAlbum = vi.fn();
+    const onPage = vi.fn().mockResolvedValue(undefined);
+    const provider = new SpotifyProvider({
+      client: {
+        getAlbum,
+        getArtistAlbumsPage: vi
+          .fn()
+          .mockResolvedValue({ items: [eligible], nextOffset: null, offset: 0, total: 1 }),
+        metrics: { failures: 0, rateLimitWaitMs: 0, requests: 1 },
+      } as unknown as SpotifyClient,
+      deferReleaseDetails: true,
+      mappings: [{ artistId: "artist-1", name: "Artist", spotifyArtistId: "spotify-1" }],
+    });
+
+    await provider.scan({ filter: { provider: "spotify", since: "2026-05-19" }, onPage });
+
+    expect(getAlbum).not.toHaveBeenCalled();
+    expect(onPage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidates: [],
+        releases: [expect.objectContaining({ selectedForDetails: true })],
+      }),
+    );
+  });
+
   it("attaches the same validated Spotify album artwork to every track candidate", async () => {
     const summary = albumSummary("album-art", "Artwork Release", "2026-07-16");
     const album = albumWithTrack(summary);

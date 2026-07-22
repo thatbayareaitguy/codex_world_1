@@ -362,6 +362,7 @@ async function recordPage(
     pageNumber: Math.floor(offset / 10) + 1,
     releases: [
       {
+        detailsFetched: false,
         externalReleaseId: `release-${offset}`,
         releaseDate: "2025-01-01",
         releaseDatePrecision: "day",

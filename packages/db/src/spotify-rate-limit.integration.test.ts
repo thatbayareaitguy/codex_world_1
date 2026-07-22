@@ -64,21 +64,21 @@ describe("Spotify global request gate", () => {
     }
   });
 
-  it("enforces a persisted five-second deferral after a database reconnection", async () => {
+  it("enforces a persisted ten-second deferral after a database reconnection", async () => {
     const deferredAt = Date.now();
-    await deferSpotifyRequests(db, 5_000, new Date(deferredAt));
+    await deferSpotifyRequests(db, 10_000, new Date(deferredAt));
     const restarted = createDatabase(databaseUrl);
     try {
-      const permit = await createSpotifyRequestGate(restarted.db, 5_000).acquire({
+      const permit = await createSpotifyRequestGate(restarted.db, 10_000).acquire({
         endpointCategory: "artist_albums",
         method: "GET",
       });
-      expect(permit.startedAt.getTime() - deferredAt).toBeGreaterThanOrEqual(4_900);
-      await createSpotifyRequestGate(restarted.db, 5_000).complete(permit, { status: 200 });
+      expect(permit.startedAt.getTime() - deferredAt).toBeGreaterThanOrEqual(9_900);
+      await createSpotifyRequestGate(restarted.db, 10_000).complete(permit, { status: 200 });
     } finally {
       await restarted.client.end();
     }
-  }, 10_000);
+  }, 15_000);
 
   it("handles missing state, concurrent deferrals, large delays, and invalid values", async () => {
     const now = new Date("2026-07-18T09:00:00.000Z");
@@ -116,7 +116,7 @@ describe("Spotify global request gate", () => {
     expect(status.nextRequestAt).toEqual(deferredUntil);
     expect(status.cooldownUntil).toEqual(cooldownUntil);
     await expect(
-      createSpotifyRequestGate(db, 5_000).acquire({
+      createSpotifyRequestGate(db, 10_000).acquire({
         endpointCategory: "artist_albums",
         method: "GET",
       }),
@@ -124,7 +124,7 @@ describe("Spotify global request gate", () => {
   });
 
   it("persists a 429 cooldown and blocks a separate gate instance", async () => {
-    const firstGate = createSpotifyRequestGate(db, 5_000);
+    const firstGate = createSpotifyRequestGate(db, 10_000);
     const permit = await firstGate.acquire({ endpointCategory: "artist_albums", method: "GET" });
     const cooldownUntil = new Date(Date.now() + 60_000);
     await firstGate.complete(permit, {
@@ -145,7 +145,7 @@ describe("Spotify global request gate", () => {
       rawRetryAfter: "60",
       requestCount: 1,
     });
-    const secondGate = createSpotifyRequestGate(db, 5_000);
+    const secondGate = createSpotifyRequestGate(db, 10_000);
     await expect(
       secondGate.acquire({ endpointCategory: "current_user", method: "GET" }),
     ).rejects.toBeInstanceOf(SpotifyCooldownError);
@@ -156,7 +156,7 @@ describe("Spotify global request gate", () => {
   });
 
   it("allows confirmed correction only for an invalid local parse", async () => {
-    const gate = createSpotifyRequestGate(db, 5_000);
+    const gate = createSpotifyRequestGate(db, 10_000);
     const permit = await gate.acquire({ endpointCategory: "artist_albums", method: "GET" });
     await gate.complete(permit, {
       cooldownUntil: new Date(Date.now() + 60_000),
@@ -173,7 +173,7 @@ describe("Spotify global request gate", () => {
   });
 
   it("serializes requests and records queue waits", async () => {
-    const gate = createSpotifyRequestGate(db, 5_000);
+    const gate = createSpotifyRequestGate(db, 10_000);
     const first = await gate.acquire({ endpointCategory: "artist", method: "GET" });
     await gate.complete(first, { status: 200 });
     const second = await gate.acquire({ endpointCategory: "artist_albums", method: "GET" });
@@ -184,14 +184,14 @@ describe("Spotify global request gate", () => {
     });
     expect(events).toHaveLength(2);
     expect(events[1]!.startedAt.getTime() - events[0]!.startedAt.getTime()).toBeGreaterThanOrEqual(
-      4_900,
+      9_900,
     );
-    expect(events[1]!.queueWaitMs).toBeGreaterThanOrEqual(4_900);
-  }, 10_000);
+    expect(events[1]!.queueWaitMs).toBeGreaterThanOrEqual(9_900);
+  }, 15_000);
 
   it("serializes concurrent callers across gate instances", async () => {
-    const firstGate = createSpotifyRequestGate(db, 5_000);
-    const secondGate = createSpotifyRequestGate(db, 5_000);
+    const firstGate = createSpotifyRequestGate(db, 10_000);
+    const secondGate = createSpotifyRequestGate(db, 10_000);
     const first = await firstGate.acquire({ endpointCategory: "artist", method: "GET" });
     const secondPromise = secondGate.acquire({
       endpointCategory: "artist_albums",
@@ -200,8 +200,8 @@ describe("Spotify global request gate", () => {
     await firstGate.complete(first, { status: 200 });
     const second = await secondPromise;
     await secondGate.complete(second, { status: 200 });
-    expect(second.startedAt.getTime() - first.startedAt.getTime()).toBeGreaterThanOrEqual(4_900);
-  }, 15_000);
+    expect(second.startedAt.getTime() - first.startedAt.getTime()).toBeGreaterThanOrEqual(9_900);
+  }, 20_000);
 });
 
 describe("Spotify resumable batches", () => {

@@ -28,6 +28,8 @@
     "scan:unlock-stale": "tsx apps/scanner/src/scan-status.ts unlock-stale",
     "spotify:backfill-artwork": "tsx apps/scanner/src/spotify-artwork-backfill-cli.ts",
     "spotify:reconcile-releases": "tsx apps/scanner/src/spotify-release-reconciliation-cli.ts",
+    "spotify:scheduler:plan": "tsx apps/scanner/src/spotify-scheduler-cli.ts plan",
+    "spotify:scheduler:tick": "tsx apps/scanner/src/spotify-scheduler-cli.ts tick",
     "reddit:reconcile-deletions": "tsx apps/scanner/src/reddit-reconcile.ts",
     "test": "vitest run --exclude '**/*.integration.test.ts' --exclude '**/e2e/**'",
     "test:e2e": "playwright test",

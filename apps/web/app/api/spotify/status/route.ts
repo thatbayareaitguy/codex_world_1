@@ -2,6 +2,7 @@ import {
   createDatabase,
   ensureLocalOwner,
   getSpotifyOperationalStatus,
+  getSpotifySchedulerStatus,
   latestSpotifyBatch,
   oauthAccounts,
 } from "@radar/db";
@@ -18,7 +19,7 @@ export async function GET(): Promise<NextResponse> {
   const connection = createDatabase(config.databaseUrl);
   try {
     const userId = await ensureLocalOwner(connection.db);
-    const [account, operational, batch] = await Promise.all([
+    const [account, operational, batch, scheduler] = await Promise.all([
       connection.db.query.oauthAccounts.findFirst({
         where: and(eq(oauthAccounts.userId, userId), eq(oauthAccounts.provider, "spotify")),
         columns: {
@@ -31,15 +32,17 @@ export async function GET(): Promise<NextResponse> {
       }),
       getSpotifyOperationalStatus(connection.db),
       latestSpotifyBatch(connection.db),
+      getSpotifySchedulerStatus(connection.db),
     ]);
     if (!account || account.disconnectedAt) {
-      return NextResponse.json({ batch, operational, state: "disconnected" });
+      return NextResponse.json({ batch, operational, scheduler, state: "disconnected" });
     }
     return NextResponse.json({
       batch,
       displayName: account.displayName,
       lastTokenRefreshAt: account.lastTokenRefreshAt,
       operational,
+      scheduler,
       scopes: account.scopes,
       state: account.reconnectRequired ? "reconnect_required" : "connected",
     });
