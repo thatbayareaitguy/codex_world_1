@@ -422,12 +422,16 @@ export class SpotifyClient {
     id: string,
     offset: number,
     signal?: AbortSignal,
+    limit = 50,
   ): Promise<SpotifyAlbumTracksPage> {
     if (!Number.isInteger(offset) || offset < 0) {
       throw new Error("Spotify album track offset is invalid.");
     }
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+      throw new Error("Spotify album track limit must be an integer from 1 to 50.");
+    }
     const page = await this.request(
-      `/albums/${encodeURIComponent(id)}/tracks?limit=50&offset=${offset}`,
+      `/albums/${encodeURIComponent(id)}/tracks?limit=${limit}&offset=${offset}`,
       spotifyAlbumTracksSchema,
       { signal },
     );

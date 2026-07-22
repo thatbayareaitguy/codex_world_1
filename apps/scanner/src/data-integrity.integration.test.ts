@@ -21,6 +21,7 @@ import {
   spotifyReleaseTrackPages,
   spotifyReleaseTrackRetrievals,
   spotifyScanBatches,
+  startSpotifyReleaseTrackRetrieval,
   tracks,
 } from "@radar/db";
 import { asc, eq, inArray } from "drizzle-orm";
@@ -211,6 +212,97 @@ describe.sequential("release appearance and Spotify album completeness", () => {
       .orderBy(asc(spotifyReleaseTrackItems.discNumber), asc(spotifyReleaseTrackItems.trackNumber));
     expect(items).toHaveLength(25);
     expect(items.at(-1)).toMatchObject({ discNumber: 2, trackNumber: 5 });
+  });
+
+  it("requires every track to be observed again before a new cycle becomes complete", async () => {
+    const albumId = `album-cycle-${randomUUID()}`;
+    const historicalItems = Array.from({ length: 23 }, (_, index) => ({
+      discNumber: index >= 20 ? 2 : 1,
+      providerTrackId: `${albumId}-track-${index + 1}`,
+      trackNumber: index >= 20 ? index - 19 : index + 1,
+    }));
+    await recordSpotifyReleaseTrackPage(connection.db, {
+      expectedTotalTracks: 23,
+      finishedAt: new Date("2026-07-20T20:00:01.000Z"),
+      items: historicalItems,
+      nextOffset: null,
+      offset: 0,
+      spotifyAlbumId: albumId,
+      startedAt: new Date("2026-07-20T20:00:00.000Z"),
+      terminal: true,
+    });
+
+    const reconciliationCycleId = randomUUID();
+    await startSpotifyReleaseTrackRetrieval(connection.db, {
+      expectedTotalTracks: 23,
+      reconciliationCycleId,
+      spotifyAlbumId: albumId,
+    });
+    await recordSpotifyReleaseTrackPage(connection.db, {
+      expectedTotalTracks: 23,
+      finishedAt: new Date(),
+      items: historicalItems.slice(0, 10),
+      nextOffset: 10,
+      offset: 0,
+      reconciliationCycleId,
+      spotifyAlbumId: albumId,
+      startedAt: new Date(),
+      terminal: false,
+    });
+    const firstPage = await connection.db.query.spotifyReleaseTrackRetrievals.findFirst({
+      where: eq(spotifyReleaseTrackRetrievals.spotifyAlbumId, albumId),
+    });
+    expect(firstPage).toMatchObject({
+      fetchedTrackCount: 10,
+      nextOffset: 10,
+      pagesCompleted: 1,
+      reconciliationCycleId,
+      status: "partial",
+    });
+
+    await startSpotifyReleaseTrackRetrieval(connection.db, {
+      expectedTotalTracks: 23,
+      reconciliationCycleId,
+      spotifyAlbumId: albumId,
+    });
+    const resumed = await connection.db.query.spotifyReleaseTrackRetrievals.findFirst({
+      where: eq(spotifyReleaseTrackRetrievals.spotifyAlbumId, albumId),
+    });
+    expect(resumed).toMatchObject({
+      fetchedTrackCount: 10,
+      nextOffset: 10,
+      reconciliationCycleId,
+      startedAt: firstPage?.startedAt,
+      status: "in_progress",
+    });
+
+    await recordSpotifyReleaseTrackPage(connection.db, {
+      expectedTotalTracks: 23,
+      finishedAt: new Date(),
+      items: historicalItems.slice(10, 20),
+      nextOffset: 20,
+      offset: 10,
+      reconciliationCycleId,
+      spotifyAlbumId: albumId,
+      startedAt: new Date(),
+      terminal: false,
+    });
+    await recordSpotifyReleaseTrackPage(connection.db, {
+      expectedTotalTracks: 23,
+      finishedAt: new Date(),
+      items: historicalItems.slice(20),
+      nextOffset: null,
+      offset: 20,
+      reconciliationCycleId,
+      spotifyAlbumId: albumId,
+      startedAt: new Date(),
+      terminal: true,
+    });
+    expect(
+      await connection.db.query.spotifyReleaseTrackRetrievals.findFirst({
+        where: eq(spotifyReleaseTrackRetrievals.spotifyAlbumId, albumId),
+      }),
+    ).toMatchObject({ fetchedTrackCount: 23, pagesCompleted: 3, status: "completed" });
   });
 
   it("keeps a terminal total_tracks mismatch visible and resumable", async () => {

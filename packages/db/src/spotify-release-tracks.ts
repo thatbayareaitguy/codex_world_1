@@ -1,10 +1,14 @@
-import { and, count, eq, inArray, sql } from "drizzle-orm";
+import { and, count, eq, gte, inArray, sql } from "drizzle-orm";
 import type { RadarDatabase } from "./client";
 import {
   releaseExternalIds,
+  releases,
+  releaseTrackAppearances,
+  releaseTrackAppearanceSources,
   spotifyReleaseTrackItems,
   spotifyReleaseTrackPages,
   spotifyReleaseTrackRetrievals,
+  trackExternalIds,
 } from "./schema";
 
 export type SpotifyReleaseTrackProgressStatus =
@@ -19,6 +23,19 @@ export interface SpotifyReleaseTrackItemInput {
   discNumber: number;
   providerTrackId: string;
   trackNumber: number;
+}
+
+export interface SpotifyReleaseReconciliationTarget {
+  expectedTotalTracks: number;
+  fetchedTrackCount: number;
+  nextOffset: number | null;
+  reconciliationCycleId: string | null;
+  releaseId: string;
+  releaseType: string;
+  spotifyAlbumId: string;
+  startedAt: Date | null;
+  status: SpotifyReleaseTrackProgressStatus;
+  title: string;
 }
 
 export async function loadSpotifyReleaseTrackResume(
@@ -65,6 +82,15 @@ export async function startSpotifyReleaseTrackRetrieval(
     ),
     columns: { releaseId: true },
   });
+  const existing = await db.query.spotifyReleaseTrackRetrievals.findFirst({
+    where: eq(spotifyReleaseTrackRetrievals.spotifyAlbumId, input.spotifyAlbumId),
+    columns: { reconciliationCycleId: true },
+  });
+  const startsNewCycle = Boolean(
+    existing &&
+    input.reconciliationCycleId &&
+    existing.reconciliationCycleId !== input.reconciliationCycleId,
+  );
   const now = new Date();
   await db
     .insert(spotifyReleaseTrackRetrievals)
@@ -88,7 +114,17 @@ export async function startSpotifyReleaseTrackRetrieval(
           : {}),
         lastErrorClassification: null,
         retryEligibleAt: null,
-        startedAt: sql`coalesce(${spotifyReleaseTrackRetrievals.startedAt}, ${now})`,
+        ...(startsNewCycle
+          ? {
+              completedAt: null,
+              discrepancy: null,
+              fetchedTrackCount: 0,
+              lastPageCompletedAt: null,
+              nextOffset: 0,
+              pagesCompleted: 0,
+              startedAt: now,
+            }
+          : {}),
         status: "in_progress",
         updatedAt: now,
       },
@@ -142,8 +178,12 @@ export async function recordSpotifyReleaseTrackPage(
           updatedAt: input.finishedAt,
         },
       })
-      .returning({ id: spotifyReleaseTrackRetrievals.id });
+      .returning({
+        id: spotifyReleaseTrackRetrievals.id,
+        startedAt: spotifyReleaseTrackRetrievals.startedAt,
+      });
     if (!retrieval) throw new Error("Spotify release track retrieval could not be recorded.");
+    const cycleStartedAt = retrieval.startedAt ?? input.startedAt;
 
     const uniqueItems = [
       ...new Map(input.items.map((item) => [item.providerTrackId, item])).values(),
@@ -187,6 +227,7 @@ export async function recordSpotifyReleaseTrackPage(
           finishedAt: input.finishedAt,
           itemCount: input.items.length,
           nextOffset: input.nextOffset,
+          startedAt: input.startedAt,
           uniqueItemCount: uniqueItems.length,
         },
       });
@@ -194,11 +235,21 @@ export async function recordSpotifyReleaseTrackPage(
     const [itemCount] = await tx
       .select({ value: count() })
       .from(spotifyReleaseTrackItems)
-      .where(eq(spotifyReleaseTrackItems.retrievalId, retrieval.id));
+      .where(
+        and(
+          eq(spotifyReleaseTrackItems.retrievalId, retrieval.id),
+          gte(spotifyReleaseTrackItems.lastObservedAt, cycleStartedAt),
+        ),
+      );
     const [pageCount] = await tx
       .select({ value: count() })
       .from(spotifyReleaseTrackPages)
-      .where(eq(spotifyReleaseTrackPages.retrievalId, retrieval.id));
+      .where(
+        and(
+          eq(spotifyReleaseTrackPages.retrievalId, retrieval.id),
+          gte(spotifyReleaseTrackPages.finishedAt, cycleStartedAt),
+        ),
+      );
     const fetchedTrackCount = itemCount?.value ?? 0;
     const countMatches = fetchedTrackCount === input.expectedTotalTracks;
     const status: SpotifyReleaseTrackProgressStatus =
@@ -254,6 +305,101 @@ export async function markSpotifyReleaseTrackInterrupted(
     .where(eq(spotifyReleaseTrackRetrievals.spotifyAlbumId, input.spotifyAlbumId));
 }
 
+export async function loadSpotifyReleaseReconciliationTargets(
+  db: RadarDatabase,
+  releaseIds: readonly string[],
+): Promise<SpotifyReleaseReconciliationTarget[]> {
+  if (releaseIds.length === 0) return [];
+  return db
+    .select({
+      expectedTotalTracks: spotifyReleaseTrackRetrievals.expectedTotalTracks,
+      fetchedTrackCount: spotifyReleaseTrackRetrievals.fetchedTrackCount,
+      nextOffset: spotifyReleaseTrackRetrievals.nextOffset,
+      reconciliationCycleId: spotifyReleaseTrackRetrievals.reconciliationCycleId,
+      releaseId: releases.id,
+      releaseType: releases.releaseType,
+      spotifyAlbumId: spotifyReleaseTrackRetrievals.spotifyAlbumId,
+      startedAt: spotifyReleaseTrackRetrievals.startedAt,
+      status: spotifyReleaseTrackRetrievals.status,
+      title: releases.title,
+    })
+    .from(spotifyReleaseTrackRetrievals)
+    .innerJoin(releases, eq(releases.id, spotifyReleaseTrackRetrievals.releaseId))
+    .innerJoin(
+      releaseExternalIds,
+      and(
+        eq(releaseExternalIds.releaseId, releases.id),
+        eq(releaseExternalIds.provider, "spotify"),
+        eq(releaseExternalIds.externalId, spotifyReleaseTrackRetrievals.spotifyAlbumId),
+      ),
+    )
+    .where(inArray(releases.id, [...releaseIds]));
+}
+
+export async function validateSpotifyReleaseTrackMappings(
+  db: RadarDatabase,
+  input: {
+    providerTrackIds: readonly string[];
+    releaseId: string;
+    spotifyAlbumId: string;
+  },
+): Promise<{
+  missingAppearanceTrackIds: string[];
+  missingCanonicalTrackIds: string[];
+}> {
+  const providerTrackIds = [...new Set(input.providerTrackIds)];
+  if (providerTrackIds.length === 0) {
+    return { missingAppearanceTrackIds: [], missingCanonicalTrackIds: [] };
+  }
+  const [canonicalRows, appearanceRows] = await Promise.all([
+    db
+      .select({ providerTrackId: trackExternalIds.externalId })
+      .from(trackExternalIds)
+      .where(
+        and(
+          eq(trackExternalIds.provider, "spotify"),
+          inArray(trackExternalIds.externalId, providerTrackIds),
+        ),
+      ),
+    db
+      .select({ providerTrackId: releaseTrackAppearanceSources.providerTrackId })
+      .from(releaseTrackAppearanceSources)
+      .innerJoin(
+        releaseTrackAppearances,
+        eq(releaseTrackAppearances.id, releaseTrackAppearanceSources.appearanceId),
+      )
+      .where(
+        and(
+          eq(releaseTrackAppearanceSources.provider, "spotify"),
+          eq(releaseTrackAppearanceSources.providerReleaseId, input.spotifyAlbumId),
+          eq(releaseTrackAppearances.releaseId, input.releaseId),
+          inArray(releaseTrackAppearanceSources.providerTrackId, providerTrackIds),
+        ),
+      ),
+  ]);
+  const canonical = new Set(canonicalRows.map((row) => row.providerTrackId));
+  const appearances = new Set(appearanceRows.map((row) => row.providerTrackId));
+  return {
+    missingAppearanceTrackIds: providerTrackIds.filter((id) => !appearances.has(id)),
+    missingCanonicalTrackIds: providerTrackIds.filter((id) => !canonical.has(id)),
+  };
+}
+
+export function createSpotifyReleaseReconciliationRepository(db: RadarDatabase) {
+  return {
+    listTargets: (releaseIds: readonly string[]) =>
+      loadSpotifyReleaseReconciliationTargets(db, releaseIds),
+    markInterrupted: (input: Parameters<typeof markSpotifyReleaseTrackInterrupted>[1]) =>
+      markSpotifyReleaseTrackInterrupted(db, input),
+    recordPage: (input: Parameters<typeof recordSpotifyReleaseTrackPage>[1]) =>
+      recordSpotifyReleaseTrackPage(db, input),
+    start: (input: Parameters<typeof startSpotifyReleaseTrackRetrieval>[1]) =>
+      startSpotifyReleaseTrackRetrieval(db, input),
+    validateMappings: (input: Parameters<typeof validateSpotifyReleaseTrackMappings>[1]) =>
+      validateSpotifyReleaseTrackMappings(db, input),
+  };
+}
+
 export async function spotifyReleaseTrackCompletenessSummary(db: RadarDatabase) {
   const rows = await db
     .select({ status: spotifyReleaseTrackRetrievals.status, value: count() })
@@ -286,7 +432,11 @@ export async function spotifyReleaseTrackCompletenessSummary(db: RadarDatabase) 
     completed: countFor("completed"),
     discrepancies: discrepancies?.value ?? 0,
     failed: countFor("failed"),
+    inProgress: countFor("in_progress"),
     missingTracks: missing?.value ?? 0,
+    notStarted: countFor("not_started"),
+    paused: countFor("paused"),
     partial: countFor("partial"),
+    rateLimited: countFor("rate_limited"),
   };
 }

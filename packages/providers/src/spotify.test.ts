@@ -64,6 +64,38 @@ describe("Spotify pagination cursors", () => {
 });
 
 describe("SpotifyClient", () => {
+  it("uses an explicit bounded album-track page size", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        href: "https://api.spotify.com/v1/albums/album/tracks?limit=10&offset=10",
+        items: [],
+        limit: 10,
+        next: null,
+        offset: 10,
+        previous: null,
+        total: 23,
+      }),
+    );
+    const client = new SpotifyClient({
+      accessToken: () => Promise.resolve("token"),
+      fetcher,
+    });
+
+    await client.getAlbumTracksPage("album", 10, undefined, 10);
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://api.spotify.com/v1/albums/album/tracks?limit=10&offset=10",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it.each([0, 51, 1.5])("rejects invalid album-track page size %s", async (limit) => {
+    const client = new SpotifyClient({ accessToken: () => Promise.resolve("token") });
+    await expect(client.getAlbumTracksPage("album", 0, undefined, limit)).rejects.toThrow(
+      "integer from 1 to 50",
+    );
+  });
+
   it("keeps safe album artwork and ignores absent, malformed, or unsafe image entries", () => {
     const page = {
       href: "https://api.spotify.com/v1/artists/artist/albums",

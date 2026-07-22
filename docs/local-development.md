@@ -48,6 +48,7 @@ pnpm scan:status
 pnpm scan:unlock-stale
 pnpm spotify:backfill-artwork --dry-run --limit 5
 pnpm spotify:backfill-artwork --apply --limit 5
+pnpm spotify:reconcile-releases -- --release <canonical-release-id> --page-size 10 --max-pages-per-release 1 --confirm-live
 ```
 
 Normal scans use one global database lock. Each provider records an independent run and failure, and a provider failure does not stop the remaining providers. Detailed errors and provider metrics expire after `SCAN_DETAIL_RETENTION_DAYS`; aggregate counts and timestamps remain.
@@ -55,6 +56,8 @@ Normal scans use one global database lock. Each provider records an independent 
 Spotify uses one database-backed queue across web and scanner processes. The default interval is five seconds with concurrency one. A provider 429 persists a client-wide cooldown across restart; do not clear or bypass a valid integer-second wait. Initial scans are limited to 15 artists per batch and begin paused for confirmation. See [Spotify Development Mode Scanning](spotify-development-mode-scanning.md).
 
 The artwork backfill reads only stored Spotify album IDs and calls the official album endpoint. It defaults to dry-run, requires an explicit limit from 1 through 25, and needs `--apply` before it writes provider metadata. Apply mode saves a provider cursor after every completed release; add `--resume` to continue after that cursor. The command never searches Spotify, inspects playlists, or changes canonical release and track identity.
+
+Release-only reconciliation requires 1 through 25 explicit canonical release IDs and `--confirm-live`. It calls only the Spotify album-tracks endpoint, uses the shared request gate and request budget, verifies every returned track against the existing canonical release appearance, and persists each page before continuing. `--page-size` accepts the provider-supported range 1 through 50 and defaults to 50; use a smaller value only for an explicitly bounded validation. Completed releases are skipped without a provider request.
 
 ## Tests
 
