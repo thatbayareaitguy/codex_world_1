@@ -1,13 +1,13 @@
 # AI Handoff
 
-Updated: 2026-07-21 17:43 PDT (UTC-07:00)
+Updated: 2026-07-21 19:29 PDT (UTC-07:00)
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`.
-- Latest checkpoint: `HEAD` (`fix: validate resumable Spotify album reconciliation`).
-- Current milestone: exact-release Spotify album-track reconciliation implemented, live-validated against five approved releases, and committed.
-- Git state: the implementation checkpoint is ready to push; historical reconciliation results will be recorded separately.
+- Latest checkpoint: `a2d010cbf4d8bc3e75af9d0fa82e9f08ed4367ae` (`fix: validate resumable Spotify album reconciliation`), pushed to the tracked remote branch.
+- Current milestone: historical Spotify album-track reconciliation completed for all 76 stored releases.
+- Git state: only this historical completion record is uncommitted pending final verification.
 
 ## Confirmed Working
 
@@ -26,11 +26,15 @@ Updated: 2026-07-21 17:43 PDT (UTC-07:00)
 - Interruption and resume were exercised on `Overgrown`: the first page persisted 10 tracks and offset 10, then the resumed run fetched the remaining two pages.
 - The exact-five idempotency rerun made zero provider requests and changed no records.
 - Feed revision detection and the in-app refresh action preserved the 166-item database feed and displayed the reconciled releases without a full page reload.
+- All 71 remaining historical releases completed in five sequential batches of 15, 15, 15, 15, and 11 releases.
+- Historical reconciliation made 71 album-track requests and one OAuth refresh in 337.6 seconds. All returned HTTP 200; minimum request-start spacing was 5.010 seconds; no cooldown, retry, playlist, artist-catalog, MusicBrainz, Reddit, or SoundCloud request occurred.
+- The final five-release idempotency sample skipped every completed release, made zero provider requests, and changed no records.
+- Final UI inspection showed correct release grouping, artwork, Spotify links, revision refresh, zero partial warnings, and no duplicate visible feed anchors.
 
 ## Implemented, Not Live-Tested
 
-- The exact-release reconciliation path is live-tested only for the five approved releases. The other 71 historical partial releases have not been reconciled.
 - Spotify playlist safeguards remain implemented, but writes are disabled and were not exercised.
+- The distributed full-watchlist scan has not started.
 
 ## Database
 
@@ -39,7 +43,8 @@ Updated: 2026-07-21 17:43 PDT (UTC-07:00)
 - `0013_moaning_kid_colt.sql` adds the durable feed revision row and transactional triggers for feed-visible tables.
 - Clean migration and upgrade from the prior 12-migration schema passed. New index names are unique and at most 63 bytes.
 - Reconciliation changed no canonical counts: 76 releases, 148 tracks, 166 appearances, 166 candidates, 166 evidence rows, and 166 feed items.
-- Retrieval state is now 5 complete and 71 partial. Not-started, in-progress, paused, failed, and rate-limited counts are zero; missing tracks and unusable Spotify album IDs are zero; 71 historical discrepancy markers remain ready for bounded reconciliation. The five completed releases have no missing mapped tracks; no active scan lock or provider cooldown remains.
+- Retrieval state is 76 complete. Partial, not-started, in-progress, paused, failed, rate-limited, missing-track, discrepancy, nonterminal-cursor, and unusable-album-ID counts are all zero.
+- All persisted album-track items have exact canonical and release-appearance mappings. Duplicate disc/track positions are zero, and 18 legitimate repeated recordings retain distinct release appearances.
 
 ## Verification
 
@@ -53,11 +58,11 @@ Updated: 2026-07-21 17:43 PDT (UTC-07:00)
 - Doctor: `READY`; 14 migrations, no cooldown, no stale lock, and no unresolved failed scan.
 - Synthetic feed page diagnostics passed for 150, 1,000, and 3,000 rows. A 100-item page remained under 1 second and 1 MB; revision lookup was 30.7 ms in the latest focused run.
 - Synthetic in-memory assembly at 3,000 rows measured 0.371 ms with indexed lookups versus 59.348 ms with nested scans. These are local synthetic diagnostics, not production claims.
-- Live validation made 10 provider requests: 9 album-track requests and 1 token refresh. All returned HTTP 200, the minimum request-start interval was 5.007 seconds, and no playlist, artist, MusicBrainz, Reddit, or SoundCloud request occurred.
+- Historical live reconciliation made 72 provider requests: 71 album-track requests and 1 token refresh. All returned HTTP 200, the minimum request-start interval was 5.010 seconds, and no playlist, artist-catalog, MusicBrainz, Reddit, or SoundCloud request occurred.
 
 ## Uncommitted Files
 
-- None before historical reconciliation begins.
+- `docs/AI_HANDOFF.md` records the completed historical reconciliation.
 
 ## Security And Policy
 
@@ -69,16 +74,15 @@ Updated: 2026-07-21 17:43 PDT (UTC-07:00)
 
 ## Known Limitations
 
-- The 71 remaining historical partial Spotify album retrievals need later bounded reconciliation before they can be called complete.
-- No selected historical release was multi-disc, so ordering was validated only within disc 1.
+- No historical release was multi-disc, so live ordering was validated only within disc 1.
+- Release completeness remains diagnostic metadata and is intentionally not rendered as a feed badge.
 - Cursor traversal is a stable historical window. New records are incorporated only after the user accepts the revision notice and refreshes from the top.
 - Synthetic performance results do not establish production capacity.
 
 ## Next Action
 
-Review and commit the uncommitted exact-release reconciliation implementation. Then reconcile the remaining 71 historical partial releases in explicit bounded groups; do not start a full watchlist scan.
+Prepare a separately approved distributed full-watchlist scan plan. Do not start the full watchlist scan as part of this milestone.
 
 ## User Decisions Needed
 
-- Decide whether to accept and commit the exact-release reconciliation milestone.
-- Do not authorize the full Spotify watchlist sync yet.
+- Decide when to authorize a distributed full-watchlist scan.
