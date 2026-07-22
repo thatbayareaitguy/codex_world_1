@@ -1,18 +1,22 @@
 # Implementation Plan
 
-## Current: pre-sync feed and query scaling
+## Current: rolling 24-hour Spotify scheduler
 
-- Add justified forward indexes for the feed, evidence projection, reverse external-ID lookups, unresolved reviews, scan history, Spotify catalog coverage, and album-track resume queries.
-- Replace full-feed browser loading with signed cursor pagination. Use release groups as pagination units, return 100 items by default, and keep oversized albums intact.
-- Assemble each selected page through bounded SQL queries and precomputed Maps or Sets. Preserve credits, release appearances, artwork, evidence, user state, and completeness.
-- Poll one durable `feed_revisions` row every 15 seconds while visible. Show a notice for changed data and require an explicit refresh from the top.
-- Page pending MusicBrainz mapping reviews and scan history without deleting older records. Keep provider telemetry bounded or aggregate-only.
-- Validate known provider evidence with provider-specific HTTPS host, path, and identifier rules. Omit unsafe historical links from clickable output without deleting the stored record.
-- Verify clean and upgrade migrations, synthetic 150, 1,000, and 3,000-item performance, unit tests, PostgreSQL integration tests, build, Playwright, doctor, and artifact exclusions. No live provider or playlist request is allowed.
+Design status: complete in [spotify-rolling-scheduler-design.md](spotify-rolling-scheduler-design.md). Implementation has not started.
+
+1. Add one forward migration for disabled-by-default scheduler state, claimable typed work, leases, due times, and request-event work context. Do not rewrite migrations `0000` through `0013`.
+2. Implement a short-lived periodic tick that acquires the existing global operation lock and shared Spotify request gate. Bound each invocation to one artist, six requests, 90 seconds, concurrency one, and at least 10 seconds between request starts.
+3. Use one durable queue for never-scanned initial work, recurring base checks, release details, album-track pages, and reconciliation. Preserve current artist and release cursors as the authoritative progress state.
+4. Add planning mode with zero provider-client construction. Keep live scheduling disabled until an explicitly approved ten-artist validation succeeds.
+5. Extend doctor, status APIs, and the existing Spotify status panel with due, overdue, blocked, partial, backlog, lease, rolling request, cooldown, and estimate projections.
+6. Add deterministic fake-time unit tests, PostgreSQL claim and restart tests, and Playwright status and control tests. Normal verification must make zero live provider or playlist requests.
+7. Roll out through separately approved gates: implementation only, ten-artist validation, remaining initial watchlist, three rolling 24-hour feasibility windows, and post-sync cleanup.
+
+Batch 3 remains untouched. Automatic mode and any use of Batch 3 require separate user approval.
 
 ## Completed milestones (archived)
 
-The sections below preserve the implementation history. Docker, PostgreSQL, migrations through `0011`, release appearances, album-track checkpoints, Spotify and MusicBrainz request gates, local operations, and the 50-artist staged validation are complete at the current checkpoint.
+The sections below preserve the implementation history. Docker, PostgreSQL, migrations through `0013`, release appearances, album-track checkpoints, Spotify and MusicBrainz request gates, local operations, and the staged Spotify validations are complete at the current checkpoint.
 
 ## Spotify and MusicBrainz milestone
 
