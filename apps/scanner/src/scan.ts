@@ -719,6 +719,18 @@ async function runScanUnlocked(
               : {}),
           ...(runtime ? { signal: runtime.signal } : {}),
         });
+        if (provider.name === "spotify" && spotifyWork && spotifyWork.deferredArtistCount > 0) {
+          const paused = await requestSpotifyBatchPause(db, spotifyWork.batchId);
+          if (!paused) {
+            const batch = await db.query.spotifyScanBatches.findFirst({
+              where: eq(spotifyScanBatches.id, spotifyWork.batchId),
+              columns: { status: true },
+            });
+            if (batch?.status !== "paused") {
+              throw new Error("Spotify batch could not be paused after its bounded artist chunk.");
+            }
+          }
+        }
         const persistedBatchStatus =
           provider.name === "spotify" && spotifyWork
             ? await db.query.spotifyScanBatches.findFirst({
@@ -1505,7 +1517,7 @@ async function persistCandidatesUnlocked(
         providersCompleted: run.status === "completed" ? [provider] : [],
         providersFailed: [],
         duplicatesIgnoredCount: cumulative.skipped,
-        metadata: providerMetrics ? { providerMetrics } : {},
+        metadata: scanRunMetadata(provider, providerMetrics),
       })
       .where(eq(scanRuns.id, run.id));
     return summary;
@@ -1563,12 +1575,29 @@ async function createProviderScanRun(
         : options.provider
           ? "provider_manual"
           : "manual",
-      metadata: providerMetrics ? { providerMetrics } : {},
+      metadata: scanRunMetadata(provider, providerMetrics),
       ...(options.artistId ? { artistFilter: options.artistId } : {}),
     })
     .returning({ id: scanRuns.id });
   if (!run) throw new Error("Failed to create scan run");
   return run.id;
+}
+
+function scanRunMetadata(
+  provider: TrackCandidate["provider"],
+  providerMetrics?: { failures: number; requests: number; waitMs: number },
+): Record<string, unknown> {
+  if (provider !== "spotify") return providerMetrics ? { providerMetrics } : {};
+  const spotify = loadProviderConfiguration().spotify;
+  return {
+    effectiveSpotifyConfiguration: {
+      artistsPerBatch: spotify.artistsPerBatch,
+      maxConcurrency: spotify.maxConcurrency,
+      maxRequestsPerRun: spotify.maxRequestsPerRun,
+      minRequestIntervalMs: spotify.minRequestIntervalMs,
+    },
+    ...(providerMetrics ? { providerMetrics } : {}),
+  };
 }
 
 function emptyScanSummary(dryRun: boolean): ScanSummary {

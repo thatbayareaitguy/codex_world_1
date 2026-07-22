@@ -21,6 +21,7 @@ import type { ScannerOptions } from "./args";
 
 export interface PreparedSpotifyWork {
   batchId: string;
+  deferredArtistCount: number;
   knownReleaseIds: ReadonlySet<string>;
   mappings: SpotifyArtistMapping[];
   maxPagesPerArtist: number;
@@ -70,6 +71,7 @@ export async function prepareSpotifyWork(
     });
     return {
       batchId,
+      deferredArtistCount: 0,
       knownReleaseIds,
       knownReleaseSummaries: await loadSpotifyCatalogSummaries(db),
       incompleteReleaseIds,
@@ -97,12 +99,14 @@ export async function prepareSpotifyWork(
     await reconcileSpotifyBatchMappings(db, latest.id, mappings);
     latest = await loadBatch(db, latest.id);
     if (options.spotifyConfirmBatch) await resumeSpotifyBatch(db, latest.id);
-    const selected = latest.artistScans
+    const resumable = latest.artistScans
       .filter((progress) =>
         ["pending", "running", "paused", "rate_limited"].includes(progress.status),
       )
       .map((progress) => mappings.find((mapping) => mapping.artistId === progress.artistId))
       .filter((mapping): mapping is SpotifyArtistMapping => Boolean(mapping));
+    const selection = selectSpotifyBatchMappings(resumable, configuration.spotify.artistsPerBatch);
+    const selected = selection.mappings;
     const mode = latest.mode as SpotifyScanMode;
     const coverage = await prepareSpotifyCoverage(db, {
       artistIds: selected.map((mapping) => mapping.artistId),
@@ -112,6 +116,7 @@ export async function prepareSpotifyWork(
     });
     return {
       batchId: latest.id,
+      deferredArtistCount: selection.deferredArtistCount,
       knownReleaseIds,
       knownReleaseSummaries: await loadSpotifyCatalogSummaries(db),
       incompleteReleaseIds,
@@ -204,6 +209,7 @@ export async function prepareSpotifyWork(
   });
   return {
     batchId,
+    deferredArtistCount: 0,
     knownReleaseIds,
     knownReleaseSummaries: await loadSpotifyCatalogSummaries(db),
     incompleteReleaseIds,
@@ -217,6 +223,19 @@ export async function prepareSpotifyWork(
       coverage.map((entry) => [entry.artistId, entry.cycleId] as const),
     ),
     startOffsets: new Map(coverage.map((entry) => [entry.artistId, entry.startOffset] as const)),
+  };
+}
+
+export function selectSpotifyBatchMappings(
+  mappings: SpotifyArtistMapping[],
+  maximumArtists: number,
+): { deferredArtistCount: number; mappings: SpotifyArtistMapping[] } {
+  if (!Number.isInteger(maximumArtists) || maximumArtists < 1) {
+    throw new Error("Spotify resumed-batch artist limit must be a positive integer.");
+  }
+  return {
+    deferredArtistCount: Math.max(0, mappings.length - maximumArtists),
+    mappings: mappings.slice(0, maximumArtists),
   };
 }
 

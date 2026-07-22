@@ -1,88 +1,84 @@
 # AI Handoff
 
-Updated: 2026-07-21 19:29 PDT (UTC-07:00)
+Updated: 2026-07-21 23:50 PDT (UTC-07:00)
 
 ## Repository
 
-- Branch: `codex/release-radar-hardening`.
-- Latest checkpoint: `82659a2d51c61234e730da313e74908469810cd6` (`feat: complete historical Spotify album reconciliation`), pushed to the tracked remote branch. The reconciliation implementation checkpoint is `a2d010cbf4d8bc3e75af9d0fa82e9f08ed4367ae`.
-- Current milestone: historical Spotify album-track reconciliation completed for all 76 stored releases.
-- Git state: implementation and historical completion records are committed and pushed.
+- Branch: `codex/release-radar-hardening`, tracking the matching remote branch.
+- Latest checkpoint: `d173fedc86133b035eec53219de6034d812de4be` (`docs: sync handoff after historical reconciliation`).
+- Current milestone: conservative recovery of the persisted Spotify watchlist batches.
+- The current implementation and validation changes are intentionally uncommitted.
 
 ## Confirmed Working
 
-- Phase 1 release appearances and album completeness were verified, committed, and pushed at `7df8830`.
-- Feed assembly uses bounded SQL projections plus `Map` and `Set` lookups instead of nested array scans.
-- Feed pages are server filtered, search aware, signed-cursor based, and bounded to 25 through 200 items with a default of 100.
-- Album and EP groups are the pagination unit. A group may exceed the nominal page size but is never split.
-- Release-track completeness remains available to diagnostics and reconciliation but is not rendered as a badge in the Discovery Feed.
-- New feed records increment a durable PostgreSQL revision. Visible tabs poll every 15 seconds and on focus; changes show a notice until the user refreshes from the top.
-- Loading more appends without duplicates. Changing search, filters, or sort resets pagination.
-- Scan history and MusicBrainz mapping reviews use bounded deterministic cursor pages with explicit access to older records.
-- Spotify, MusicBrainz, and Reddit evidence use provider-specific HTTPS host, path, and identifier validation. Invalid historical evidence is retained in PostgreSQL but omitted from clickable UI.
-- The app is responding on `http://127.0.0.1:3000`.
-- Exact release reconciliation accepts only an explicit canonical-release allowlist, uses the shared Spotify request gate, persists every page, resumes from the next offset, and skips already completed releases without provider requests.
-- The approved five-release validation completed `Overgrown (Deluxe Edition)` (23/23 tracks), `SOMA` (13/13), `UNTAMED` (12/12), `Inverse` (4/4), and `Hold On` (1/1).
-- Interruption and resume were exercised on `Overgrown`: the first page persisted 10 tracks and offset 10, then the resumed run fetched the remaining two pages.
-- The exact-five idempotency rerun made zero provider requests and changed no records.
-- Feed revision detection and the in-app refresh action preserved the 166-item database feed and displayed the reconciled releases without a full page reload.
-- All 71 remaining historical releases completed in five sequential batches of 15, 15, 15, 15, and 11 releases.
-- Historical reconciliation made 71 album-track requests and one OAuth refresh in 337.6 seconds. All returned HTTP 200; minimum request-start spacing was 5.010 seconds; no cooldown, retry, playlist, artist-catalog, MusicBrainz, Reddit, or SoundCloud request occurred.
-- The final five-release idempotency sample skipped every completed release, made zero provider requests, and changed no records.
-- Final UI inspection showed correct release grouping, artwork, Spotify links, revision refresh, zero partial warnings, and no duplicate visible feed anchors.
+- The active watchlist has 593 artists, all with confirmed Spotify artist IDs.
+- Batch 1 `ed34093f-6a1b-4b22-96d1-12e2d3c5f1a7` completed its 15 artists with 26 requests and no provider failure.
+- Batch 2 `4d19f78e-3b7c-4e90-a25f-69c6f819c042` preserved its original order and resumed only DMVU, Subsonic, Brooks, KTRL, and KJ Sawka after the verified cooldown expired.
+- The recovery run processed all five artists in 80.510 seconds. It made 9 total Spotify requests: 5 `artist_albums`, 3 `album`, and 1 `oauth_token`. The minimum request-start interval was 10.007 seconds.
+- No HTTP 429, provider failure, new cooldown, playlist request, MusicBrainz request, Reddit request, or SoundCloud request occurred.
+- DMVU and KJ Sawka were successful no-result scans within the 60-day backfill. Subsonic, Brooks, and KTRL each produced one candidate.
+- The run created 3 releases, 3 tracks, 3 appearances, 3 candidates, 3 evidence rows, 3 feed rows, and 3 artwork rows. It created no review item.
+- All five processed artist catalogs are partial because another Spotify catalog page exists. Batch 2 is paused with its six later members untouched and pending. Batch 3 remains untouched with all 15 artists pending.
+- The DMVU idempotency spot check resumed at its persisted next offset, made one additional `artist_albums` request, and created zero records or duplicates. The validation total was 10 Spotify requests, below the 20-request budget.
+- Resumed batches now honor the configured artist chunk size, preserve persisted order, and pause before deferred members. Scan telemetry records the effective non-secret concurrency, interval, artist limit, and request budget.
+- Database integrity checks found zero duplicate provider IDs, appearances, candidates, evidence identities, or feed keys.
+- The official artwork backfill repaired all prior missing artwork. All 91 current Spotify release records have validated artwork.
 
 ## Implemented, Not Live-Tested
 
-- Spotify playlist safeguards remain implemented, but writes are disabled and were not exercised.
-- The distributed full-watchlist scan has not started.
+- A second five-artist resume using the new bounded chunk behavior has not run.
+- Batch 2 positions 9 through 14 and all of Batch 3 have not run.
+- The remaining full watchlist synchronization has not begun.
+- Spotify playlist safeguards remain implemented, but playlist writes are disabled and were not exercised.
 
 ## Database
 
-- PostgreSQL is healthy with 14 forward migrations applied through `0013_moaning_kid_colt`.
-- `0012_common_newton_destine.sql` adds 16 query-specific indexes for feed paging and projection, review loading, scan history, reverse provider lookups, playlist status, coverage reconciliation, and album retrieval resume.
-- `0013_moaning_kid_colt.sql` adds the durable feed revision row and transactional triggers for feed-visible tables.
-- Clean migration and upgrade from the prior 12-migration schema passed. New index names are unique and at most 63 bytes.
-- Reconciliation changed no canonical counts: 76 releases, 148 tracks, 166 appearances, 166 candidates, 166 evidence rows, and 166 feed items.
-- Retrieval state is 76 complete. Partial, not-started, in-progress, paused, failed, rate-limited, missing-track, discrepancy, nonterminal-cursor, and unusable-album-ID counts are all zero.
-- All persisted album-track items have exact canonical and release-appearance mappings. Duplicate disc/track positions are zero, and 18 legitimate repeated recordings retain distinct release appearances.
+- PostgreSQL is healthy with 14 forward migrations applied. No migration was required for this change.
+- Current totals: 91 releases, 181 tracks, 199 appearances, 199 Spotify candidates, 199 Spotify evidence rows, and 199 Spotify feed rows.
+- Spotify album retrieval state is 91 complete, zero incomplete, zero missing cursors, zero missing tracks, and zero discrepancies.
+- Successfully live-scanned artists increased from 90 to 95. Never-live-scanned artists decreased from 503 to 498.
+- Batch 2 has 1 completed artist, 8 partial artists, 6 pending artists, zero rate-limited artists, and zero failed artists.
+- No active cooldown, operation lock, scan lock, request lease, or queue entry remains.
 
 ## Verification
 
 - Format: passed.
 - Lint: passed with zero warnings.
 - Strict TypeScript: passed across all six checked workspace projects.
-- Unit tests: 257 passed in 36 files.
+- Unit tests: 259 passed in 36 files.
 - PostgreSQL integration tests: 64 passed in 12 files.
-- Production build: passed; 23 pages and routes generated.
+- Production build: passed.
 - Playwright: 23 passed.
-- Doctor: `READY`; 14 migrations, no cooldown, no stale lock, and no unresolved failed scan.
-- Synthetic feed page diagnostics passed for 150, 1,000, and 3,000 rows. A 100-item page remained under 1 second and 1 MB; revision lookup was 30.7 ms in the latest focused run.
-- Synthetic in-memory assembly at 3,000 rows measured 0.371 ms with indexed lookups versus 59.348 ms with nested scans. These are local synthetic diagnostics, not production claims.
-- Historical live reconciliation made 72 provider requests: 71 album-track requests and 1 token refresh. All returned HTTP 200, the minimum request-start interval was 5.010 seconds, and no playlist, artist-catalog, MusicBrainz, Reddit, or SoundCloud request occurred.
+- Doctor: overall `READY`, PostgreSQL available, 14 migrations, no stale lock, no active Spotify cooldown, and 91 complete Spotify albums.
+- `git diff --check`: passed.
+- Credential-free verification made no live provider request.
 
 ## Uncommitted Files
 
-- None.
+- `apps/scanner/src/scan.ts`
+- `apps/scanner/src/spotify-scan-plan.ts`
+- `apps/scanner/src/spotify-scan-plan.test.ts`
+- `docs/AI_HANDOFF.md`
 
 ## Security And Policy
 
-- Signed cursors contain ordering positions and a query hash, not SQL or credentials.
-- Unsafe provider evidence is never rendered as a link and is not silently deleted.
-- Spotify request gating, OAuth scopes, provider boundaries, artwork provenance, matching rules, and playlist safeguards were not changed.
+- The recovery run used the shared PostgreSQL-backed Spotify gate with concurrency one and a 10-second minimum interval.
+- The process-local request ceiling was 20 and the run stopped after its five selected artists.
+- The prior provider cooldown was honored and allowed to expire naturally. It was not probed, bypassed, cleared, or shortened.
 - Spotify playlist writes remain disabled. Reddit and SoundCloud automatic access remain disabled.
-- The reconciliation command cannot infer or accept arbitrary provider IDs: each target must resolve from an explicitly supplied canonical release ID.
+- No tokens, credentials, authorization headers, raw provider payloads, or personal account data were recorded.
 
-## Known Limitations
+## Known Defects Or Limitations
 
-- No historical release was multi-disc, so live ordering was validated only within disc 1.
-- Release completeness remains diagnostic metadata and is intentionally not rendered as a feed badge.
-- Cursor traversal is a stable historical window. New records are incorporated only after the user accepts the revision notice and refreshes from the top.
-- Synthetic performance results do not establish production capacity.
+- Normal one-page artist scans remain partial when Spotify reports another catalog page.
+- Scan-run provider metrics count 8 discovery requests for the recovery run; the request-event ledger correctly records 9 total requests because OAuth refresh is tracked separately.
+- Spotify rate limits remain unpublished. One successful five-artist sample at 10-second pacing is evidence, not a guarantee against future 429 responses.
 
 ## Next Action
 
-Prepare a separately approved distributed full-watchlist scan plan. Do not start the full watchlist scan as part of this milestone.
+Review this recovery result. If approved, run only the next five pending Batch 2 artists with the same 10-second interval, concurrency one, and 20-request ceiling. Run `pnpm doctor` immediately before execution and do not start Batch 3 automatically.
 
 ## User Decisions Needed
 
-- Decide when to authorize a distributed full-watchlist scan.
+- Decide whether to keep 10-second pacing for the next five-artist Batch 2 chunk.
+- Decide whether the bounded-resume guard should be committed before another live run.

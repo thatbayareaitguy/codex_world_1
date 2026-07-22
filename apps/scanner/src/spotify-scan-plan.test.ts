@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { selectSpotifyReconciliationMappings, spotifyScheduleEstimate } from "./spotify-scan-plan";
+import {
+  selectSpotifyBatchMappings,
+  selectSpotifyReconciliationMappings,
+  spotifyScheduleEstimate,
+} from "./spotify-scan-plan";
 import { spotifyBatchPauseMilliseconds, spotifyReleaseTelemetry } from "./scan";
 
 describe("Spotify scan scheduling", () => {
@@ -69,5 +73,26 @@ describe("selectSpotifyReconciliationMappings", () => {
     );
 
     expect(selected.map((mapping) => mapping.artistId)).toEqual(["missing", "partial", "expired"]);
+  });
+});
+
+describe("selectSpotifyBatchMappings", () => {
+  const mappings = ["dmvu", "subsonic", "brooks", "ktrl", "kj-sawka", "later"].map((artistId) => ({
+    artistId,
+    name: artistId,
+    spotifyArtistId: `spotify-${artistId}`,
+  }));
+
+  it("preserves persisted order and defers artists beyond the configured resume chunk", () => {
+    expect(selectSpotifyBatchMappings(mappings, 5)).toEqual({
+      deferredArtistCount: 1,
+      mappings: mappings.slice(0, 5),
+    });
+  });
+
+  it("rejects an unsafe resumed-batch artist limit", () => {
+    expect(() => selectSpotifyBatchMappings(mappings, 0)).toThrow(
+      "Spotify resumed-batch artist limit must be a positive integer.",
+    );
   });
 });
