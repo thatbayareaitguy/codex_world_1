@@ -8,6 +8,9 @@ import { loadDatabaseFeedSnapshot } from "./feed-server";
 
 const databaseUrl =
   process.env.TEST_DATABASE_URL ?? "postgres://radar:radar@127.0.0.1:5433/radar_test";
+const spotifyAlbumId = "0123456789ABCDEFGHIJKL";
+const spotifyTrackOneId = "1123456789ABCDEFGHIJKL";
+const spotifyTrackTwoId = "2123456789ABCDEFGHIJKL";
 
 describe.sequential("Spotify release artwork persistence", () => {
   const connection = createDatabase(databaseUrl);
@@ -27,8 +30,8 @@ describe.sequential("Spotify release artwork persistence", () => {
 
   it("persists one namespaced artwork record for an album and exposes it to the feed", async () => {
     const candidates = [
-      spotifyCandidate("track-one", "First Track"),
-      spotifyCandidate("track-two", "Second Track"),
+      spotifyCandidate(spotifyTrackOneId, "First Track"),
+      spotifyCandidate(spotifyTrackTwoId, "Second Track"),
     ];
 
     await persistCandidates(connection.db, candidates, {
@@ -38,17 +41,17 @@ describe.sequential("Spotify release artwork persistence", () => {
     });
 
     const externalIds = (await connection.db.select().from(releaseExternalIds)).filter(
-      (row) => row.externalId === "spotify-artwork-album" && row.provider === "spotify",
+      (row) => row.externalId === spotifyAlbumId && row.provider === "spotify",
     );
     expect(externalIds).toHaveLength(1);
     expect(externalIds[0]).toMatchObject({
-      externalId: "spotify-artwork-album",
+      externalId: spotifyAlbumId,
       provider: "spotify",
-      providerUrl: "https://open.spotify.com/album/spotify-artwork-album",
+      providerUrl: `https://open.spotify.com/album/${spotifyAlbumId}`,
     });
     expect(externalIds[0]?.providerFields).toMatchObject({
       spotify: {
-        albumId: "spotify-artwork-album",
+        albumId: spotifyAlbumId,
         image: { height: 300, url: "https://i.scdn.co/image/artworkone", width: 300 },
         sourceProvider: "spotify",
       },
@@ -68,7 +71,7 @@ describe.sequential("Spotify release artwork persistence", () => {
   it("updates changed artwork idempotently without duplicating feed or evidence records", async () => {
     const beforeFeedCount = (await connection.db.select().from(feedItems)).length;
     const beforeEvidenceCount = (await connection.db.select().from(sourceEvidence)).length;
-    const changed = spotifyCandidate("track-one", "First Track");
+    const changed = spotifyCandidate(spotifyTrackOneId, "First Track");
     changed.spotifyRelease = {
       ...changed.spotifyRelease!,
       image: { height: 640, url: "https://i.scdn.co/image/artworktwo", width: 640 },
@@ -84,7 +87,7 @@ describe.sequential("Spotify release artwork persistence", () => {
     expect(result).toMatchObject({ inserted: 0, skipped: 1 });
     expect(
       (await connection.db.select().from(releaseExternalIds)).filter(
-        (row) => row.externalId === "spotify-artwork-album" && row.provider === "spotify",
+        (row) => row.externalId === spotifyAlbumId && row.provider === "spotify",
       ),
     ).toHaveLength(1);
     expect((await connection.db.select().from(feedItems)).length).toBe(beforeFeedCount);
@@ -98,13 +101,21 @@ describe.sequential("Spotify release artwork persistence", () => {
   });
 
   it("keeps missing, unsafe, and non-Spotify artwork off the feed", async () => {
-    const missing = spotifyCandidate("missing-art", "Missing Art", "spotify-no-art-album");
+    const missing = spotifyCandidate(
+      "3123456789ABCDEFGHIJKL",
+      "Missing Art",
+      "4123456789ABCDEFGHIJKL",
+    );
     delete missing.spotifyRelease;
-    const unsafe = spotifyCandidate("unsafe-art", "Unsafe Art", "spotify-unsafe-art-album");
+    const unsafe = spotifyCandidate(
+      "5123456789ABCDEFGHIJKL",
+      "Unsafe Art",
+      "6123456789ABCDEFGHIJKL",
+    );
     unsafe.spotifyRelease = {
       ...unsafe.spotifyRelease!,
-      albumId: "spotify-unsafe-art-album",
-      albumUrl: "https://open.spotify.com/album/spotify-unsafe-art-album",
+      albumId: "6123456789ABCDEFGHIJKL",
+      albumUrl: "https://open.spotify.com/album/6123456789ABCDEFGHIJKL",
       image: { height: 300, url: "https://example.com/unsafe.jpg", width: 300 },
     };
     const musicbrainzBase = spotifyCandidate("mb-track", "MusicBrainz Only", "mb-release");
@@ -143,7 +154,7 @@ describe.sequential("Spotify release artwork persistence", () => {
 function spotifyCandidate(
   externalTrackId: string,
   title: string,
-  externalReleaseId = "spotify-artwork-album",
+  externalReleaseId = spotifyAlbumId,
 ): TrackCandidate {
   const albumUrl = `https://open.spotify.com/album/${externalReleaseId}`;
   return {
@@ -163,8 +174,8 @@ function spotifyCandidate(
     region: "US",
     releaseDate: "2026-07-20",
     releaseDatePrecision: "day",
-    releaseTitle: externalReleaseId === "spotify-artwork-album" ? "Artwork Album" : title,
-    releaseType: externalReleaseId === "spotify-artwork-album" ? "album" : "single",
+    releaseTitle: externalReleaseId === spotifyAlbumId ? "Artwork Album" : title,
+    releaseType: externalReleaseId === spotifyAlbumId ? "album" : "single",
     sourceLabel: "Spotify test",
     spotifyRelease: {
       albumId: externalReleaseId,

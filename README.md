@@ -4,7 +4,7 @@ TS New Music Radar is a private, single-user Release Inbox for a provider-neutra
 
 ## Current Scope
 
-- Spotify: followed-artist import, mapped release discovery, exact track availability, read-only configured-playlist inspection, and default-disabled add-only export.
+- Spotify: followed-artist import, bounded daily discovery, resumable reconciliation, exact track availability, read-only configured-playlist inspection, and prepared but default-disabled add-only export.
 - MusicBrainz: artist mapping, release and release-group discovery, and upcoming release dates.
 - Reddit: configurable evidence sources and deterministic parsing, disabled until Reddit grants explicit API approval.
 - MockProvider: credential-free local scanning and tests.
@@ -39,7 +39,7 @@ Run `pnpm doctor` after editing `.env`. It checks versions, database connectivit
 2. Open Settings, connect Spotify in the browser, inspect the setup checklist, and import followed artists through the preview.
 3. Add artists that are not followed on Spotify from Followed artists.
 4. Use the MusicBrainz mapping controls to confirm exact identities and leave ambiguous identities in review.
-5. Run `pnpm scan -- --provider mock` for a credential-free check, then `pnpm scan` for configured providers.
+5. Run `pnpm scan -- --provider mock` for a credential-free check. Run providers explicitly for normal operation so the intended boundary is visible.
 6. Review Needs review items. Only exact or manually confirmed Spotify matches are eligible for export.
 7. Playlist writes are initially disabled. For read-only use, leave both playlist environment values at their defaults. If add-only export is enabled later, create one private playlist directly in Spotify and configure its ID server-side. The application has no picker and cannot create or alter playlists.
 
@@ -47,7 +47,8 @@ Run `pnpm doctor` after editing `.env`. It checks versions, database connectivit
 
 ```powershell
 pnpm doctor
-pnpm scan
+pnpm scan -- --provider spotify
+pnpm scan -- --provider musicbrainz
 pnpm scan:status
 ```
 
@@ -55,13 +56,15 @@ Useful diagnostics and recovery:
 
 ```powershell
 pnpm scan -- --dry-run
-pnpm scan -- --provider spotify
-pnpm scan -- --provider musicbrainz
 pnpm scan -- --provider reddit
 pnpm scan -- --artist <internal-artist-id>
-pnpm scan -- --full
+pnpm scan -- --provider spotify --spotify-mode reconciliation --confirm-spotify-batch
 pnpm scan:unlock-stale
 ```
+
+The Spotify daily command checks one bounded catalog page per selected artist. Reconciliation resumes persisted deeper offsets in bounded work units and requires confirmation. Generic `pnpm scan` runs every configured provider and is not a synonym for Spotify reconciliation.
+
+The database feed initially returns at most 100 items, except when one album or EP group itself exceeds that limit. Use **Load more discoveries** for older pages. A revision check runs every 15 seconds while visible; newly persisted records show a notice and are incorporated only after **Refresh feed** is selected, so loaded pages and collapse state are not replaced unexpectedly.
 
 Reddit commands enforce `REDDIT_ENABLED=true`, `REDDIT_ACCESS_APPROVED=true`, complete credentials, and a valid descriptive User-Agent. The flags are not proof of approval. See [daily use](docs/daily-use.md) and [troubleshooting](docs/troubleshooting.md).
 

@@ -1,6 +1,6 @@
 # Provider Registration
 
-Verified: 2026-07-16
+Verified: 2026-07-21
 
 ## Spotify
 
@@ -19,7 +19,7 @@ Official references: [Development Mode migration](https://developer.spotify.com/
 
 ## MusicBrainz
 
-No registration, API key, or paid account is required for public non-commercial reads. Set `MUSICBRAINZ_CONTACT_EMAIL` to a monitored address. The client identifies itself as `ReleaseInbox/<version> (<contact>)` and serializes requests to one per second.
+No registration, API key, or paid account is required for public non-commercial reads. Set `MUSICBRAINZ_CONTACT_EMAIL` to a monitored address. The client identifies itself as `TSNewMusicRadar/<version> (<contact>)` and serializes requests to one per second.
 
 ## Reddit
 

@@ -668,7 +668,14 @@ describe.sequential("complete deterministic fake-provider workflow", () => {
       where: (table, { eq }) => eq(table.artistId, artist!.id),
       orderBy: (table, { asc }) => [asc(table.createdAt)],
     });
-    expect(resolvedReviews).toMatchObject([{ status: "confirmed" }, { status: "rejected" }]);
+    expect(
+      Object.fromEntries(
+        resolvedReviews.map((review) => [review.proposedExternalId, review.status]),
+      ),
+    ).toEqual({
+      "00000000-0000-4000-8000-000000000011": "confirmed",
+      "00000000-0000-4000-8000-000000000012": "rejected",
+    });
     expect(resolvedReviews.every((review) => review.decidedAt instanceof Date)).toBe(true);
 
     const reconfirmed = await decideMusicBrainzArtistMapping(connection.db, {

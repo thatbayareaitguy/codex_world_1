@@ -10,7 +10,9 @@ scanner process, retries, and live validation tools. Safe request telemetry is s
 Discovery runs as persisted artist batches. Each artist advances through release groups,
 primary releases, and track-level appearances. Candidates are committed after each completed
 stage, and the operation-lock heartbeat exposes the current stage and most recent persistence
-checkpoint. A cancelled batch retains prior candidates and can be resumed from incomplete artists.
+checkpoint. A cancelled batch retains prior candidates and resumes at the next incomplete artist.
+An interrupted artist restarts from `artist_start`; persisted candidates make repeated completed
+stages idempotent, but the current implementation does not resume inside a MusicBrainz stage.
 
 MusicBrainz consumes canonical artist names, aliases, and confirmed MBIDs. It does not consume
 raw Spotify response metadata. Spotify cooldown state and MusicBrainz state are independent.
@@ -59,3 +61,11 @@ Spotify artist-catalog pagination and release-track pagination have independent 
 Canonical recording identity does not imply one release. `release_track_appearances` associates one canonical track with every provenance-proven single, EP, album, deluxe, compilation, remix, live, or reissue presentation. `release_track_appearance_sources` retains the candidate and provider IDs that prove each relationship. The feed shows every distinct release appearance and deduplicates repeated observations of the same appearance. Group ordering uses disc number, track number, provider order, title, and stable ID in that order.
 
 Persisted Spotify artist work stores the expected confirmed Spotify artist ID. If that mapping disappears or changes before resume, the artist becomes `blocked_mapping`; other artists can continue, and retry becomes eligible only after the expected mapping is restored. No replacement mapping is selected automatically.
+
+## Feed delivery
+
+The feed API applies status, provider, release type, artist, date, Spotify availability, review, search, and sort predicates in PostgreSQL. Signed query-bound cursors contain only the stable release-date, precision, first-seen, and UUID position. The default page is 100 items with a permitted range of 25 through 200.
+
+A release is the pagination unit. Album and EP groups remain intact even when one group exceeds the nominal page size. Projection queries are bounded to selected release groups and assemble related rows through Maps and Sets with a fixed maximum of 16 SQL statements per page, not one query per item.
+
+`feed_revisions` is a singleton durable counter and item count. Database triggers update it for feed row changes and for tables that alter visible titles, credits, evidence, availability, artwork, appearances, completeness, or export state. Visible tabs poll only this row every 15 seconds and once on focus. A changed revision displays a notice; refreshing from the top is explicit and does not silently discard loaded pages.

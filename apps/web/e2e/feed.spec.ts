@@ -63,7 +63,16 @@ test("shows externally persisted discoveries without reloading the page", async 
   await page.getByRole("tab", { name: "New" }).click();
   await page.getByRole("button", { name: "Filters" }).click();
   await page.getByLabel("Sort").selectOption("first-seen");
+  const filteredFeedResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === "/api/feed" &&
+      url.searchParams.get("search") === "Glass" &&
+      url.searchParams.get("mode") === null
+    );
+  });
   await page.getByRole("searchbox", { name: "Search discoveries" }).fill("Glass");
+  await filteredFeedResponse;
   await page.evaluate(() => {
     Object.defineProperty(window, "feedRefreshMarker", { value: "still-here", writable: true });
   });
@@ -71,8 +80,15 @@ test("shows externally persisted discoveries without reloading the page", async 
   revision = "revision-2";
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
 
+  await expect(
+    page.getByRole("status").filter({ hasText: "New or updated releases are available" }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Lumen Field - Glass Signal" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Refresh feed" }).click();
   await expect(page.getByRole("heading", { name: "Lumen Field - Glass Signal" })).toBeVisible();
-  await expect(page.getByRole("status").filter({ hasText: "1 new release added." })).toBeVisible();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Feed refreshed from the top" }),
+  ).toBeVisible();
   await expect(page.getByRole("searchbox", { name: "Search discoveries" })).toHaveValue("Glass");
   await expect(page.getByRole("tab", { name: "New" })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByLabel("Sort")).toHaveValue("first-seen");
@@ -86,6 +102,94 @@ test("shows externally persisted discoveries without reloading the page", async 
   await page.getByRole("button", { name: "Refresh feed" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "Feed refresh failed" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Lumen Field - Glass Signal" })).toBeVisible();
+});
+
+test("loads another feed page and keeps unavailable evidence non-clickable", async ({ page }) => {
+  const first = {
+    ...feedFixtures[0]!,
+    id: "70000000-0000-4000-8000-000000000001",
+    links: [],
+    sources: [],
+    title: "First Paged Track",
+  };
+  const second = {
+    ...feedFixtures[1]!,
+    id: "70000000-0000-4000-8000-000000000002",
+    title: "Second Paged Track",
+  };
+  await page.route("**/api/feed**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("mode") === "revision") {
+      await route.fulfill({ json: { count: 2, revision: "paged-feed" } });
+      return;
+    }
+    const older = url.searchParams.get("cursor") === "older-page";
+    await route.fulfill({
+      json: {
+        count: 2,
+        hasMore: !older,
+        items: older ? [second] : [first],
+        nextCursor: older ? null : "older-page",
+        revision: "paged-feed",
+        summary: { needsReview: 0, newThisWeek: 2, upcoming: 0 },
+        totalCount: 2,
+      },
+    });
+  });
+
+  await page.goto("/?e2e-scan-status=database#feed");
+  await page.getByRole("tab", { name: "New" }).click();
+  await expect(page.getByRole("heading", { name: /First Paged Track/ })).toBeVisible();
+  await expect(page.getByText("Evidence unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Evidence" })).toHaveCount(0);
+  const loadMore = page.getByRole("button", { name: "Load more discoveries" });
+  await loadMore.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { name: /Second Paged Track/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /First Paged Track/ })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Load more discoveries" })).toHaveCount(0);
+});
+
+test("resets feed pagination when filters and search change", async ({ page }) => {
+  const feedRequests: string[] = [];
+  await page.route("**/api/feed**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("mode") === "revision") {
+      await route.fulfill({ json: { count: 1, revision: "filter-reset" } });
+      return;
+    }
+    feedRequests.push(url.search);
+    await route.fulfill({
+      json: {
+        count: 1,
+        hasMore: true,
+        items: [feedFixtures[0]],
+        nextCursor: "older-page",
+        revision: "filter-reset",
+        summary: { needsReview: 0, newThisWeek: 1, upcoming: 0 },
+        totalCount: 1,
+      },
+    });
+  });
+
+  await page.goto("/?e2e-scan-status=database#feed");
+  await page.getByRole("button", { name: "Filters" }).click();
+  await page.getByLabel("Release type").selectOption("single");
+  await expect
+    .poll(() =>
+      feedRequests.some(
+        (request) => request.includes("releaseType=single") && !request.includes("cursor="),
+      ),
+    )
+    .toBe(true);
+  await page.getByRole("searchbox", { name: "Search discoveries" }).fill("Glass");
+  await expect
+    .poll(() =>
+      feedRequests.some(
+        (request) => request.includes("search=Glass") && !request.includes("cursor="),
+      ),
+    )
+    .toBe(true);
 });
 
 test("includes the artist in grouped release headings", async ({ page }) => {
@@ -118,6 +222,7 @@ test("includes the artist in grouped release headings", async ({ page }) => {
   });
 
   await page.goto("/?e2e-scan-status=database#feed");
+  await page.getByRole("button", { name: "Refresh feed" }).click();
   const group = page.getByRole("region", { name: "Au5 - Inverse Ep" });
   await expect(group.locator(".release-feed-group-title strong")).toHaveText("Au5 - Inverse");
   await expect(group.getByRole("article").getByRole("heading")).toHaveText([
@@ -155,17 +260,18 @@ test("shows one canonical recording in each distinct release appearance", async 
   });
 
   await page.goto("/?e2e-scan-status=database#feed");
+  await page.getByRole("button", { name: "Refresh feed" }).click();
   await expect(page.getByRole("heading", { name: /Shared Signal/ })).toHaveCount(2);
   await expect(page.getByText("Signal Single", { exact: true })).toBeVisible();
   await expect(page.getByText("Signal Album", { exact: true })).toBeVisible();
 });
 
-test("labels complete and incomplete Spotify album retrievals", async ({ page }) => {
+test("keeps Spotify completeness metadata out of the discovery feed", async ({ page }) => {
   const base = feedFixtures[0]!;
   const items = [
     {
       ...base,
-      id: "partial-album-item",
+      id: "partial-album-item-1",
       releaseCompleteness: {
         expectedTracks: 25,
         fetchedTracks: 20,
@@ -174,11 +280,28 @@ test("labels complete and incomplete Spotify album retrievals", async ({ page })
       },
       releaseId: "partial-album",
       releaseTitle: "Partial Album",
-      title: "Partial Track",
+      releaseType: "album" as const,
+      title: "Partial Track One",
+      trackNumber: 1,
     },
     {
       ...base,
-      id: "complete-album-item",
+      id: "partial-album-item-2",
+      releaseCompleteness: {
+        expectedTracks: 25,
+        fetchedTracks: 20,
+        missingTracks: 5,
+        status: "partial" as const,
+      },
+      releaseId: "partial-album",
+      releaseTitle: "Partial Album",
+      releaseType: "album" as const,
+      title: "Partial Track Two",
+      trackNumber: 2,
+    },
+    {
+      ...base,
+      id: "complete-album-item-1",
       releaseCompleteness: {
         expectedTracks: 25,
         fetchedTracks: 25,
@@ -187,7 +310,38 @@ test("labels complete and incomplete Spotify album retrievals", async ({ page })
       },
       releaseId: "complete-album",
       releaseTitle: "Complete Album",
-      title: "Complete Track",
+      releaseType: "album" as const,
+      title: "Complete Track One",
+      trackNumber: 1,
+    },
+    {
+      ...base,
+      id: "complete-album-item-2",
+      releaseCompleteness: {
+        expectedTracks: 25,
+        fetchedTracks: 25,
+        missingTracks: 0,
+        status: "completed" as const,
+      },
+      releaseId: "complete-album",
+      releaseTitle: "Complete Album",
+      releaseType: "album" as const,
+      title: "Complete Track Two",
+      trackNumber: 2,
+    },
+    {
+      ...base,
+      id: "partial-single-item",
+      releaseCompleteness: {
+        expectedTracks: 1,
+        fetchedTracks: 1,
+        missingTracks: 0,
+        status: "partial" as const,
+      },
+      releaseId: "partial-single",
+      releaseTitle: "Standalone Single",
+      releaseType: "single" as const,
+      title: "Standalone Single",
     },
   ];
   await page.route("**/api/feed**", async (route) => {
@@ -195,8 +349,12 @@ test("labels complete and incomplete Spotify album retrievals", async ({ page })
   });
 
   await page.goto("/?e2e-scan-status=database#feed");
-  await expect(page.getByRole("status").filter({ hasText: "5 tracks missing" })).toBeVisible();
-  await expect(page.getByTitle("All provider album tracks persisted")).toHaveText("Complete");
+  await page.getByRole("button", { name: "Refresh feed" }).click();
+  await expect(page.locator(".release-completeness")).toHaveCount(0);
+  await expect(page.getByText("5 tracks missing", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Tracklist incomplete", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Complete", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Partial album", { exact: true })).toHaveCount(0);
 });
 
 test("defaults scan history to the meaningful batch and inspects other run types", async ({
@@ -207,6 +365,7 @@ test("defaults scan history to the meaningful batch and inspects other run types
   const dryRunId = "10000000-0000-4000-8000-000000000003";
   const cancelledRunId = "10000000-0000-4000-8000-000000000004";
   const pausedRunId = "10000000-0000-4000-8000-000000000005";
+  const olderRunId = "10000000-0000-4000-8000-000000000006";
   const history = [
     {
       artistCount: 1,
@@ -310,12 +469,24 @@ test("defaults scan history to the meaningful batch and inspects other run types
     },
   ];
 
-  await page.route("**/api/scans", async (route) => {
+  await page.route("**/api/scans**", async (route) => {
+    const olderPage = new URL(route.request().url()).searchParams.has("historyCursor");
     await route.fulfill({
       json: {
         active: null,
         defaultHistoryId: batchRunId,
-        history,
+        history: olderPage
+          ? [
+              {
+                ...history[2],
+                id: olderRunId,
+                startedAt: "2026-07-17T02:00:00.000Z",
+                triggerType: "older_history_test",
+              },
+            ]
+          : history,
+        historyHasMore: !olderPage,
+        historyNextCursor: olderPage ? null : "older-history-page",
         latest: null,
         running: false,
         runs: [],
@@ -406,6 +577,48 @@ test("defaults scan history to the meaningful batch and inspects other run types
     "Cancelled",
     "Paused",
   ]);
+  await panel.getByRole("button", { name: "Load older scans" }).click();
+  await expect(selector.locator(`option[value="${olderRunId}"]`)).toHaveCount(1);
+});
+
+test("loads MusicBrainz mapping reviews in bounded pages", async ({ page }) => {
+  const firstReview = {
+    artistId: "40000000-0000-4000-8000-000000000001",
+    artistName: "First Review Artist",
+    confidence: "0.500",
+    createdAt: "2026-07-21T12:00:00.000Z",
+    id: "50000000-0000-4000-8000-000000000001",
+    name: "First Candidate",
+    proposedExternalId: "60000000-0000-4000-8000-000000000001",
+    reasons: ["Synthetic first review"],
+    status: "pending",
+    updatedAt: "2026-07-21T12:00:00.000Z",
+  };
+  const secondReview = {
+    ...firstReview,
+    artistName: "Older Review Artist",
+    id: "50000000-0000-4000-8000-000000000002",
+    name: "Older Candidate",
+    proposedExternalId: "60000000-0000-4000-8000-000000000002",
+  };
+  await page.route("**/api/musicbrainz/mappings?*", async (route) => {
+    const olderPage = new URL(route.request().url()).searchParams.has("cursor");
+    await route.fulfill({
+      json: {
+        hasMore: !olderPage,
+        mappings: [],
+        nextCursor: olderPage ? null : "older-review-page",
+        reviews: olderPage ? [secondReview] : [firstReview],
+      },
+    });
+  });
+
+  await page.goto("/#review");
+  await expect(page.getByRole("heading", { name: "First Review Artist" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Older Review Artist" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Load older mapping reviews" }).click();
+  await expect(page.getByRole("heading", { name: "Older Review Artist" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Load older mapping reviews" })).toHaveCount(0);
 });
 
 test("runs a mock scan, opens evidence, changes status, and filters the feed", async ({ page }) => {

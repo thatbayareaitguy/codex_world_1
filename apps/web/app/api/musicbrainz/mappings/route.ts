@@ -1,60 +1,51 @@
-import { artistExternalIds, artistMappingReviews, artists } from "@radar/db";
-import { and, desc, eq } from "drizzle-orm";
+import { artistExternalIds, artists, listMusicBrainzMappingReviewsPage } from "@radar/db";
+import { and, eq } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createMusicBrainzServerContext } from "../../../../lib/musicbrainz-server";
 import { enforceRateLimit } from "../../../../lib/request-security";
 
-const querySchema = z.object({ artistId: z.uuid().optional() });
+const querySchema = z.object({
+  artistId: z.uuid().optional(),
+  cursor: z.string().min(1).max(1024).optional(),
+  limit: z.coerce.number().int().min(5).max(50).default(20),
+});
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     enforceRateLimit(request, 60);
-    const artistIdValue = request.nextUrl.searchParams.get("artistId") ?? undefined;
-    const { artistId } = querySchema.parse({ artistId: artistIdValue });
+    const { artistId, cursor, limit } = querySchema.parse(
+      Object.fromEntries(request.nextUrl.searchParams.entries()),
+    );
     const context = await createMusicBrainzServerContext();
     try {
-      const reviews = await context.db
-        .select({
-          artistId: artistMappingReviews.artistId,
-          artistName: artists.name,
-          confidence: artistMappingReviews.matchScore,
-          createdAt: artistMappingReviews.createdAt,
-          id: artistMappingReviews.id,
-          name: artistMappingReviews.providerName,
-          proposedExternalId: artistMappingReviews.proposedExternalId,
-          reasons: artistMappingReviews.matchReasons,
-          status: artistMappingReviews.status,
-        })
-        .from(artistMappingReviews)
-        .innerJoin(artists, eq(artists.id, artistMappingReviews.artistId))
-        .where(
-          and(
-            eq(artistMappingReviews.provider, "musicbrainz"),
-            ...(artistId ? [eq(artistMappingReviews.artistId, artistId)] : []),
-          ),
-        )
-        .orderBy(desc(artistMappingReviews.updatedAt));
-      const mappings = await context.db
-        .select({
-          artistId: artistExternalIds.artistId,
-          artistName: artists.name,
-          confidence: artistExternalIds.matchScore,
-          externalId: artistExternalIds.externalId,
-          reasons: artistExternalIds.matchReasons,
-          url: artistExternalIds.providerUrl,
-        })
-        .from(artistExternalIds)
-        .innerJoin(artists, eq(artists.id, artistExternalIds.artistId))
-        .where(
-          and(
-            eq(artistExternalIds.provider, "musicbrainz"),
-            eq(artistExternalIds.confirmed, true),
-            ...(artistId ? [eq(artistExternalIds.artistId, artistId)] : []),
-          ),
-        );
-      return NextResponse.json({ mappings, reviews });
+      const reviewPage = await listMusicBrainzMappingReviewsPage(context.db, {
+        ...(artistId ? { artistId } : {}),
+        ...(cursor ? { cursor } : {}),
+        limit,
+      });
+      const mappings = artistId
+        ? await context.db
+            .select({
+              artistId: artistExternalIds.artistId,
+              artistName: artists.name,
+              confidence: artistExternalIds.matchScore,
+              externalId: artistExternalIds.externalId,
+              reasons: artistExternalIds.matchReasons,
+              url: artistExternalIds.providerUrl,
+            })
+            .from(artistExternalIds)
+            .innerJoin(artists, eq(artists.id, artistExternalIds.artistId))
+            .where(
+              and(
+                eq(artistExternalIds.provider, "musicbrainz"),
+                eq(artistExternalIds.confirmed, true),
+                ...(artistId ? [eq(artistExternalIds.artistId, artistId)] : []),
+              ),
+            )
+        : [];
+      return NextResponse.json({ mappings, ...reviewPage });
     } finally {
       await context.close();
     }

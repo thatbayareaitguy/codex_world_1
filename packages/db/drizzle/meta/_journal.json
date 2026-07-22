@@ -85,6 +85,20 @@
       "when": 1784669550003,
       "tag": "0011_gigantic_power_man",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1784674154290,
+      "tag": "0012_common_newton_destine",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1784674168675,
+      "tag": "0013_moaning_kid_colt",
+      "breakpoints": true
     }
   ]
 }

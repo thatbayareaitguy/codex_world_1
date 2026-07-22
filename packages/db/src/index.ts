@@ -15,3 +15,4 @@ export * from "./spotify-release-tracks";
 export * from "./musicbrainz-request-gate";
 export * from "./musicbrainz-batches";
 export * from "./musicbrainz-mappings";
+export * from "./musicbrainz-review-history";

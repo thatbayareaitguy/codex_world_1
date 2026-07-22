@@ -903,22 +903,6 @@ select:focus-visible {
   font-weight: 700;
   white-space: nowrap;
 }
-.release-completeness {
-  padding: 3px 6px;
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  font-size: 9px;
-  font-weight: 750;
-  white-space: nowrap;
-}
-.release-completeness.is-complete {
-  color: #3d6a30;
-  background: #e6f0df;
-}
-.release-completeness.is-incomplete {
-  color: #745112;
-  background: #f3e2bc;
-}
 .release-feed-group-items {
   display: grid;
   gap: 8px;
@@ -2327,6 +2311,28 @@ select:focus-visible {
 
 .reddit-source-setting > .form-error {
   grid-column: 1 / -1;
+}
+
+.feed-pagination-actions,
+.feed-page-state {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+.scan-history-load-more,
+.review-load-more {
+  justify-self: start;
+  margin-top: 12px;
+}
+
+.review-load-more {
+  grid-column: 1 / -1;
+}
+
+.feed-evidence-link.is-unavailable {
+  color: var(--muted);
+  cursor: default;
 }
 
 @media (max-width: 720px) {

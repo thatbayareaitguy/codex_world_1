@@ -17,7 +17,7 @@ The product optimizes for recall but never guarantees completeness. It has no au
 - Match by same-provider ID, ISRC, MusicBrainz IDs, then strict metadata.
 - Keep Reddit disabled until explicit Data API approval exists; exact canonical artist and title corroboration may attach evidence, while every other Reddit candidate enters review.
 - Send ambiguous artist, recording, and version matches to review.
-- Create and idempotently synchronize one owned private Spotify playlist.
+- Prepare idempotent add-only synchronization to one owned private Spotify playlist. Writes remain disabled by default and require the server-configured allowlisted playlist ID.
 - Keep saved, dismissed, listened, upcoming, new, and review feed states.
 
 ## Deferred Scope
@@ -26,4 +26,4 @@ YouTube, SoundCloud API and OAuth, SoundCloud playlists, Apple Music, TIDAL, pla
 
 ## Acceptance Boundary
 
-The app starts without provider credentials and uses MockProvider. Real provider data stays namespaced with evidence. Spotify artwork is optional and never required for canonical matching; existing records without artwork retain a generic fallback. Scan and playlist operations are idempotent. Spotify Development Mode scans are globally serialized, cooldown-aware, bounded by mode-specific page limits, persisted after each artist, and resumable without restarting completed work. Tokens are encrypted and server-only. Database tests run against provisioned PostgreSQL and never silently skip. All standard provider tests use synthetic responses.
+The app starts without provider credentials and uses MockProvider. Real provider data stays namespaced with evidence. Spotify artwork is optional and never required for canonical matching; existing records without artwork retain a generic fallback. Scan and playlist operations are idempotent. Spotify Development Mode scans are globally serialized, cooldown-aware, bounded by mode-specific page limits, persisted after each artist, and resumable without restarting completed work. Completeness remains bounded by the catalog and regional availability Spotify exposes to the connected account. Tokens are encrypted and server-only. Database tests run against provisioned PostgreSQL and never silently skip. All standard provider tests use synthetic responses.

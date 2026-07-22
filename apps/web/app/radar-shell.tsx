@@ -48,11 +48,21 @@ import type { WatchlistArtistViewModel } from "../lib/watchlist-types";
 interface RadarShellProps {
   feedMode: "database" | "error" | "mock";
   initialArtists: WatchlistArtistViewModel[];
+  initialFeedHasMore: boolean;
+  initialFeedNextCursor: string | null;
   initialFeedRevision: string | null;
+  initialFeedSummary: FeedSummary;
+  initialFeedTotalCount: number;
   initialItems: FeedFixtureItem[];
   providerConfiguration: ProviderUiConfiguration;
   scannedItem: FeedFixtureItem;
   watchlistMode: "database" | "error" | "mock";
+}
+
+interface FeedSummary {
+  needsReview: number;
+  newThisWeek: number;
+  upcoming: number;
 }
 
 interface ProviderUiConfiguration {
@@ -185,6 +195,8 @@ interface ScanApiStatus {
   active: ActiveScanStatus | null;
   defaultHistoryId: string | null;
   history: ScanHistoryEntry[];
+  historyHasMore: boolean;
+  historyNextCursor: string | null;
   latest: ScanRunStatus | null;
   running: boolean;
   runs: ScanRunStatus[];
@@ -297,19 +309,30 @@ const appViews = new Set<AppView>([
 export function RadarShell({
   feedMode,
   initialArtists,
+  initialFeedHasMore,
+  initialFeedNextCursor,
   initialFeedRevision,
+  initialFeedSummary,
+  initialFeedTotalCount,
   initialItems,
   providerConfiguration,
   scannedItem,
   watchlistMode,
 }: RadarShellProps) {
   const [activeView, setActiveView] = useState<AppView>("feed");
+  const reviewFeedMode = activeView === "review";
   const [hydrated, setHydrated] = useState(false);
   const [activeFilter, setActiveFilter] = useState<FeedState | "all">("all");
   const [items, setItems] = useState(initialItems);
   const itemsRef = useRef(initialItems);
   const feedRevisionRef = useRef(initialFeedRevision);
+  const initialFeedQueryRef = useRef(true);
   const feedRefreshInFlightRef = useRef(false);
+  const [feedHasMore, setFeedHasMore] = useState(initialFeedHasMore);
+  const [feedNextCursor, setFeedNextCursor] = useState(initialFeedNextCursor);
+  const [feedTotalCount, setFeedTotalCount] = useState(initialFeedTotalCount);
+  const [feedSummary, setFeedSummary] = useState(initialFeedSummary);
+  const [feedPageState, setFeedPageState] = useState<"idle" | "loading" | "error">("idle");
   const [feedRefreshState, setFeedRefreshState] = useState<
     "idle" | "checking" | "updated" | "error"
   >("idle");
@@ -324,6 +347,7 @@ export function RadarShell({
   const [scanStatusState, setScanStatusState] = useState<"idle" | "loading" | "loaded" | "error">(
     "idle",
   );
+  const [loadingOlderHistory, setLoadingOlderHistory] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [exactOnly, setExactOnly] = useState(false);
   const [advancedFilters, setAdvancedFilters] = useState<FeedAdvancedFilters>({
@@ -346,6 +370,10 @@ export function RadarShell({
   const [removedArtistIds, setRemovedArtistIds] = useState<string[]>([]);
   const [artistProfiles, setArtistProfiles] = useState<Record<string, string>>({});
   const [soundCloudLinks, setSoundCloudLinks] = useState<Record<string, SoundCloudLinkRecord>>({});
+
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
 
   useEffect(() => {
     const syncViewFromHash = () => {
@@ -385,7 +413,16 @@ export function RadarShell({
         const response = await fetch("/api/scans", { cache: "no-store" });
         const status = scanStatusSchema.parse(await response.json());
         if (!cancelled && response.ok) {
-          setScanStatus(status);
+          setScanStatus((current) =>
+            current && current.history.length > status.history.length
+              ? {
+                  ...status,
+                  history: mergeById(status.history, current.history),
+                  historyHasMore: current.historyHasMore,
+                  historyNextCursor: current.historyNextCursor,
+                }
+              : status,
+          );
           setScanStatusState("loaded");
         }
       } catch {
@@ -399,6 +436,32 @@ export function RadarShell({
       window.clearInterval(interval);
     };
   }, [feedMode]);
+
+  const loadOlderScanHistory = async () => {
+    const cursor = scanStatus?.historyNextCursor;
+    if (!cursor || loadingOlderHistory) return;
+    setLoadingOlderHistory(true);
+    try {
+      const parameters = new URLSearchParams({ historyCursor: cursor, historyLimit: "20" });
+      const response = await fetch(`/api/scans?${parameters.toString()}`, { cache: "no-store" });
+      const page = scanStatusSchema.parse(await response.json());
+      if (!response.ok) throw new Error("Scan history page failed");
+      setScanStatus((current) =>
+        current
+          ? {
+              ...current,
+              history: mergeById(current.history, page.history),
+              historyHasMore: page.historyHasMore,
+              historyNextCursor: page.historyNextCursor,
+            }
+          : page,
+      );
+    } catch {
+      setNotice("Older scan history could not be loaded.");
+    } finally {
+      setLoadingOlderHistory(false);
+    }
+  };
 
   useEffect(() => {
     if (!scanStatus?.running) setCancellingScan(false);
@@ -430,50 +493,96 @@ export function RadarShell({
     return () => systemTheme.removeEventListener("change", applyTheme);
   }, [themePreference]);
 
-  const refreshDatabaseFeed = useCallback(
-    async ({ force = false }: { force?: boolean } = {}) => {
+  const feedQueryParameters = useCallback(
+    (cursor?: string) => {
+      const parameters = new URLSearchParams({ limit: "100", sort: advancedFilters.sort });
+      const state = reviewFeedMode ? "needs_review" : activeFilter;
+      if (state !== "all") parameters.set("state", state);
+      const normalizedQuery = query.trim();
+      if (normalizedQuery) parameters.set("search", normalizedQuery);
+      if (exactOnly) parameters.set("exactOnly", "true");
+      if (advancedFilters.artist !== "all") parameters.set("artist", advancedFilters.artist);
+      if (advancedFilters.dateFrom) parameters.set("dateFrom", advancedFilters.dateFrom);
+      if (advancedFilters.dateTo) parameters.set("dateTo", advancedFilters.dateTo);
+      if (advancedFilters.provider !== "all") {
+        parameters.set("provider", advancedFilters.provider);
+      }
+      if (advancedFilters.releaseType !== "all") {
+        parameters.set("releaseType", advancedFilters.releaseType);
+      }
+      if (advancedFilters.spotify !== "all") {
+        parameters.set("spotify", advancedFilters.spotify);
+      }
+      if (cursor) parameters.set("cursor", cursor);
+      return parameters;
+    },
+    [activeFilter, advancedFilters, exactOnly, query, reviewFeedMode],
+  );
+
+  const loadFeedPage = useCallback(
+    async ({ append = false, cursor }: { append?: boolean; cursor?: string } = {}) => {
       if (feedMode !== "database" || feedRefreshInFlightRef.current) return false;
       feedRefreshInFlightRef.current = true;
-      setFeedRefreshState("checking");
+      setFeedPageState("loading");
       try {
-        const revisionResponse = await fetch("/api/feed?mode=revision", { cache: "no-store" });
-        const revision = feedRevisionResponseSchema.parse(await revisionResponse.json());
-        if (!revisionResponse.ok) throw new Error("Feed revision check failed");
-        if (!force && feedRevisionRef.current === revision.revision) {
-          setFeedRefreshState("idle");
-          return false;
-        }
-
-        const snapshotResponse = await fetch("/api/feed", { cache: "no-store" });
-        const snapshot = feedSnapshotResponseSchema.parse(await snapshotResponse.json());
-        if (!snapshotResponse.ok) throw new Error("Feed refresh failed");
-
-        const anchor = captureVisibleFeedAnchor();
-        const current = itemsRef.current;
-        const currentIds = new Set(current.map((item) => item.id));
-        const refreshedItems = snapshot.items as FeedFixtureItem[];
-        const addedCount = refreshedItems.filter((item) => !currentIds.has(item.id)).length;
-        const merged = mergeFeedItems(current, refreshedItems);
-        itemsRef.current = merged;
-        feedRevisionRef.current = snapshot.revision;
-        setItems(merged);
-        setFeedRefreshState("updated");
-        setFeedRefreshMessage(
-          addedCount > 0
-            ? `${addedCount} new ${addedCount === 1 ? "release" : "releases"} added.`
-            : "Feed is current.",
-        );
-        restoreVisibleFeedAnchor(anchor);
+        const response = await fetch(`/api/feed?${feedQueryParameters(cursor).toString()}`, {
+          cache: "no-store",
+        });
+        const page = feedSnapshotResponseSchema.parse(await response.json());
+        if (!response.ok) throw new Error("Feed page failed");
+        const incoming = page.items as FeedFixtureItem[];
+        const nextItems = append ? mergeFeedItems(itemsRef.current, incoming) : incoming;
+        itemsRef.current = nextItems;
+        feedRevisionRef.current = page.revision;
+        setItems(nextItems);
+        setFeedHasMore(page.hasMore);
+        setFeedNextCursor(page.nextCursor);
+        setFeedTotalCount(page.totalCount);
+        setFeedSummary(page.summary);
+        setFeedPageState("idle");
         return true;
       } catch {
-        setFeedRefreshState("error");
-        setFeedRefreshMessage("Feed refresh failed. Existing discoveries remain available.");
+        setFeedPageState("error");
         return false;
       } finally {
         feedRefreshInFlightRef.current = false;
       }
     },
-    [feedMode],
+    [feedMode, feedQueryParameters],
+  );
+
+  const refreshDatabaseFeed = useCallback(
+    async ({ force = false }: { force?: boolean } = {}) => {
+      if (feedMode !== "database" || feedRefreshInFlightRef.current) return false;
+      if (force) {
+        setFeedRefreshState("checking");
+        const refreshed = await loadFeedPage();
+        setFeedRefreshState(refreshed ? "updated" : "error");
+        setFeedRefreshMessage(
+          refreshed
+            ? "Feed refreshed from the top."
+            : "Feed refresh failed. Existing discoveries remain available.",
+        );
+        return refreshed;
+      }
+      feedRefreshInFlightRef.current = true;
+      try {
+        const revisionResponse = await fetch("/api/feed?mode=revision", { cache: "no-store" });
+        const revision = feedRevisionResponseSchema.parse(await revisionResponse.json());
+        if (!revisionResponse.ok) throw new Error("Feed revision check failed");
+        if (feedRevisionRef.current === revision.revision) return false;
+        setFeedRefreshState("updated");
+        setFeedRefreshMessage("New or updated releases are available. Refresh from the top.");
+        return true;
+      } catch {
+        setFeedRefreshState("error");
+        setFeedRefreshMessage("Feed update check failed. Existing discoveries remain available.");
+        return false;
+      } finally {
+        feedRefreshInFlightRef.current = false;
+      }
+    },
+    [feedMode, loadFeedPage],
   );
 
   useEffect(() => {
@@ -495,8 +604,22 @@ export function RadarShell({
     };
   }, [feedMode, refreshDatabaseFeed]);
 
+  useEffect(() => {
+    if (feedMode !== "database") return;
+    if (initialFeedQueryRef.current) {
+      initialFeedQueryRef.current = false;
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      setFeedRefreshMessage(null);
+      void loadFeedPage();
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [feedMode, feedQueryParameters, loadFeedPage]);
+
   const visibleItems = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase("en-US");
+    if (feedMode === "database") return items;
     return items
       .filter((item) => {
         const stateMatches =
@@ -547,7 +670,7 @@ export function RadarShell({
             : Date.parse(right.firstSeenAt) - Date.parse(left.firstSeenAt);
         return primary || Date.parse(right.firstSeenAt) - Date.parse(left.firstSeenAt);
       });
-  }, [activeFilter, advancedFilters, exactOnly, items, query]);
+  }, [activeFilter, advancedFilters, exactOnly, feedMode, items, query]);
 
   const reviewItems = items.filter((item) => item.state === "needs_review");
   const verifiedSoundCloudLinks = Object.values(soundCloudLinks).filter(
@@ -948,9 +1071,9 @@ export function RadarShell({
 
         <PrimaryNavigation
           activeView={activeView}
-          discoveryCount={items.length}
+          discoveryCount={feedMode === "database" ? feedTotalCount : items.length}
           artistCount={artists.length}
-          reviewCount={reviewItems.length}
+          reviewCount={feedMode === "database" ? feedSummary.needsReview : reviewItems.length}
           soundCloudManualLinksEnabled={providerConfiguration.soundcloudManualLinksEnabled}
           soundCloudLinkCount={verifiedSoundCloudLinks.length}
           navigate={navigate}
@@ -1041,9 +1164,9 @@ export function RadarShell({
         <div className="mobile-navigation">
           <PrimaryNavigation
             activeView={activeView}
-            discoveryCount={items.length}
+            discoveryCount={feedMode === "database" ? feedTotalCount : items.length}
             artistCount={artists.length}
-            reviewCount={reviewItems.length}
+            reviewCount={feedMode === "database" ? feedSummary.needsReview : reviewItems.length}
             soundCloudManualLinksEnabled={providerConfiguration.soundcloudManualLinksEnabled}
             soundCloudLinkCount={verifiedSoundCloudLinks.length}
             navigate={navigate}
@@ -1065,6 +1188,8 @@ export function RadarShell({
             advancedFilters={advancedFilters}
             exactOnly={exactOnly}
             feedMode={feedMode}
+            feedHasMore={feedHasMore}
+            feedPageState={feedPageState}
             filtersOpen={filtersOpen}
             items={visibleItems}
             lastScanInsertedCount={
@@ -1077,6 +1202,9 @@ export function RadarShell({
             onFilterChange={setActiveFilter}
             onAdvancedFiltersChange={setAdvancedFilters}
             onItemChange={updateItem}
+            onLoadMore={() => {
+              if (feedNextCursor) void loadFeedPage({ append: true, cursor: feedNextCursor });
+            }}
             onTogglePreference={(item, preference) => void toggleFeedPreference(item, preference)}
             onSoundCloudLinkChange={changeSoundCloudLink}
             onToggleExact={() => setExactOnly((value) => !value)}
@@ -1086,14 +1214,17 @@ export function RadarShell({
             onMusicBrainzResume={(batchId) =>
               void runFeedScan({ musicbrainzBatchId: batchId, provider: "musicbrainz" })
             }
+            onLoadOlderHistory={() => void loadOlderScanHistory()}
             onCancelScan={() => void cancelFeedScan()}
             onSpotifyBatchAction={(action, id) => void controlSpotifyBatch(action, id)}
             pendingFeedActions={pendingFeedActions}
             ready={hydrated}
-            reviewCount={reviewItems.length}
+            reviewCount={feedMode === "database" ? feedSummary.needsReview : reviewItems.length}
             scanStatus={scanStatus}
             scanStatusState={scanStatusState}
+            loadingOlderHistory={loadingOlderHistory}
             summaryItems={items}
+            serverSummary={feedMode === "database" ? feedSummary : null}
             cancellingScan={cancellingScan}
             soundCloudManualLinksEnabled={providerConfiguration.soundcloudManualLinksEnabled}
             syncing={syncing}
@@ -1265,6 +1396,8 @@ interface FeedViewProps {
   advancedFilters: FeedAdvancedFilters;
   exactOnly: boolean;
   feedMode: "database" | "error" | "mock";
+  feedHasMore: boolean;
+  feedPageState: "idle" | "loading" | "error";
   feedRefreshMessage: string | null;
   feedRefreshState: "idle" | "checking" | "updated" | "error";
   filtersOpen: boolean;
@@ -1275,6 +1408,8 @@ interface FeedViewProps {
   onFilterChange: (state: FeedState | "all") => void;
   onAdvancedFiltersChange: (filters: FeedAdvancedFilters) => void;
   onItemChange: (id: string, changes: Partial<FeedFixtureItem>, message: string) => void;
+  onLoadMore: () => void;
+  onLoadOlderHistory: () => void;
   onTogglePreference: (item: FeedFixtureItem, preference: FeedPreference) => void;
   onSoundCloudLinkChange: (feedItemId: string, record?: SoundCloudLinkRecord) => void;
   onRunScan: () => void;
@@ -1292,10 +1427,12 @@ interface FeedViewProps {
   reviewCount: number;
   scanStatus: ScanApiStatus | null;
   scanStatusState: "idle" | "loading" | "loaded" | "error";
+  serverSummary: FeedSummary | null;
   summaryItems: FeedFixtureItem[];
   cancellingScan: boolean;
   soundCloudManualLinksEnabled: boolean;
   syncing: boolean;
+  loadingOlderHistory: boolean;
 }
 
 function FeedView({
@@ -1303,6 +1440,8 @@ function FeedView({
   advancedFilters,
   exactOnly,
   feedMode,
+  feedHasMore,
+  feedPageState,
   feedRefreshMessage,
   feedRefreshState,
   filtersOpen,
@@ -1313,6 +1452,8 @@ function FeedView({
   onFilterChange,
   onAdvancedFiltersChange,
   onItemChange,
+  onLoadMore,
+  onLoadOlderHistory,
   onTogglePreference,
   onSoundCloudLinkChange,
   onRunScan,
@@ -1327,15 +1468,20 @@ function FeedView({
   reviewCount,
   scanStatus,
   scanStatusState,
+  serverSummary,
   summaryItems,
   cancellingScan,
   soundCloudManualLinksEnabled,
   syncing,
+  loadingOlderHistory,
 }: FeedViewProps) {
   const [collapsedReleaseGroups, setCollapsedReleaseGroups] = useState<string[]>([]);
   const [spotifyStatusCollapsed, setSpotifyStatusCollapsed] = useState(false);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
-  const feedSummary = useMemo(() => calculateFeedSummary(summaryItems), [summaryItems]);
+  const feedSummary = useMemo(
+    () => serverSummary ?? calculateFeedSummary(summaryItems),
+    [serverSummary, summaryItems],
+  );
   const scanInProgress = syncing || Boolean(scanStatus?.running);
   const activeScan = scanStatus?.active;
   const spotifyOperational = scanStatus?.spotify.operational;
@@ -1588,7 +1734,10 @@ function FeedView({
 
       {feedMode === "database" && !scanInProgress && (
         <ScanHistoryPanel
+          hasMore={scanStatus?.historyHasMore ?? false}
           history={scanHistory}
+          loadingOlder={loadingOlderHistory}
+          onLoadOlder={onLoadOlderHistory}
           onSelect={setSelectedHistoryId}
           onStartReconciliation={() => {
             if (
@@ -2035,7 +2184,6 @@ function FeedView({
                     <small>Released {formatDate(group.releaseDate)}</small>
                   </div>
                   <span className="release-feed-group-count">{group.items.length} tracks</span>
-                  <ReleaseCompletenessBadge item={group.items[0]!} />
                 </div>
                 {!collapsed && (
                   <div className="release-feed-group-items">
@@ -2064,19 +2212,42 @@ function FeedView({
           </div>
         )}
       </div>
+      {feedMode === "database" && feedPageState === "error" && (
+        <div className="form-error feed-page-state" role="alert">
+          More discoveries could not be loaded. The items already shown remain available.
+        </div>
+      )}
+      {feedMode === "database" && feedHasMore && (
+        <div className="feed-pagination-actions">
+          <button
+            className="secondary-button"
+            disabled={feedPageState === "loading"}
+            onClick={onLoadMore}
+            type="button"
+          >
+            {feedPageState === "loading" ? "Loading discoveries" : "Load more discoveries"}
+          </button>
+        </div>
+      )}
     </section>
   );
 }
 
 function ScanHistoryPanel({
+  hasMore,
   history,
+  loadingOlder,
+  onLoadOlder,
   onSelect,
   onStartReconciliation,
   selectedRun,
   spotifyCooldown,
   state,
 }: {
+  hasMore: boolean;
   history: ScanHistoryEntry[];
+  loadingOlder: boolean;
+  onLoadOlder: () => void;
   onSelect: (id: string) => void;
   onStartReconciliation: () => void;
   selectedRun: ScanHistoryEntry | null;
@@ -2209,6 +2380,16 @@ function ScanHistoryPanel({
             not stored by that scan.
           </small>
         </>
+      )}
+      {state === "loaded" && hasMore && (
+        <button
+          className="secondary-button scan-history-load-more"
+          disabled={loadingOlder}
+          onClick={onLoadOlder}
+          type="button"
+        >
+          {loadingOlder ? "Loading history" : "Load older scans"}
+        </button>
       )}
     </section>
   );
@@ -3146,44 +3327,45 @@ function ReviewView({
       reasons: string[];
     }>
   >([]);
+  const [mappingReviewCursor, setMappingReviewCursor] = useState<string | null>(null);
+  const [mappingReviewHasMore, setMappingReviewHasMore] = useState(false);
+  const [mappingReviewState, setMappingReviewState] = useState<"loading" | "loaded" | "error">(
+    "loading",
+  );
   const normalizedQuery = query.trim().toLocaleLowerCase("en-US");
   const visibleItems = items.filter((item) =>
     `${item.artist} ${item.title}`.toLocaleLowerCase("en-US").includes(normalizedQuery),
   );
 
-  useEffect(() => {
-    let cancelled = false;
-    void fetch("/api/musicbrainz/mappings", { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Mapping reviews unavailable");
-        return z
-          .object({
-            reviews: z.array(
-              z.object({
-                artistName: z.string(),
-                confidence: z.string(),
-                id: z.string().uuid(),
-                name: z.string(),
-                proposedExternalId: z.string().uuid(),
-                reasons: z.array(z.string()),
-                status: z.string(),
-              }),
-            ),
-          })
-          .passthrough()
-          .parse(await response.json());
-      })
-      .then((payload) => {
-        if (!cancelled)
-          setMappingReviews(payload.reviews.filter((review) => review.status === "pending"));
-      })
-      .catch(() => {
-        if (!cancelled) setMappingReviews([]);
+  const loadMappingReviews = useCallback(async (cursor?: string) => {
+    setMappingReviewState("loading");
+    try {
+      const parameters = new URLSearchParams({ limit: "20" });
+      if (cursor) parameters.set("cursor", cursor);
+      const response = await fetch(`/api/musicbrainz/mappings?${parameters.toString()}`, {
+        cache: "no-store",
       });
-    return () => {
-      cancelled = true;
-    };
+      if (!response.ok) throw new Error("Mapping reviews unavailable");
+      const payload = mappingReviewPageSchema.parse(await response.json());
+      setMappingReviews((current) =>
+        cursor
+          ? mergeById(
+              current,
+              payload.reviews.filter((review) => review.status === "pending"),
+            )
+          : payload.reviews.filter((review) => review.status === "pending"),
+      );
+      setMappingReviewCursor(payload.nextCursor);
+      setMappingReviewHasMore(payload.hasMore);
+      setMappingReviewState("loaded");
+    } catch {
+      setMappingReviewState("error");
+    }
   }, []);
+
+  useEffect(() => {
+    void loadMappingReviews();
+  }, [loadMappingReviews]);
 
   const decideMapping = async (reviewId: string, decision: "confirm" | "reject") => {
     const response = await fetch("/api/musicbrainz/mappings/decision", {
@@ -3218,6 +3400,16 @@ function ReviewView({
         </select>
       </label>
       <div className="review-list">
+        {reviewFilter !== "matches" &&
+          mappingReviewState === "loading" &&
+          mappingReviews.length === 0 && (
+            <div className="empty-inline">Loading mapping reviews...</div>
+          )}
+        {reviewFilter !== "matches" && mappingReviewState === "error" && (
+          <div className="form-error" role="alert">
+            MusicBrainz mapping reviews are temporarily unavailable.
+          </div>
+        )}
         {reviewFilter !== "matches" &&
           mappingReviews.map((review) => (
             <article className="review-card" key={review.id}>
@@ -3256,6 +3448,18 @@ function ReviewView({
               </div>
             </article>
           ))}
+        {reviewFilter !== "matches" && mappingReviewHasMore && (
+          <button
+            className="secondary-button review-load-more"
+            disabled={mappingReviewState === "loading"}
+            onClick={() => {
+              if (mappingReviewCursor) void loadMappingReviews(mappingReviewCursor);
+            }}
+            type="button"
+          >
+            {mappingReviewState === "loading" ? "Loading reviews" : "Load older mapping reviews"}
+          </button>
+        )}
         {reviewFilter !== "musicbrainz_mappings" && visibleItems.length ? (
           visibleItems.map((item) => {
             const pending = pendingItemIds.includes(item.id);
@@ -4409,6 +4613,22 @@ const musicBrainzMappingsResponseSchema = z.object({
   ),
 });
 
+const mappingReviewPageSchema = z.object({
+  hasMore: z.boolean().default(false),
+  nextCursor: z.string().nullable().default(null),
+  reviews: z.array(
+    z.object({
+      artistName: z.string(),
+      confidence: z.string(),
+      id: z.string().uuid(),
+      name: z.string(),
+      proposedExternalId: z.string().uuid(),
+      reasons: z.array(z.string()),
+      status: z.string(),
+    }),
+  ),
+});
+
 const feedItemResponseSchema = z.object({
   accent: z.enum(["coral", "cyan", "lime", "gold"]),
   artist: z.string(),
@@ -4490,7 +4710,17 @@ const feedRevisionResponseSchema = z.object({
 });
 
 const feedSnapshotResponseSchema = feedRevisionResponseSchema.extend({
+  hasMore: z.boolean().default(false),
   items: z.array(feedItemResponseSchema),
+  nextCursor: z.string().nullable().default(null),
+  summary: z
+    .object({
+      needsReview: z.number().int().nonnegative(),
+      newThisWeek: z.number().int().nonnegative(),
+      upcoming: z.number().int().nonnegative(),
+    })
+    .default({ needsReview: 0, newThisWeek: 0, upcoming: 0 }),
+  totalCount: z.number().int().nonnegative().default(0),
 });
 
 const spotifyStatusSchema = z.object({
@@ -4622,6 +4852,8 @@ const scanStatusSchema = z.object({
     .nullable(),
   defaultHistoryId: z.string().uuid().nullable(),
   history: z.array(scanHistoryEntrySchema),
+  historyHasMore: z.boolean().default(false),
+  historyNextCursor: z.string().nullable().default(null),
   latest: scanRunStatusSchema.nullable(),
   musicbrainz: z
     .object({
@@ -4820,59 +5052,24 @@ function mergeFeedItems(
   currentItems: FeedFixtureItem[],
   refreshedItems: FeedFixtureItem[],
 ): FeedFixtureItem[] {
-  const currentById = new Map(currentItems.map((item) => [item.id, item]));
-  return refreshedItems.map((item) => ({ ...currentById.get(item.id), ...item }));
-}
-
-interface FeedScrollAnchor {
-  id: string;
-  top: number;
-}
-
-function captureVisibleFeedAnchor(): FeedScrollAnchor | null {
-  const anchor = Array.from(document.querySelectorAll<HTMLElement>("[data-feed-anchor]")).find(
-    (element) => element.getBoundingClientRect().bottom > 0,
-  );
-  return anchor?.dataset.feedAnchor
-    ? { id: anchor.dataset.feedAnchor, top: anchor.getBoundingClientRect().top }
-    : null;
-}
-
-function restoreVisibleFeedAnchor(anchor: FeedScrollAnchor | null): void {
-  if (!anchor) return;
-  window.requestAnimationFrame(() => {
-    window.requestAnimationFrame(() => {
-      const matchingAnchor = Array.from(
-        document.querySelectorAll<HTMLElement>("[data-feed-anchor]"),
-      ).find((element) => element.dataset.feedAnchor === anchor.id);
-      if (matchingAnchor) {
-        window.scrollBy({ top: matchingAnchor.getBoundingClientRect().top - anchor.top });
-      }
-    });
-  });
-}
-
-function ReleaseCompletenessBadge({ item }: { item: FeedFixtureItem }) {
-  const completeness = item.releaseCompleteness;
-  if (!completeness) return null;
-  if (completeness.status === "completed") {
-    return (
-      <span
-        className="release-completeness is-complete"
-        title="All provider album tracks persisted"
-      >
-        Complete
-      </span>
-    );
+  const merged = [...currentItems];
+  const indexById = new Map(currentItems.map((item, index) => [item.id, index]));
+  for (const item of refreshedItems) {
+    const existingIndex = indexById.get(item.id);
+    if (existingIndex === undefined) {
+      indexById.set(item.id, merged.length);
+      merged.push(item);
+    } else {
+      merged[existingIndex] = { ...merged[existingIndex], ...item };
+    }
   }
-  const label = completeness.missingTracks
-    ? `${completeness.missingTracks} tracks missing`
-    : `${titleCase(completeness.status)} album`;
-  return (
-    <span className="release-completeness is-incomplete" role="status">
-      {label}
-    </span>
-  );
+  return merged;
+}
+
+function mergeById<T extends { id: string }>(current: T[], incoming: T[]): T[] {
+  const merged = new Map(current.map((item) => [item.id, item]));
+  for (const item of incoming) merged.set(item.id, item);
+  return [...merged.values()];
 }
 
 function FeedItem({
@@ -4938,7 +5135,6 @@ function FeedItem({
                     {source.label}
                   </span>
                 ))}
-                <ReleaseCompletenessBadge item={item} />
               </div>
               <div className="item-heading-line">
                 <h2>
@@ -5016,14 +5212,18 @@ function FeedItem({
               SoundCloud {soundCloudStateLabel(soundCloudLink?.state ?? item.soundcloudState)}
             </span>
           )}
-          <a
-            className="feed-evidence-link"
-            href={item.links[0]?.href}
-            rel="noopener noreferrer"
-            target="_blank"
-          >
-            Evidence <ChevronRight size={13} />
-          </a>
+          {item.links[0] ? (
+            <a
+              className="feed-evidence-link"
+              href={item.links[0].href}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              Evidence <ChevronRight size={13} />
+            </a>
+          ) : (
+            <span className="feed-evidence-link is-unavailable">Evidence unavailable</span>
+          )}
         </div>
 
         {soundCloudManualLinksEnabled && (

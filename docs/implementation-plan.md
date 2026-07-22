@@ -1,4 +1,20 @@
-# Spotify and MusicBrainz Milestone Plan
+# Implementation Plan
+
+## Current: pre-sync feed and query scaling
+
+- Add justified forward indexes for the feed, evidence projection, reverse external-ID lookups, unresolved reviews, scan history, Spotify catalog coverage, and album-track resume queries.
+- Replace full-feed browser loading with signed cursor pagination. Use release groups as pagination units, return 100 items by default, and keep oversized albums intact.
+- Assemble each selected page through bounded SQL queries and precomputed Maps or Sets. Preserve credits, release appearances, artwork, evidence, user state, and completeness.
+- Poll one durable `feed_revisions` row every 15 seconds while visible. Show a notice for changed data and require an explicit refresh from the top.
+- Page pending MusicBrainz mapping reviews and scan history without deleting older records. Keep provider telemetry bounded or aggregate-only.
+- Validate known provider evidence with provider-specific HTTPS host, path, and identifier rules. Omit unsafe historical links from clickable output without deleting the stored record.
+- Verify clean and upgrade migrations, synthetic 150, 1,000, and 3,000-item performance, unit tests, PostgreSQL integration tests, build, Playwright, doctor, and artifact exclusions. No live provider or playlist request is allowed.
+
+## Completed milestones (archived)
+
+The sections below preserve the implementation history. Docker, PostgreSQL, migrations through `0011`, release appearances, album-track checkpoints, Spotify and MusicBrainz request gates, local operations, and the 50-artist staged validation are complete at the current checkpoint.
+
+## Spotify and MusicBrainz milestone
 
 ## Pre-sync data integrity and release completeness
 
@@ -68,13 +84,9 @@ Keep the pnpm monorepo, strict TypeScript, Drizzle schema and migration history,
 
 No playback, previews, embeds, audio handling, cross-provider artwork, Spotify-to-MusicBrainz payload transfer, live response fixtures, AI ingestion, public signup, or commercial behavior is implemented. MusicBrainz starts only from canonical user-approved watchlist data and confirmed mappings. Spotify policy compatibility remains unresolved and is not represented as approved.
 
-## Environment Constraint
-
-Docker is not currently installed on the development machine. The milestone cannot be marked complete until the clean-database migration and non-skipped integration suite run successfully with Docker Compose. The repository commands must report this condition clearly rather than skipping tests.
-
 ---
 
-# Reddit Evidence Milestone Plan
+## Reddit evidence milestone
 
 Verified: 2026-07-16
 
@@ -108,7 +120,7 @@ No live request may occur unless both flags are true, credentials are configured
 
 ---
 
-# Integration Hardening And Local Readiness Plan
+## Integration hardening and local readiness milestone
 
 Verified: 2026-07-16
 

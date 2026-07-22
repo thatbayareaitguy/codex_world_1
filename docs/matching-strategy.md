@@ -7,7 +7,7 @@ Algorithm version: `v2-real-providers`.
 1. Exact provider track ID in the same provider: `1.00`, automatic.
 2. Exact normalized ISRC: `1.00`, automatic across providers.
 3. Exact UPC or EAN plus disc and track position: `0.99`, automatic.
-4. Exact MusicBrainz recording or release-group relationship: `0.98`, automatic.
+4. Exact MusicBrainz recording identity, or a release-group relationship with the same disc, track position, and normalized title: `0.98`, automatic.
 5. Exact normalized title, ordered canonical credits, compatible version, and duration within two seconds: automatic only at `0.93` or higher with no tied candidate or conflict.
 6. Manual review.
 
@@ -20,3 +20,5 @@ Canonical display values prefer explicit user edits, then manually confirmed map
 Recording matching and release membership are separate decisions. An exact ISRC, provider track ID, or MusicBrainz recording ID may reuse one canonical track while candidate provenance creates another release appearance. The feed shows each distinct proven appearance, including a single followed by an album appearance, rather than treating the track's deprecated `release_id` as authoritative.
 
 `Keep separate` is a positive manual identity decision, not rejection. It creates or preserves a distinct canonical recording, retains the candidate, evidence, feed row, release appearance, and manual timestamp, and prevents the candidate from being merged again. If an identifier is already uniquely assigned to the proposed recording, the separate recording leaves that canonical identifier unset while the conflicting observed identifier remains preserved in candidate provenance.
+
+A single-versus-album observation does not collapse release identity. Exact recording evidence may reuse the canonical track, but each proven provider release ID creates or reuses its own release appearance. Album grouping is therefore a presentation of shared release membership, not a matching shortcut.

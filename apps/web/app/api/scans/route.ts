@@ -2,7 +2,7 @@ import {
   createDatabase,
   getSpotifyOperationalStatus,
   latestSpotifyBatch,
-  listScanHistory,
+  listScanHistoryPage,
   musicbrainzArtistScans,
   musicbrainzProviderState,
   musicbrainzScanBatches,
@@ -30,6 +30,11 @@ const startScanSchema = z.object({
   since: z.iso.date().optional(),
 });
 
+const historyQuerySchema = z.object({
+  historyCursor: z.string().min(1).max(1024).optional(),
+  historyLimit: z.coerce.number().int().min(10).max(50).default(20),
+});
+
 interface ActiveScanLock {
   acquiredAt: Date;
   expiresAt: Date;
@@ -44,13 +49,16 @@ interface ScanProgressRun {
   status: string;
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request?: NextRequest): Promise<NextResponse> {
   const configuration = loadProviderConfiguration();
   if (!configuration.databaseUrl) {
     return NextResponse.json({ error: "Database is not configured" }, { status: 503 });
   }
   const connection = createDatabase(configuration.databaseUrl);
   try {
+    const historyQuery = historyQuerySchema.parse(
+      request ? Object.fromEntries(request.nextUrl.searchParams.entries()) : {},
+    );
     const [
       runs,
       activeScanLock,
@@ -71,7 +79,10 @@ export async function GET(): Promise<NextResponse> {
       }),
       getSpotifyOperationalStatus(connection.db),
       latestSpotifyBatch(connection.db),
-      listScanHistory(connection.db),
+      listScanHistoryPage(connection.db, {
+        ...(historyQuery.historyCursor ? { cursor: historyQuery.historyCursor } : {}),
+        limit: historyQuery.historyLimit,
+      }),
       connection.db.query.musicbrainzProviderState.findFirst({
         where: eq(musicbrainzProviderState.id, "global"),
       }),
@@ -87,7 +98,7 @@ export async function GET(): Promise<NextResponse> {
           .where(eq(musicbrainzArtistScans.batchId, musicbrainzBatch.id))
           .orderBy(asc(musicbrainzArtistScans.position))
       : [];
-    const defaultHistory = selectDefaultScanHistoryEntry(history);
+    const defaultHistory = selectDefaultScanHistoryEntry(history.entries);
     const requestedProviders = configuredScanProviders(configuration, activeScanLock?.metadata);
     return NextResponse.json(
       {
@@ -95,7 +106,9 @@ export async function GET(): Promise<NextResponse> {
           ? describeActiveScan(activeScanLock, runs, requestedProviders)
           : null,
         defaultHistoryId: defaultHistory?.id ?? null,
-        history,
+        history: history.entries,
+        historyHasMore: history.hasMore,
+        historyNextCursor: history.nextCursor,
         latest: runs[0] ?? null,
         musicbrainz: {
           batch: musicbrainzBatch

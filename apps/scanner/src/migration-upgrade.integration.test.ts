@@ -7,7 +7,7 @@ const host = process.env.TEST_DATABASE_URL ?? "postgres://radar:radar@127.0.0.1:
 const adminUrl = host.replace(/\/[^/]+$/, "/postgres");
 const migrationDirectory = fileURLToPath(new URL("../../../packages/db/drizzle/", import.meta.url));
 
-it("upgrades the eleven-migration schema and repairs a provenance-proven release", async () => {
+it("upgrades the pre-appearance schema through release repair and feed scaling", async () => {
   const databaseName = `radar_upgrade_${Date.now()}_${Math.floor(Math.random() * 10_000)}`;
   const admin = postgres(adminUrl, { max: 1 });
   await admin.unsafe(`create database "${databaseName}"`);
@@ -277,6 +277,51 @@ it("upgrades the eleven-migration schema and repairs a provenance-proven release
         expect.objectContaining({ release_type: "remix", title: "SPEAKERBOX (Remixes)" }),
       ]),
     );
+
+    await applyMigration(client, 12);
+    await applyMigration(client, 13);
+    const [revisionBefore] = await client<Array<{ item_count: number; revision: string }>>`
+      select item_count, revision from feed_revisions where id = 'global'
+    `;
+    const [migratedFeedCount] = await client<Array<{ count: number }>>`
+      select count(*)::int as count from feed_items
+    `;
+    expect(revisionBefore).toMatchObject({ item_count: migratedFeedCount!.count });
+    await client`
+      update tracks set title = 'SPEAKERBOX UPDATED'
+      where id = '00000000-0000-4000-8000-000000000020'
+    `;
+    const [revisionAfter] = await client<Array<{ revision: string }>>`
+      select revision from feed_revisions where id = 'global'
+    `;
+    expect(BigInt(revisionAfter!.revision)).toBeGreaterThan(BigInt(revisionBefore!.revision));
+    const expectedIndexes = [
+      "artist_mapping_review_pending_idx",
+      "feed_appearance_idx",
+      "feed_track_idx",
+      "feed_user_release_seen_idx",
+      "feed_user_seen_id_idx",
+      "playlist_export_track_status_idx",
+      "release_candidates_matched_track_seen_idx",
+      "release_external_release_provider_idx",
+      "scan_runs_started_history_idx",
+      "scan_runs_status_provider_started_idx",
+      "source_evidence_candidate_idx",
+      "spotify_artist_coverage_reconcile_idx",
+      "spotify_release_track_retrieval_release_idx",
+      "spotify_release_track_retrieval_resume_idx",
+      "track_availability_track_provider_idx",
+      "track_external_track_provider_idx",
+    ];
+    const indexes = await client<Array<{ indexname: string; name_bytes: number }>>`
+      select indexname, octet_length(indexname) as name_bytes from pg_indexes
+      where schemaname = 'public'
+        and indexname = any(${expectedIndexes})
+      order by indexname
+    `;
+    expect(indexes.map((row) => row.indexname)).toEqual(expectedIndexes);
+    expect(new Set(indexes.map((row) => row.indexname)).size).toBe(expectedIndexes.length);
+    expect(indexes.every((row) => row.name_bytes <= 63)).toBe(true);
   } finally {
     await client.end();
     await admin.unsafe(`drop database if exists "${databaseName}"`);
@@ -299,6 +344,8 @@ async function applyMigration(client: postgres.Sql, index: number): Promise<void
     "0009_first_white_queen.sql",
     "0010_chubby_talkback.sql",
     "0011_gigantic_power_man.sql",
+    "0012_common_newton_destine.sql",
+    "0013_moaning_kid_colt.sql",
   ];
   const file = files.find((name) => name.startsWith(prefix));
   if (!file) throw new Error(`Migration ${prefix} was not found`);

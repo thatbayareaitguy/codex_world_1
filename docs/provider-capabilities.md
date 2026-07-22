@@ -1,6 +1,6 @@
 # Provider Capabilities and Cost Gate
 
-## MusicBrainz workflow verification (2026-07-17)
+## MusicBrainz workflow verification (2026-07-21)
 
 - Authentication: no OAuth or paid account. A descriptive User-Agent with application name,
   version, and private operator contact is required.
@@ -15,10 +15,9 @@
   A no-result scan is not proof that no release exists.
 - Official documentation: https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting,
   https://musicbrainz.org/doc/MusicBrainz_API, and
-  https://musicbrainz.org/doc/MusicBrainz_API/Search (verified 2026-07-17). The official API
+  https://musicbrainz.org/doc/MusicBrainz_API/Search (verified 2026-07-21). The official API
   reference confirms `track_artist` release browsing for appearances and supports release media,
   recordings, release groups, artist credits, and ISRC includes.
-  Verified: 2026-07-20
 
 The only permitted paid prerequisite is the owner's existing Spotify Premium subscription. No provider adapter may require a paid developer membership, API subscription, or commercial plan.
 

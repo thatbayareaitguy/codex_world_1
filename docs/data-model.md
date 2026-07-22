@@ -22,6 +22,7 @@
 - `source_evidence`: independent provider evidence URLs and payload fingerprints.
 - `upcoming_announcements` and `upcoming_date_history`: future date, precision, source confidence, evidence, and every observed date change.
 - `feed_items`: canonical user state associated with a release appearance. Non-review rows are unique per user and appearance; candidate evidence remains separate. Saved, listened, dismissed, upcoming, and review history survive appearance repair.
+- `feed_revisions`: singleton durable feed revision and item count. Triggers advance it transactionally for feed rows and related records that change visible feed projection data.
 - `reddit_sources`: local subreddit configuration, lookback, overlap, parser signals, cursor, and last error.
 - `reddit_submissions`, `reddit_parse_results`, and `reddit_external_links`: minimized retained source text, versioned deterministic parse output, and unverified outbound evidence. Author, score, comments, votes, media, and HTML are not stored.
 - `reddit_candidate_matches` and `reddit_reconciliation_runs`: canonical corroboration or review state plus deletion-purge history.
@@ -33,8 +34,11 @@
 - `spotify_request_events`: safe endpoint-category metrics, request timing, status, queue wait, raw and parsed `Retry-After`, cooldown, and redacted classifications.
 - `spotify_scan_batches`: bounded Spotify mode, page limit, confirmation, pause/cancel state, estimates, and aggregate artist outcomes, including blocked mappings.
 - `spotify_artist_scans`: persisted per-artist position, expected Spotify artist ID, timing, request/candidate/page counts, result state, retry eligibility, and heartbeat.
+- `spotify_artist_coverage`, `spotify_page_scans`, and `spotify_catalog_releases`: resumable catalog cycle, page evidence, next offset, partial or fully reconciled state, and validated provider release summaries that avoid refetching unchanged records.
 - `spotify_release_track_retrievals`: one durable retrieval state per Spotify album ID with canonical release, expected and fetched counts, next offset, page count, status, timing, error, retry, discrepancy, and reconciliation-cycle fields.
 - `spotify_release_track_pages` and `spotify_release_track_items`: idempotent completed-page checkpoints and deduplicated provider track IDs with disc/track order.
+- `musicbrainz_provider_state` and `musicbrainz_request_events`: singleton request lease plus bounded, secret-safe request timing and outcome telemetry.
+- `musicbrainz_scan_batches` and `musicbrainz_artist_scans`: artist-level batch position, stage checkpoints, counts, heartbeat, errors, cancellation, and resume eligibility.
 - `operation_locks`: one global expiring operation lock for scan serialization and interruption recovery.
 - `scan_locks`: one expiring lock per provider.
 - `provider_cursors` and `provider_cache`: scoped checkpoints and sanitized cached metadata. Spotify artwork backfill uses a dedicated cursor scope and advances it only after a release is updated or confirmed to have no usable artwork, so `--resume` starts after the last completed release without changing scan history.
@@ -46,3 +50,26 @@
 ## Constraints
 
 Unique constraints protect provider IDs, user follows, import candidates, candidates by provider release and track, canonical ISRC, release appearances, appearance provenance, release-track pages and items, provider availability by region, evidence fingerprints, feed appearances, playlist additions, cursors, mappings, and upcoming source IDs. Forward migrations are the executable source of truth; existing migration history is not rewritten.
+
+Candidates are observations, not immutable canonical truth. Their identity fields and source payload fingerprint are stable, while match target, status, rule, confidence, reasons, and algorithm version may be updated by deterministic rematching or a stored manual decision. A manual decision is preserved separately and remains authoritative over later fuzzy matching.
+
+Operational history is bounded at read time, not deleted: scan history and pending MusicBrainz mapping reviews use deterministic cursor pages, while provider request status exposes bounded recent or aggregate telemetry. Older scan and review rows remain in PostgreSQL.
+
+## Feed-scaling indexes
+
+Migration `0012_common_newton_destine.sql` adds only indexes tied to current predicates:
+
+- `artist_mapping_review_pending_idx`: provider plus pending status and deterministic review ordering.
+- `feed_user_seen_id_idx`: owner-scoped first-seen cursor traversal.
+- `feed_user_release_seen_idx`: owner-scoped release grouping and release-page selection.
+- `feed_track_idx` and `feed_appearance_idx`: reverse projection from selected canonical tracks and appearances.
+- `playlist_export_track_status_idx`: bounded export-state projection for selected track IDs.
+- `release_candidates_matched_track_seen_idx`: canonical track candidate history ordered by first seen.
+- `release_external_release_provider_idx` and `track_external_track_provider_idx`: forward projection from canonical entities to provider evidence. Existing unique provider/external-ID indexes remain the reverse-lookup path.
+- `source_evidence_candidate_idx`: evidence projection for selected candidates.
+- `track_availability_track_provider_idx`: provider availability for selected tracks.
+- `scan_runs_started_history_idx` and `scan_runs_status_provider_started_idx`: deterministic history pages and recent provider/status diagnostics.
+- `spotify_artist_coverage_reconcile_idx`: partial reconciliation work ordered by status and age.
+- `spotify_release_track_retrieval_resume_idx` and `spotify_release_track_retrieval_release_idx`: resumable album work and release completeness projection.
+
+No new `feed_items.updated_at` index is needed because polling reads the primary-keyed `feed_revisions` singleton. No release-date-only index is added because feed ordering is computed across owner-scoped release groups, not by scanning `releases` directly.

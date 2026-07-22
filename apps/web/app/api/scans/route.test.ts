@@ -8,7 +8,7 @@ const {
   history,
   launchScanNow,
   latestSpotifyBatch,
-  listScanHistory,
+  listScanHistoryPage,
   requestOperationCancellation,
   select,
   selectDefaultScanHistoryEntry,
@@ -43,7 +43,9 @@ const {
     history,
     launchScanNow: vi.fn(() => Promise.resolve({ pid: 4242 })),
     latestSpotifyBatch: vi.fn(() => Promise.resolve(null)),
-    listScanHistory: vi.fn(() => Promise.resolve(history)),
+    listScanHistoryPage: vi.fn(() =>
+      Promise.resolve({ entries: history, hasMore: false, nextCursor: null }),
+    ),
     requestOperationCancellation: vi.fn(() => Promise.resolve(true)),
     select: vi.fn(() => ({
       from: vi.fn(() => ({
@@ -90,7 +92,7 @@ vi.mock("@radar/db", () => ({
   })),
   getSpotifyOperationalStatus,
   latestSpotifyBatch,
-  listScanHistory,
+  listScanHistoryPage,
   musicbrainzArtistScans: {},
   musicbrainzProviderState: {},
   musicbrainzScanBatches: {},
@@ -160,7 +162,7 @@ describe("on-demand scan route", () => {
         },
       ],
     });
-    expect(listScanHistory).toHaveBeenCalledOnce();
+    expect(listScanHistoryPage).toHaveBeenCalledOnce();
     expect(selectDefaultScanHistoryEntry).toHaveBeenCalledWith(history);
   });
 

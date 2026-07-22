@@ -3,8 +3,8 @@ import type { FeedFixtureItem } from "@radar/core";
 import { feedFixtures } from "@radar/testing";
 
 const artwork = {
-  albumId: "album-artwork-test",
-  albumUrl: "https://open.spotify.com/album/album-artwork-test",
+  albumId: "albumArtworkTest000001",
+  albumUrl: "https://open.spotify.com/album/albumArtworkTest000001",
   image: { height: 300, url: "https://i.scdn.co/image/artworktest", width: 300 },
   lastObservedAt: "2026-07-20T12:00:00.000Z",
   sourceProvider: "spotify" as const,
@@ -19,6 +19,7 @@ test("renders direct Spotify artwork with a safe album link and preserves it on 
   await page.setViewportSize({ width: 480, height: 800 });
 
   await page.goto("/?e2e-scan-status=database#feed");
+  await page.getByRole("button", { name: "Refresh feed" }).click();
 
   const link = page.getByRole("link", { name: "Open Signal Bloom by Artwork Artist on Spotify" });
   const image = page.getByRole("img", {
@@ -48,6 +49,7 @@ test("shows artwork on every grouped track and keeps the header artwork when col
   await fulfillArtwork(page);
 
   await page.goto("/?e2e-scan-status=database#feed");
+  await page.getByRole("button", { name: "Refresh feed" }).click();
 
   const group = page.getByRole("region", { name: "Artwork Artist - Grouped Album Album" });
   await expect(group.getByRole("img")).toHaveCount(3);
@@ -87,8 +89,9 @@ test("uses the existing fallback when artwork is absent or cannot load", async (
   });
 
   await page.goto("/?e2e-scan-status=database#feed");
+  await page.getByRole("button", { name: "Refresh feed" }).click();
 
-  await expect(page.locator(".cover:not(.spotify-artwork-cover)")).toHaveCount(3);
+  await expect(page.locator("article .cover:not(.spotify-artwork-cover)")).toHaveCount(3);
   await expect(page.getByRole("img", { name: /Broken Artwork/ })).toHaveCount(0);
   await expect(page.getByRole("img", { name: /MusicBrainz Release/ })).toHaveCount(0);
 });
@@ -109,9 +112,11 @@ function spotifyArtworkItem(id: string, title: string, releaseTitle = title): Fe
     ],
     spotifyArtwork: {
       ...artwork,
-      albumId: releaseTitle === title ? artwork.albumId : "grouped-album",
+      albumId: releaseTitle === title ? artwork.albumId : "groupedAlbumArtwork001",
       albumUrl:
-        releaseTitle === title ? artwork.albumUrl : "https://open.spotify.com/album/grouped-album",
+        releaseTitle === title
+          ? artwork.albumUrl
+          : "https://open.spotify.com/album/groupedAlbumArtwork001",
     },
     title,
   };

@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   check,
   date,
@@ -353,6 +354,12 @@ export const artistMappingReviews = pgTable(
       table.provider,
       table.proposedExternalId,
     ),
+    index("artist_mapping_review_pending_idx").on(
+      table.provider,
+      table.status,
+      table.updatedAt,
+      table.id,
+    ),
   ],
 );
 
@@ -428,6 +435,7 @@ export const releaseExternalIds = pgTable(
   },
   (table) => [
     uniqueIndex("release_external_provider_id_unique").on(table.provider, table.externalId),
+    index("release_external_release_provider_idx").on(table.releaseId, table.provider),
   ],
 );
 
@@ -449,6 +457,7 @@ export const trackExternalIds = pgTable(
   },
   (table) => [
     uniqueIndex("track_external_provider_id_unique").on(table.provider, table.externalId),
+    index("track_external_track_provider_idx").on(table.trackId, table.provider),
   ],
 );
 
@@ -529,49 +538,61 @@ export const trackAvailabilities = pgTable(
       table.providerTrackId,
       table.region,
     ),
+    index("track_availability_track_provider_idx").on(table.trackId, table.provider),
   ],
 );
 
-export const scanRuns = pgTable("scan_runs", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  provider: providerEnum("provider"),
-  status: scanStatusEnum("status").notNull().default("running"),
-  dryRun: boolean("dry_run").notNull().default(false),
-  triggerType: text("trigger_type").notNull().default("manual"),
-  providersRequested: text("providers_requested")
-    .array()
-    .notNull()
-    .default(sql`'{}'::text[]`),
-  providersCompleted: text("providers_completed")
-    .array()
-    .notNull()
-    .default(sql`'{}'::text[]`),
-  providersFailed: text("providers_failed")
-    .array()
-    .notNull()
-    .default(sql`'{}'::text[]`),
-  artistFilter: text("artist_filter"),
-  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
-  completedAt: timestamp("completed_at", { withTimezone: true }),
-  discoveredCount: integer("discovered_count").notNull().default(0),
-  insertedCount: integer("inserted_count").notNull().default(0),
-  updatedCount: integer("updated_count").notNull().default(0),
-  skippedCount: integer("skipped_count").notNull().default(0),
-  reviewCount: integer("review_count").notNull().default(0),
-  playlistAdditionCount: integer("playlist_addition_count").notNull().default(0),
-  artistsProcessedCount: integer("artists_processed_count").notNull().default(0),
-  duplicatesIgnoredCount: integer("duplicates_ignored_count").notNull().default(0),
-  detailedExpiresAt: timestamp("detailed_expires_at", { withTimezone: true }),
-  providerResults: jsonb("provider_results")
-    .notNull()
-    .default(sql`'{}'::jsonb`),
-  metadata: jsonb("metadata")
-    .notNull()
-    .default(sql`'{}'::jsonb`),
-  errors: jsonb("errors")
-    .notNull()
-    .default(sql`'[]'::jsonb`),
-});
+export const scanRuns = pgTable(
+  "scan_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    provider: providerEnum("provider"),
+    status: scanStatusEnum("status").notNull().default("running"),
+    dryRun: boolean("dry_run").notNull().default(false),
+    triggerType: text("trigger_type").notNull().default("manual"),
+    providersRequested: text("providers_requested")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    providersCompleted: text("providers_completed")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    providersFailed: text("providers_failed")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    artistFilter: text("artist_filter"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    discoveredCount: integer("discovered_count").notNull().default(0),
+    insertedCount: integer("inserted_count").notNull().default(0),
+    updatedCount: integer("updated_count").notNull().default(0),
+    skippedCount: integer("skipped_count").notNull().default(0),
+    reviewCount: integer("review_count").notNull().default(0),
+    playlistAdditionCount: integer("playlist_addition_count").notNull().default(0),
+    artistsProcessedCount: integer("artists_processed_count").notNull().default(0),
+    duplicatesIgnoredCount: integer("duplicates_ignored_count").notNull().default(0),
+    detailedExpiresAt: timestamp("detailed_expires_at", { withTimezone: true }),
+    providerResults: jsonb("provider_results")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    metadata: jsonb("metadata")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    errors: jsonb("errors")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+  },
+  (table) => [
+    index("scan_runs_started_history_idx").on(table.startedAt, table.id),
+    index("scan_runs_status_provider_started_idx").on(
+      table.status,
+      table.provider,
+      table.startedAt,
+    ),
+  ],
+);
 
 export const spotifyProviderState = pgTable("spotify_provider_state", {
   id: text("id").primaryKey().default("global"),
@@ -777,7 +798,10 @@ export const spotifyArtistCoverage = pgTable(
     createdAt,
     updatedAt,
   },
-  (table) => [index("spotify_artist_coverage_status_idx").on(table.status, table.updatedAt)],
+  (table) => [
+    index("spotify_artist_coverage_status_idx").on(table.status, table.updatedAt),
+    index("spotify_artist_coverage_reconcile_idx").on(table.partial, table.status, table.updatedAt),
+  ],
 );
 
 export const spotifyCatalogReleases = pgTable(
@@ -833,6 +857,12 @@ export const spotifyReleaseTrackRetrievals = pgTable(
   (table) => [
     uniqueIndex("spotify_release_track_retrieval_album_unique").on(table.spotifyAlbumId),
     index("spotify_release_track_retrieval_status_idx").on(table.status, table.updatedAt),
+    index("spotify_release_track_retrieval_resume_idx").on(
+      table.status,
+      table.nextOffset,
+      table.updatedAt,
+    ),
+    index("spotify_release_track_retrieval_release_idx").on(table.releaseId),
   ],
 );
 
@@ -981,6 +1011,7 @@ export const releaseCandidates = pgTable(
       table.providerReleaseId,
       table.providerTrackId,
     ),
+    index("release_candidates_matched_track_seen_idx").on(table.matchedTrackId, table.firstSeenAt),
   ],
 );
 
@@ -1005,6 +1036,7 @@ export const sourceEvidence = pgTable(
       table.externalId,
       table.payloadHash,
     ),
+    index("source_evidence_candidate_idx").on(table.candidateId),
   ],
 );
 
@@ -1150,8 +1182,19 @@ export const feedItems = pgTable(
       .on(table.userId, table.appearanceId)
       .where(sql`${table.appearanceId} is not null and ${table.state} <> 'needs_review'`),
     index("feed_user_state_seen_idx").on(table.userId, table.state, table.firstSeenAt),
+    index("feed_user_seen_id_idx").on(table.userId, table.firstSeenAt, table.id),
+    index("feed_user_release_seen_idx").on(table.userId, table.releaseId, table.firstSeenAt),
+    index("feed_track_idx").on(table.trackId),
+    index("feed_appearance_idx").on(table.appearanceId),
   ],
 );
+
+export const feedRevisions = pgTable("feed_revisions", {
+  id: text("id").primaryKey().default("global"),
+  revision: bigint("revision", { mode: "number" }).notNull().default(0),
+  itemCount: integer("item_count").notNull().default(0),
+  updatedAt,
+});
 
 export const playlistTargets = pgTable(
   "playlist_targets",
@@ -1196,6 +1239,7 @@ export const playlistExports = pgTable(
       table.playlistTargetId,
       table.providerTrackId,
     ),
+    index("playlist_export_track_status_idx").on(table.trackId, table.status),
   ],
 );
 
