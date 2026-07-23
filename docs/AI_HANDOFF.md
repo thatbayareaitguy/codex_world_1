@@ -90,6 +90,9 @@ documents may retain historical status language.
   tests in 38 files, 72 PostgreSQL integration tests in 13 files, and 23 Playwright tests passed.
 - Live-validation checkpoint: 29 focused unit tests in 5 files and 26 focused PostgreSQL
   integration tests in 3 files passed with no relevant skips.
+- Blocked 100-artist preflight rerun: the same 29 focused unit tests and 26 focused PostgreSQL
+  integration tests passed. The tests confirm existing tick safeguards but do not provide an
+  exact-100 cross-tick campaign boundary.
 - Initial and final scheduler plan checks started zero provider requests, claimed no lease, and made
   no domain mutation.
 
