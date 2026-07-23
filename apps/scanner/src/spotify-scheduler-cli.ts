@@ -15,6 +15,7 @@ import {
   spotifyReleaseTrackRetrievals,
   startSpotifyReleaseTrackRetrieval,
   SpotifyTokenManager,
+  queueSpotifyCampaignReleaseTrackWork,
   type SpotifySchedulerClaim,
   type SpotifySchedulerLimits,
 } from "@radar/db";
@@ -28,6 +29,8 @@ import {
   type SpotifyArtistMapping,
 } from "@radar/providers";
 import { and, eq } from "drizzle-orm";
+import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { loadLocalEnvironment } from "./local-env";
 import { persistCandidates, runScanUnlocked } from "./scan";
 import {
@@ -127,7 +130,7 @@ async function main(): Promise<void> {
   }
 }
 
-async function createProductionSchedulerExecutor(
+export async function createProductionSchedulerExecutor(
   db: ReturnType<typeof createDatabase>["db"],
   configuration: ProviderConfiguration,
 ): Promise<SpotifySchedulerExecutor> {
@@ -197,7 +200,11 @@ async function executeProductionWork(
       deferSpotifyReleaseDetails: true,
       reportProgress: () => Promise.resolve(),
       requestGateWrapper: context.wrapRequestGate,
-      schedulerContext: { workId: work.id, workType: work.workType },
+      schedulerContext: {
+        ...(campaignContext(work) ?? {}),
+        workId: work.id,
+        workType: work.workType,
+      },
       signal: context.signal,
     },
   );
@@ -245,49 +252,66 @@ async function executeReleaseDetailWork(
     mappings: [],
     releaseTrackResume: await loadSpotifyReleaseTrackResume(db),
   });
-  await provider.scanReleaseDetails(
-    mapping,
-    { id: work.spotifyAlbumId, total_tracks: catalog.totalTracks },
-    {
-      filter: { artistId: work.artistId, provider: "spotify" },
-      onReleaseTrackError: (error) =>
-        markSpotifyReleaseTrackInterrupted(db, {
-          errorClassification: error.classification,
-          spotifyAlbumId: error.externalReleaseId,
-          status: error.status,
-        }),
-      onReleaseTrackPage: async (page: ProviderReleaseTrackPage) => {
-        await persistCandidates(db, page.candidates, {
-          artistId: work.artistId!,
-          dryRun: false,
-          full: false,
-          provider: "spotify",
-          source: "spotify_scheduler_detail",
-        });
-        await recordSpotifyReleaseTrackPage(db, {
-          ...(page.errorClassification ? { errorClassification: page.errorClassification } : {}),
-          expectedTotalTracks: page.expectedTotalTracks,
-          finishedAt: page.finishedAt,
-          items: page.items,
-          nextOffset: page.nextOffset,
-          offset: page.offset,
-          spotifyAlbumId: page.externalReleaseId,
-          startedAt: page.startedAt,
-          terminal: page.terminal,
-        });
+  try {
+    await provider.scanReleaseDetails(
+      mapping,
+      { id: work.spotifyAlbumId, total_tracks: catalog.totalTracks },
+      {
+        filter: { artistId: work.artistId, provider: "spotify" },
+        onReleaseTrackError: (error) =>
+          markSpotifyReleaseTrackInterrupted(db, {
+            errorClassification: error.classification,
+            spotifyAlbumId: error.externalReleaseId,
+            status: error.status,
+          }),
+        onReleaseTrackPage: async (page: ProviderReleaseTrackPage) => {
+          await persistCandidates(db, page.candidates, {
+            artistId: work.artistId!,
+            dryRun: false,
+            full: false,
+            provider: "spotify",
+            source: "spotify_scheduler_detail",
+          });
+          await recordSpotifyReleaseTrackPage(db, {
+            ...(page.errorClassification ? { errorClassification: page.errorClassification } : {}),
+            expectedTotalTracks: page.expectedTotalTracks,
+            finishedAt: page.finishedAt,
+            items: page.items,
+            nextOffset: page.nextOffset,
+            offset: page.offset,
+            spotifyAlbumId: page.externalReleaseId,
+            startedAt: page.startedAt,
+            terminal: page.terminal,
+          });
+        },
+        onReleaseTrackStart: (release) =>
+          startSpotifyReleaseTrackRetrieval(db, {
+            expectedTotalTracks: release.expectedTotalTracks,
+            spotifyAlbumId: release.externalReleaseId,
+          }),
+        signal: context.signal,
       },
-      onReleaseTrackStart: (release) =>
-        startSpotifyReleaseTrackRetrieval(db, {
-          expectedTotalTracks: release.expectedTotalTracks,
-          spotifyAlbumId: release.externalReleaseId,
-        }),
-      signal: context.signal,
-    },
-  );
-  await markSpotifyReleaseDetailsFetched(db, {
-    artistId: work.artistId,
-    spotifyAlbumId: work.spotifyAlbumId,
-  });
+    );
+    await markSpotifyReleaseDetailsFetched(db, {
+      artistId: work.artistId,
+      spotifyAlbumId: work.spotifyAlbumId,
+    });
+  } finally {
+    const campaign = campaignContext(work);
+    if (campaign) {
+      const retrieval = await db.query.spotifyReleaseTrackRetrievals.findFirst({
+        where: eq(spotifyReleaseTrackRetrievals.spotifyAlbumId, work.spotifyAlbumId),
+      });
+      if (retrieval && retrieval.status !== "completed") {
+        await queueSpotifyCampaignReleaseTrackWork(db, {
+          campaignId: campaign.campaignId,
+          campaignMemberId: campaign.campaignMemberId,
+          releaseTrackRetrievalId: retrieval.id,
+          spotifyAlbumId: work.spotifyAlbumId,
+        });
+      }
+    }
+  }
 }
 
 async function createSchedulerSpotifyClient(
@@ -347,7 +371,25 @@ function abbreviate(value: string): string {
   return value.length <= 12 ? value : `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
 
-if (process.env.VITEST !== "true") {
+function campaignContext(work: SpotifySchedulerClaim): {
+  campaignId: string;
+  campaignMemberId: string | null;
+} | null {
+  if (!("campaignId" in work) || typeof work.campaignId !== "string") return null;
+  return {
+    campaignId: work.campaignId,
+    campaignMemberId:
+      "campaignMemberId" in work && typeof work.campaignMemberId === "string"
+        ? work.campaignMemberId
+        : null,
+  };
+}
+
+if (
+  process.env.VITEST !== "true" &&
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
   main().catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.message : "Scheduler failed."}\n`);
     process.exitCode = 1;

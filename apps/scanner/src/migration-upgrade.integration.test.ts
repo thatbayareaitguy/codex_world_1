@@ -281,6 +281,7 @@ it("upgrades the pre-appearance schema through release repair and feed scaling",
     await applyMigration(client, 12);
     await applyMigration(client, 13);
     await applyMigration(client, 14);
+    await applyMigration(client, 15);
     const [revisionBefore] = await client<Array<{ item_count: number; revision: string }>>`
       select item_count, revision from feed_revisions where id = 'global'
     `;
@@ -314,9 +315,12 @@ it("upgrades the pre-appearance schema through release repair and feed scaling",
       "spotify_request_events_scheduler_idx",
       "spotify_scheduler_work_album_idx",
       "spotify_scheduler_work_artist_idx",
+      "spotify_scheduler_work_campaign_idx",
       "spotify_scheduler_work_due_idx",
       "spotify_scheduler_work_lease_idx",
       "spotify_scheduler_work_type_due_idx",
+      "spotify_sync_campaign_member_status_idx",
+      "spotify_sync_campaign_status_idx",
       "track_availability_track_provider_idx",
       "track_external_track_provider_idx",
     ];
@@ -358,6 +362,7 @@ async function applyMigration(client: postgres.Sql, index: number): Promise<void
     "0012_common_newton_destine.sql",
     "0013_moaning_kid_colt.sql",
     "0014_parallel_quasar.sql",
+    "0015_bounded_spotify_campaign.sql",
   ];
   const file = files.find((name) => name.startsWith(prefix));
   if (!file) throw new Error(`Migration ${prefix} was not found`);

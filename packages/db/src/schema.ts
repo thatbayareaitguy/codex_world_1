@@ -125,6 +125,25 @@ export const spotifySchedulerWorkSourceEnum = pgEnum("spotify_scheduler_work_sou
   "validation",
   "repair",
 ]);
+export const spotifySyncCampaignStatusEnum = pgEnum("spotify_sync_campaign_status", [
+  "planned",
+  "running",
+  "canary_review",
+  "base_target_reached",
+  "draining",
+  "paused",
+  "completed",
+  "cancelled",
+  "failed",
+]);
+export const spotifySyncCampaignMemberStatusEnum = pgEnum("spotify_sync_campaign_member_status", [
+  "pending",
+  "reserved",
+  "succeeded",
+  "blocked",
+  "skipped",
+  "cancelled",
+]);
 export const musicbrainzBatchStatusEnum = pgEnum("musicbrainz_batch_status", [
   "pending",
   "running",
@@ -658,6 +677,51 @@ export const spotifySchedulerState = pgTable("spotify_scheduler_state", {
   updatedAt,
 });
 
+export const spotifySyncCampaigns = pgTable(
+  "spotify_sync_campaigns",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    campaignKey: text("campaign_key").notNull(),
+    campaignType: text("campaign_type").notNull().default("bounded_initial_sync"),
+    status: spotifySyncCampaignStatusEnum("status").notNull().default("planned"),
+    targetSuccesses: integer("target_successes").notNull(),
+    canaryTarget: integer("canary_target").notNull(),
+    qualifyingSuccessCount: integer("qualifying_success_count").notNull().default(0),
+    activeReservationCount: integer("active_reservation_count").notNull().default(0),
+    baselineArtistCount: integer("baseline_artist_count").notNull(),
+    orderingVersion: text("ordering_version").notNull().default("scheduler-priority-v1"),
+    baseIntervalMs: integer("base_interval_ms").notNull(),
+    nextBaseClaimAt: timestamp("next_base_claim_at", { withTimezone: true }),
+    canaryPassedAt: timestamp("canary_passed_at", { withTimezone: true }),
+    createdAt,
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    pausedAt: timestamp("paused_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    failedAt: timestamp("failed_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    stopReason: text("stop_reason"),
+    lastError: text("last_error"),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    effectiveConfiguration: jsonb("effective_configuration").notNull(),
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("spotify_sync_campaign_key_unique").on(table.campaignKey),
+    index("spotify_sync_campaign_status_idx").on(table.status, table.createdAt),
+    index("spotify_sync_campaign_lease_idx").on(table.leaseExpiresAt),
+    check(
+      "spotify_sync_campaign_targets_check",
+      sql`${table.targetSuccesses} > 0 and ${table.canaryTarget} > 0 and ${table.canaryTarget} <= ${table.targetSuccesses} and ${table.baselineArtistCount} >= ${table.targetSuccesses}`,
+    ),
+    check(
+      "spotify_sync_campaign_counts_check",
+      sql`${table.qualifyingSuccessCount} >= 0 and ${table.activeReservationCount} >= 0 and ${table.qualifyingSuccessCount} + ${table.activeReservationCount} <= ${table.targetSuccesses}`,
+    ),
+    check("spotify_sync_campaign_interval_check", sql`${table.baseIntervalMs} >= 10000`),
+  ],
+);
+
 export const spotifyRequestEvents = pgTable(
   "spotify_request_events",
   {
@@ -979,6 +1043,10 @@ export const spotifySchedulerWork = pgTable(
       { onDelete: "cascade" },
     ),
     reconciliationCycleId: uuid("reconciliation_cycle_id"),
+    campaignId: uuid("campaign_id").references(() => spotifySyncCampaigns.id, {
+      onDelete: "set null",
+    }),
+    campaignMemberId: uuid("campaign_member_id"),
     priority: integer("priority").notNull().default(100),
     dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
     notBefore: timestamp("not_before", { withTimezone: true }),
@@ -1004,6 +1072,12 @@ export const spotifySchedulerWork = pgTable(
     index("spotify_scheduler_work_lease_idx").on(table.leaseExpiresAt),
     index("spotify_scheduler_work_artist_idx").on(table.artistId, table.status),
     index("spotify_scheduler_work_album_idx").on(table.spotifyAlbumId, table.workType),
+    index("spotify_scheduler_work_campaign_idx").on(
+      table.campaignId,
+      table.status,
+      table.workType,
+      table.dueAt,
+    ),
     check(
       "spotify_scheduler_work_target_check",
       sql`(
@@ -1015,6 +1089,52 @@ export const spotifySchedulerWork = pgTable(
     check(
       "spotify_scheduler_work_lease_check",
       sql`(${table.status} = 'leased' and ${table.leaseOwner} is not null and ${table.leaseExpiresAt} is not null) or (${table.status} <> 'leased' and ${table.leaseOwner} is null and ${table.leaseExpiresAt} is null)`,
+    ),
+  ],
+);
+
+export const spotifySyncCampaignMembers = pgTable(
+  "spotify_sync_campaign_members",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => spotifySyncCampaigns.id, { onDelete: "cascade" }),
+    artistId: uuid("artist_id")
+      .notNull()
+      .references(() => artists.id, { onDelete: "restrict" }),
+    schedulerWorkId: uuid("scheduler_work_id").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    baselineSpotifyArtistId: text("baseline_spotify_artist_id").notNull(),
+    baselineEligibleAt: timestamp("baseline_eligible_at", { withTimezone: true }).notNull(),
+    status: spotifySyncCampaignMemberStatusEnum("status").notNull().default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    reservationToken: uuid("reservation_token"),
+    reservedAt: timestamp("reserved_at", { withTimezone: true }),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    qualifiedAt: timestamp("qualified_at", { withTimezone: true }),
+    blockedReason: text("blocked_reason"),
+    lastError: text("last_error"),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("spotify_sync_campaign_member_artist_unique").on(table.campaignId, table.artistId),
+    uniqueIndex("spotify_sync_campaign_member_ordinal_unique").on(table.campaignId, table.ordinal),
+    uniqueIndex("spotify_sync_campaign_member_work_unique").on(
+      table.campaignId,
+      table.schedulerWorkId,
+    ),
+    index("spotify_sync_campaign_member_status_idx").on(
+      table.campaignId,
+      table.status,
+      table.ordinal,
+    ),
+    index("spotify_sync_campaign_member_lease_idx").on(table.leaseExpiresAt),
+    check("spotify_sync_campaign_member_ordinal_check", sql`${table.ordinal} > 0`),
+    check(
+      "spotify_sync_campaign_member_reservation_check",
+      sql`(${table.status} = 'reserved' and ${table.reservationToken} is not null and ${table.reservedAt} is not null and ${table.leaseExpiresAt} is not null) or (${table.status} <> 'reserved' and ${table.reservationToken} is null and ${table.reservedAt} is null and ${table.leaseExpiresAt} is null)`,
     ),
   ],
 );

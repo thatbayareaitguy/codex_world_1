@@ -1,17 +1,27 @@
 # Implementation Plan
 
-## Current: rolling 24-hour Spotify scheduler
+## Current: bounded initial Spotify synchronization
 
-Design and credential-free implementation are complete. Production execution and automatic mode remain disabled pending a separately approved ten-artist live validation.
+The rolling scheduler is implemented and bounded-live validated. Migration `0015` adds the minimal
+durable campaign boundary needed to authorize an exact number of first-successful artist scans
+across independent scheduler ticks.
 
-1. Completed in migration `0014`: disabled-by-default scheduler state, claimable typed work, leases, due times, and request-event work context.
-2. Completed: one-artist, six-request, 90-second ticks using the existing global lock, Spotify request gate, cooldown, and a ten-second production minimum.
-3. Completed: one durable queue for initial and recurring base checks, release details, album-track repair, and reconciliation while existing coverage and track checkpoints remain authoritative.
-4. Completed: read-only planning, injected credential-free execution, disabled production capability, doctor diagnostics, status APIs, and a collapsible UI panel.
-5. Completed credential-free: deterministic unit tests, PostgreSQL lease and restart tests, clean and upgrade migrations, and a 593-artist simulated rolling day.
-6. Next approval gate: a separate ten-artist live validation review. Do not activate automatic mode, register Windows Task Scheduler, or use Batch 3 before that review.
+1. Completed: deterministic baseline snapshot of active, confirmed, never-successfully-scanned
+   artists, campaign lifecycle, deadline, status, and configuration snapshot.
+2. Completed: transactional qualifying-slot reservation, exactly-once success conversion, expired
+   reservation recovery, ten-success canary pause, and exact target guard.
+3. Completed: campaign attribution for release-detail and release-track work, with unrelated detail
+   and reconciliation work excluded from campaign execution.
+4. Completed: plan/status/member/work and lifecycle CLI, doctor diagnostics, one-work campaign tick,
+   and temporary non-overlapping Windows Task Scheduler scripts.
+5. Verified credential-free: 280 unit tests, 78 PostgreSQL integration tests, clean and upgrade
+   migrations, 593/101/492 scale simulation, concurrent race at 99, strict typecheck, lint, build,
+   23 Playwright tests, and doctor.
+6. Next authorized phase: commit and push the implementation, then create one live campaign with
+   target 100, canary 10, and an eight-hour deadline. Automatically continue only after the canary
+   integrity checks pass.
 
-Batch 3 remains untouched. Automatic mode and any use of Batch 3 require separate user approval.
+Batch 3, playlist operations, reconciliation, and the remaining initial watchlist stay untouched.
 
 ## Completed milestones (archived)
 

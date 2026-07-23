@@ -134,6 +134,8 @@ export interface ScanRuntime {
   reportProgress: (metadata: Record<string, unknown>, force?: boolean) => Promise<void>;
   requestGateWrapper?: (gate: SpotifyRequestGate) => SpotifyRequestGate;
   schedulerContext?: {
+    campaignId?: string;
+    campaignMemberId?: string | null;
     workId: string;
     workType: "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation";
   };
@@ -535,6 +537,12 @@ export async function runScanUnlocked(
                     )) {
                       await queueSpotifyReleaseDetailWork(db, {
                         artistId: page.currentUnitId,
+                        ...(runtime.schedulerContext?.campaignId
+                          ? {
+                              campaignId: runtime.schedulerContext.campaignId,
+                              campaignMemberId: runtime.schedulerContext.campaignMemberId ?? null,
+                            }
+                          : {}),
                         dueAt: page.finishedAt,
                         spotifyAlbumId: release.externalReleaseId,
                       });

@@ -20,7 +20,7 @@ export const spotifySchedulerWindowMs = 24 * 60 * 60_000;
 export const spotifySchedulerLeaseMs = 120_000;
 
 type SchedulerTransaction = Parameters<Parameters<RadarDatabase["transaction"]>[0]>[0];
-type SchedulerDatabase = RadarDatabase | SchedulerTransaction;
+export type SchedulerDatabase = RadarDatabase | SchedulerTransaction;
 
 export type SpotifySchedulerMode = "disabled" | "planning" | "validation" | "automatic" | "paused";
 export type SpotifySchedulerWorkType =
@@ -101,7 +101,7 @@ export async function reconcileSpotifySchedulerWork(
     .insert(spotifySchedulerState)
     .values({ id: spotifySchedulerStateId })
     .onConflictDoNothing();
-  const eligible = await eligibleSpotifyArtists(db);
+  const eligible = await loadEligibleSpotifyArtists(db);
   const neverScanned = eligible.filter((artist) => artist.lastSuccessfulAt === null);
   const neverDueAt = new Map(
     staggerSpotifyArtistsAcrossWindow(neverScanned, now).map((artist) => [
@@ -258,7 +258,13 @@ export async function reconcileSpotifySchedulerWork(
 
 export async function queueSpotifyReleaseDetailWork(
   db: RadarDatabase,
-  input: { artistId: string; dueAt?: Date; spotifyAlbumId: string },
+  input: {
+    artistId: string;
+    campaignId?: string | null;
+    campaignMemberId?: string | null;
+    dueAt?: Date;
+    spotifyAlbumId: string;
+  },
 ): Promise<void> {
   await insertSpotifyReleaseDetailWork(db, {
     ...input,
@@ -286,12 +292,20 @@ export async function markSpotifyReleaseDetailsFetched(
 
 async function insertSpotifyReleaseDetailWork(
   db: SchedulerDatabase,
-  input: { artistId: string; dueAt: Date; spotifyAlbumId: string },
+  input: {
+    artistId: string;
+    campaignId?: string | null;
+    campaignMemberId?: string | null;
+    dueAt: Date;
+    spotifyAlbumId: string;
+  },
 ): Promise<void> {
   await db
     .insert(spotifySchedulerWork)
     .values({
       artistId: input.artistId,
+      campaignId: input.campaignId ?? null,
+      campaignMemberId: input.campaignMemberId ?? null,
       dueAt: input.dueAt,
       priority: 30,
       source: "recurring",
@@ -483,7 +497,7 @@ export async function getSpotifySchedulerStatus(
   const provider = await db.query.spotifyProviderState.findFirst({
     where: eq(spotifyProviderState.id, "global"),
   });
-  const eligible = await eligibleSpotifyArtists(db);
+  const eligible = await loadEligibleSpotifyArtists(db);
   const work = await db.select().from(spotifySchedulerWork);
   const requests = await db
     .select({
@@ -662,7 +676,7 @@ async function selectSpotifySchedulerCandidate(
   });
 }
 
-async function eligibleSpotifyArtists(db: SchedulerDatabase) {
+export async function loadEligibleSpotifyArtists(db: SchedulerDatabase) {
   const rows = await db
     .select({
       artistId: artistFollows.artistId,

@@ -5,6 +5,7 @@ import {
   operationLocks,
   scanRuns,
   spotifyReleaseTrackCompletenessSummary,
+  spotifySyncCampaigns,
 } from "@radar/db";
 import { isValidRedditUserAgent, loadProviderConfiguration } from "@radar/providers";
 import { desc, eq, sql } from "drizzle-orm";
@@ -45,6 +46,14 @@ export interface DoctorDatabaseStatus {
     blocked: number;
     mode: string;
     queued: number;
+  };
+  spotifySyncCampaign?: {
+    activeReservations: number;
+    leaseActive: boolean;
+    leaseStale: boolean;
+    status: string;
+    successes: number;
+    target: number;
   };
   staleLocks: number;
 }
@@ -198,6 +207,23 @@ export async function collectDoctorReport(
               ),
         );
       }
+      if (databaseStatus.spotifySyncCampaign) {
+        const campaign = databaseStatus.spotifySyncCampaign;
+        checks.push(
+          campaign.leaseStale
+            ? action(
+                "Spotify sync campaign",
+                `${campaign.successes} of ${campaign.target} qualifying successes; stale campaign lease detected.`,
+                "Confirm no campaign tick is active before allowing lease-expiry recovery.",
+                false,
+              )
+            : ready(
+                "Spotify sync campaign",
+                `${campaign.status}; ${campaign.successes} of ${campaign.target} qualifying successes; ${campaign.activeReservations} active reservations; ${campaign.leaseActive ? "one active lease" : "no active lease"}.`,
+                false,
+              ),
+        );
+      }
     } catch (databaseError) {
       checks.push(
         error(
@@ -325,6 +351,7 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
     let spotifyCooldownUntil: string | undefined;
     let spotifyReleaseTracks: DoctorDatabaseStatus["spotifyReleaseTracks"];
     let spotifyScheduler: DoctorDatabaseStatus["spotifyScheduler"];
+    let spotifySyncCampaign: DoctorDatabaseStatus["spotifySyncCampaign"];
     try {
       const [failed] = await db
         .select({ count: sql<number>`count(*)::int` })
@@ -363,6 +390,21 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
         mode: scheduler.mode,
         queued: Object.values(scheduler.backlog).reduce((total, value) => total + value, 0),
       };
+      const campaign = await db.query.spotifySyncCampaigns.findFirst({
+        where: sql`${spotifySyncCampaigns.status} in ('planned', 'running', 'canary_review', 'base_target_reached', 'draining', 'paused')`,
+        orderBy: desc(spotifySyncCampaigns.createdAt),
+      });
+      if (campaign) {
+        const current = new Date();
+        spotifySyncCampaign = {
+          activeReservations: campaign.activeReservationCount,
+          leaseActive: Boolean(campaign.leaseExpiresAt && campaign.leaseExpiresAt > current),
+          leaseStale: Boolean(campaign.leaseExpiresAt && campaign.leaseExpiresAt <= current),
+          status: campaign.status,
+          successes: campaign.qualifyingSuccessCount,
+          target: campaign.targetSuccesses,
+        };
+      }
     } catch {
       // Migration status already explains why operational tables cannot be read.
     }
@@ -376,6 +418,7 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
       spotifyCooldownActive,
       ...(spotifyReleaseTracks ? { spotifyReleaseTracks } : {}),
       ...(spotifyScheduler ? { spotifyScheduler } : {}),
+      ...(spotifySyncCampaign ? { spotifySyncCampaign } : {}),
       ...(spotifyCooldownUntil ? { spotifyCooldownUntil } : {}),
       staleLocks,
     };

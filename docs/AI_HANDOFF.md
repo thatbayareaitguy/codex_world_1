@@ -1,133 +1,90 @@
 # AI Handoff
 
-Updated: 2026-07-22 18:38 PDT (UTC-07:00)
+Updated: 2026-07-22 19:40 PDT (UTC-07:00)
 
-This is the canonical current implementation and operational snapshot. Design and milestone
-documents may retain historical status language.
+This is the canonical current implementation and operational snapshot. It contains no credentials
+or raw provider data.
 
 ## Repository State
 
 - Branch: `codex/release-radar-hardening`.
-- HEAD and upstream: `d5e3ffb44f84d104ca3f4a1f60f852f3ad910bd6`; ahead/behind `0/0` before this handoff edit.
-- Worktree: `docs/AI_HANDOFF.md` is the only expected modification from this update.
-- Scheduler implementation: `9d2742dabad4aaed28b5cf365ef5e92162d86db6`.
-- Current milestone: the proposed 100-artist initial-sync run is **blocked before live execution**.
-  The current scheduler cannot atomically prevent a 101st first-successful scan.
+- Implementation checkpoint: the commit containing this handoff, with parent
+  `8262f27defaa9959bee70df6716a4927688919f0`.
+- Worktree and upstream: expected clean and synchronized after the amended checkpoint is pushed.
+- Current milestone: bounded Spotify sync campaign is implemented and credential-free verified.
+  The next internal phase is the explicitly authorized live campaign for exactly 100 first-successful
+  artist scans, with an automatic integrity gate at 10.
 
-## Architecture
+## Architecture And Database
 
-- TypeScript pnpm monorepo: Next.js web/API in `apps/web`, short-lived scanner and operations
-  commands in `apps/scanner`, provider-neutral matching in `packages/core`, Drizzle/PostgreSQL in
-  `packages/db`, validated adapters in `packages/providers`, and fixtures in `packages/testing`.
-- PostgreSQL is authoritative for canonical artists, provider mappings, releases, tracks,
-  appearances, evidence, feed state, cursors, cooldowns, request telemetry, locks, and scheduler
-  work.
-- Spotify, MusicBrainz, and mock execution are isolated behind provider interfaces and independent
-  request gates. Canonical matching remains provider-neutral and evidence-backed.
-- The Spotify scheduler uses durable typed work, due times, expiring leases, the global operation
-  lock, one PostgreSQL-backed request gate, persistent cooldowns, and short-lived one-work ticks.
-- Spotify playlist export is a separate default-disabled, add-only path restricted to one
-  server-configured owned private playlist. It is not part of discovery scheduling.
+- TypeScript pnpm monorepo: Next.js web/API, short-lived Node scanner, provider-neutral core,
+  Drizzle/PostgreSQL repositories, runtime-validated provider adapters, and test fixtures.
+- PostgreSQL is authoritative for canonical music data, provider evidence, request telemetry,
+  cooldowns, leases, scheduler work, album retrieval checkpoints, and bounded campaign state.
+- Migration `0015_bounded_spotify_campaign.sql` adds campaign records, deterministic baseline
+  membership, exact-success reservations, canary state, deadline and lease state, configuration
+  snapshots, and campaign attribution on scheduler work. Production has 16 applied migrations.
+- A campaign snapshots active, confirmed Spotify-mapped artists without successful coverage. A
+  row-locked claim reserves one target slot atomically. Completion converts that reservation once,
+  so concurrent claims cannot pass artist 100. The same guard pauses base claims at artist 10 until
+  the canary transition is explicitly passed.
+- Campaign ticks reuse the existing global operation lock, PostgreSQL Spotify request gate,
+  persistent cooldown, scheduler work, release ingestion, and album-track checkpoints. One tick
+  handles one work item, at most six requests, at most 90 seconds, and never less than 10 seconds
+  between Spotify request starts.
+- Campaign-created release detail and track work is durably attributed and can drain after the base
+  target. Unrelated scheduler and reconciliation work remains untouched.
 
-## Database And Operations
+## Operational State
 
-- Status: **verified operational**. Doctor reports `READY`; the app responds on
-  `http://127.0.0.1:3000`; PostgreSQL is available.
-- Migrations: 15 forward migrations through `0014_parallel_quasar.sql`.
-- Watchlist: 593 active artists, all 593 with confirmed Spotify mappings; 101 have successful
-  Spotify coverage and 492 remain never scanned successfully.
-- Canonical data: 94 releases, 187 tracks, 205 appearances, 205 candidates, 205 evidence rows,
-  205 feed rows, and 94 Spotify artwork records.
-- Album integrity: 94 complete, 0 incomplete, 0 missing cursors, and 0 track-count discrepancies.
-- Scheduler: database mode `disabled`; 593 base items queued, 99 reconciliation items queued,
-  1 release-detail item completed, 0 blocked, and 0 active leases.
-- Spotify: 501 request events; no active cooldown or request lease. The preserved historical
-  cooldown expired at `2026-07-22T04:05:30.437Z`.
-- Locks: 0 operation locks and 0 scan locks. No matching Windows scheduled task is registered.
-- Batch 3: `pending`, with 15 pending artists and 0 batch-attributed requests.
-- Latest backup: `ts-new-music-radar-2026-07-23T00-50-01-467Z.dump`, stored outside the repository.
-- Blocked-run verification: no new backup, Windows task, canary tick, provider request, scheduler
-  mutation, or Batch 3 mutation was started. Counts remain 101 scanned and 492 never scanned.
+- Doctor: `READY`; PostgreSQL and the loopback application are available.
+- Watchlist: 593 active confirmed Spotify mappings; 101 successful; 492 never successfully scanned.
+- Spotify request telemetry: 501 events; latest start `2026-07-23T01:16:41.451Z`. This did not change
+  during implementation or testing.
+- Spotify: no active cooldown, provider lease, scheduler lease, operation lock, scan lock, or active
+  campaign. Scheduler database mode and automatic capability remain disabled.
+- Scheduler queue: 692 queued, 0 blocked, and no active work lease. Album integrity is 94 complete,
+  0 partial, 0 missing tracks, and 0 discrepancies.
+- Batch 3 remains untouched: 15 pending artists and zero batch-attributed requests.
+- Playlist writes remain disabled and no allowed playlist is configured. No playlist request ran.
+- Pre-migration backup is outside the repository at
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-07-23T01-54-55-613Z.dump`.
 
-## Verified Capabilities
+## Verification
 
-- **Verified live:** Spotify OAuth/account connection, followed-artist persistence, bounded
-  artist-catalog discovery, durable scheduler base work, release-detail follow-up, canonical
-  persistence, artwork persistence, evidence/feed creation, restart/resume, cooldown checks, and
-  globally serialized request starts.
-- **Bounded live scheduler result:** 10 natural base artists plus 1 related detail tick; 12 HTTP
-  starts, all 200; 10.011-second minimum interval; no overlap, 429, cooldown, playlist request,
-  other-provider request, duplicate, stranded lease, or lock.
-- **Verified live persistence:** the validation created 1 release, track, appearance, candidate,
-  evidence row, feed row, and artwork row. All integrity checks remained clean.
-- **Verified by tests and prior UI validation:** canonical matching, source evidence, watchlist,
-  feed and review state, scan history, Spotify import, manual artist management, and idempotent
-  persistence.
-- **Verified operational safeguards:** playlist writes, Reddit, automatic scheduler execution,
-  and manual SoundCloud links all remain disabled by default.
+- Format and lint passed with zero warnings.
+- Strict TypeScript passed across all six configured projects.
+- Unit: 280 tests in 41 files passed.
+- PostgreSQL integration: 78 tests in 14 files passed, including clean migration, upgrade migration,
+  cooldown, restart, lease recovery, campaign attribution, canary, exact-target, and concurrency.
+- Scale-shaped simulation: 593 mapped artists, 101 prior successes, 492-member baseline, canary at
+  exactly 10, one winner in a concurrent race at 99, exactly 100 successes, zero 101st claim, and
+  drained campaign backlog.
+- Production Next.js build passed. Playwright: 23 tests passed. `git diff --check` passed.
+- No live provider request was made during implementation or verification.
 
-## Implemented, Partially Verified
+## Capability Status
 
-- **Partially verified:** rolling Spotify scheduling. Base and detail work are live-validated;
-  release-track interruption/resume, reconciliation selection, pause behavior, rolling ceilings,
-  and scale behavior are credential-free tested but were not exercised by this live sample.
-- **Partially verified:** MusicBrainz mapping/discovery and its independent 1-second database gate
-  are implemented and tested. No MusicBrainz request was made during the scheduler validation.
-- **Implemented, not activated:** the one-tick PowerShell launcher. No recurring Windows task is
-  registered, and automatic database/environment capabilities remain disabled.
-- **Not implemented:** a durable bounded-sync campaign containing the baseline unscanned artist
-  set, qualifying-success counter, target count, and atomic claim guard.
-- **Implemented, not live-write verified:** add-only Spotify playlist export safeguards. Writes
-  remain disabled and no allowed playlist is configured.
-- **Implemented, blocked:** Reddit evidence adapter and local parsing. Live access requires explicit
-  Reddit approval and compatible free access.
-- **Implemented, disabled:** safe manual SoundCloud outbound links. No SoundCloud API or page
-  request exists.
+- **Verified:** canonical watchlist and feed, Spotify import and bounded discovery, artwork,
+  evidence, album-track resume/completeness, global Spotify request gate and cooldown, scan history,
+  MusicBrainz mapping/discovery, MockProvider, and default-off policy controls.
+- **Implemented and credential-free verified:** durable bounded campaigns, exact target and canary
+  guards, campaign work attribution, plan/status/member/work CLI, pause/resume/cancel, and temporary
+  non-overlapping Windows task scripts.
+- **Not live verified:** the bounded campaign runner, automatic canary continuation, exact live 100
+  boundary, campaign backlog drain, and temporary Windows task recovery.
+- **Blocked:** Reddit live access pending approval. SoundCloud remains manual outbound links only.
+- **Deferred:** playlist writes, Batch 3, remaining initial sync, reconciliation cadence, and all
+  excluded providers and playback.
 
-## Validation Evidence
+## Risks And Next Action
 
-- Scheduler implementation checkpoint: format, lint, strict typecheck, production build, 273 unit
-  tests in 38 files, 72 PostgreSQL integration tests in 13 files, and 23 Playwright tests passed.
-- Live-validation checkpoint: 29 focused unit tests in 5 files and 26 focused PostgreSQL
-  integration tests in 3 files passed with no relevant skips.
-- Blocked 100-artist preflight rerun: the same 29 focused unit tests and 26 focused PostgreSQL
-  integration tests passed. The tests confirm existing tick safeguards but do not provide an
-  exact-100 cross-tick campaign boundary.
-- Initial and final scheduler plan checks started zero provider requests, claimed no lease, and made
-  no domain mutation.
-
-## Blockers, Risks, And Known Defects
-
-- Spotify Development Mode limits are unpublished. Ten-second pacing passed this bounded sample
-  but is not proof of full-watchlist or long-running reliability.
-- Automatic execution is intentionally unavailable until a separate activation milestone registers
-  and validates an external launcher, monitoring, pause behavior, and rollback.
-- The initial synchronization is incomplete: 492 mapped artists have no successful Spotify scan.
-- The scheduler can enforce one artist per tick but cannot enforce exactly 100 first-successful
-  artists across independent ticks. `spotify_scheduler_state.cycle_target_artists` describes the
-  whole eligible cycle, not a milestone cohort or completion boundary. The existing PowerShell
-  launcher only invokes one tick and does not supervise a durable milestone counter. External
-  polling would leave a race in which a 101st artist could be claimed.
-- The 24-hour scheduler window is centralized but not runtime configurable.
-- `docs/architecture.md` and `docs/spotify-rolling-scheduler-design.md` still contain historical
-  text saying the scheduler is not live-provider tested; this file supersedes that status.
-- Spotify cross-service policy language remains broad. No mixed playback, cross-provider artwork,
-  or automated SoundCloud integration is permitted.
-
-## Immediate Next Step
-
-Run a separate credential-free implementation milestone for bounded synchronization campaigns.
-Add a forward migration and transactional repository that snapshots the authorized baseline artist
-set, records qualifying first successes, atomically blocks base claims at the target, allows only
-campaign-created detail/track work to drain, and exposes safe status. Add unit, PostgreSQL, launcher,
-restart, race, cooldown, and exact-100 boundary tests before requesting live authorization again.
-
-## Explicitly Deferred
-
-- Remaining 492-artist initial synchronization and all Batch 3 execution.
-- The first-10 canary and temporary Windows task from the blocked 100-artist milestone.
-- Production-scale scheduler claims, faster request pacing, and automatic reconciliation cadence.
-- Spotify playlist writes until separately authorized and configured.
-- Reddit live access until approval is recorded and free compatible access is confirmed.
-- YouTube, SoundCloud API/OAuth/playlists, Apple Music, TIDAL, playback, notifications, multi-user
-  support, cloud infrastructure, and commercial deployment.
+- Spotify Development Mode limits remain unpublished. Ten-second pacing and durable cooldowns
+  reduce risk but cannot guarantee the absence of HTTP 429 responses.
+- A temporary Windows task depends on the local machine remaining available; database state remains
+  authoritative through sleep, process exit, and restart.
+- Next action after committing and pushing this implementation: re-run live preflight, create an
+  out-of-tree backup, create one 100-target/10-canary/eight-hour campaign, validate plan mode, then
+  register the temporary task and monitor the automatic canary.
+- Decision needed from the user after this milestone: review the exact first-100 result before
+  authorizing the remaining initial synchronization.

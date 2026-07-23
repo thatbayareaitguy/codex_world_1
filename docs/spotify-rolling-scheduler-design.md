@@ -2,11 +2,32 @@
 
 Verified: 2026-07-22
 
-Status: designed, not implemented, not live-provider tested, and not proven at scale.
+Status: rolling scheduler implemented and bounded-live validated; bounded campaign implemented and
+credential-free verified, but not yet live-campaign validated or proven at production scale.
 
 This document defines one durable scheduler for initial synchronization and normal recurring
 Spotify discovery. It does not authorize provider requests, playlist access, Batch 3 work, or a
 runtime configuration change.
+
+## Bounded Campaign Extension
+
+Migration `0015_bounded_spotify_campaign.sql` adds campaign and membership records plus campaign
+attribution on scheduler work. It snapshots never-successfully-scanned artists in deterministic
+scheduler order and reuses existing coverage, scheduler work, release checkpoints, locks, request
+gate, cooldown, and persistence.
+
+Each base claim locks the campaign and atomically reserves one target slot. A committed first
+success converts the reservation exactly once. The guard prevents claims when successes plus active
+reservations reach either the unapproved canary boundary or the final target. Expired and failed
+claims release reservations; duplicate completion does not increment the count. Campaign-created
+detail and track work can drain after the base target while unrelated detail and reconciliation work
+remain ineligible.
+
+The `spotify:campaign` CLI provides create, plan, start/resume, pause, cancel, tick, status, member,
+work, and canary operations. One campaign tick runs one work item with the existing six-request,
+90-second, single-concurrency, ten-second-start safeguards. The temporary Windows launcher uses an
+explicit campaign ID, one-minute invocations, and `IgnoreNew`; campaign state and base spacing are
+durable in PostgreSQL. No task is registered or automatic mode enabled by source installation.
 
 ## Verified Baseline
 

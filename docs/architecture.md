@@ -54,7 +54,29 @@ The implemented scheduled strategy uses persisted 15-artist batches. Daily disco
 
 The rolling scheduler in [spotify-rolling-scheduler-design.md](spotify-rolling-scheduler-design.md) is implemented as a short-lived tick backed by `spotify_scheduler_state` and `spotify_scheduler_work`. It uses dynamic 24-hour base due times, deterministic PostgreSQL claims, expiring work leases, the existing `scan:global` operation lock, the existing Spotify request gate and cooldown, and explicit planning, validation, automatic, paused, and disabled modes. Each tick handles at most one artist, six Spotify request starts, and 90 seconds. OAuth refreshes and retries that start a request consume the same budget.
 
-Base checks can defer newly selected release details into typed work. The detail worker reuses the existing candidate persistence, matching, evidence, release-track page, and resume checkpoints. Incomplete track retrievals become repair work, while deeper artist reconciliation is eligible only when due base and urgent release work do not need the slot. Planning constructs no production provider client and performs no durable mutation. Production capability and database mode both default disabled. The repository includes a one-tick PowerShell launcher, but does not register or enable a Windows scheduled task. The implementation is credential-free tested, not live-provider tested, and not proven at production scale. Existing manual batches remain available and Batch 3 remains untouched.
+Base checks can defer newly selected release details into typed work. The detail worker reuses the existing candidate persistence, matching, evidence, release-track page, and resume checkpoints. Incomplete track retrievals become repair work, while deeper artist reconciliation is eligible only when due base and urgent release work do not need the slot. Planning constructs no production provider client and performs no durable mutation. Production capability and database mode both default disabled. The scheduler tick and ten-second pacing have bounded live validation, but automatic long-running execution is not yet live verified. Existing manual batches remain available and Batch 3 remains untouched.
+
+### Bounded initial-sync campaigns
+
+Migration `0015_bounded_spotify_campaign.sql` adds a minimal campaign layer without replacing the
+rolling scheduler. A campaign snapshots the deterministic set of active, confirmed Spotify-mapped
+artists that have no successful coverage. A row lock on the campaign serializes claims, and a base
+claim reserves one qualifying slot in the same transaction that leases its scheduler work. A first
+successful coverage transition converts that reservation exactly once. Failed, expired, skipped,
+or externally completed members release or avoid the reservation.
+
+The campaign enforces a durable canary boundary and final target using
+`qualifying_success_count + active_reservations`. No eleventh base artist can be claimed before the
+ten-success canary is passed, and no 101st base artist can be claimed at a target of 100. Base due
+times are persisted and derived from the 24-hour active-mapped population interval, while all HTTP
+starts still use the shared ten-second Spotify gate.
+
+Release-detail and release-track scheduler work created by campaign scans carries campaign
+attribution. After the base target, only that attributed work may drain; unrelated detail work and
+reconciliation remain untouched. Campaign status, member state, attributed work, planning,
+pause/resume/cancel, canary advancement, and one-tick execution are exposed through
+`pnpm spotify:campaign`. Temporary Windows task scripts run non-overlapping short-lived ticks and
+store no credentials. No permanent task is registered by the implementation.
 
 Spotify catalog coverage is separate from canonical music data. `spotify_artist_coverage` stores the current cycle, next offset, status, page counts, and reconciliation timestamps. `spotify_page_scans` retains page-level operational history. `spotify_catalog_releases` retains validated provider summaries so old or unchanged releases do not require full album requests and do not create feed records. The artist becomes fully reconciled only after Spotify omits the next-page cursor.
 
