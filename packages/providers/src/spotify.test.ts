@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  inspectSpotifyErrorResponse,
   parseSpotifyRetryAfter,
   spotifyArtistAlbumsSchema,
   spotifyNextOffset,
@@ -60,6 +61,104 @@ describe("Spotify pagination cursors", () => {
     expect(() =>
       spotifyNextOffset("https://api.spotify.com/v1/artists/artist/albums?offset=nope", 90),
     ).toThrow("invalid next-page offset");
+  });
+});
+
+describe("Spotify 429 response evidence", () => {
+  it("recognizes only the documented QUOTA_EXCEEDED reason location", async () => {
+    await expect(
+      inspectSpotifyErrorResponse(
+        jsonResponse(
+          { error: { message: "quota reached", reason: "QUOTA_EXCEEDED", status: 429 } },
+          429,
+        ),
+      ),
+    ).resolves.toEqual({
+      rateLimit: {
+        classification: "quota_exceeded",
+        providerReasonToken: "QUOTA_EXCEEDED",
+      },
+      responseClassification: "json_error",
+    });
+
+    await expect(
+      inspectSpotifyErrorResponse(
+        jsonResponse({ error: { details: { reason: "QUOTA_EXCEEDED" } } }, 429),
+      ),
+    ).resolves.toEqual({
+      rateLimit: { classification: "unspecified_429" },
+      responseClassification: "json_error",
+    });
+  });
+
+  it.each([
+    ["missing reason", { error: { message: "rate limited" } }, "json_error"],
+    ["unexpected shape", { reason: "QUOTA_EXCEEDED" }, "json_other"],
+  ])("classifies %s as unspecified", async (_name, body, responseClassification) => {
+    await expect(inspectSpotifyErrorResponse(jsonResponse(body, 429))).resolves.toEqual({
+      rateLimit: { classification: "unspecified_429" },
+      responseClassification,
+    });
+  });
+
+  it("retains only bounded safe unknown reason tokens", async () => {
+    await expect(
+      inspectSpotifyErrorResponse(jsonResponse({ error: { reason: "NEW_LIMIT_REASON_2" } }, 429)),
+    ).resolves.toMatchObject({
+      rateLimit: {
+        classification: "unknown_reason",
+        providerReasonToken: "NEW_LIMIT_REASON_2",
+      },
+    });
+
+    for (const reason of ["unsafe reason: account text", "A".repeat(65)]) {
+      await expect(
+        inspectSpotifyErrorResponse(jsonResponse({ error: { reason } }, 429)),
+      ).resolves.toMatchObject({
+        rateLimit: { classification: "unknown_reason" },
+      });
+      expect(
+        (await inspectSpotifyErrorResponse(jsonResponse({ error: { reason } }, 429))).rateLimit,
+      ).not.toHaveProperty("providerReasonToken");
+    }
+  });
+
+  it.each([
+    ["empty", new Response("", { status: 429 }), "empty"],
+    ["malformed", new Response("{", { status: 429 }), "non_json"],
+    ["html", new Response("<html>limited</html>", { status: 429 }), "non_json"],
+    [
+      "oversized",
+      new Response("x".repeat(4_097), {
+        headers: { "content-type": "text/plain" },
+        status: 429,
+      }),
+      "oversized",
+    ],
+  ])("handles an %s 429 body without retaining it", async (_name, response, classification) => {
+    await expect(inspectSpotifyErrorResponse(response)).resolves.toEqual({
+      rateLimit: { classification: "unspecified_429" },
+      responseClassification: classification,
+    });
+  });
+
+  it("treats response-body read failures as unspecified", async () => {
+    const response = new Response("", { status: 429 });
+    Object.defineProperty(response, "clone", {
+      value: () => {
+        throw new Error("synthetic body read failure with sensitive text");
+      },
+    });
+    await expect(inspectSpotifyErrorResponse(response)).resolves.toEqual({
+      rateLimit: { classification: "unspecified_429" },
+      responseClassification: "unreadable",
+    });
+  });
+
+  it("does not attach a rate-limit classification to non-429 errors", async () => {
+    await expect(
+      inspectSpotifyErrorResponse(jsonResponse({ error: { reason: "QUOTA_EXCEEDED" } }, 403)),
+    ).resolves.toEqual({ responseClassification: "json_error" });
   });
 });
 
@@ -260,10 +359,12 @@ describe("SpotifyClient", () => {
       expect.objectContaining({
         errorClassification: "rate_limited_integer_seconds",
         parsedRetryAfterSeconds: "2",
+        rateLimitClassification: "unspecified_429",
         rawRetryAfter: "2",
         status: 429,
       }),
     );
+    expect(JSON.stringify(complete.mock.calls)).not.toContain("rate limited");
   });
 
   it("resolves a possibly refreshing token before acquiring an API request permit", async () => {

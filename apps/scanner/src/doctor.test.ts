@@ -103,6 +103,61 @@ describe("doctor", () => {
     });
   });
 
+  it("reports bounded Spotify 429 classifications without raw response content", async () => {
+    const report = await collectDoctorReport(
+      {
+        DATABASE_URL: "postgresql://secret:secret@127.0.0.1:5432/radar",
+        MUSICBRAINZ_ENABLED: "false",
+        REDDIT_ENABLED: "false",
+        SPOTIFY_ENABLED: "false",
+      },
+      {
+        databaseProbe: () =>
+          Promise.resolve({
+            ...databaseReady,
+            spotifyRateLimits: {
+              allTime: {
+                legacy_unknown: 1,
+                quota_exceeded: 2,
+                unknown_reason: 0,
+                unspecified_429: 1,
+              },
+              historicalUnclassifiedCount: 1,
+              last24Hours: {
+                legacy_unknown: 0,
+                quota_exceeded: 1,
+                unknown_reason: 0,
+                unspecified_429: 0,
+              },
+              last30Minutes: {
+                legacy_unknown: 0,
+                quota_exceeded: 1,
+                unknown_reason: 0,
+                unspecified_429: 0,
+              },
+              latest: {
+                classification: "quota_exceeded",
+                endpointCategory: "artist_albums",
+                observedAt: "2026-07-27T20:00:00.000Z",
+                parsedRetryAfterSeconds: "60",
+                providerReasonToken: "QUOTA_EXCEEDED",
+                rawRetryAfter: "60",
+              },
+            },
+          }),
+        directoryProbe: () => true,
+        expectedMigrationCount: 6,
+        pnpmVersion: "11.9.0",
+        portProbe: () => Promise.resolve("available"),
+      },
+    );
+    const output = formatDoctorReport(report);
+    expect(output).toContain("Latest quota_exceeded");
+    expect(output).toContain("reason QUOTA_EXCEEDED");
+    expect(output).toContain("legacy_unknown=1");
+    expect(output).not.toContain("provider response body");
+  });
+
   it("reports migrations and stale locks as actionable", async () => {
     const report = await collectDoctorReport(
       {

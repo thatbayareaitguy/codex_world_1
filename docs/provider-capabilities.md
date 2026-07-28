@@ -44,7 +44,9 @@ The only permitted paid prerequisite is the owner's existing Spotify Premium sub
 - [Get Album](https://developer.spotify.com/documentation/web-api/reference/get-an-album): the official album response includes cover-art URLs and dimensions; Spotify documents the images in widest-first order.
 - [Get Album Tracks](https://developer.spotify.com/documentation/web-api/reference/get-an-albums-tracks): offset pagination supports an explicit limit from 1 through 50. The production default remains 50; bounded live validation may explicitly use 10 without changing normal behavior.
 - [Spotify design guidelines](https://developer.spotify.com/documentation/design): Spotify visual content must remain in its original form and should link back to Spotify. The feed uses the original aspect ratio, no crop, overlay, download, proxy, or transformation, and a direct album link.
-- [Rate limits](https://developer.spotify.com/documentation/web-api/concepts/rate-limits) and [quota modes](https://developer.spotify.com/documentation/web-api/concepts/quota-modes): rolling 30-second application limit, integer-second `Retry-After`, unpublished Development Mode threshold, and Premium requirement.
+- [Rate limits](https://developer.spotify.com/documentation/web-api/concepts/rate-limits): HTTP 429 responses use integer-second `Retry-After`; the provider-directed wait remains authoritative.
+- [API calls and errors](https://developer.spotify.com/documentation/web-api/concepts/api-calls): the structured error object may contain an optional `reason`; the documented quota reason is `QUOTA_EXCEEDED`.
+- [July 2026 quota update](https://developer.spotify.com/blog/2026-07-23-web-api-quota-updates): Development Mode quota exhaustion now returns the structured `QUOTA_EXCEEDED` reason.
 - [Scopes](https://developer.spotify.com/documentation/web-api/concepts/scopes): `playlist-read-private` permits private playlist reads. `playlist-modify-private` grants account-level private-playlist mutation capabilities including creation, additions, removal, replacement, reordering, detail changes, cover upload, follow, and unfollow. Spotify does not offer a playlist-specific write scope.
 - [Get playlist](https://developer.spotify.com/documentation/web-api/reference/get-playlist), [read items](https://developer.spotify.com/documentation/web-api/reference/get-playlists-items), and [add items](https://developer.spotify.com/documentation/web-api/reference/add-items-to-playlist): current playlist paths use `/items`; additions accept at most 100 item URIs per request.
 - [Playlist concepts](https://developer.spotify.com/documentation/web-api/concepts/playlists): playlist authorization is granted through user scopes, and public/private reflects profile visibility rather than a per-playlist OAuth permission boundary.
@@ -52,7 +54,25 @@ The only permitted paid prerequisite is the owner's existing Spotify Premium sub
 
 Developer credentials require a Spotify developer account but no separate fee is documented. A paid Premium consumer account is required for the Development Mode app owner under the current rules. Initial authorization requests only `user-follow-read` and `playlist-read-private`. Playlist writes default off. Future add-only support requires `playlist-modify-private`, `SPOTIFY_PLAYLIST_WRITES_ENABLED=true`, and one valid `SPOTIFY_ALLOWED_PLAYLIST_ID`. The server and provider client both reject every other target and verify that the configured playlist is owned, private, and non-collaborative. The application never creates, renames, changes visibility, uploads artwork, follows, unfollows, removes, replaces, or reorders. This does not establish conclusive policy approval for the whole product.
 
-Spotify traffic is serialized through one database-backed client-ID gate at one request every five seconds. A 429 blocks every Spotify path until the persisted cooldown expires. Daily artist-album scans check page one for speed but retain a partial state and any deeper reconciliation cursor. Initial and periodic reconciliation resume in bounded page units until Spotify returns no next cursor. The endpoint documentation does not guarantee newest-first ordering, so old results never justify abandoning later pages. Provider catalog summaries prevent repeated detail fetches without creating canonical feed records for out-of-window releases. Completeness remains limited to the catalog Spotify exposes for the connected user's region. Full album responses already retrieved for new releases supply optional artwork metadata, so artwork adds no discovery request. Only validated HTTPS `i.scdn.co/image/...` URLs are retained, and the artwork link must be the matching `open.spotify.com/album/...` URL. See [Spotify Development Mode Scanning](spotify-development-mode-scanning.md).
+Spotify traffic is serialized through one database-backed client-ID gate with one concurrent request
+and a production minimum of ten seconds between request starts. A 429 blocks every Spotify path until
+the persisted cooldown expires. The response body is read through a 4 KB bounded parser that inspects
+only `error.reason`. Exact `QUOTA_EXCEEDED` is stored as `quota_exceeded`; a missing or unusable reason
+is `unspecified_429`; a bounded unknown token is `unknown_reason`; and historical events without
+stored evidence remain `legacy_unknown`. Raw bodies and arbitrary provider messages are not stored or
+logged, and classification does not change retry, pacing, or cooldown behavior. These details and
+official sources were verified 2026-07-27.
+
+Daily artist-album scans check page one for speed but retain a partial state and any deeper
+reconciliation cursor. Initial and periodic reconciliation resume in bounded page units until
+Spotify returns no next cursor. The endpoint documentation does not guarantee newest-first ordering,
+so old results never justify abandoning later pages. Provider catalog summaries prevent repeated
+detail fetches without creating canonical feed records for out-of-window releases. Completeness
+remains limited to the catalog Spotify exposes for the connected user's region. Full album responses
+already retrieved for new releases supply optional artwork metadata, so artwork adds no discovery
+request. Only validated HTTPS `i.scdn.co/image/...` URLs are retained, and the artwork link must be
+the matching `open.spotify.com/album/...` URL. See
+[Spotify Development Mode Scanning](spotify-development-mode-scanning.md).
 
 ## MusicBrainz Verification
 

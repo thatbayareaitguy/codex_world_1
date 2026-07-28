@@ -42,6 +42,7 @@ import {
   scanLocks,
   sourceEvidence,
   tracks,
+  trackCredits,
   trackAvailabilities,
   trackExternalIds,
   persistRedditListing,
@@ -54,7 +55,7 @@ import {
 import type { TrackCandidate } from "@radar/core";
 import { encryptSecret } from "@radar/providers";
 import { mockProviderFixture, syntheticRedditListing } from "@radar/testing";
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createSpotifyDryRunReport, persistCandidates, runScan } from "./scan";
 
@@ -201,7 +202,9 @@ describe.sequential("complete deterministic fake-provider workflow", () => {
   const connection = createDatabase(databaseUrl);
 
   beforeAll(async () => {
-    await connection.db.execute(sql`truncate table scan_runs restart identity cascade`);
+    await connection.db.execute(
+      sql`truncate table users, artists, releases, tracks, scan_runs restart identity cascade`,
+    );
   });
 
   afterAll(async () => {
@@ -871,9 +874,15 @@ describe.sequential("complete deterministic fake-provider workflow", () => {
 
   it("persists mocked Reddit evidence idempotently and purges deleted source content", async () => {
     const userId = await ensureLocalOwner(connection.db);
-    const spotifyBackedTrack = (await connection.db.select().from(tracks)).find(
-      (track) => track.normalizedTitle === "glass horizon",
-    );
+    const [spotifyBackedTrack] = await connection.db
+      .select({ id: tracks.id })
+      .from(tracks)
+      .innerJoin(trackCredits, eq(trackCredits.trackId, tracks.id))
+      .innerJoin(artists, eq(artists.id, trackCredits.artistId))
+      .where(
+        and(eq(tracks.normalizedTitle, "glass horizon"), eq(artists.normalizedName, "lumen field")),
+      )
+      .limit(1);
     expect(spotifyBackedTrack).toBeDefined();
     await connection.db
       .insert(trackAvailabilities)

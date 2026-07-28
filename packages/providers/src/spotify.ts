@@ -242,9 +242,23 @@ export interface SpotifyRequestCompletion {
   cooldownUntil?: Date;
   errorClassification?: string;
   parsedRetryAfterSeconds?: string;
+  providerReasonToken?: string;
+  rateLimitClassification?: Spotify429Classification;
   rawRetryAfter?: string;
   responseClassification?: string;
   status?: number;
+}
+
+export type Spotify429Classification = "quota_exceeded" | "unspecified_429" | "unknown_reason";
+
+export interface Spotify429ResponseEvidence {
+  classification: Spotify429Classification;
+  providerReasonToken?: string;
+}
+
+export interface SpotifyErrorResponseEvidence {
+  rateLimit?: Spotify429ResponseEvidence;
+  responseClassification: string;
 }
 
 export interface SpotifyRequestGate {
@@ -565,9 +579,8 @@ export class SpotifyClient {
           signal,
         });
 
-        const responseClassification = response.ok
-          ? undefined
-          : classifySpotifyErrorBody(await response.clone().text());
+        const errorResponse = response.ok ? undefined : await inspectSpotifyErrorResponse(response);
+        const responseClassification = errorResponse?.responseClassification;
         const retryEvidence =
           response.status === 429
             ? parseSpotifyRetryAfter(response.headers.get("retry-after"), new Date())
@@ -589,6 +602,11 @@ export class SpotifyClient {
                     ? { rawRetryAfter: retryEvidence.rawValue }
                     : {}),
                   errorClassification: `rate_limited_${retryEvidence.interpretation}`,
+                  ...(errorResponse?.rateLimit?.providerReasonToken
+                    ? { providerReasonToken: errorResponse.rateLimit.providerReasonToken }
+                    : {}),
+                  rateLimitClassification:
+                    errorResponse?.rateLimit?.classification ?? "unspecified_429",
                 }
               : {}),
           });
@@ -739,9 +757,8 @@ export class SpotifyOAuthClient {
         method: "POST",
         signal: AbortSignal.timeout(15_000),
       });
-      const responseClassification = response.ok
-        ? undefined
-        : classifySpotifyErrorBody(await response.clone().text());
+      const errorResponse = response.ok ? undefined : await inspectSpotifyErrorResponse(response);
+      const responseClassification = errorResponse?.responseClassification;
       const retryEvidence =
         response.status === 429
           ? parseSpotifyRetryAfter(response.headers.get("retry-after"), new Date())
@@ -763,6 +780,11 @@ export class SpotifyOAuthClient {
                   ? { rawRetryAfter: retryEvidence.rawValue }
                   : {}),
                 errorClassification: `rate_limited_${retryEvidence.interpretation}`,
+                ...(errorResponse?.rateLimit?.providerReasonToken
+                  ? { providerReasonToken: errorResponse.rateLimit.providerReasonToken }
+                  : {}),
+                rateLimitClassification:
+                  errorResponse?.rateLimit?.classification ?? "unspecified_429",
               }
             : {}),
         });
@@ -860,15 +882,100 @@ export function spotifyEndpointCategory(path: string, method = "GET"): string {
   return "other";
 }
 
-function classifySpotifyErrorBody(body: string): string {
-  if (body.trim().length === 0) return "empty";
+const spotifyErrorBodyMaximumBytes = 4_096;
+const spotifyReasonTokenPattern = /^[A-Z0-9_]{1,64}$/;
+
+export async function inspectSpotifyErrorResponse(
+  response: Response,
+): Promise<SpotifyErrorResponseEvidence> {
+  const body = await readBoundedSpotifyErrorBody(response);
+  if (body.kind !== "text") {
+    return {
+      ...(response.status === 429
+        ? { rateLimit: { classification: "unspecified_429" as const } }
+        : {}),
+      responseClassification: body.kind,
+    };
+  }
+  const parsed = parseSpotifyErrorBody(body.value);
+  return {
+    ...(response.status === 429 ? { rateLimit: classifySpotify429Reason(parsed.value) } : {}),
+    responseClassification: parsed.classification,
+  };
+}
+
+function parseSpotifyErrorBody(body: string): {
+  classification: string;
+  value: unknown;
+} {
+  if (body.trim().length === 0) return { classification: "empty", value: null };
   try {
     const parsed: unknown = JSON.parse(body);
-    if (parsed && typeof parsed === "object" && "error" in parsed) return "json_error";
-    return "json_other";
+    return {
+      classification:
+        parsed && typeof parsed === "object" && "error" in parsed ? "json_error" : "json_other",
+      value: parsed,
+    };
   } catch {
-    return "non_json";
+    return { classification: "non_json", value: null };
   }
+}
+
+function classifySpotify429Reason(body: unknown): Spotify429ResponseEvidence {
+  if (!isRecord(body) || !isRecord(body.error) || typeof body.error.reason !== "string") {
+    return { classification: "unspecified_429" };
+  }
+  const reason = body.error.reason;
+  if (reason === "QUOTA_EXCEEDED") {
+    return { classification: "quota_exceeded", providerReasonToken: reason };
+  }
+  if (spotifyReasonTokenPattern.test(reason)) {
+    return { classification: "unknown_reason", providerReasonToken: reason };
+  }
+  return { classification: "unknown_reason" };
+}
+
+async function readBoundedSpotifyErrorBody(
+  response: Response,
+): Promise<{ kind: "oversized" | "unreadable" } | { kind: "text"; value: string }> {
+  try {
+    const clone = response.clone();
+    const contentLength = clone.headers.get("content-length");
+    if (
+      contentLength &&
+      /^\d+$/.test(contentLength) &&
+      BigInt(contentLength) > BigInt(spotifyErrorBodyMaximumBytes)
+    ) {
+      return { kind: "oversized" };
+    }
+    if (!clone.body) return { kind: "text", value: "" };
+    const reader = clone.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let byteLength = 0;
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      byteLength += chunk.value.byteLength;
+      if (byteLength > spotifyErrorBodyMaximumBytes) {
+        void reader.cancel().catch(() => undefined);
+        return { kind: "oversized" };
+      }
+      chunks.push(chunk.value);
+    }
+    const bytes = new Uint8Array(byteLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return { kind: "text", value: new TextDecoder().decode(bytes) };
+  } catch {
+    return { kind: "unreadable" };
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 async function abortableSleep(

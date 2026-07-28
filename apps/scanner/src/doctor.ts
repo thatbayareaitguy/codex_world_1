@@ -1,5 +1,6 @@
 import {
   createDatabase,
+  getSpotify429Telemetry,
   getSpotifyOperationalStatus,
   getSpotifySchedulerStatus,
   operationLocks,
@@ -33,6 +34,20 @@ export interface DoctorDatabaseStatus {
   resolvedScans?: number;
   spotifyCooldownActive?: boolean;
   spotifyCooldownUntil?: string;
+  spotifyRateLimits?: {
+    allTime: Record<string, number>;
+    historicalUnclassifiedCount: number;
+    last24Hours: Record<string, number>;
+    last30Minutes: Record<string, number>;
+    latest: {
+      classification: string;
+      endpointCategory: string;
+      observedAt: string;
+      parsedRetryAfterSeconds: string | null;
+      providerReasonToken: string | null;
+      rawRetryAfter: string | null;
+    } | null;
+  };
   spotifyReleaseTracks?: {
     awaitingResume: number;
     completed: number;
@@ -186,6 +201,22 @@ export async function collectDoctorReport(
           ready(
             "Spotify album completeness",
             `${albumTracks.completed} complete; ${albumTracks.partial} partial; ${albumTracks.awaitingResume} awaiting resume; ${albumTracks.missingTracks} tracks missing; ${albumTracks.discrepancies} discrepancies.`,
+            false,
+          ),
+        );
+      }
+      if (databaseStatus.spotifyRateLimits) {
+        const telemetry = databaseStatus.spotifyRateLimits;
+        const rolling = (counts: Record<string, number>) =>
+          ["quota_exceeded", "unspecified_429", "unknown_reason", "legacy_unknown"]
+            .map((classification) => `${classification}=${counts[classification] ?? 0}`)
+            .join(", ");
+        checks.push(
+          ready(
+            "Spotify 429 telemetry",
+            telemetry.latest
+              ? `Latest ${telemetry.latest.classification} at ${telemetry.latest.observedAt} on ${telemetry.latest.endpointCategory}; reason ${telemetry.latest.providerReasonToken ?? "none"}; Retry-After ${telemetry.latest.parsedRetryAfterSeconds ?? telemetry.latest.rawRetryAfter ?? "unavailable"}. Last 30 minutes: ${rolling(telemetry.last30Minutes)}. Last 24 hours: ${rolling(telemetry.last24Hours)}. All time: ${rolling(telemetry.allTime)}; ${telemetry.historicalUnclassifiedCount} historical unclassified.`
+              : "No Spotify 429 request events are stored.",
             false,
           ),
         );
@@ -350,6 +381,7 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
     let spotifyCooldownActive = false;
     let spotifyCooldownUntil: string | undefined;
     let spotifyReleaseTracks: DoctorDatabaseStatus["spotifyReleaseTracks"];
+    let spotifyRateLimits: DoctorDatabaseStatus["spotifyRateLimits"];
     let spotifyScheduler: DoctorDatabaseStatus["spotifyScheduler"];
     let spotifySyncCampaign: DoctorDatabaseStatus["spotifySyncCampaign"];
     try {
@@ -383,6 +415,19 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
       spotifyCooldownActive = spotify.cooldownActive;
       spotifyCooldownUntil = spotify.cooldownUntil?.toISOString();
       spotifyReleaseTracks = await spotifyReleaseTrackCompletenessSummary(db);
+      const rateLimits = await getSpotify429Telemetry(db);
+      spotifyRateLimits = {
+        allTime: rateLimits.counts.allTime,
+        historicalUnclassifiedCount: rateLimits.historicalUnclassifiedCount,
+        last24Hours: rateLimits.counts.last24Hours,
+        last30Minutes: rateLimits.counts.last30Minutes,
+        latest: rateLimits.latest
+          ? {
+              ...rateLimits.latest,
+              observedAt: rateLimits.latest.observedAt.toISOString(),
+            }
+          : null,
+      };
       const scheduler = await getSpotifySchedulerStatus(db);
       spotifyScheduler = {
         activeLease: Boolean(scheduler.activeLease),
@@ -417,6 +462,7 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
       resolvedScans,
       spotifyCooldownActive,
       ...(spotifyReleaseTracks ? { spotifyReleaseTracks } : {}),
+      ...(spotifyRateLimits ? { spotifyRateLimits } : {}),
       ...(spotifyScheduler ? { spotifyScheduler } : {}),
       ...(spotifySyncCampaign ? { spotifySyncCampaign } : {}),
       ...(spotifyCooldownUntil ? { spotifyCooldownUntil } : {}),

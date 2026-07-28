@@ -15,6 +15,7 @@ import {
   clearInvalidSpotifyCooldown,
   createSpotifyRequestGate,
   deferSpotifyRequests,
+  getSpotify429Telemetry,
   getSpotifyOperationalStatus,
   SpotifyCooldownError,
 } from "./spotify-request-gate";
@@ -153,6 +154,68 @@ describe("Spotify global request gate", () => {
     await expect(
       clearInvalidSpotifyCooldown(db, "The provider returned a valid integer wait."),
     ).resolves.toBe(false);
+  });
+
+  it("persists safe 429 classifications and aggregates legacy events without inference", async () => {
+    const gate = createSpotifyRequestGate(db, 10_000);
+    const permit = await gate.acquire({ endpointCategory: "artist_albums", method: "GET" });
+    await gate.complete(permit, {
+      cooldownUntil: new Date("2026-07-27T20:01:00.000Z"),
+      errorClassification: "rate_limited_integer_seconds",
+      parsedRetryAfterSeconds: "60",
+      providerReasonToken: "QUOTA_EXCEEDED",
+      rateLimitClassification: "quota_exceeded",
+      rawRetryAfter: "60",
+      responseClassification: "json_error",
+      status: 429,
+    });
+    await db.insert(spotifyRequestEvents).values({
+      endpointCategory: "album_tracks",
+      method: "GET",
+      queueWaitMs: 0,
+      startedAt: new Date("2026-07-27T19:00:00.000Z"),
+      status: 429,
+    });
+
+    const telemetry = await getSpotify429Telemetry(db, new Date("2026-07-27T20:10:00.000Z"));
+    expect(telemetry.counts.allTime).toEqual({
+      legacy_unknown: 1,
+      quota_exceeded: 1,
+      unknown_reason: 0,
+      unspecified_429: 0,
+    });
+    expect(telemetry.counts.last30Minutes.quota_exceeded).toBe(1);
+    expect(telemetry.historicalUnclassifiedCount).toBe(1);
+    expect(telemetry.latest).toMatchObject({
+      classification: "quota_exceeded",
+      endpointCategory: "artist_albums",
+      parsedRetryAfterSeconds: "60",
+      providerReasonToken: "QUOTA_EXCEEDED",
+      rawRetryAfter: "60",
+    });
+
+    const stored = await db.query.spotifyRequestEvents.findFirst({
+      where: (table, { eq }) => eq(table.id, permit.eventId),
+    });
+    expect(stored).toMatchObject({
+      providerReasonToken: "QUOTA_EXCEEDED",
+      rateLimitClassification: "quota_exceeded",
+    });
+    expect(JSON.stringify(stored)).not.toContain("response body");
+  });
+
+  it("rejects arbitrary provider text at the persistence boundary", async () => {
+    const gate = createSpotifyRequestGate(db, 10_000);
+    const permit = await gate.acquire({ endpointCategory: "artist_albums", method: "GET" });
+    await gate.complete(permit, {
+      providerReasonToken: "unsafe provider message: personal data",
+      rateLimitClassification: "unknown_reason",
+      status: 429,
+    });
+    const stored = await db.query.spotifyRequestEvents.findFirst({
+      where: (table, { eq }) => eq(table.id, permit.eventId),
+    });
+    expect(stored?.providerReasonToken).toBeNull();
   });
 
   it("allows confirmed correction only for an invalid local parse", async () => {

@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-07-27 15:15 PDT (UTC-07:00)
+Updated: 2026-07-27 17:54 PDT (UTC-07:00)
 
 This is the canonical implementation and operational snapshot. It excludes credentials, personal
 account data, authorization material, and raw provider payloads.
@@ -8,13 +8,13 @@ account data, authorization material, and raw provider payloads.
 ## Repository State
 
 - Branch: `codex/release-radar-hardening`.
-- Current checkpoint: the commit containing this handoff, based on
-  `3e0a8e45010f8e3665b8b6312f36ebc9cc2c7244`.
-- Worktree and upstream were clean and synchronized before this documentation update.
-- Current milestone: the second durable bounded Spotify campaign completed exactly 100 additional
-  first-successful artist scans.
-- Immediate next step: review this second 100-artist cohort, then explicitly authorize another
-  bounded cohort from the remaining 292 never-successfully-scanned artists.
+- Current checkpoint: the pending Spotify 429 classification commit, based on
+  `b8a04cd1814751b03c8396c72471e9a1d20a08b3`.
+- Upstream matched the base checkpoint at `0/0`; the worktree contains only this milestone's
+  implementation, migration, tests, and documentation.
+- Current milestone: safe Spotify 429 classification is implemented and credential-free verified.
+- Immediate next step: commit and push this implementation, then create the authorized final bounded
+  campaign for all 292 remaining never-successfully-scanned artists.
 
 ## Architecture And Database
 
@@ -22,7 +22,9 @@ account data, authorization material, and raw provider payloads.
   provider-neutral core, Drizzle/PostgreSQL repositories, validated provider adapters, and fixtures.
 - PostgreSQL is authoritative for canonical music data, source evidence, request telemetry,
   cooldowns, leases, scheduler work, album retrieval checkpoints, and campaign state.
-- Production has 16 applied forward migrations. The bounded campaign model stores deterministic
+- Production has 17 applied forward migrations. Migration `0016_spotify_429_classification` adds
+  nullable normalized classification and safe reason-token fields plus one diagnostic index. The
+  bounded campaign model stores deterministic
   baseline membership, exact-success reservations, deadlines, effective configuration, and work
   attribution.
 - Campaign ticks reuse the global operation lock, PostgreSQL Spotify request gate, provider cooldown,
@@ -30,6 +32,11 @@ account data, authorization material, and raw provider payloads.
   are at least 10 seconds apart, and each tick is bounded to six requests and 90 seconds.
 - Campaign release work is isolated by campaign ID. Reconciliation and ordinary scheduler work are
   ineligible in campaign mode.
+- Spotify 429 bodies are inspected only through a 4 KB parser at `error.reason`. Exact
+  `QUOTA_EXCEEDED` becomes `quota_exceeded`; missing or unusable reasons become `unspecified_429`;
+  bounded unknown tokens become `unknown_reason`; and pre-migration events remain
+  `legacy_unknown`. Raw bodies and arbitrary error messages are not stored or logged. Retry-After,
+  cooldown, pacing, and global-gate behavior are unchanged.
 
 ## Second Campaign Result
 
@@ -67,36 +74,46 @@ account data, authorization material, and raw provider payloads.
   was not executed by this campaign.
 - Batch 3 remains untouched: 15 pending artists and zero batch-attributed requests.
 - Playlist writes remain disabled. The campaign made zero playlist or MusicBrainz requests.
+- Spotify request telemetry remains 876 events with latest start
+  `2026-07-27T22:09:27.387Z`; credential-free implementation made zero provider requests or OAuth
+  refreshes. Doctor reports two historical `legacy_unknown` 429 events, no newly classified event,
+  and no active cooldown.
 - Pre-live backup remains outside source control:
   `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-07-27T15-38-01-673Z.dump`.
 
 ## Verification
 
-- Focused credential-free unit verification: 16 of 16 tests in 5 files passed.
-- Focused PostgreSQL integration verification: 32 of 32 tests in 4 files passed.
+- Focused Spotify and doctor unit verification: 49 of 49 tests passed.
+- Focused PostgreSQL classification, migration, and scan-isolation verification: 27 of 27 tests
+  passed.
 - Live campaign database checks passed for exact targeting, request serialization, pacing,
   campaign isolation, album completeness, duplicates, Batch 3 preservation, and cleanup.
-- Format, lint, strict TypeScript across six projects, production build, and 280 of 280 unit tests in
-  41 files passed. Playwright passed 23 of 23 tests.
-- The canonical PostgreSQL integration command reproducibly passed 77 of 78 tests. Its existing
-  mocked Reddit evidence assertion failed only in the full suite; the affected file passed 15 of 15
-  tests against a freshly prepared test database. This operations-only milestone did not change
-  application or test source.
+- Lint, strict TypeScript across six projects, production build, and 291 of 291 unit tests in 41
+  files passed. PostgreSQL integration passed 80 of 80 tests in 14 files, including clean and
+  upgrade migration paths. Playwright passed 23 of 23 tests. Final format and diff checks are
+  pending only the completed documentation update.
+- The prior mocked Reddit suite-order defect is corrected in test setup by selecting the exact
+  canonical artist credit for its same-title Spotify-backed fixture; no runtime Reddit behavior
+  changed.
 
 ## Capability Status
 
 - **Verified:** canonical watchlist and feed, Spotify import and bounded discovery, artwork, source
   evidence, album-track resume/completeness, global Spotify request gate and cooldown, scan history,
-  MusicBrainz mapping/discovery, MockProvider, and default-off policy controls.
+  safe 429 parsing and aggregation, MusicBrainz mapping/discovery, MockProvider, and default-off
+  policy controls.
 - **Live verified:** restart-safe campaign execution, exact 100 boundaries across two campaigns,
   campaign work attribution and drain, cooldown recovery, 10-second pacing, and temporary headless
   Windows execution.
 - **Partially verified:** Spotify Development Mode request tolerance. Two bounded cohorts completed,
   but unpublished limits remain variable and a prior campaign encountered one recoverable 429.
 - **Blocked:** Reddit live access pending approval. SoundCloud remains manual outbound links only.
-- **Known defect:** the full PostgreSQL integration suite has shared-state or suite-order sensitivity
-  in one mocked Reddit evidence assertion even though the same integration file passes in isolation.
-- **Planned:** a separately authorized bounded campaign from the remaining 292 artists.
+- **Implemented but not live-tested:** reason-bearing Spotify 429 classification. No live request was
+  made to manufacture a provider response; the path is verified with injected responses and
+  PostgreSQL integration tests.
+- **Known defect:** none currently blocks the final bounded campaign.
+- **Planned:** one authorized campaign snapshot containing all 292 remaining artists, followed by
+  campaign-attributed release-detail and track-work drain and full initial-sync evaluation.
 - **Deferred:** Batch 3, reconciliation execution, playlist writes, remaining provider integrations,
   playback, sleep-resume hardening, and a permanent production scheduler task.
 
@@ -104,6 +121,7 @@ account data, authorization material, and raw provider payloads.
 
 - Spotify Development Mode limits are unpublished. The global gate and durable cooldown make a 429
   recoverable but cannot guarantee it will not recur.
-- This campaign does not authorize another artist cohort.
-- User decision required: choose and authorize the next bounded cohort size after reviewing this
-  result.
+- Spotify 429 classification is diagnostic only. A valid Retry-After remains authoritative
+  regardless of classification.
+- The final 292-artist bounded campaign is authorized by the current milestone; no additional user
+  decision is required before its safety gates pass.

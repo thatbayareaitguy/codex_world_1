@@ -1,4 +1,5 @@
 import type {
+  Spotify429Classification,
   SpotifyRequestCompletion,
   SpotifyRequestGate,
   SpotifyRequestPermit,
@@ -41,6 +42,25 @@ export interface SpotifyOperationalStatus {
   queueDepth: number;
   rawRetryAfter: string | null;
   requestCount: number;
+}
+
+export type StoredSpotify429Classification = Spotify429Classification | "legacy_unknown";
+
+export interface Spotify429Telemetry {
+  counts: {
+    allTime: Record<StoredSpotify429Classification, number>;
+    last24Hours: Record<StoredSpotify429Classification, number>;
+    last30Minutes: Record<StoredSpotify429Classification, number>;
+  };
+  historicalUnclassifiedCount: number;
+  latest: {
+    classification: StoredSpotify429Classification;
+    endpointCategory: string;
+    observedAt: Date;
+    parsedRetryAfterSeconds: string | null;
+    providerReasonToken: string | null;
+    rawRetryAfter: string | null;
+  } | null;
 }
 
 export function createSpotifyRequestGate(
@@ -87,6 +107,52 @@ export async function getSpotifyOperationalStatus(
     queueDepth: state?.queueDepth ?? 0,
     rawRetryAfter: state?.rawRetryAfter ?? null,
     requestCount: state?.requestCount ?? 0,
+  };
+}
+
+export async function getSpotify429Telemetry(
+  db: RadarDatabase,
+  now = new Date(),
+): Promise<Spotify429Telemetry> {
+  const rows = await db
+    .select({
+      endpointCategory: spotifyRequestEvents.endpointCategory,
+      parsedRetryAfterSeconds: spotifyRequestEvents.parsedRetryAfterSeconds,
+      providerReasonToken: spotifyRequestEvents.providerReasonToken,
+      rateLimitClassification: spotifyRequestEvents.rateLimitClassification,
+      rawRetryAfter: spotifyRequestEvents.rawRetryAfter,
+      startedAt: spotifyRequestEvents.startedAt,
+    })
+    .from(spotifyRequestEvents)
+    .where(eq(spotifyRequestEvents.status, 429))
+    .orderBy(sql`${spotifyRequestEvents.startedAt} desc`);
+  const counts = {
+    allTime: emptySpotify429Counts(),
+    last24Hours: emptySpotify429Counts(),
+    last30Minutes: emptySpotify429Counts(),
+  };
+  const last24Hours = new Date(now.getTime() - 24 * 60 * 60_000);
+  const last30Minutes = new Date(now.getTime() - 30 * 60_000);
+  for (const row of rows) {
+    const classification = storedSpotify429Classification(row.rateLimitClassification);
+    counts.allTime[classification] += 1;
+    if (row.startedAt >= last24Hours) counts.last24Hours[classification] += 1;
+    if (row.startedAt >= last30Minutes) counts.last30Minutes[classification] += 1;
+  }
+  const latest = rows[0];
+  return {
+    counts,
+    historicalUnclassifiedCount: counts.allTime.legacy_unknown,
+    latest: latest
+      ? {
+          classification: storedSpotify429Classification(latest.rateLimitClassification),
+          endpointCategory: latest.endpointCategory,
+          observedAt: latest.startedAt,
+          parsedRetryAfterSeconds: latest.parsedRetryAfterSeconds,
+          providerReasonToken: latest.providerReasonToken,
+          rawRetryAfter: latest.rawRetryAfter,
+        }
+      : null,
   };
 }
 
@@ -269,6 +335,12 @@ async function completeSpotifyRequest(
         ...(result.errorClassification
           ? { errorClassification: result.errorClassification.slice(0, 100) }
           : {}),
+        ...(safeSpotifyProviderReasonToken(result.providerReasonToken)
+          ? { providerReasonToken: safeSpotifyProviderReasonToken(result.providerReasonToken) }
+          : {}),
+        ...(result.rateLimitClassification
+          ? { rateLimitClassification: result.rateLimitClassification }
+          : {}),
         ...(result.responseClassification
           ? { responseClassification: result.responseClassification.slice(0, 100) }
           : {}),
@@ -302,6 +374,26 @@ async function completeSpotifyRequest(
         ),
       );
   });
+}
+
+function emptySpotify429Counts(): Record<StoredSpotify429Classification, number> {
+  return {
+    legacy_unknown: 0,
+    quota_exceeded: 0,
+    unknown_reason: 0,
+    unspecified_429: 0,
+  };
+}
+
+function storedSpotify429Classification(value: string | null): StoredSpotify429Classification {
+  if (value === "quota_exceeded" || value === "unknown_reason" || value === "unspecified_429") {
+    return value;
+  }
+  return "legacy_unknown";
+}
+
+function safeSpotifyProviderReasonToken(value: string | undefined): string | undefined {
+  return value && /^[A-Z0-9_]{1,64}$/.test(value) ? value : undefined;
 }
 
 async function requestEndpointCategory(

@@ -736,6 +736,8 @@ export const spotifyRequestEvents = pgTable(
     parsedRetryAfterSeconds: text("parsed_retry_after_seconds"),
     cooldownUntil: timestamp("cooldown_until", { withTimezone: true }),
     errorClassification: text("error_classification"),
+    providerReasonToken: text("provider_reason_token"),
+    rateLimitClassification: text("rate_limit_classification"),
     responseClassification: text("response_classification"),
     schedulerWorkId: uuid("scheduler_work_id"),
     schedulerWorkType: spotifySchedulerWorkTypeEnum("scheduler_work_type"),
@@ -743,6 +745,11 @@ export const spotifyRequestEvents = pgTable(
   },
   (table) => [
     index("spotify_request_events_started_idx").on(table.startedAt),
+    index("spotify_request_events_429_classification_idx").on(
+      table.status,
+      table.rateLimitClassification,
+      table.startedAt,
+    ),
     index("spotify_request_events_scheduler_idx").on(table.schedulerWorkType, table.startedAt),
   ],
 );

@@ -44,7 +44,17 @@ The browser cannot supply or select a Spotify write target. `SPOTIFY_ALLOWED_PLA
 
 ## Resilience
 
-Provider clients have timeouts, bounded retries, structured errors, pagination, and rate-limit handling. Every Spotify Web API and token request uses one PostgreSQL-backed client-ID queue with a single lease, a ten-second production minimum start interval, safe request events, and a persistent global cooldown. A Spotify 429 is not retried. MusicBrainz uses one shared serial request gate. Reddit uses its own global request gate and cannot instantiate without recorded approval. Provider failures are isolated.
+Provider clients have timeouts, bounded retries, structured errors, pagination, and rate-limit
+handling. Every Spotify Web API and token request uses one PostgreSQL-backed client-ID queue with a
+single lease, a ten-second production minimum start interval, safe request events, and a persistent
+global cooldown. A Spotify 429 is not retried. Its body is inspected only through a bounded 4 KB
+parser at the documented `error.reason` location. Request telemetry stores the normalized
+`quota_exceeded`, `unspecified_429`, or `unknown_reason` classification and an optional safe reason
+token; historical events without that evidence aggregate as `legacy_unknown`. Raw response bodies
+and arbitrary messages are never retained. Doctor reports the latest safe event and rolling
+classification counts. Classification does not alter the request gate, pacing, Retry-After, or
+cooldown behavior. MusicBrainz uses one shared serial request gate. Reddit uses its own global
+request gate and cannot instantiate without recorded approval. Provider failures are isolated.
 
 One global operation lock serializes normal and provider-specific scans. Provider locks still guard persistence. Expired locks are visible through `scan:status` and only stale locks can be cleared. Detailed scan errors and metrics expire while aggregate history remains.
 
