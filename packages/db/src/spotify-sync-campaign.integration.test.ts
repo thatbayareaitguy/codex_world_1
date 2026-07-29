@@ -24,6 +24,7 @@ import {
   pauseSpotifySyncCampaign,
   planSpotifySyncCampaignTick,
   queueSpotifyCampaignReleaseTrackWork,
+  resumeSpotifySyncCampaign,
   startSpotifySyncCampaign,
 } from "./spotify-sync-campaign";
 import { queueSpotifyReleaseDetailWork, reconcileSpotifySchedulerWork } from "./spotify-scheduler";
@@ -158,6 +159,153 @@ describe("bounded Spotify sync campaign", () => {
     expect((await getSpotifySyncCampaignStatus(db, campaign.id))?.status).toBe("canary_review");
     expect(await pauseSpotifySyncCampaign(db, campaign.id, "manual review", now)).toBe(true);
     expect(await startSpotifySyncCampaign(db, campaign.id, now)).toBe(false);
+  });
+
+  it("resumes the same expired campaign with a bounded deadline and preserves progress", async () => {
+    const now = new Date("2026-07-23T01:00:00.000Z");
+    await createArtist("Completed before continuation");
+    await createArtist("Pending continuation");
+    await createArtist("Second pending continuation");
+    await reconcileSpotifySchedulerWork(db, now);
+    const campaign = await createSpotifySyncCampaign(db, {
+      canaryTarget: 3,
+      expiresAt: new Date(now.getTime() + 60_000),
+      now,
+      targetSuccesses: 3,
+    });
+    await startSpotifySyncCampaign(db, campaign.id, now);
+    const completed = await claimSpotifySyncCampaignWork(db, campaign.id, now);
+    await recordSuccess(completed!.artistId!, now);
+    await finishSpotifySyncCampaignWork(db, completed!, { status: "completed" }, now);
+    const detailWorkId = randomUUID();
+    await db.insert(spotifySchedulerWork).values({
+      campaignId: campaign.id,
+      campaignMemberId: completed!.campaignMemberId,
+      dueAt: now,
+      id: detailWorkId,
+      source: "initial",
+      spotifyAlbumId: "continuation-detail",
+      status: "queued",
+      workKey: "campaign-release-detail:continuation-detail",
+      workType: "release_detail",
+    });
+
+    const expiredAt = new Date(now.getTime() + 60_001);
+    expect(await claimSpotifySyncCampaignWork(db, campaign.id, expiredAt)).toBeNull();
+    expect(await getSpotifySyncCampaignStatus(db, campaign.id)).toMatchObject({
+      pendingMembers: 2,
+      qualifyingSuccesses: 1,
+      status: "paused",
+      stopReason: "hard_deadline_reached",
+    });
+
+    const continuationDeadline = new Date(expiredAt.getTime() + 24 * 60 * 60_000);
+    expect(
+      await resumeSpotifySyncCampaign(db, campaign.id, {
+        expiresAt: continuationDeadline,
+        now: expiredAt,
+      }),
+    ).toBe(true);
+    expect(await getSpotifySyncCampaignStatus(db, campaign.id)).toMatchObject({
+      campaignId: campaign.id,
+      detailBacklog: 1,
+      expiresAt: continuationDeadline,
+      pendingMembers: 2,
+      qualifyingSuccesses: 1,
+      status: "running",
+      target: 3,
+    });
+    expect(
+      await resumeSpotifySyncCampaign(db, campaign.id, {
+        expiresAt: continuationDeadline,
+        now: expiredAt,
+      }),
+    ).toBe(false);
+
+    const members = await db
+      .select()
+      .from(spotifySyncCampaignMembers)
+      .where(eq(spotifySyncCampaignMembers.campaignId, campaign.id));
+    expect(members).toHaveLength(3);
+    expect(members.filter((member) => member.status === "succeeded")).toHaveLength(1);
+    expect(members.filter((member) => member.status === "pending")).toHaveLength(2);
+    const detail = await db.query.spotifySchedulerWork.findFirst({
+      where: eq(spotifySchedulerWork.id, detailWorkId),
+    });
+    expect(detail).toMatchObject({ campaignId: campaign.id, status: "queued" });
+    const next = await planSpotifySyncCampaignTick(db, campaign.id, expiredAt);
+    expect(next).toMatchObject({
+      campaignId: campaign.id,
+      workType: "base_artist",
+    });
+    expect(next?.campaignMemberId).not.toBe(completed?.campaignMemberId);
+    expect((await getSpotifySyncCampaignStatus(db, campaign.id))?.activeReservations).toBe(0);
+  });
+
+  it("recovers a stale expired running campaign without replacing its baseline", async () => {
+    const now = new Date("2026-07-23T02:00:00.000Z");
+    await createArtist("Stale first");
+    await createArtist("Stale second");
+    await reconcileSpotifySchedulerWork(db, now);
+    const campaign = await createSpotifySyncCampaign(db, {
+      canaryTarget: 2,
+      expiresAt: new Date(now.getTime() + 60_000),
+      now,
+      targetSuccesses: 2,
+    });
+    await startSpotifySyncCampaign(db, campaign.id, now);
+    const continuedAt = new Date(now.getTime() + 60_001);
+    const continuationDeadline = new Date(continuedAt.getTime() + 24 * 60 * 60_000);
+
+    expect(
+      await resumeSpotifySyncCampaign(db, campaign.id, {
+        expiresAt: continuationDeadline,
+        now: continuedAt,
+      }),
+    ).toBe(true);
+    expect(await getSpotifySyncCampaignStatus(db, campaign.id)).toMatchObject({
+      baselineSize: 2,
+      campaignId: campaign.id,
+      expiresAt: continuationDeadline,
+      pendingMembers: 2,
+      qualifyingSuccesses: 0,
+      status: "running",
+      target: 2,
+    });
+  });
+
+  it("rejects unsafe continuation deadlines and active campaign reservations", async () => {
+    const now = new Date("2026-07-23T03:00:00.000Z");
+    await createArtist("Reserved continuation");
+    await createArtist("Later continuation");
+    await reconcileSpotifySchedulerWork(db, now);
+    const campaign = await createSpotifySyncCampaign(db, {
+      canaryTarget: 2,
+      expiresAt: new Date(now.getTime() + 60_000),
+      now,
+      targetSuccesses: 2,
+    });
+    await startSpotifySyncCampaign(db, campaign.id, now);
+    expect(await claimSpotifySyncCampaignWork(db, campaign.id, now)).not.toBeNull();
+    const expiredAt = new Date(now.getTime() + 60_001);
+
+    await expect(
+      resumeSpotifySyncCampaign(db, campaign.id, {
+        expiresAt: new Date(expiredAt.getTime() + 24 * 60 * 60_000 + 1),
+        now: expiredAt,
+      }),
+    ).rejects.toThrow("at most 24 hours");
+    expect(
+      await resumeSpotifySyncCampaign(db, campaign.id, {
+        expiresAt: new Date(expiredAt.getTime() + 24 * 60 * 60_000),
+        now: expiredAt,
+      }),
+    ).toBe(false);
+    expect(await getSpotifySyncCampaignStatus(db, campaign.id)).toMatchObject({
+      activeReservations: 1,
+      qualifyingSuccesses: 0,
+      status: "running",
+    });
   });
 
   it("attributes only campaign-created release work and leaves unrelated work untouched", async () => {

@@ -7,6 +7,7 @@ import {
   listSpotifySyncCampaignMembers,
   listSpotifySyncCampaignWork,
   pauseSpotifySyncCampaign,
+  resumeSpotifySyncCampaign,
   startSpotifySyncCampaign,
 } from "@radar/db";
 import { loadProviderConfiguration } from "@radar/providers";
@@ -136,8 +137,18 @@ async function main(): Promise<void> {
       );
       return;
     }
-    if (options.command === "start" || options.command === "resume") {
+    if (options.command === "start") {
       output({ changed: await startSpotifySyncCampaign(connection.db, campaignId) });
+      return;
+    }
+    if (options.command === "resume") {
+      const now = new Date();
+      output({
+        changed: await resumeSpotifySyncCampaign(connection.db, campaignId, {
+          expiresAt: new Date(now.getTime() + options.deadlineHours * 60 * 60_000),
+          now,
+        }),
+      });
       return;
     }
     if (options.command === "pause") {

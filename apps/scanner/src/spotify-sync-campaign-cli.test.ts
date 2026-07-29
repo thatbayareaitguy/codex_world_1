@@ -20,5 +20,18 @@ describe("Spotify sync campaign CLI", () => {
     expect(parseSpotifySyncCampaignOptions(["tick", "--campaign", "campaign-id"]).campaignId).toBe(
       "campaign-id",
     );
+    expect(
+      parseSpotifySyncCampaignOptions([
+        "resume",
+        "--campaign",
+        "campaign-id",
+        "--deadline-hours",
+        "24",
+      ]),
+    ).toMatchObject({
+      campaignId: "campaign-id",
+      command: "resume",
+      deadlineHours: 24,
+    });
   });
 });

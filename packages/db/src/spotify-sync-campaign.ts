@@ -213,6 +213,83 @@ export async function startSpotifySyncCampaign(
   });
 }
 
+export async function resumeSpotifySyncCampaign(
+  db: RadarDatabase,
+  campaignId: string,
+  input: { expiresAt: Date; now?: Date },
+): Promise<boolean> {
+  const now = input.now ?? new Date();
+  validateContinuationDeadline(input.expiresAt, now);
+  return db.transaction(async (tx) => {
+    const [campaign] = await tx
+      .select()
+      .from(spotifySyncCampaigns)
+      .where(eq(spotifySyncCampaigns.id, campaignId))
+      .limit(1)
+      .for("update");
+    if (
+      !campaign ||
+      !["paused", "running"].includes(campaign.status) ||
+      (campaign.status === "running" && campaign.expiresAt > now) ||
+      campaign.qualifyingSuccessCount >= campaign.targetSuccesses ||
+      campaign.activeReservationCount !== 0 ||
+      campaign.leaseOwner !== null ||
+      campaign.leaseExpiresAt !== null ||
+      (!campaign.canaryPassedAt && campaign.qualifyingSuccessCount >= campaign.canaryTarget)
+    ) {
+      return false;
+    }
+
+    const members = await tx
+      .select({
+        leaseExpiresAt: spotifySyncCampaignMembers.leaseExpiresAt,
+        reservationToken: spotifySyncCampaignMembers.reservationToken,
+        status: spotifySyncCampaignMembers.status,
+      })
+      .from(spotifySyncCampaignMembers)
+      .where(eq(spotifySyncCampaignMembers.campaignId, campaignId));
+    const succeeded = members.filter((member) => member.status === "succeeded").length;
+    if (
+      members.length !== campaign.baselineArtistCount ||
+      succeeded !== campaign.qualifyingSuccessCount ||
+      members.some(
+        (member) =>
+          member.status === "reserved" ||
+          member.leaseExpiresAt !== null ||
+          member.reservationToken !== null,
+      )
+    ) {
+      return false;
+    }
+
+    const leasedWork = await tx
+      .select({ id: spotifySchedulerWork.id })
+      .from(spotifySchedulerWork)
+      .where(
+        and(
+          eq(spotifySchedulerWork.campaignId, campaignId),
+          eq(spotifySchedulerWork.status, "leased"),
+        ),
+      )
+      .limit(1);
+    if (leasedWork.length > 0) return false;
+
+    await tx
+      .update(spotifySyncCampaigns)
+      .set({
+        expiresAt: input.expiresAt,
+        lastError: null,
+        nextBaseClaimAt: now,
+        pausedAt: null,
+        status: "running",
+        stopReason: null,
+        updatedAt: now,
+      })
+      .where(eq(spotifySyncCampaigns.id, campaignId));
+    return true;
+  });
+}
+
 export async function pauseSpotifySyncCampaign(
   db: RadarDatabase,
   campaignId: string,
@@ -1043,6 +1120,13 @@ function validateCampaignTargets(target: number, canary: number, expiresAt: Date
     throw new Error("Campaign canary target must be positive and no greater than the target.");
   }
   if (expiresAt <= now) throw new Error("Campaign deadline must be in the future.");
+}
+
+function validateContinuationDeadline(expiresAt: Date, now: Date): void {
+  if (expiresAt <= now) throw new Error("Campaign continuation deadline must be in the future.");
+  if (expiresAt.getTime() - now.getTime() > spotifySchedulerWindowMs) {
+    throw new Error("Campaign continuation deadline may be at most 24 hours.");
+  }
 }
 
 function bounded(value: unknown, minimum: number, maximum: number, fallback: number): number {
