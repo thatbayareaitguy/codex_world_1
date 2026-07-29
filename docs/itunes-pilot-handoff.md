@@ -114,11 +114,9 @@ playlist behavior exists.
 - Projected candidate artists: 433 of 593, implying a lower-bound 27.0% reduction from one
   Spotify artist-catalog request per artist
 
-The pilot is not reliable enough for this watchlist under the tested mapping workflow. The live
-workflow did not use extra catalog lookups to resolve competing exact-name candidates with frozen
-release-title evidence, and one probable match accepted a 93-day date difference. Correct those
-specific weaknesses in a separate credential-free milestone before considering another live run.
-Do not merge this branch into the main application from the current result.
+Historical first-run conclusion, now superseded: the first workflow was not reliable enough and
+required the identity and matching correction documented below. The 93-day acceptance and missing
+same-name catalog-evidence stage were subsequently corrected.
 
 ## Identity and matching correction
 
@@ -176,15 +174,73 @@ Do not merge this branch into the main application from the current result.
 - Full-cohort artist recall improved from 16 of 35, or 45.7%, to 29 of 35, or 82.9%.
 - Seven-day recall improved from 6 of 13, or 46.2%, to 11 of 13, or 84.6%, using the same inclusive
   calendar definition.
-- Corrected unmatched releases comprise 14 catalog misses, 12 mapping-caused misses, 5 ambiguous
-  matches, and 2 invalid matches.
+- Corrected unmatched releases comprise 14 releases not retrieved by the tested workflow, 12
+  unresolved-identity rows, 5 matcher-ambiguous rows, and 2 matcher-rejected rows. The 14 do not
+  prove Apple catalog absence because lookup truncation remains possible for 10 of them.
 - The previous 93-day BARELY ALIVE probable match is now invalid. No accepted corrected match
   exceeds 7, 14, or 30 days.
 - Appearance recall is 12 of 25, or 48.0%; remix recall is 5 of 8, or 62.5%.
-- The corrected result is useful only as a supplemental source. It does not justify primary-source
-  integration or a merge.
+- The earlier supplemental-source classification is superseded by the leakage-safe offline
+  evaluation below. The enriched cohort alone cannot classify iTunes as primary, supplemental, or
+  rejected.
 - The original 433-of-593 projection was invalid because it pooled a deliberately positive-heavy
   cohort. A randomized or full-watchlist Apple-only sweep is required for a reliable projection.
+
+## Leakage-safe offline evaluation
+
+- Milestone base before offline changes:
+  `bc865ceb82f1d95b08e2838d3b59f054f5bd8ba1`
+- Provider requests and production writes: 0
+- Exact normalized mappings remain independent: 26 artists in every window.
+- Historically reproducible evidence mappings: 12 at 7 days, 9 at 14 days, 6 at 30 days, and 0 at
+  60 days.
+- Target-window-assisted mappings excluded from unbiased metrics: 1 at 7 days, 4 at 14 days, 7 at
+  30 days, and all 13 evidence-confirmed mappings at 60 days.
+- Corrected unresolved mappings: 11 in every window.
+- The 60-day snapshot contains no Spotify evidence before its target start, so no evidence-confirmed
+  identity can be independently validated for that window.
+
+Seven-day artist-level product result among 38 safely mapped artists:
+
+- True positives: 9
+- False positives: 0
+- True negatives: 26
+- False negatives: 3
+- Candidate-artist recall: 9 of 12, or 75.0%
+- Candidate-artist precision: 9 of 9, or 100.0%
+- Specificity: 26 of 26, or 100.0%
+
+Seven-day safe-fallback simulation across all 50 artists:
+
+- Unresolved or target-assisted artists sent to Spotify: 12
+- Safe Apple-candidate artists sent to Spotify: 9
+- Deduplicated Spotify artist queries: 21
+- Queries avoided: 29 of 50, or 58.0%
+- Spotify-positive artists still queried: 10 of 13, or 76.9%
+- Spotify-positive artists incorrectly skipped: BUNT., Vibe Chemistry, and William Black
+- Unnecessary confirmation queries caused by Apple false positives: 0
+
+The result justifies a separate randomized or full-watchlist Apple-only shadow pilot. It does not
+justify production use or a source classification. Representative prevalence remains unproven.
+
+Offline verification passed:
+
+- Formatting and lint with zero warnings
+- Strict TypeScript across all packages
+- 336 unit tests in 46 files
+- 84 PostgreSQL integration tests in 15 files
+- No migration drift
+- Production build
+- 23 Playwright tests
+- Credential-free doctor `READY` with 18 migrations
+- Repeated artifact generation with identical hashes
+
+Offline artifacts:
+
+- `docs/itunes-pilot-offline-evaluation.json`
+- `docs/itunes-pilot-identity-provenance.csv`
+- `docs/itunes-pilot-match-review.csv`
+- `docs/itunes-pilot-evaluation.md`
 
 ## Final integrity evidence
 
@@ -193,7 +249,14 @@ Do not merge this branch into the main application from the current result.
 - Unsafe persisted Apple store URLs: 0
 - Pilot Spotify and MusicBrainz request events: 0
 - Pilot feed items, non-mock release candidates, and playlist exports: 0
-- Total pilot request events: 360; normalized cache rows: 258
-- Main worktree remained on `codex/release-radar-hardening` with only its pre-existing
-  `docs/AI_HANDOFF.md` modification.
-- The existing Spotify Windows task was not stopped, restarted, edited, disabled, or replaced.
+- First run: 108 network requests, 0 cache hits, 108 event rows, budget 200
+- Corrected run: 150 network requests, 102 cache hits, 252 event rows, budget 150
+- Combined: 258 network requests, 102 cache-hit events, 360 event rows, and 258 normalized cache
+  rows
+- The request ceiling is configurable and enforced per run against the lesser of the persisted run
+  budget and client maximum. Cache hits do not consume the run network budget.
+- Main worktree preflight: `codex/release-radar-hardening` at
+  `6c21b23ad11eae638877e20e1b3e8d6eb4b81d11`, clean. No claim is made here about its current Spotify
+  operational state.
+- No original-worktree file, production database row, task, campaign, cooldown, scheduler, lease,
+  playlist, or feed state was changed by the offline evaluation.

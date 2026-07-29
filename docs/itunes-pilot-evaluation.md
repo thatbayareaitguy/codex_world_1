@@ -1,443 +1,334 @@
 # iTunes Search API Pilot Evaluation
 
-Generated: 2026-07-29T01:30:14.464Z
+This document separates historical live-run measurements from the leakage-safe offline evaluation.
+It does not treat Spotify releases used to resolve an Apple artist identity as independently
+discovered by Apple.
 
-## Environment
+## 1. Environment and cohort
 
-- Feature branch: `codex/itunes-discovery`
-- Branch-point commit: `c602929142291da9b99ee126c2ecf73b39b528b3`
-- Implementation commit: `42db979e779e82769330efba4891087184260fa6`
 - Worktree: `C:\Users\taysh\Documents\Codex\codex_world_1_itunes`
-- Compose project: `codex_world_1_itunes`
-- Web port: `3001`; PostgreSQL ports: `55433` and `55434`
-- Pilot database: `radar_itunes`; test database: `radar_itunes_test`
-- Snapshot: 2026-07-29T01:00:20.642Z
-- Ground-truth window: 2026-05-30 through 2026-07-29
-- Live start: 2026-07-29T01:23:16.853Z
-- Live end: 2026-07-29T01:29:17.489Z
+- Branch: `codex/itunes-discovery`
+- Frozen snapshot ID: `5c7c27ec-9432-4457-8787-aa3bba582eea`
+- Canonical sanitized-content SHA-256:
+  `48259f7e2016aa8bbbabf4baa7e3baf8d4f9e9b53b413dab56f9d4fc70e1278a`
+- Snapshot timestamp: `2026-07-29T01:00:20.642Z`
+- Frozen date range: `2026-05-30` through `2026-07-29`
+- Artists: 50, comprising 30 positive, 10 negative, and 10 identity-stress artists
+- Frozen Spotify releases: 106 across 35 artists
+- Stored genres: unavailable, and none were inferred
+- Pilot database: isolated `radar_itunes` on `127.0.0.1:55433`
 
-## Cohort
+The expected SHA is the hash of the sanitized canonical JSON object with its `snapshotHash` field
+excluded. It is not the byte-level hash of the indented file.
 
-- Artists: 50
-- Positive: 30
-- Negative: 10
-- Identity stress: 10
-- Frozen Spotify releases: 106
-- Stored genre representation: unavailable in the source schema; no genres were inferred.
+The cohort was deliberately enriched for recent releases and difficult names. It is not a random
+sample of the 593-artist watchlist, and this evaluation does not extrapolate its prevalence to that
+watchlist.
 
-| Artist            | Cohort          |
-| ----------------- | --------------- |
-| 12th Planet       | identity_stress |
-| 1788-L            | identity_stress |
-| 1991              | identity_stress |
-| 2TD               | identity_stress |
-| 3LAU              | identity_stress |
-| 4B                | identity_stress |
-| A.M.C             | identity_stress |
-| Au5               | identity_stress |
-| BUNT.             | identity_stress |
-| Kx5               | identity_stress |
-| Alison Wonderland | negative        |
-| Andromedik        | negative        |
-| Anki              | negative        |
-| Anto              | negative        |
-| Apashe            | negative        |
-| ATLiens           | negative        |
-| Autograf          | negative        |
-| Babsy.            | negative        |
-| Bad Chicken!      | negative        |
-| Bad Computer      | negative        |
-| Alok              | positive        |
-| ATTLAS            | positive        |
-| BARELY ALIVE      | positive        |
-| BIJOU             | positive        |
-| BROHUG            | positive        |
-| Deorro            | positive        |
-| Don Diablo        | positive        |
-| Dr. Ozi           | positive        |
-| G-Space           | positive        |
-| GRiZ              | positive        |
-| Habstrakt         | positive        |
-| Leotrix           | positive        |
-| Lit Lords         | positive        |
-| Martin Garrix     | positive        |
-| MashBit           | positive        |
-| Monxx             | positive        |
-| MUST DIE!         | positive        |
-| NURKO             | positive        |
-| NXSTY             | positive        |
-| REAPER            | positive        |
-| Rueben            | positive        |
-| SampliFire        | positive        |
-| SISTO             | positive        |
-| SVDDEN DEATH      | positive        |
-| Vibe Chemistry    | positive        |
-| Virus Syndicate   | positive        |
-| William Black     | positive        |
-| YUSSI             | positive        |
-| Zeds Dead         | positive        |
-| ZHU               | positive        |
+## 2. First-pilot baseline
 
-## Before-correction diagnostic
+Run `e51a57f6-2f95-4e6d-868b-f30ed43f90fd` completed with 108 network requests under a 200-request
+run budget.
 
-This section freezes the first-pilot decomposition before identity or release-matching behavior is
-changed. It uses only stored run `e51a57f6-2f95-4e6d-868b-f30ed43f90fd`, its normalized pilot
-rows, and its cached responses.
+### Mapping and release baseline
 
-### Artist mapping
+- Exact-confirmed mappings: 26 of 50, or 52.0%
+- Evidence-confirmed mappings: 0 of 50, or 0.0%
+- Ambiguous mappings: 24 of 50, or 48.0%
+- No-match and rejected mappings: 0 of 50
+- Accepted release matches: 41 of 106, or 38.7%
+- Exact matches: 3 of 106, or 2.8%
+- Strong probable matches: 38 of 106, or 35.8%
+- Ambiguous matches: 2 of 106, or 1.9%
+- Invalid matches: 0 of 106
+- Mapped-only release recall: 41 of 52, or 78.8%
+- Mapped-only artist recall: 16 of 16, or 100.0%
+- Full-cohort artist recall: 16 of 35 Spotify-positive artists, or 45.7%
 
-- The 26 exact-confirmed artists contained 52 frozen Spotify releases across 16 artists with
-  ground truth. Forty-one releases matched, for 78.8% mapped-release recall. All 16 artists had at
-  least one match, for 100.0% mapped-artist recall.
-- The 24 ambiguous artists contained 54 frozen Spotify releases across 19 artists with ground
-  truth. None could be evaluated after the first-stage identity failure.
-- Every ambiguous mapping was caused by multiple exact normalized Apple artist names.
-- Search result counts ranged from 2 to 10. The exact competing-name subset contained 119 distinct
-  Apple artist IDs, including 85 candidates across the 19 ambiguous artists with ground truth.
-- Punctuation or alias differences and collaborative naming caused no first-stage ambiguity.
-  Same-name candidates were likely unrelated, but stored search data alone was insufficient to
-  choose among them.
+### Inclusive release-window recall
 
-| Ambiguous artist | Search candidates | Exact-name competitors |
-| ---------------- | ----------------: | ---------------------: |
-| 12th Planet      |                 2 |                      2 |
-| 1991             |                10 |                      5 |
-| 4B               |                10 |                      9 |
-| A.M.C            |                10 |                     10 |
-| Alok             |                10 |                      8 |
-| Anki             |                10 |                      9 |
-| Anto             |                10 |                      8 |
-| ATTLAS           |                 6 |                      5 |
-| BIJOU            |                10 |                      8 |
-| BROHUG           |                 2 |                      2 |
-| BUNT.            |                10 |                      4 |
-| Babsy.           |                10 |                      5 |
-| Don Diablo       |                 5 |                      2 |
-| G-Space          |                10 |                      3 |
-| GRiZ             |                10 |                      5 |
-| MashBit          |                 2 |                      2 |
-| NXSTY            |                10 |                      4 |
-| REAPER           |                10 |                     10 |
-| Rueben           |                10 |                      2 |
-| SampliFire       |                 2 |                      2 |
-| SISTO            |                10 |                      4 |
-| William Black    |                 7 |                      2 |
-| YUSSI            |                10 |                      6 |
-| ZHU              |                10 |                      2 |
+| Window                                 | Matched | Frozen releases | Recall |
+| -------------------------------------- | ------: | --------------: | -----: |
+| 7 days, 2026-07-22 through 2026-07-29  |       6 |              13 |  46.2% |
+| 14 days, 2026-07-15 through 2026-07-29 |      12 |              28 |  42.9% |
+| 30 days, 2026-06-29 through 2026-07-29 |      21 |              53 |  39.6% |
+| 60 days, 2026-05-30 through 2026-07-29 |      41 |             106 |  38.7% |
 
-### Release matching
+### Release-type recall
 
-- The mapped group produced 3 exact matches, 38 strong probable matches, 2 ambiguous matches, and
-  9 Spotify ground-truth misses.
-- Neither ambiguous match had an exact normalized-title candidate. Both were tied partial-title
-  matches.
-- None of the 9 missed Spotify releases had an exact normalized title in the stored Apple
-  collections. The original matcher recorded them as lacking any title-compatible collection.
-- No match was explicitly rejected because of date, version, track list, or artist credit. Artist
-  credit was not part of the release-pair score.
-- One accepted strong probable match exceeded 7, 14, 30, and 60 days. It paired BARELY ALIVE's
-  `100% NO AI` releases 93 days apart.
+| Frozen type                    | Matched | Frozen releases | Recall |
+| ------------------------------ | ------: | --------------: | -----: |
+| Single                         |      22 |              58 |  37.9% |
+| EP                             |       6 |              10 |  60.0% |
+| Album                          |       2 |               5 |  40.0% |
+| Remix                          |       4 |               8 |  50.0% |
+| Feature or credited appearance |       7 |              25 |  28.0% |
 
-### Candidate-prevalence bias
+All 24 ambiguous mappings were caused by competing exact normalized names. The first pilot also
+accepted BARELY ALIVE's `100% NO AI` despite a 93-day date difference. Album and song batch
+experiments were unsafe and are excluded from every operational estimate.
 
-The first run collected catalogs only for exact-confirmed artists. Cohort prevalence therefore
-mixes catalog behavior with the 48.0% mapping failure and must not be treated as a random-watchlist
-estimate.
+## 3. Corrected implementation and live run
 
-| Cohort          |  Window | Artists with candidates | Cohort prevalence | Mapped prevalence |
-| --------------- | ------: | ----------------------: | ----------------: | ----------------: |
-| Positive        |  7 days |                 8 of 30 |             26.7% |             57.1% |
-| Positive        | 14 days |                10 of 30 |             33.3% |             71.4% |
-| Positive        | 30 days |                14 of 30 |             46.7% |            100.0% |
-| Positive        | 60 days |                14 of 30 |             46.7% |            100.0% |
-| Negative        |  7 days |                 0 of 10 |              0.0% |              0.0% |
-| Negative        | 14 days |                 0 of 10 |              0.0% |              0.0% |
-| Negative        | 30 days |                 1 of 10 |             10.0% |             14.3% |
-| Negative        | 60 days |                 3 of 10 |             30.0% |             42.9% |
-| Identity stress |  7 days |                 0 of 10 |              0.0% |              0.0% |
-| Identity stress | 14 days |                 1 of 10 |             10.0% |             20.0% |
-| Identity stress | 30 days |                 2 of 10 |             20.0% |             40.0% |
-| Identity stress | 60 days |                 2 of 10 |             20.0% |             40.0% |
+The correction added a deterministic second-stage resolver for competing exact-name candidates.
+It compares individual cached candidate catalogs with frozen titles, tracks, dates, track counts,
+version markers, and Apple credit IDs. It confirms only one uniquely strong candidate with no
+conflict and a score margin of at least two.
 
-The original 433-of-593 candidate-artist projection used 19 of 26 mapped artists from a cohort
-deliberately enriched with 30 positive artists. It is not a valid full-watchlist estimate.
+The release matcher now rejects incompatible version markers, track-count conflicts, and date
+differences above 30 days. Differences above 14 days remain ambiguous. No batch evidence is used.
 
-## Mapping
+Run `0f719ae6-bb42-48a0-b24c-557a0c2facb5` ended `controlled_partial` at its deterministic
+150-request correction budget:
 
-- Exact confirmed: 26
-- Evidence confirmed: 0
-- Ambiguous: 24
-- No match: 0
-- Rejected: 0
-- Mapping rate: 52.0%
-- Ambiguity and artist-level identity failure rate: 48.0%
-- Positive cohort: 14 exact confirmed, 16 ambiguous
-- Negative cohort: 7 exact confirmed, 3 ambiguous
-- Identity-stress cohort: 5 exact confirmed, 5 ambiguous
-- Examples of multiple exact-name candidates include Alok, ATTLAS, BIJOU, Don Diablo, GRiZ,
-  REAPER, William Black, and ZHU.
-- The stored-alias evidence route was implemented but confirmed no artists in this snapshot. The
-  live workflow did not perform additional candidate catalog lookups to apply frozen release-title
-  overlap to ambiguous same-name results. This is a material mapping limitation and should be
-  corrected in a separate credential-free milestone before another live run.
-
-## Requests
-
-- Total network requests: 108
-- Search: 50
-- Album lookups: 26
-- Song lookups: 26
-- Batched lookups: 4
-- Collection-detail lookups: 2
-- Cache hits: 0
-- Runtime: 6.01 minutes
-- Requests per minute: 17.97
+- New network requests: 150, comprising 75 album and 75 song lookups
+- Cache hits: 102, comprising 50 searches, 26 album lookups, and 26 song lookups
+- Candidate catalogs examined completely: 75
+- Candidate catalogs skipped before partially examining the next artist: 10
+- Runtime: 8.48 minutes
 - Minimum request-start interval: 3201 ms
 - Overlapping request pairs: 0
-- Largest response: 3,018,593 bytes, below the 5 MiB response ceiling
-- HTTP errors: 0
-- Retry-After values: none
-- Stop reason: `pilot_workflow_completed`
-
-## Discovery
-
-- Deduplicated collections: 3386
-- Deduplicated tracks: 4495
-- Collections in 7/14/30/60 days: 9 / 18 / 40 / 76
-- Tracks in 7/14/30/60 days: 12 / 29 / 72 / 114
-- Album lookup only: 880
-- Song lookup only: 1361
-- Both lookup paths: 1145
-- Within 60 days: 0 album-only, 25 song-only, and 51 found through both paths
-- Appearance candidates: 947 across the returned catalog; 14 within 60 days
-- Recent collection types: 38 single, 4 EP, 27 album, 5 remix, and 2 live
-- Cross-path duplicate collection observations removed: 1145
-- Duplicate track observations removed: 0
-- Eighteen of 26 song lookups returned exactly 200 tracks. Two album lookups returned exactly 200
-  collections. With no proven paging mechanism, these artists have explicit truncation risk.
-
-## Comparison
-
-- Artist-level recall: 45.7%
-- Release-level recall: 38.7%
-- Candidate precision proxy for the 60-day comparison window: 52.6% (40 distinct matched
-  candidates of 76)
-- All-catalog precision proxy: 1.2%. This is not the primary comparison metric because the lookup
-  results include old catalog releases outside the frozen ground-truth window.
-- Recall at 7/14/30/60 days: 46.2% / 42.9% / 39.6% / 38.7%
-- Exact matches: 3
-- Strong probable matches: 38
-- Ambiguous matches: 2
-- Apple-only or unresolved: 36 recent candidates; 3345 across the full returned catalog
-- Spotify releases missed by iTunes: 9
-- Identity mapping failures: 24 artists, represented by 54 frozen release rows
-- Release-type recall:
-
-| Type                           | Frozen releases | Matched | Recall |
-| ------------------------------ | --------------: | ------: | -----: |
-| Album                          |               5 |       2 |  40.0% |
-| EP                             |              10 |       6 |  60.0% |
-| Feature or credited appearance |              25 |       7 |  28.0% |
-| Remix                          |               8 |       4 |  50.0% |
-| Single                         |              58 |      22 |  37.9% |
-
-- Appearance recall: 28.0% using the frozen `feature` category
-- Matched-release date agreement: 38 of 41 exact, 39 of 41 within one day, and an average absolute
-  difference of 2.46 days
-- One strong probable match paired BARELY ALIVE's `100% NO AI` releases 93 days apart. This exposes
-  a date-compatibility weakness and means the probable-match count is not equivalent to manually
-  confirmed precision.
-- Track-count agreement: 41 of 41 matched comparisons; 42 of 43 when ambiguous comparisons are
-  included
-- Request efficiency: 4.15 calls per mapped artist, 1.42 calls per recent collection candidate,
-  and 2.63 calls per matched frozen release
-
-## Batching
-
-- album, size 5: unsafe; 472/752 results; missing_collections:278, misattributed:78
-- song, size 5: unsafe; 1000/1000 results; misattributed:147
-- album, size 10: unsafe; 720/1267 results; missing_collections:523, misattributed:123
-- song, size 10: unsafe; 1812/1812 results; misattributed:367
-- Proven safe batch size: none
-- Response sizes were 457,516 and 1,658,190 bytes for size 5, then 699,560 and 3,018,593
-  bytes for size 10, for album and song lookups respectively.
-- Song result counts could equal the individual union while artist attribution still failed. Album
-  batches also omitted large parts of the individual baseline. Normal iTunes artist-ID batching is
-  therefore not acceptable for production.
-
-## Projected 593-Artist Operation
-
-- One-time mapping requests: 593
-- Recurring individual lookup requests: 1186
-- Recurring batched lookup requests: not projected because batching was not proven safe
-- Individual lookup runtime at 3.2 seconds: 63.3 minutes
-- Projected mapped artists with recent candidates: 433, based on 19 of 26 mapped pilot artists
-- Projected candidate-driven Spotify confirmation requests: 433 as a lower-bound estimate of one
-  request per candidate artist
-- Projected reduction from 593 Spotify artist-catalog requests: 160 (27.0%)
-- Expected weekly iTunes lookup duration: 63.3 minutes
-- This projection assumes 593 artists are already mapped. The observed 52.0% mapping rate does not
-  support that assumption without a better identity-resolution stage.
-
-## Corrected identity and release-matching rerun
-
-The correction reran the same 50 artists and frozen 106-release snapshot. It reused all 50 artist
-searches and all 52 selected-catalog requests from the first run. It made 150 new individual
-requests to examine 75 complete same-name candidate catalogs. It did not make a batch request or
-partially examine the next artist.
-
-### Before and after
-
-| Measure                    |   First pilot | Corrected rerun |
-| -------------------------- | ------------: | --------------: |
-| Exact-confirmed artists    |            26 |              26 |
-| Evidence-confirmed artists |             0 |              13 |
-| Ambiguous artists          |            24 |              11 |
-| No match                   |             0 |               0 |
-| Rejected                   |             0 |               0 |
-| Mapping rate               |         52.0% |           78.0% |
-| Mapped-release recall      |  41/52, 78.8% |    73/94, 77.7% |
-| Full-cohort release recall | 41/106, 38.7% |   73/106, 68.9% |
-| Mapped-artist recall       | 16/16, 100.0% |   29/29, 100.0% |
-| Full-cohort artist recall  |  16/35, 45.7% |    29/35, 82.9% |
-
-Mapped-only release recall did not improve. The material full-cohort gain came from resolving 13
-previous identity failures and evaluating their catalogs. The corrected unmatched decomposition is:
-
-- 14 genuine catalog misses, where the selected iTunes catalog had no title candidate
-- 12 mapping-caused misses attached to unresolved artists
-- 5 ambiguous release matches and 2 invalid release matches, or 7 matcher-caused misses
-
-### Recall by inclusive calendar window
-
-The same inclusive calendar-day definition used by the first report is retained for direct
-comparison.
-
-| Window  |   First pilot | Corrected rerun |
-| ------- | ------------: | --------------: |
-| 7 days  |   6/13, 46.2% |    11/13, 84.6% |
-| 14 days |  12/28, 42.9% |    23/28, 82.1% |
-| 30 days |  21/53, 39.6% |    36/53, 67.9% |
-| 60 days | 41/106, 38.7% |   73/106, 68.9% |
-
-### Recall by frozen release type
-
-| Type                           | Frozen |    First pilot | Corrected rerun |
-| ------------------------------ | -----: | -------------: | --------------: |
-| Single                         |     58 |      22, 37.9% |       48, 82.8% |
-| EP                             |     10 |       6, 60.0% |        4, 40.0% |
-| Album                          |      5 |       2, 40.0% |        4, 80.0% |
-| Remix                          |      8 |       4, 50.0% |        5, 62.5% |
-| Feature or credited appearance |     25 |       7, 28.0% |       12, 48.0% |
-| Live                           |      0 | not measurable |  not measurable |
-| Compilation                    |      0 | not measurable |  not measurable |
-
-The snapshot stores no genres, so separate EDM or bass-music recall cannot be measured without
-inventing genre assignments. Remix and appearance recall improved but remains too weak for primary
-discovery.
-
-### Matching quality
-
-- Exact matches: 5
-- Strong probable matches: 68
-- Ambiguous matches: 5
-- Invalid matches: 2
-- Accepted matches above 7, 14, or 30 days: 0 at every threshold
-- The prior BARELY ALIVE `100% NO AI` 93-day probable match is now `invalid_match`.
-- Track-count conflicts, incompatible version markers, and date differences above 30 days are not
-  accepted.
-- The known false acceptance was removed. A general false-match rate cannot be claimed because the
-  other 73 accepted pairs were not independently labeled by a human.
-
-### Corrected operation
-
-- Run ID: `0f719ae6-bb42-48a0-b24c-557a0c2facb5`
-- Status: `controlled_partial`
-- Stop reason: `correction_candidate_budget_prioritization_complete`
-- Runtime: 8.48 minutes
-- New requests: 150, comprising 75 album and 75 song lookups
-- Cache hits: 102, comprising 50 search, 26 album, and 26 song lookups
-- Minimum request-start interval: 3201 ms
-- Concurrent request overlap: 0
 - HTTP errors and Retry-After rows: 0
 - Batch requests: 0
-- Candidate catalogs examined: 75
-- Candidate catalogs skipped to avoid exceeding the budget: 10, all belonging to the next complete
-  artist
 
-### Cohort-specific operational projection
+### Corrected historical baseline
 
-The candidate rate is the share of all artists in that cohort with at least one iTunes collection
-in the stated window. These deliberately selected groups are scenarios, not estimates of the
-593-artist watchlist.
+- Exact-confirmed mappings: 26 of 50, or 52.0%
+- Evidence-confirmed mappings: 13 of 50, or 26.0%
+- Ambiguous mappings: 11 of 50, or 22.0%
+- Total corrected mapping rate: 39 of 50, or 78.0%
+- Accepted release matches: 73 of 106, or 68.9%
+- Exact matches: 5 of 106, or 4.7%
+- Strong probable matches: 68 of 106, or 64.2%
+- Ambiguous matches: 5 of 106, or 4.7%
+- Invalid matches: 2 of 106, or 1.9%
+- Mapped-only release recall: 73 of 94, or 77.7%
+- Mapped-only artist recall: 29 of 29, or 100.0%
+- Full-cohort artist recall: 29 of 35 Spotify-positive artists, or 82.9%
 
-| Scenario               |   7-day rate | 7-day candidates of 593 | Spotify reduction |  60-day rate | 60-day candidates of 593 | Spotify reduction |
-| ---------------------- | -----------: | ----------------------: | ----------------: | -----------: | -----------------------: | ----------------: |
-| Positive cohort        | 14/30, 46.7% |                     277 |        316, 53.3% | 26/30, 86.7% |                      514 |         79, 13.3% |
-| Negative cohort        |   0/10, 0.0% |                       0 |       593, 100.0% |  3/10, 30.0% |                      178 |        415, 70.0% |
-| Identity-stress cohort |  1/10, 10.0% |                      59 |        534, 90.0% |  3/10, 30.0% |                      178 |        415, 70.0% |
+These corrected historical metrics are not leakage-safe because the same target-window Spotify
+releases helped select 13 Apple identities.
 
-The positive cohort was intentionally enriched for recent releases, while the negative and
-identity-stress groups contain only ten artists each. None is a defensible prevalence estimate.
-The original 433-of-593 projection pooled mapped artists from this biased cohort and therefore was
-not valid as a watchlist projection.
+### Corrected release counts
 
-- Minimum one-time mapping cost remains 593 artist searches. Same-name ambiguity adds individual
-  catalog evidence requests, but this selected cohort cannot estimate that overhead reliably.
-- Looking up all 593 artists weekly costs 1,186 individual requests and about 63.3 minutes at the
-  required pacing.
-- Scaling the observed 78.0% mapping rate would cover about 463 artists, cost about 926 weekly
-  requests, and take about 49.4 minutes, while leaving the other artists undiscovered.
-- No unsafe batch result is used in any estimate.
-- A reliable weekly candidate-volume and Spotify-request-reduction estimate requires a randomized
-  or full-watchlist Apple-only sweep.
+| Window  | Matched | Frozen releases | Recall |
+| ------- | ------: | --------------: | -----: |
+| 7 days  |      11 |              13 |  84.6% |
+| 14 days |      23 |              28 |  82.1% |
+| 30 days |      36 |              53 |  67.9% |
+| 60 days |      73 |             106 |  68.9% |
 
-### Corrected decision
+| Frozen type                    | Matched | Frozen releases | Recall |
+| ------------------------------ | ------: | --------------: | -----: |
+| Single                         |      48 |              58 |  82.8% |
+| EP                             |       4 |              10 |  40.0% |
+| Album                          |       4 |               5 |  80.0% |
+| Remix                          |       5 |               8 |  62.5% |
+| Feature or credited appearance |      12 |              25 |  48.0% |
 
-**Useful only as a supplemental source.**
+### EP regressions
 
-Mapping coverage and seven-day recall improved materially, and the known 93-day false acceptance
-was removed. The result still has 22.0% unresolved artist identities, 48.0% appearance recall,
-62.5% remix recall, 14 catalog misses, 5 ambiguous release matches, and no defensible watchlist-wide
-request-reduction estimate. This is not sufficient for a primary candidate-discovery source.
+- BARELY ALIVE, `100% NO AI`: first-run `strong_probable_match`, corrected
+  `invalid_match`. The 93-day difference now triggers the date rule and corrects the known false
+  match.
+- Habstrakt, `Everyday (VIP)`: first-run `strong_probable_match`, corrected
+  `ambiguous_match`. The stored Apple candidate is a related single-versus-EP appearance with a
+  contained rather than identical title. This is stricter but still uncertain matching, not a
+  proven false match.
 
-If further work is desired, use a separate representative pilot with randomized or full-watchlist
-sampling. Keep this branch unmerged in the current milestone.
+The deterministic 80-row matcher audit is at `docs/itunes-pilot-match-review.csv`. It contains all
+73 accepted, 5 ambiguous, and 2 invalid comparisons. It does not invent human labels or claim a
+general false-match rate.
 
-## Limitations
+## 4. Leakage-safe offline evaluation
 
-- Apple publishes this API only in archived documentation.
-- The documented allowance is approximate and subject to change.
-- Results vary by storefront.
-- Lookup results are capped at 200 and no paging mechanism is proven.
-- Artist-name mapping remains ambiguous for same-name and non-exact identities.
-- Song lookup does not prove complete appearance coverage.
-- Current Apple catalog results are compared with a frozen historical Spotify snapshot.
-- Spotify ground truth can itself contain partial artist catalogs.
-- Unmatched Apple candidates are not automatically false positives.
-- No UPC or ISRC claim is made because those identifiers were not part of the normalized pilot response.
-- One snapshot cannot prove future Apple release-availability timing.
-- Apple promotional content is not downloaded, cached, rendered, or used; only normalized metadata and validated store links are retained.
+For each target window, mapping is frozen before its Spotify truth is read:
 
-## Integrity
+1. A unique exact normalized mapping remains `independent_exact`.
+2. An evidence mapping is usable only when Spotify releases strictly before the target start
+   reproduce the same selected Apple artist.
+3. An evidence mapping that requires a release inside the scored window is
+   `target_window_assisted` and excluded from the confusion matrix.
+4. Every other mapping is unresolved.
 
-- Request count: 108 of 200
-- Minimum start interval: 3201 ms
-- Concurrent request overlap: none
-- Duplicate mappings, collections, tracks, and match identity rows: none
-- Cached artwork or preview fields: none
-- Unsafe persisted Apple store URLs: none
-- Pilot Spotify request events: 0
-- Pilot MusicBrainz request events: 0
-- Production feed items, non-mock release candidates, and playlist exports in the pilot database: 0
+Apple candidates are then determined only from the cached Apple collections, tracks, and credited
+appearances dated inside the target window.
 
-## Decision
+### Evidence-confirmed mapping provenance
 
-**Not reliable enough for this watchlist under the tested mapping workflow.**
+| Artist        | Selected Apple ID | Score | Margin | 7-day      | 14-day     | 30-day     | 60-day   |
+| ------------- | ----------------- | ----: | -----: | ---------- | ---------- | ---------- | -------- |
+| ATTLAS        | 173455825         | 12.75 |  12.75 | historical | historical | assisted   | assisted |
+| BIJOU         | 44873418          | 12.75 |  12.75 | historical | historical | historical | assisted |
+| BROHUG        | 1115744117        | 12.75 |  12.75 | historical | historical | historical | assisted |
+| BUNT.         | 1436090348        | 17.00 |  17.00 | historical | historical | historical | assisted |
+| Don Diablo    | 76849154          |  8.50 |   8.50 | assisted   | assisted   | assisted   | assisted |
+| G-Space       | 511671481         |  9.00 |   9.00 | historical | assisted   | assisted   | assisted |
+| MashBit       | 1385123684        |  8.50 |   8.50 | historical | assisted   | assisted   | assisted |
+| NXSTY         | 1336163773        | 12.75 |  12.75 | historical | assisted   | assisted   | assisted |
+| SampliFire    | 696018289         | 12.75 |  12.75 | historical | historical | historical | assisted |
+| SISTO         | 1526157202        | 17.00 |  17.00 | historical | historical | assisted   | assisted |
+| William Black | 1297084102        | 12.00 |  12.00 | historical | historical | historical | assisted |
+| YUSSI         | 1614562965        | 12.00 |   7.75 | historical | historical | historical | assisted |
+| ZHU           | 261545033         |  8.00 |   8.00 | historical | historical | assisted   | assisted |
 
-Do not merge or use iTunes as the primary discovery source from this result. The next milestone
-should correct the specific ambiguous-identity workflow, including bounded release-title evidence
-for competing exact-name candidates and a stricter date rule, then repeat the isolated pilot. If
-that correction does not materially improve the 52.0% mapping rate and 38.7% release recall, reject
-iTunes rather than integrating it. SoundCloud automation remains prohibited under current
-repository policy, and paid Apple access is outside the current no-paid-provider constraint.
+The complete provenance artifact at `docs/itunes-pilot-identity-provenance.csv` records, for every
+mapping:
+
+- Selected and competing Apple artist IDs
+- Exact Spotify releases and tracks used as evidence
+- Evidence dates and inside-or-before status for every target window
+- Full deterministic score and margin
+- Whether the mapping remains reproducible after target-window evidence is removed
+
+For the 60-day evaluation, the frozen snapshot begins on the target start date. It contains no
+older Spotify release evidence. Therefore all 13 evidence-confirmed mappings are
+target-window-assisted at 60 days and none can be described as independent discovery.
+
+### Mapping availability by window
+
+| Window  | Independent exact | Historical evidence | Target-assisted, excluded | Unresolved | Safely mapped total |
+| ------- | ----------------: | ------------------: | ------------------------: | ---------: | ------------------: |
+| 7 days  |                26 |                  12 |                         1 |         11 |                  38 |
+| 14 days |                26 |                   9 |                         4 |         11 |                  35 |
+| 30 days |                26 |                   6 |                         7 |         11 |                  32 |
+| 60 days |                26 |                   0 |                        13 |         11 |                  26 |
+
+The 11 unresolved artists in every window are 12th Planet, 1991, 4B, A.M.C, Alok, Anki, Anto,
+Babsy., GRiZ, REAPER, and Rueben.
+
+### Artist-level confusion matrices
+
+The confusion matrices include only independently or historically mapped artists. Their unit is
+one artist, regardless of how many releases that artist has.
+
+| Window  | Safe artists |  TP |  FP |  TN |  FN |        Recall |     Precision |   Specificity |         FPR |         FNR |
+| ------- | -----------: | --: | --: | --: | --: | ------------: | ------------: | ------------: | ----------: | ----------: |
+| 7 days  |           38 |   9 |   0 |  26 |   3 |   9/12, 75.0% |   9/9, 100.0% | 26/26, 100.0% |  0/26, 0.0% | 3/12, 25.0% |
+| 14 days |           35 |  15 |   0 |  17 |   3 |  15/18, 83.3% | 15/15, 100.0% | 17/17, 100.0% |  0/17, 0.0% | 3/18, 16.7% |
+| 30 days |           32 |  17 |   1 |  10 |   4 |  17/21, 81.0% |  17/18, 94.4% |  10/11, 90.9% |  1/11, 9.1% | 4/21, 19.0% |
+| 60 days |           26 |  16 |   2 |   8 |   0 | 16/16, 100.0% |  16/18, 88.9% |   8/10, 80.0% | 2/10, 20.0% |  0/16, 0.0% |
+
+False-positive artists:
+
+- 7 days: none
+- 14 days: none
+- 30 days: Bad Computer
+- 60 days: Alison Wonderland and Bad Computer
+
+False-negative artists:
+
+- 7 days: BUNT., Vibe Chemistry, and William Black
+- 14 days: BUNT., Vibe Chemistry, and William Black
+- 30 days: BUNT., Vibe Chemistry, Virus Syndicate, and William Black
+- 60 days: none among the 26 independently mapped artists
+
+## 5. Product-policy simulation
+
+The simulated weekly policy sends unresolved mappings to Spotify, sends safely mapped Apple
+candidates to Spotify for confirmation, and skips safely mapped Apple negatives.
+
+| Window  | Cohort | Unresolved or assisted fallback | Safe Apple candidates | Deduplicated Spotify queries | Queries avoided |    Reduction | Spotify-positive queried | Positive artists skipped | Unnecessary Apple FP queries |
+| ------- | -----: | ------------------------------: | --------------------: | ---------------------------: | --------------: | -----------: | -----------------------: | -----------------------: | ---------------------------: |
+| 7 days  |     50 |                              12 |                     9 |                           21 |              29 | 29/50, 58.0% |             10/13, 76.9% |              3/13, 23.1% |                            0 |
+| 14 days |     50 |                              15 |                    15 |                           30 |              20 | 20/50, 40.0% |             21/24, 87.5% |              3/24, 12.5% |                            0 |
+| 30 days |     50 |                              18 |                    18 |                           36 |              14 | 14/50, 28.0% |             27/31, 87.1% |              4/31, 12.9% |                            1 |
+| 60 days |     50 |                              24 |                    18 |                           42 |               8 |  8/50, 16.0% |            35/35, 100.0% |               0/35, 0.0% |                            2 |
+
+The query totals are exact under the stated fallback rule, so no speculative optimistic or
+pessimistic query bound is needed. Target-window-assisted mappings are treated as unresolved and
+sent to Spotify.
+
+Incorrectly skipped frozen releases:
+
+- 7 and 14 days:
+  - Vibe Chemistry, `Two Blueys`, Spotify `3dAN2CfniUb0keu79H1fAZ`, 2026-07-24
+  - BUNT., `World Away`, Spotify `6k2I7QkXRPlWzylh7UsFIx`, 2026-07-24
+  - William Black, `Flutters`, Spotify `6uUmp5LDUJ1BV8ZEa7yV35`, 2026-07-24
+- 30 days adds:
+  - Virus Syndicate, `Like This Ft. Virus Syndicate (Skybreak Remix)`, Spotify
+    `1QzjYEk947JH1HCZHpC83x`, 2026-07-03
+  - Vibe Chemistry, `Mate`, Spotify `6SP9EeXnFj67Kw0I7R9Wiw`, 2026-07-03
+  - Virus Syndicate, `Shellingham (WC Remix)`, Spotify `6iWKdGshyuqG8289LNUNue`,
+    2026-07-10
+- 60 days: none among independently mapped artists
+
+The seven-day result is the primary product signal: 29 of 50 Spotify artist queries would be
+avoided, but 3 of 13 Spotify-positive artists would be incorrectly skipped. This tradeoff must be
+tested on representative Apple-only data before any production decision.
+
+## 6. Limitations
+
+- The cohort is enriched and cannot establish representative prevalence or a 593-artist reduction.
+- The 60-day snapshot contains no pre-window Spotify evidence for evidence-based identity
+  validation.
+- Apple catalogs are current cached observations compared with a frozen Spotify snapshot.
+- Individual album and song lookups can reach their 200-result cap. Absence is not proven.
+- Fourteen corrected rows previously called genuine catalog misses are now classified as `not
+retrieved by tested workflow` or `mapped catalog contained no compatible title`. Lookup
+  truncation remains possible for 10 of those 14 rows because the selected catalog reached a
+  200-result bound.
+- Five release comparisons remain matcher-ambiguous and two are matcher-rejected.
+- Eleven artist identities remain unresolved.
+- The 73 accepted comparisons lack independent human labels, so no general false-match rate is
+  claimed.
+- Stored genres are unavailable, so EDM or bass-music performance cannot be isolated.
+- The iTunes Search API documentation is archived and describes an approximate allowance.
+- No Apple approval, production quota, or stable future behavior is claimed.
+
+## 7. Current decision
+
+**A separate representative Apple-only shadow pilot is justified.**
+
+This is not a decision to classify iTunes as a primary source, supplemental source, or rejected
+source. The leakage-safe seven-day candidate filter shows:
+
+- Recall of 9 of 12 safely mapped Spotify-positive artists, or 75.0%
+- Precision of 9 of 9 Apple-flagged artists, or 100.0%
+- 29 of 50 Spotify queries avoided, or 58.0%
+- 3 of 13 total Spotify-positive artists incorrectly skipped, or 23.1%
+- 12 artists requiring fallback because identity was unresolved or target-assisted
+
+Those results are promising enough to justify a separate randomized or full-watchlist Apple-only
+shadow pilot, but not production use. That pilot must measure prevalence without Spotify-assisted
+identity leakage, preserve fallback for unresolved mappings, retain individual lookups, and
+explicitly quantify truncation risk. Representative or full-watchlist prevalence remains unproven.
+
+## 8. Final integrity state
+
+- First run: 108 network requests, 0 cache hits, 108 request-event rows, budget 200
+- Corrected run: 150 network requests, 102 cache hits, 252 request-event rows, budget 150
+- Combined: 258 network requests, 102 cache-hit events, 360 request-event rows
+- Normalized cache: 258 rows, one for each distinct successful network request identity
+- Active pilot runs: 0
+- Active pilot lease: none
+- Offline-evaluation provider requests: 0
+- Pilot Spotify and MusicBrainz request rows: 0
+- Production feed and playlist writes: 0
+- Original pilot and corrected-run records: unchanged
+- Formatting and lint with zero warnings: passed
+- Strict TypeScript across all packages: passed
+- Unit tests: 336 passed in 46 files
+- PostgreSQL integration tests: 84 passed in 15 files
+- Migration drift: no schema changes
+- Production build: passed
+- Playwright: 23 passed
+- Credential-free pilot doctor: `READY` with 18 migrations
+- Artifact idempotence: all three generated artifacts retained identical SHA-256 hashes on a second
+  provider-disabled evaluation run
+
+The network ceiling is configurable per run. The database gate increments only the active run's
+network `requestCount` and allows a request only while that count is below the lesser of the
+persisted run budget and the configured client maximum. Cache hits create telemetry rows but do
+not increment the network request count. The provider-state counter is cumulative telemetry and is
+not the enforcement ceiling.
+
+Offline artifacts:
+
+- `docs/itunes-pilot-offline-evaluation.json`
+- `docs/itunes-pilot-identity-provenance.csv`
+- `docs/itunes-pilot-match-review.csv`
+- `docs/itunes-pilot-handoff.md`
+
+No live provider request, production write, migration, merge, or cherry-pick occurred during this
+offline evaluation.

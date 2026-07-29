@@ -77,7 +77,8 @@ The database-backed global gate provides:
 
 - concurrency one
 - at least 3.2 seconds between request starts
-- one 200-request ceiling per run
+- one configurable network-request ceiling per run, bounded by the lesser of the persisted run
+  budget and configured client maximum; cache hits do not consume it
 - one 30-minute run deadline
 - a recoverable 30-second lease
 - durable request start, completion, status, byte count, Retry-After, error classification, and
@@ -153,7 +154,9 @@ Corrected comparison requires confirmed canonical artist identity and applies ex
 Results are `exact_match`, `strong_probable_match`, `ambiguous_match`,
 `invalid_match`, `apple_only_or_spotify_missing`, `spotify_ground_truth_missed_by_itunes`, or
 `identity_mapping_failure`. The prior 93-day BARELY ALIVE pairing is invalid under these rules.
-Unmatched Apple candidates are not labeled false positives.
+The stored `spotify_ground_truth_missed_by_itunes` name is reported as `not retrieved by tested
+workflow` or `mapped catalog contained no compatible title`; it does not prove Apple catalog
+absence. Unmatched Apple candidates are not labeled false positives.
 
 Album and song batches of 5 and 10 ordinary iTunes artist IDs are compared with the union of
 individual results. Batching is safe only if every artist and individual result is represented and
@@ -182,3 +185,25 @@ run, all 108 normalized cache rows, a clean pushed implementation checkpoint, a 
 budget, and a 20-minute deadline. Search and first-run individual lookups must be served from cache.
 The correction runner makes no batch request and does not use the unsafe first-run batch responses
 as evidence.
+
+## Offline temporal evaluation
+
+The offline evaluator reads only the frozen snapshot, the two completed run records, normalized
+cache rows, and persisted pilot evidence. Every provider must be disabled. It writes deterministic
+JSON and CSV artifacts and does not mutate the database.
+
+For each inclusive 7-, 14-, 30-, and 60-day target:
+
+- Unique exact normalized identity is independent of Spotify release truth.
+- An evidence-confirmed identity is safe only if the same Apple artist can be reproduced using
+  Spotify evidence strictly before the target start.
+- Target-window-assisted identity is excluded from the confusion matrix and treated as unresolved
+  by the fallback policy.
+- Apple candidate status is then computed from cached Apple collections, tracks, or credited
+  appearances inside the target window.
+- Confusion matrices and fallback simulation deduplicate by canonical artist, not release.
+- Unresolved identity always queries Spotify. A safe Apple candidate queries Spotify once. A safe
+  Apple negative skips Spotify.
+
+The 60-day target begins at the frozen snapshot boundary, so no historical Spotify evidence exists
+to validate any of the 13 evidence-confirmed identities for that window.

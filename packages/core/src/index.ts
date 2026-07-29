@@ -1,5 +1,6 @@
 export * from "./logger";
 export * from "./itunes-pilot";
+export * from "./itunes-pilot-offline-evaluation";
 export * from "./matching";
 export * from "./normalize";
 export * from "./retry";
