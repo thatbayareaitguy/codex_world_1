@@ -279,6 +279,131 @@ deliberately enriched with 30 positive artists. It is not a valid full-watchlist
 - This projection assumes 593 artists are already mapped. The observed 52.0% mapping rate does not
   support that assumption without a better identity-resolution stage.
 
+## Corrected identity and release-matching rerun
+
+The correction reran the same 50 artists and frozen 106-release snapshot. It reused all 50 artist
+searches and all 52 selected-catalog requests from the first run. It made 150 new individual
+requests to examine 75 complete same-name candidate catalogs. It did not make a batch request or
+partially examine the next artist.
+
+### Before and after
+
+| Measure                    |   First pilot | Corrected rerun |
+| -------------------------- | ------------: | --------------: |
+| Exact-confirmed artists    |            26 |              26 |
+| Evidence-confirmed artists |             0 |              13 |
+| Ambiguous artists          |            24 |              11 |
+| No match                   |             0 |               0 |
+| Rejected                   |             0 |               0 |
+| Mapping rate               |         52.0% |           78.0% |
+| Mapped-release recall      |  41/52, 78.8% |    73/94, 77.7% |
+| Full-cohort release recall | 41/106, 38.7% |   73/106, 68.9% |
+| Mapped-artist recall       | 16/16, 100.0% |   29/29, 100.0% |
+| Full-cohort artist recall  |  16/35, 45.7% |    29/35, 82.9% |
+
+Mapped-only release recall did not improve. The material full-cohort gain came from resolving 13
+previous identity failures and evaluating their catalogs. The corrected unmatched decomposition is:
+
+- 14 genuine catalog misses, where the selected iTunes catalog had no title candidate
+- 12 mapping-caused misses attached to unresolved artists
+- 5 ambiguous release matches and 2 invalid release matches, or 7 matcher-caused misses
+
+### Recall by inclusive calendar window
+
+The same inclusive calendar-day definition used by the first report is retained for direct
+comparison.
+
+| Window  |   First pilot | Corrected rerun |
+| ------- | ------------: | --------------: |
+| 7 days  |   6/13, 46.2% |    11/13, 84.6% |
+| 14 days |  12/28, 42.9% |    23/28, 82.1% |
+| 30 days |  21/53, 39.6% |    36/53, 67.9% |
+| 60 days | 41/106, 38.7% |   73/106, 68.9% |
+
+### Recall by frozen release type
+
+| Type                           | Frozen |    First pilot | Corrected rerun |
+| ------------------------------ | -----: | -------------: | --------------: |
+| Single                         |     58 |      22, 37.9% |       48, 82.8% |
+| EP                             |     10 |       6, 60.0% |        4, 40.0% |
+| Album                          |      5 |       2, 40.0% |        4, 80.0% |
+| Remix                          |      8 |       4, 50.0% |        5, 62.5% |
+| Feature or credited appearance |     25 |       7, 28.0% |       12, 48.0% |
+| Live                           |      0 | not measurable |  not measurable |
+| Compilation                    |      0 | not measurable |  not measurable |
+
+The snapshot stores no genres, so separate EDM or bass-music recall cannot be measured without
+inventing genre assignments. Remix and appearance recall improved but remains too weak for primary
+discovery.
+
+### Matching quality
+
+- Exact matches: 5
+- Strong probable matches: 68
+- Ambiguous matches: 5
+- Invalid matches: 2
+- Accepted matches above 7, 14, or 30 days: 0 at every threshold
+- The prior BARELY ALIVE `100% NO AI` 93-day probable match is now `invalid_match`.
+- Track-count conflicts, incompatible version markers, and date differences above 30 days are not
+  accepted.
+- The known false acceptance was removed. A general false-match rate cannot be claimed because the
+  other 73 accepted pairs were not independently labeled by a human.
+
+### Corrected operation
+
+- Run ID: `0f719ae6-bb42-48a0-b24c-557a0c2facb5`
+- Status: `controlled_partial`
+- Stop reason: `correction_candidate_budget_prioritization_complete`
+- Runtime: 8.48 minutes
+- New requests: 150, comprising 75 album and 75 song lookups
+- Cache hits: 102, comprising 50 search, 26 album, and 26 song lookups
+- Minimum request-start interval: 3201 ms
+- Concurrent request overlap: 0
+- HTTP errors and Retry-After rows: 0
+- Batch requests: 0
+- Candidate catalogs examined: 75
+- Candidate catalogs skipped to avoid exceeding the budget: 10, all belonging to the next complete
+  artist
+
+### Cohort-specific operational projection
+
+The candidate rate is the share of all artists in that cohort with at least one iTunes collection
+in the stated window. These deliberately selected groups are scenarios, not estimates of the
+593-artist watchlist.
+
+| Scenario               |   7-day rate | 7-day candidates of 593 | Spotify reduction |  60-day rate | 60-day candidates of 593 | Spotify reduction |
+| ---------------------- | -----------: | ----------------------: | ----------------: | -----------: | -----------------------: | ----------------: |
+| Positive cohort        | 14/30, 46.7% |                     277 |        316, 53.3% | 26/30, 86.7% |                      514 |         79, 13.3% |
+| Negative cohort        |   0/10, 0.0% |                       0 |       593, 100.0% |  3/10, 30.0% |                      178 |        415, 70.0% |
+| Identity-stress cohort |  1/10, 10.0% |                      59 |        534, 90.0% |  3/10, 30.0% |                      178 |        415, 70.0% |
+
+The positive cohort was intentionally enriched for recent releases, while the negative and
+identity-stress groups contain only ten artists each. None is a defensible prevalence estimate.
+The original 433-of-593 projection pooled mapped artists from this biased cohort and therefore was
+not valid as a watchlist projection.
+
+- Minimum one-time mapping cost remains 593 artist searches. Same-name ambiguity adds individual
+  catalog evidence requests, but this selected cohort cannot estimate that overhead reliably.
+- Looking up all 593 artists weekly costs 1,186 individual requests and about 63.3 minutes at the
+  required pacing.
+- Scaling the observed 78.0% mapping rate would cover about 463 artists, cost about 926 weekly
+  requests, and take about 49.4 minutes, while leaving the other artists undiscovered.
+- No unsafe batch result is used in any estimate.
+- A reliable weekly candidate-volume and Spotify-request-reduction estimate requires a randomized
+  or full-watchlist Apple-only sweep.
+
+### Corrected decision
+
+**Useful only as a supplemental source.**
+
+Mapping coverage and seven-day recall improved materially, and the known 93-day false acceptance
+was removed. The result still has 22.0% unresolved artist identities, 48.0% appearance recall,
+62.5% remix recall, 14 catalog misses, 5 ambiguous release matches, and no defensible watchlist-wide
+request-reduction estimate. This is not sufficient for a primary candidate-discovery source.
+
+If further work is desired, use a separate representative pilot with randomized or full-watchlist
+sampling. Keep this branch unmerged in the current milestone.
+
 ## Limitations
 
 - Apple publishes this API only in archived documentation.

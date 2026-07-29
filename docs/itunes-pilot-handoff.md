@@ -151,6 +151,41 @@ Do not merge this branch into the main application from the current result.
   evidence in the existing JSONB evidence field.
 - The pilot doctor remained `READY` with 18 migrations and isolated loopback port 3001 available.
 
+## Corrected live rerun
+
+- Pre-live checkpoint: `ad817095cf47dfcfc05afa73850f005844a014cc`
+- Run ID: `0f719ae6-bb42-48a0-b24c-557a0c2facb5`
+- Status: `controlled_partial`
+- Stop reason: `correction_candidate_budget_prioritization_complete`
+- Runtime: 2026-07-29T03:00:28.529Z through 2026-07-29T03:08:57.198Z
+- New requests: 150 of 150, comprising 75 album and 75 song lookups
+- Cache hits: 102, comprising all 50 searches and the 26 album and 26 song lookups selected in the
+  first run
+- Candidate catalogs examined: 75; skipped before starting the next complete artist: 10
+- Minimum request-start interval: 3201 ms; overlapping request pairs: 0
+- HTTP errors, Retry-After rows, and batch requests: 0
+- Largest correction response: 359,376 bytes
+- No source code changed after the first correction request.
+
+## Corrected outcome
+
+- Mapping improved from 26 of 50, or 52.0%, to 39 of 50, or 78.0%.
+- Thirteen ambiguous artists became evidence-confirmed. Eleven remain ambiguous.
+- Mapped-only release recall was 73 of 94, or 77.7%, compared with 41 of 52, or 78.8%.
+- Full-cohort release recall improved from 41 of 106, or 38.7%, to 73 of 106, or 68.9%.
+- Full-cohort artist recall improved from 16 of 35, or 45.7%, to 29 of 35, or 82.9%.
+- Seven-day recall improved from 6 of 13, or 46.2%, to 11 of 13, or 84.6%, using the same inclusive
+  calendar definition.
+- Corrected unmatched releases comprise 14 catalog misses, 12 mapping-caused misses, 5 ambiguous
+  matches, and 2 invalid matches.
+- The previous 93-day BARELY ALIVE probable match is now invalid. No accepted corrected match
+  exceeds 7, 14, or 30 days.
+- Appearance recall is 12 of 25, or 48.0%; remix recall is 5 of 8, or 62.5%.
+- The corrected result is useful only as a supplemental source. It does not justify primary-source
+  integration or a merge.
+- The original 433-of-593 projection was invalid because it pooled a deliberately positive-heavy
+  cohort. A randomized or full-watchlist Apple-only sweep is required for a reliable projection.
+
 ## Final integrity evidence
 
 - Duplicate mappings, collection candidates, track candidates, and match identity rows: 0
@@ -158,6 +193,7 @@ Do not merge this branch into the main application from the current result.
 - Unsafe persisted Apple store URLs: 0
 - Pilot Spotify and MusicBrainz request events: 0
 - Pilot feed items, non-mock release candidates, and playlist exports: 0
+- Total pilot request events: 360; normalized cache rows: 258
 - Main worktree remained on `codex/release-radar-hardening` with only its pre-existing
   `docs/AI_HANDOFF.md` modification.
 - The existing Spotify Windows task was not stopped, restarted, edited, disabled, or replaced.
