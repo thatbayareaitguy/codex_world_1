@@ -83,10 +83,50 @@ playlist behavior exists.
 - Playwright: 23 passed against the isolated test database and loopback port 3100
 - Pilot doctor: `READY`; 18 migrations; isolated port 3001 available
 - `git diff --check`: passed
-- No live iTunes request has occurred.
+- Pre-live checkpoint: `42db979e779e82769330efba4891087184260fa6`
+- The checkpoint was pushed and synchronized before the first live iTunes request.
 
-## Next checkpoint
+## Live pilot result
 
-Commit and push the verified implementation. Then run plan mode with zero requests before
-explicitly enabling and starting the bounded live pilot. Do not modify source code after the first
-live iTunes request.
+- Run ID: `e51a57f6-2f95-4e6d-868b-f30ed43f90fd`
+- Status: completed
+- Stop reason: `pilot_workflow_completed`
+- Runtime: 2026-07-29T01:23:16.853Z through 2026-07-29T01:29:17.489Z
+- Requests: 108 of 200
+- Request mix: 50 search, 26 album, 26 song, 4 batch, and 2 collection-detail
+- Minimum observed request-start interval: 3201 ms
+- Overlapping request pairs: 0
+- HTTP errors and Retry-After rows: 0
+- Largest response: 3,018,593 bytes, below the 5 MiB ceiling
+- No source code changed after the first live request.
+
+## Outcome
+
+- Exact mappings: 26; ambiguous mappings: 24; mapping rate: 52.0%
+- Frozen releases matched: 41 of 106; release recall: 38.7%
+- Artist-level recall: 45.7%
+- Recent 60-day iTunes candidates: 76 collections and 114 tracks
+- Recent candidate precision proxy: 52.6%
+- Appearance recall: 7 of 25 frozen feature releases, or 28.0%
+- No tested batch size was safe.
+- Projected recurring individual lookup load for 593 mapped artists: 1,186 requests and 63.3
+  minutes at 3.2-second pacing
+- Projected candidate artists: 433 of 593, implying a lower-bound 27.0% reduction from one
+  Spotify artist-catalog request per artist
+
+The pilot is not reliable enough for this watchlist under the tested mapping workflow. The live
+workflow did not use extra catalog lookups to resolve competing exact-name candidates with frozen
+release-title evidence, and one probable match accepted a 93-day date difference. Correct those
+specific weaknesses in a separate credential-free milestone before considering another live run.
+Do not merge this branch into the main application from the current result.
+
+## Final integrity evidence
+
+- Duplicate mappings, collection candidates, track candidates, and match identity rows: 0
+- Cached artwork or preview fields: 0
+- Unsafe persisted Apple store URLs: 0
+- Pilot Spotify and MusicBrainz request events: 0
+- Pilot feed items, non-mock release candidates, and playlist exports: 0
+- Main worktree remained on `codex/release-radar-hardening` with only its pre-existing
+  `docs/AI_HANDOFF.md` modification.
+- The existing Spotify Windows task was not stopped, restarted, edited, disabled, or replaced.
