@@ -3,7 +3,9 @@ import { resolve } from "node:path";
 
 export function loadLocalEnvironment(
   environment: NodeJS.ProcessEnv = process.env,
-  path = resolve(process.cwd(), ".env"),
+  path = environment.RADAR_ENV_FILE
+    ? resolve(environment.RADAR_ENV_FILE)
+    : resolve(process.cwd(), ".env"),
 ): NodeJS.ProcessEnv {
   if (!existsSync(path)) return environment;
   for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {

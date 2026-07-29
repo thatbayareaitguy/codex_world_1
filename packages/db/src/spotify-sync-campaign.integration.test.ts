@@ -13,6 +13,7 @@ import {
   spotifySchedulerWork,
   spotifySyncCampaignMembers,
   spotifySyncCampaigns,
+  trackCredits,
   users,
 } from "./schema";
 import {
@@ -52,6 +53,7 @@ beforeEach(async () => {
   await db.delete(spotifyProviderState);
   await db.delete(artistExternalIds);
   await db.delete(artistFollows);
+  await db.delete(trackCredits);
   await db.delete(artists);
 });
 

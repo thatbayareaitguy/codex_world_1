@@ -18,3 +18,4 @@ export * from "./musicbrainz-request-gate";
 export * from "./musicbrainz-batches";
 export * from "./musicbrainz-mappings";
 export * from "./musicbrainz-review-history";
+export * from "./itunes-pilot";

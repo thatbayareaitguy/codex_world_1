@@ -7,11 +7,12 @@ export default defineConfig({
   use: { baseURL: "http://127.0.0.1:3100", trace: "retain-on-failure" },
   webServer: {
     command:
-      "pnpm --filter @radar/web build && pnpm --filter @radar/web start --hostname 127.0.0.1 --port 3100",
+      "corepack pnpm@11.9.0 --filter @radar/web build && corepack pnpm@11.9.0 --filter @radar/web start --hostname 127.0.0.1 --port 3100",
     env: {
       APP_BASE_URL: "http://127.0.0.1:3100",
       APP_ENCRYPTION_KEY: "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
-      DATABASE_URL: "postgres://radar:radar@127.0.0.1:5433/radar_test",
+      DATABASE_URL:
+        process.env.TEST_DATABASE_URL ?? "postgres://radar:radar@127.0.0.1:55434/radar_itunes_test",
       MUSICBRAINZ_CONTACT_EMAIL: "e2e@example.com",
       MUSICBRAINZ_ENABLED: "true",
       NEXT_DIST_DIR: ".next-e2e",

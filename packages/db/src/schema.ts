@@ -1426,6 +1426,323 @@ export const feedRevisions = pgTable("feed_revisions", {
   updatedAt,
 });
 
+export const itunesPilotSnapshots = pgTable("itunes_pilot_snapshots", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  snapshotHash: text("snapshot_hash").notNull().unique(),
+  snapshotTimestamp: timestamp("snapshot_timestamp", { withTimezone: true }).notNull(),
+  windowStart: date("window_start").notNull(),
+  windowEnd: date("window_end").notNull(),
+  mainRepositoryCommit: text("main_repository_commit").notNull(),
+  mainSchemaVersion: integer("main_schema_version").notNull(),
+  artistCount: integer("artist_count").notNull(),
+  releaseCount: integer("release_count").notNull(),
+  createdAt,
+});
+
+export const itunesPilotSnapshotArtists = pgTable(
+  "itunes_pilot_snapshot_artists",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    snapshotId: uuid("snapshot_id")
+      .notNull()
+      .references(() => itunesPilotSnapshots.id, { onDelete: "cascade" }),
+    canonicalArtistId: uuid("canonical_artist_id").notNull(),
+    canonicalName: text("canonical_name").notNull(),
+    normalizedName: text("normalized_name").notNull(),
+    aliases: jsonb("aliases")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    spotifyArtistId: text("spotify_artist_id").notNull(),
+    spotifyCoverageTimestamp: timestamp("spotify_coverage_timestamp", {
+      withTimezone: true,
+    }).notNull(),
+    cohortReason: text("cohort_reason").notNull(),
+    genres: jsonb("genres")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    inclusionState: jsonb("inclusion_state")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    createdAt,
+  },
+  (table) => [
+    uniqueIndex("itunes_pilot_snapshot_artist_unique").on(
+      table.snapshotId,
+      table.canonicalArtistId,
+    ),
+    check(
+      "itunes_pilot_snapshot_artist_reason_check",
+      sql`${table.cohortReason} in ('positive', 'negative', 'identity_stress')`,
+    ),
+  ],
+);
+
+export const itunesPilotGroundTruthReleases = pgTable(
+  "itunes_pilot_ground_truth_releases",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    snapshotId: uuid("snapshot_id")
+      .notNull()
+      .references(() => itunesPilotSnapshots.id, { onDelete: "cascade" }),
+    canonicalArtistId: uuid("canonical_artist_id").notNull(),
+    canonicalReleaseId: uuid("canonical_release_id").notNull(),
+    spotifyReleaseId: text("spotify_release_id").notNull(),
+    title: text("title").notNull(),
+    normalizedTitle: text("normalized_title").notNull(),
+    releaseDate: date("release_date").notNull(),
+    releaseDatePrecision: text("release_date_precision").notNull(),
+    releaseType: text("release_type").notNull(),
+    version: text("version"),
+    trackCount: integer("track_count"),
+    creditedArtists: jsonb("credited_artists")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    tracks: jsonb("tracks")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    completenessState: text("completeness_state"),
+    feedEligible: boolean("feed_eligible").notNull().default(false),
+    createdAt,
+  },
+  (table) => [
+    uniqueIndex("itunes_pilot_ground_truth_release_unique").on(
+      table.snapshotId,
+      table.canonicalArtistId,
+      table.spotifyReleaseId,
+    ),
+    index("itunes_pilot_ground_truth_artist_idx").on(table.snapshotId, table.canonicalArtistId),
+  ],
+);
+
+export const itunesPilotRuns = pgTable(
+  "itunes_pilot_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    snapshotId: uuid("snapshot_id")
+      .notNull()
+      .references(() => itunesPilotSnapshots.id, { onDelete: "restrict" }),
+    status: text("status").notNull().default("planned"),
+    requestBudget: integer("request_budget").notNull().default(200),
+    requestCount: integer("request_count").notNull().default(0),
+    minRequestIntervalMs: integer("min_request_interval_ms").notNull().default(3200),
+    maximumRuntimeMs: integer("maximum_runtime_ms").notNull().default(1_800_000),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    deadlineAt: timestamp("deadline_at", { withTimezone: true }),
+    stopReason: text("stop_reason"),
+    implementationCommit: text("implementation_commit").notNull(),
+    metrics: jsonb("metrics")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    check(
+      "itunes_pilot_run_status_check",
+      sql`${table.status} in ('planned', 'running', 'completed', 'controlled_partial', 'failed')`,
+    ),
+    check(
+      "itunes_pilot_run_budget_check",
+      sql`${table.requestBudget} between 1 and 200 and ${table.requestCount} between 0 and ${table.requestBudget}`,
+    ),
+    check("itunes_pilot_run_interval_check", sql`${table.minRequestIntervalMs} >= 3200`),
+  ],
+);
+
+export const itunesPilotArtistMappings = pgTable(
+  "itunes_pilot_artist_mappings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => itunesPilotRuns.id, { onDelete: "cascade" }),
+    canonicalArtistId: uuid("canonical_artist_id").notNull(),
+    status: text("status").notNull(),
+    selectedArtistId: text("selected_artist_id"),
+    selectedArtistName: text("selected_artist_name"),
+    confidence: numeric("confidence", { precision: 4, scale: 3 }).notNull(),
+    decisionReason: text("decision_reason").notNull(),
+    ambiguityReason: text("ambiguity_reason"),
+    evidence: jsonb("evidence")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    candidates: jsonb("candidates")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("itunes_pilot_artist_mapping_unique").on(table.runId, table.canonicalArtistId),
+    check(
+      "itunes_pilot_artist_mapping_status_check",
+      sql`${table.status} in ('exact_confirmed', 'evidence_confirmed', 'ambiguous', 'no_match', 'rejected')`,
+    ),
+  ],
+);
+
+export const itunesPilotCollections = pgTable(
+  "itunes_pilot_collections",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => itunesPilotRuns.id, { onDelete: "cascade" }),
+    canonicalArtistId: uuid("canonical_artist_id").notNull(),
+    collectionId: text("collection_id").notNull(),
+    collectionName: text("collection_name").notNull(),
+    normalizedTitle: text("normalized_title").notNull(),
+    artistId: text("artist_id"),
+    artistName: text("artist_name"),
+    collectionArtistId: text("collection_artist_id"),
+    collectionArtistName: text("collection_artist_name"),
+    releaseDate: timestamp("release_date", { withTimezone: true }).notNull(),
+    trackCount: integer("track_count"),
+    explicitness: text("explicitness"),
+    primaryGenreName: text("primary_genre_name"),
+    source: text("source").notNull(),
+    releaseType: text("release_type").notNull(),
+    version: text("version"),
+    viewUrl: text("view_url"),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("itunes_pilot_collection_unique").on(
+      table.runId,
+      table.canonicalArtistId,
+      table.collectionId,
+    ),
+  ],
+);
+
+export const itunesPilotTracks = pgTable(
+  "itunes_pilot_tracks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => itunesPilotRuns.id, { onDelete: "cascade" }),
+    canonicalArtistId: uuid("canonical_artist_id").notNull(),
+    trackId: text("track_id").notNull(),
+    collectionId: text("collection_id"),
+    artistId: text("artist_id"),
+    artistName: text("artist_name").notNull(),
+    collectionArtistId: text("collection_artist_id"),
+    collectionArtistName: text("collection_artist_name"),
+    trackName: text("track_name").notNull(),
+    normalizedTitle: text("normalized_title").notNull(),
+    collectionName: text("collection_name"),
+    releaseDate: timestamp("release_date", { withTimezone: true }).notNull(),
+    durationMs: integer("duration_ms"),
+    discNumber: integer("disc_number"),
+    trackNumber: integer("track_number"),
+    trackCount: integer("track_count"),
+    discCount: integer("disc_count"),
+    explicitness: text("explicitness"),
+    appearance: boolean("appearance").notNull().default(false),
+    viewUrl: text("view_url"),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("itunes_pilot_track_unique").on(
+      table.runId,
+      table.canonicalArtistId,
+      table.trackId,
+    ),
+  ],
+);
+
+export const itunesPilotMatches = pgTable(
+  "itunes_pilot_matches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => itunesPilotRuns.id, { onDelete: "cascade" }),
+    canonicalArtistId: uuid("canonical_artist_id").notNull(),
+    identityKey: text("identity_key").notNull(),
+    spotifyReleaseId: text("spotify_release_id"),
+    appleCollectionId: text("apple_collection_id"),
+    classification: text("classification").notNull(),
+    dateDifferenceDays: integer("date_difference_days"),
+    trackCountAgreement: boolean("track_count_agreement"),
+    reasons: jsonb("reasons")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    createdAt,
+  },
+  (table) => [uniqueIndex("itunes_pilot_match_unique").on(table.runId, table.identityKey)],
+);
+
+export const itunesPilotProviderState = pgTable("itunes_pilot_provider_state", {
+  id: text("id").primaryKey().default("global"),
+  nextRequestAt: timestamp("next_request_at", { withTimezone: true }),
+  lastRequestStartedAt: timestamp("last_request_started_at", { withTimezone: true }),
+  leaseOwner: text("lease_owner"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  requestCount: integer("request_count").notNull().default(0),
+  updatedAt,
+});
+
+export const itunesPilotRequestEvents = pgTable(
+  "itunes_pilot_request_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => itunesPilotRuns.id, { onDelete: "cascade" }),
+    endpointCategory: text("endpoint_category").notNull(),
+    requestIdentity: text("request_identity").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    status: integer("status"),
+    responseBytes: integer("response_bytes").notNull().default(0),
+    retryAfterSeconds: integer("retry_after_seconds"),
+    errorClassification: text("error_classification"),
+    cacheHit: boolean("cache_hit").notNull().default(false),
+    createdAt,
+  },
+  (table) => [
+    index("itunes_pilot_request_run_started_idx").on(table.runId, table.startedAt),
+    index("itunes_pilot_request_identity_idx").on(table.requestIdentity),
+  ],
+);
+
+export const itunesPilotResponseCache = pgTable("itunes_pilot_response_cache", {
+  requestIdentity: text("request_identity").primaryKey(),
+  response: jsonb("response").notNull(),
+  responseHash: text("response_hash").notNull(),
+  storedAt: timestamp("stored_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt,
+});
+
+export const itunesPilotBatchExperiments = pgTable(
+  "itunes_pilot_batch_experiments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => itunesPilotRuns.id, { onDelete: "cascade" }),
+    entity: text("entity").notNull(),
+    batchSize: integer("batch_size").notNull(),
+    artistIds: jsonb("artist_ids").notNull(),
+    safe: boolean("safe").notNull(),
+    reasons: jsonb("reasons")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    individualResultCount: integer("individual_result_count").notNull(),
+    batchResultCount: integer("batch_result_count").notNull(),
+    responseBytes: integer("response_bytes"),
+    createdAt,
+  },
+  (table) => [
+    uniqueIndex("itunes_pilot_batch_unique").on(table.runId, table.entity, table.batchSize),
+  ],
+);
+
 export const playlistTargets = pgTable(
   "playlist_targets",
   {

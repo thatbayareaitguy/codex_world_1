@@ -22,6 +22,7 @@ import {
   spotifyRequestEvents,
   spotifySchedulerState,
   spotifySchedulerWork,
+  trackCredits,
   users,
 } from "./schema";
 
@@ -64,6 +65,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await db.delete(spotifySchedulerWork);
   await db.delete(artistFollows);
+  await db.delete(trackCredits);
   await db.delete(artists);
   await db.delete(spotifyReleaseTrackRetrievals);
 });

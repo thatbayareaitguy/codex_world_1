@@ -875,12 +875,18 @@ describe.sequential("complete deterministic fake-provider workflow", () => {
   it("persists mocked Reddit evidence idempotently and purges deleted source content", async () => {
     const userId = await ensureLocalOwner(connection.db);
     const [spotifyBackedTrack] = await connection.db
-      .select({ id: tracks.id })
-      .from(tracks)
-      .innerJoin(trackCredits, eq(trackCredits.trackId, tracks.id))
-      .innerJoin(artists, eq(artists.id, trackCredits.artistId))
+      .selectDistinct({ id: tracks.id })
+      .from(artistFollows)
+      .innerJoin(artists, eq(artists.id, artistFollows.artistId))
+      .innerJoin(trackCredits, eq(trackCredits.artistId, artists.id))
+      .innerJoin(tracks, eq(tracks.id, trackCredits.trackId))
       .where(
-        and(eq(tracks.normalizedTitle, "glass horizon"), eq(artists.normalizedName, "lumen field")),
+        and(
+          eq(artistFollows.userId, userId),
+          eq(artistFollows.active, true),
+          eq(artists.normalizedName, "lumen field"),
+          eq(tracks.normalizedTitle, "glass horizon"),
+        ),
       )
       .limit(1);
     expect(spotifyBackedTrack).toBeDefined();

@@ -17,6 +17,22 @@ const environmentSchema = z.object({
   APP_ENCRYPTION_KEY: z.string().min(1).optional(),
   DATABASE_URL: z.string().min(1).optional(),
   INITIAL_BACKFILL_DAYS: z.coerce.number().int().min(1).max(3650).default(60),
+  ITUNES_CONCURRENCY: z.coerce.number().int().min(1).max(1).default(1),
+  ITUNES_DISCOVERY_ENABLED: booleanFlag(false),
+  ITUNES_LANGUAGE: z.enum(["en_us", "ja_jp"]).default("en_us"),
+  ITUNES_MAX_REQUESTS_PER_RUN: z.coerce.number().int().min(1).max(200).default(200),
+  ITUNES_MAX_RESPONSE_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1024)
+    .max(10 * 1024 * 1024)
+    .default(5 * 1024 * 1024),
+  ITUNES_MIN_REQUEST_INTERVAL_MS: z.coerce.number().int().min(3200).default(3200),
+  ITUNES_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60_000).default(15_000),
+  ITUNES_STOREFRONT: z
+    .string()
+    .regex(/^[A-Z]{2}$/)
+    .default("US"),
   MUSICBRAINZ_CONTACT_EMAIL: z.email().optional(),
   MUSICBRAINZ_ENABLED: booleanFlag(true),
   REDDIT_ACCESS_APPROVED: booleanFlag(false),
@@ -60,6 +76,16 @@ export interface ProviderConfiguration {
   appEncryptionKey?: string;
   databaseUrl?: string;
   initialBackfillDays: number;
+  itunes: {
+    concurrency: 1;
+    enabled: boolean;
+    language: "en_us" | "ja_jp";
+    maxRequestsPerRun: number;
+    maxResponseBytes: number;
+    minRequestIntervalMs: number;
+    requestTimeoutMs: number;
+    storefront: string;
+  };
   musicbrainz: {
     configured: boolean;
     contactEmail?: string;
@@ -134,6 +160,16 @@ export function loadProviderConfiguration(
     ...(parsed.APP_ENCRYPTION_KEY ? { appEncryptionKey: parsed.APP_ENCRYPTION_KEY } : {}),
     ...(parsed.DATABASE_URL ? { databaseUrl: parsed.DATABASE_URL } : {}),
     initialBackfillDays: parsed.INITIAL_BACKFILL_DAYS,
+    itunes: {
+      concurrency: 1,
+      enabled: parsed.ITUNES_DISCOVERY_ENABLED,
+      language: parsed.ITUNES_LANGUAGE,
+      maxRequestsPerRun: parsed.ITUNES_MAX_REQUESTS_PER_RUN,
+      maxResponseBytes: parsed.ITUNES_MAX_RESPONSE_BYTES,
+      minRequestIntervalMs: parsed.ITUNES_MIN_REQUEST_INTERVAL_MS,
+      requestTimeoutMs: parsed.ITUNES_REQUEST_TIMEOUT_MS,
+      storefront: parsed.ITUNES_STOREFRONT,
+    },
     musicbrainz: {
       configured: Boolean(parsed.MUSICBRAINZ_ENABLED && parsed.MUSICBRAINZ_CONTACT_EMAIL),
       ...(parsed.MUSICBRAINZ_CONTACT_EMAIL

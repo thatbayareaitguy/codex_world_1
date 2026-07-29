@@ -21,6 +21,30 @@ describe("provider configuration", () => {
       internalMaxQpm: 30,
     });
     expect(config.initialBackfillDays).toBe(60);
+    expect(config.itunes).toEqual({
+      concurrency: 1,
+      enabled: false,
+      language: "en_us",
+      maxRequestsPerRun: 200,
+      maxResponseBytes: 5 * 1024 * 1024,
+      minRequestIntervalMs: 3200,
+      requestTimeoutMs: 15_000,
+      storefront: "US",
+    });
+  });
+
+  it("requires explicit iTunes enablement and rejects unsafe pilot limits", () => {
+    expect(loadProviderConfiguration({ ITUNES_DISCOVERY_ENABLED: "true" }).itunes.enabled).toBe(
+      true,
+    );
+    for (const environment of [
+      { ITUNES_CONCURRENCY: "2" },
+      { ITUNES_MAX_REQUESTS_PER_RUN: "201" },
+      { ITUNES_MIN_REQUEST_INTERVAL_MS: "3199" },
+      { ITUNES_STOREFRONT: "usa" },
+    ]) {
+      expect(() => loadProviderConfiguration(environment)).toThrow();
+    }
   });
 
   it("validates the single allowed Spotify playlist boundary", () => {
