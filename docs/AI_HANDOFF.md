@@ -6,37 +6,44 @@ Updated: 2026-07-29
 
 - Worktree: `C:\Users\taysh\Documents\Codex\codex_world_1_apple`
 - Branch: `codex/apple-music-discovery`
-- Starting branch point: `bfd305149ab6776bb84a0809009ff3ecc435d5ba`
+- Runtime milestone starting checkpoint: `98a44cf663f73e169ad93d1567aae4562092a053`
 - Upstream: `origin/codex/apple-music-discovery`
-- Scope: policy-only authorization checkpoint
+- Scope: isolated runtime and local credential readiness only
 
-## Authorized Scope
+## Runtime
 
-Repository policy now permits a disabled-by-default, bounded Apple Music API public catalog pilot
-on this branch only. The user approved Apple Developer Program access and developer-token
-authentication for public catalog requests.
+- Compose project: `codex_world_1_apple`
+- Compose file: `docker-compose.apple.yml`
+- Web port: `3002`, available on loopback
+- Development database: `radar_apple` on loopback port `55435`
+- Test database: `radar_apple_test` on loopback port `55436`
+- PostgreSQL application name: `release-radar-apple`
+- Dedicated development volume: `codex_world_1_apple_radar-apple-postgres`
+- Test storage: isolated container tmpfs
+- Applied migrations: 18 in each Apple database
+- Repository doctor: `READY`
 
-Credential-free tests must pass before any live Apple request. Each live request milestone must be
-separately authorized and explicitly bounded.
+The Apple containers, network, volume, database names, and ports are separate from Spotify and
+iTunes.
 
-## Prohibited Scope
+## Credentials
 
-- No Music User Tokens, personal-library access, playback, Apple playlists, or Apple Music Feed
-- No production scheduling, production integration, or merge into
-  `codex/release-radar-hardening`
-- No Spotify, iTunes, SoundCloud, MusicBrainz, Reddit, or other provider activity
-- No tracked or reported Apple identifiers, private-key paths, private-key material, or generated
-  tokens
+- Ignored runtime file: `.app-runtime/apple-music.env`
+- Apple Music remains disabled
+- Team ID, Key ID, and Media ID are configured locally but are not recorded here
+- The private key remains outside all repositories
+- Local validation confirmed a readable PEM EC private key compatible with ES256 and P-256
+- One short-lived developer token was generated and validated only in memory, then discarded
+- No token, identifier, private-key path, private-key material, or signature was logged or persisted
 
-The `.p8` private key must remain outside the repository. This exception does not modify policy on
-the Spotify or iTunes branches.
+## Boundaries
 
-## Current Status
+- Apple provider implementation has not started
+- No Apple, Spotify, iTunes, or other live-provider request occurred
+- Music User Tokens, personal-library access, playback, playlists, and Apple Music Feed remain
+  prohibited
+- Production scheduling, production integration, and merging into
+  `codex/release-radar-hardening` remain unauthorized
+- The Spotify and iTunes worktrees, databases, tasks, and runtime environments were not modified
 
-- Apple pilot authorized by repository policy
-- Runtime configuration may proceed in a later milestone
-- Provider implementation not started
-- Live Apple access not yet authorized
-- No provider request occurred in this milestone
-
-See `docs/apple-music-pilot-authorization.md` for the branch-specific authorization record.
+See `docs/apple-music-pilot-authorization.md` and `docs/apple-music-runtime.md`.
