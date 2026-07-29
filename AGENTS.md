@@ -4,6 +4,22 @@
 - Before implementing a real provider, verify current official account, payment, authentication, functionality, terms, and policy constraints. Record unresolved policy language and never claim provider approval.
 - No provider may require paid developer access, membership, API subscription, or commercial plan. The owner's existing Spotify Premium subscription is the only permitted paid prerequisite.
 - Active providers are Spotify, MusicBrainz, MockProvider, and the approval-gated Reddit evidence adapter. Reddit must remain disabled until explicit API approval is received and recorded. Do not add YouTube, SoundCloud API, Apple Music, or TIDAL adapters in this milestone.
+- The paid-provider and Apple Music adapter prohibitions above have one narrow exception on
+  `codex/apple-music-discovery`: Apple Developer Program access and Apple Music API catalog
+  development are permitted only for the isolated, bounded Apple Music catalog pilot. The Apple
+  provider must remain disabled by default, and this exception does not authorize a merge into
+  `codex/release-radar-hardening`.
+- Apple pilot tests must remain credential-free and pass before any live Apple request. Live Apple
+  requests require a separately authorized, explicitly bounded milestone. Only public catalog
+  endpoints and developer-token authentication are permitted.
+- Apple Team ID, Key ID, Media ID, private-key path, private-key contents, and generated developer
+  tokens must remain untracked and must not appear in logs or reports. The `.p8` private key must
+  remain outside the repository.
+- Music User Tokens, Apple Music user-library or other personal-library access, playback, Apple
+  playlist access or writes, and Apple Music Feed remain prohibited.
+- Spotify, iTunes, SoundCloud, MusicBrainz, Reddit, and all other provider activity remain
+  prohibited from the Apple pilot unless separately authorized. This exception applies only to
+  `codex/apple-music-discovery` and does not change policy on the Spotify or iTunes branches.
 - Never add SoundCloud credentials, OAuth, API requests, account import, search requests, monitoring, metadata, artwork, HTML fetching, scraping, browser automation, playback, oEmbed, or playlist writing.
 - SoundCloud is limited to the existing safe manual outbound-link feature and must be hidden by default behind `SOUNDCLOUD_MANUAL_LINKS_ENABLED=false`.
 - Accept SoundCloud field URLs only from `soundcloud.com` or its subdomains over HTTPS. Reject unsafe schemes, embedded credentials, lookalike domains, and non-track paths for track fields.
