@@ -6,10 +6,13 @@ import {
   compareItunesToSpotify,
   decideItunesArtistMapping,
   dedupeItunesTracks,
+  evaluateItunesReleasePair,
   isItunesAppearance,
   mergeItunesCollections,
   normalizeArtistIdentity,
+  resolveItunesArtistFromCatalogEvidence,
   type ItunesCollectionCandidate,
+  type SpotifyGroundTruthRelease,
   type ItunesTrackCandidate,
 } from "./itunes-pilot";
 
@@ -85,6 +88,151 @@ describe("iTunes artist mapping", () => {
       }),
     ).toMatchObject({ status: "no_match" });
   });
+
+  it("evidence-confirms only the same-name candidate with unique strong catalog overlap", () => {
+    const groundTruth: SpotifyGroundTruthRelease[] = [
+      {
+        canonicalReleaseId: "canonical",
+        normalizedTitle: "signal fire",
+        releaseDate: "2026-07-01",
+        releaseType: "single",
+        spotifyReleaseId: "spotify",
+        title: "Signal Fire",
+        trackCount: 1,
+        tracks: [{ normalizedTitle: "signal fire", title: "Signal Fire" }],
+      },
+    ];
+    const decision = resolveItunesArtistFromCatalogEvidence({
+      aliases: [],
+      candidates: [
+        {
+          candidate: candidate("correct", "Same Name"),
+          collections: [
+            {
+              ...collection("correct-release", "Signal Fire"),
+              releaseDate: "2026-07-01T00:00:00Z",
+              trackCount: 1,
+            },
+          ],
+          tracks: [{ ...track("correct-track", "correct"), trackName: "Signal Fire" }],
+        },
+        {
+          candidate: candidate("unrelated", "Same Name"),
+          collections: [collection("unrelated-release", "Unrelated")],
+          tracks: [track("unrelated-track", "unrelated")],
+        },
+      ],
+      canonicalName: "Same Name",
+      groundTruth,
+    });
+    expect(decision).toMatchObject({
+      selected: { artistId: "correct" },
+      status: "evidence_confirmed",
+    });
+    expect(decision.candidateEvidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          artistId: "correct",
+          decision: "confirm",
+          matchedReleases: ["spotify"],
+        }),
+      ]),
+    );
+  });
+
+  it("keeps conflicting or duplicate strong catalog evidence ambiguous", () => {
+    const groundTruth: SpotifyGroundTruthRelease[] = [
+      {
+        canonicalReleaseId: "canonical",
+        normalizedTitle: "shared title",
+        releaseDate: "2026-07-01",
+        releaseType: "single",
+        spotifyReleaseId: "spotify",
+        title: "Shared Title",
+        trackCount: 1,
+      },
+    ];
+    const matchingCatalog = (artistId: string) => ({
+      candidate: candidate(artistId, "Same Name"),
+      collections: [
+        {
+          ...collection(`${artistId}-release`, "Shared Title"),
+          releaseDate: "2026-07-01T00:00:00Z",
+          trackCount: 1,
+        },
+      ],
+      tracks: [{ ...track(`${artistId}-track`, artistId), trackName: "Shared Title" }],
+    });
+    expect(
+      resolveItunesArtistFromCatalogEvidence({
+        aliases: [],
+        candidates: [matchingCatalog("one"), matchingCatalog("two")],
+        canonicalName: "Same Name",
+        groundTruth,
+      }),
+    ).toMatchObject({ status: "ambiguous" });
+    expect(
+      resolveItunesArtistFromCatalogEvidence({
+        aliases: [],
+        candidates: [
+          {
+            candidate: candidate("one", "Same Name"),
+            collections: [
+              {
+                ...collection("old", "Shared Title"),
+                releaseDate: "2026-03-30T00:00:00Z",
+                trackCount: 1,
+              },
+            ],
+            tracks: [],
+          },
+        ],
+        canonicalName: "Same Name",
+        groundTruth,
+      }),
+    ).toMatchObject({ status: "ambiguous" });
+  });
+
+  it("does not confirm matching titles when returned credits identify another artist", () => {
+    expect(
+      resolveItunesArtistFromCatalogEvidence({
+        aliases: [],
+        candidates: [
+          {
+            candidate: candidate("candidate", "Same Name"),
+            collections: [
+              {
+                ...collection("release", "Shared Title"),
+                artistId: "different",
+                collectionArtistId: "different",
+                releaseDate: "2026-07-01T00:00:00Z",
+                trackCount: 1,
+              },
+            ],
+            tracks: [
+              {
+                ...track("track", "different"),
+                collectionArtistId: "different",
+                trackName: "Shared Title",
+              },
+            ],
+          },
+        ],
+        canonicalName: "Same Name",
+        groundTruth: [
+          {
+            canonicalReleaseId: "canonical",
+            normalizedTitle: "shared title",
+            releaseDate: "2026-07-01",
+            releaseType: "single",
+            spotifyReleaseId: "spotify",
+            title: "Shared Title",
+            trackCount: 1,
+          },
+        ],
+      }),
+    ).toMatchObject({ status: "ambiguous" });
+  });
 });
 
 describe("iTunes discovery normalization", () => {
@@ -147,13 +295,83 @@ describe("cross-provider comparison", () => {
         [{ ...groundTruth[0]!, title: "Release (Live)", normalizedTitle: "release live" }],
         [collection("apple", "Release (Remix)")],
       )[0],
-    ).toMatchObject({ classification: "ambiguous_match" });
+    ).toMatchObject({ classification: "invalid_match" });
     expect(compareItunesToSpotify(groundTruth, [collection("other", "Different")])).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ classification: "spotify_ground_truth_missed_by_itunes" }),
         expect.objectContaining({ classification: "apple_only_or_spotify_missing" }),
       ]),
     );
+  });
+
+  it.each([
+    ["same date", "2026-07-01T00:00:00Z", "exact_match"],
+    ["one day", "2026-07-02T00:00:00Z", "exact_match"],
+    ["seven days", "2026-07-08T00:00:00Z", "strong_probable_match"],
+    ["fourteen days", "2026-07-15T00:00:00Z", "strong_probable_match"],
+    ["thirty days", "2026-07-31T00:00:00Z", "ambiguous_match"],
+    ["ninety-three days", "2026-10-02T00:00:00Z", "invalid_match"],
+  ])("applies strict date compatibility for %s", (_label, releaseDate, classification) => {
+    const spotify: SpotifyGroundTruthRelease = {
+      canonicalReleaseId: "canonical",
+      normalizedTitle: "release",
+      releaseDate: "2026-07-01",
+      releaseType: "single",
+      spotifyReleaseId: "spotify",
+      title: "Release",
+      trackCount: 2,
+    };
+    expect(
+      evaluateItunesReleasePair(spotify, {
+        ...collection("apple"),
+        releaseDate,
+      }),
+    ).toMatchObject({ classification });
+  });
+
+  it("rejects version, track-list, remix, and live conflicts", () => {
+    const spotify: SpotifyGroundTruthRelease = {
+      canonicalReleaseId: "canonical",
+      normalizedTitle: "release",
+      releaseDate: "2026-07-01",
+      releaseType: "single",
+      spotifyReleaseId: "spotify",
+      title: "Release",
+      trackCount: 2,
+    };
+    expect(
+      evaluateItunesReleasePair(spotify, collection("remix", "Release (Remix)")),
+    ).toMatchObject({
+      classification: "invalid_match",
+    });
+    expect(
+      evaluateItunesReleasePair(
+        { ...spotify, normalizedTitle: "release live", title: "Release (Live)" },
+        collection("studio", "Release"),
+      ),
+    ).toMatchObject({ classification: "invalid_match" });
+    expect(
+      evaluateItunesReleasePair(spotify, { ...collection("different-tracks"), trackCount: 9 }),
+    ).toMatchObject({ classification: "invalid_match" });
+  });
+
+  it("does not merge a single with a later album appearance", () => {
+    const spotify: SpotifyGroundTruthRelease = {
+      canonicalReleaseId: "canonical",
+      normalizedTitle: "release",
+      releaseDate: "2026-07-01",
+      releaseType: "single",
+      spotifyReleaseId: "spotify",
+      title: "Release",
+      trackCount: 1,
+    };
+    expect(
+      evaluateItunesReleasePair(spotify, {
+        ...collection("album"),
+        releaseDate: "2026-07-08T00:00:00Z",
+        trackCount: 12,
+      }),
+    ).toMatchObject({ classification: "invalid_match" });
   });
 });
 

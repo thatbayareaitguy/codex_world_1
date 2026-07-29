@@ -78,6 +78,90 @@ Generated: 2026-07-29T01:30:14.464Z
 | Zeds Dead         | positive        |
 | ZHU               | positive        |
 
+## Before-correction diagnostic
+
+This section freezes the first-pilot decomposition before identity or release-matching behavior is
+changed. It uses only stored run `e51a57f6-2f95-4e6d-868b-f30ed43f90fd`, its normalized pilot
+rows, and its cached responses.
+
+### Artist mapping
+
+- The 26 exact-confirmed artists contained 52 frozen Spotify releases across 16 artists with
+  ground truth. Forty-one releases matched, for 78.8% mapped-release recall. All 16 artists had at
+  least one match, for 100.0% mapped-artist recall.
+- The 24 ambiguous artists contained 54 frozen Spotify releases across 19 artists with ground
+  truth. None could be evaluated after the first-stage identity failure.
+- Every ambiguous mapping was caused by multiple exact normalized Apple artist names.
+- Search result counts ranged from 2 to 10. The exact competing-name subset contained 119 distinct
+  Apple artist IDs, including 85 candidates across the 19 ambiguous artists with ground truth.
+- Punctuation or alias differences and collaborative naming caused no first-stage ambiguity.
+  Same-name candidates were likely unrelated, but stored search data alone was insufficient to
+  choose among them.
+
+| Ambiguous artist | Search candidates | Exact-name competitors |
+| ---------------- | ----------------: | ---------------------: |
+| 12th Planet      |                 2 |                      2 |
+| 1991             |                10 |                      5 |
+| 4B               |                10 |                      9 |
+| A.M.C            |                10 |                     10 |
+| Alok             |                10 |                      8 |
+| Anki             |                10 |                      9 |
+| Anto             |                10 |                      8 |
+| ATTLAS           |                 6 |                      5 |
+| BIJOU            |                10 |                      8 |
+| BROHUG           |                 2 |                      2 |
+| BUNT.            |                10 |                      4 |
+| Babsy.           |                10 |                      5 |
+| Don Diablo       |                 5 |                      2 |
+| G-Space          |                10 |                      3 |
+| GRiZ             |                10 |                      5 |
+| MashBit          |                 2 |                      2 |
+| NXSTY            |                10 |                      4 |
+| REAPER           |                10 |                     10 |
+| Rueben           |                10 |                      2 |
+| SampliFire       |                 2 |                      2 |
+| SISTO            |                10 |                      4 |
+| William Black    |                 7 |                      2 |
+| YUSSI            |                10 |                      6 |
+| ZHU              |                10 |                      2 |
+
+### Release matching
+
+- The mapped group produced 3 exact matches, 38 strong probable matches, 2 ambiguous matches, and
+  9 Spotify ground-truth misses.
+- Neither ambiguous match had an exact normalized-title candidate. Both were tied partial-title
+  matches.
+- None of the 9 missed Spotify releases had an exact normalized title in the stored Apple
+  collections. The original matcher recorded them as lacking any title-compatible collection.
+- No match was explicitly rejected because of date, version, track list, or artist credit. Artist
+  credit was not part of the release-pair score.
+- One accepted strong probable match exceeded 7, 14, 30, and 60 days. It paired BARELY ALIVE's
+  `100% NO AI` releases 93 days apart.
+
+### Candidate-prevalence bias
+
+The first run collected catalogs only for exact-confirmed artists. Cohort prevalence therefore
+mixes catalog behavior with the 48.0% mapping failure and must not be treated as a random-watchlist
+estimate.
+
+| Cohort          |  Window | Artists with candidates | Cohort prevalence | Mapped prevalence |
+| --------------- | ------: | ----------------------: | ----------------: | ----------------: |
+| Positive        |  7 days |                 8 of 30 |             26.7% |             57.1% |
+| Positive        | 14 days |                10 of 30 |             33.3% |             71.4% |
+| Positive        | 30 days |                14 of 30 |             46.7% |            100.0% |
+| Positive        | 60 days |                14 of 30 |             46.7% |            100.0% |
+| Negative        |  7 days |                 0 of 10 |              0.0% |              0.0% |
+| Negative        | 14 days |                 0 of 10 |              0.0% |              0.0% |
+| Negative        | 30 days |                 1 of 10 |             10.0% |             14.3% |
+| Negative        | 60 days |                 3 of 10 |             30.0% |             42.9% |
+| Identity stress |  7 days |                 0 of 10 |              0.0% |              0.0% |
+| Identity stress | 14 days |                 1 of 10 |             10.0% |             20.0% |
+| Identity stress | 30 days |                 2 of 10 |             20.0% |             40.0% |
+| Identity stress | 60 days |                 2 of 10 |             20.0% |             40.0% |
+
+The original 433-of-593 candidate-artist projection used 19 of 26 mapped artists from a cohort
+deliberately enriched with 30 positive artists. It is not a valid full-watchlist estimate.
+
 ## Mapping
 
 - Exact confirmed: 26

@@ -92,7 +92,7 @@ prices, and personal account data are not persisted or logged.
 
 ## Artist mapping
 
-Mapping is deterministic:
+First-stage mapping remains deterministic:
 
 1. Normalize Unicode, case, whitespace, punctuation, ampersands, and common collaboration words.
 2. Confirm one unique exact normalized canonical-name result.
@@ -104,6 +104,31 @@ Mapping is deterministic:
 Only `exact_confirmed` and `evidence_confirmed` mappings proceed. Every returned candidate, decision
 reason, ambiguity reason, confidence, and evidence item is retained in the pilot database.
 
+The correction rerun adds a second stage for competing exact names. It reuses cached search
+responses, then requests individual album and recent-song catalogs only for candidates attached to
+artists with frozen ground truth. Candidate evidence records:
+
+- exact normalized release-title overlap
+- strict release and version compatibility
+- release-date and track-count compatibility
+- exact track-title overlap
+- stored aliases
+- returned artist and collection credit IDs
+- matched and conflicting frozen releases
+- a deterministic score, confidence, decision, and reason
+
+Genre, search rank, popularity, result order, partial spelling, and one generic title are not
+decisive. A candidate is evidence-confirmed only when one same-name catalog has strong compatible
+overlap, no invalid release conflict, and a score margin of at least two over every competitor. If
+two candidates remain plausible, the artist remains ambiguous.
+
+The correction request budget can examine 75 complete candidate catalogs, because each catalog
+requires one individual album lookup and one individual song lookup. Artists with ground truth are
+ordered by candidate count and canonical name. This covers 18 of 19 ambiguous ground-truth artists
+within 150 requests. REAPER's 10 candidates are not partially examined because starting that artist
+would exceed the bound. Ambiguous artists with no frozen releases remain unresolved without
+unnecessary live requests.
+
 ## Discovery and comparison
 
 Individual album and song lookup establish the baseline. Collections deduplicate by `collectionId`;
@@ -111,16 +136,24 @@ tracks deduplicate by `trackId`. Original names, normalized titles, version mark
 dates, positions, duration, explicitness, source path, and validated Apple store links remain
 separate.
 
-Comparison requires confirmed canonical artist identity and scores:
+Corrected comparison requires confirmed canonical artist identity and applies explicit rules:
 
-- normalized title and base-title compatibility
-- explicit version-marker agreement or conflict
-- release-date distance
-- track-count agreement
+- Exact normalized titles with compatible versions, release types, track counts, and dates within
+  one day may be exact matches.
+- Compatible exact titles within seven days may be strong probable matches.
+- A 14-day difference requires an exact title and matching track count.
+- Differences above 14 days remain ambiguous. Differences above 30 days are invalid without
+  separately proven track-level identity.
+- Conflicting track counts are invalid.
+- Remix and original, or live and studio, are invalid pairs when their version markers differ.
+- Single and album or EP appearances remain ambiguous rather than being merged as one release.
+- Partial or base-title compatibility without sufficient date and track evidence remains
+  ambiguous.
 
 Results are `exact_match`, `strong_probable_match`, `ambiguous_match`,
-`apple_only_or_spotify_missing`, `spotify_ground_truth_missed_by_itunes`, or
-`identity_mapping_failure`. Unmatched Apple candidates are not labeled false positives.
+`invalid_match`, `apple_only_or_spotify_missing`, `spotify_ground_truth_missed_by_itunes`, or
+`identity_mapping_failure`. The prior 93-day BARELY ALIVE pairing is invalid under these rules.
+Unmatched Apple candidates are not labeled false positives.
 
 Album and song batches of 5 and 10 ordinary iTunes artist IDs are compared with the union of
 individual results. Batching is safe only if every artist and individual result is represented and
@@ -143,3 +176,9 @@ Live execution is allowed only after format, lint, strict TypeScript, unit tests
 clean and upgrade migrations, build, Playwright, doctor, and `git diff --check` pass, followed by a
 committed and pushed implementation checkpoint. Plan mode requires the committed worktree to be
 clean, exactly 50 imported artists, the frozen snapshot, and zero iTunes request events.
+
+Correction plan mode instead requires the same snapshot hash, exactly the completed 108-event first
+run, all 108 normalized cache rows, a clean pushed implementation checkpoint, a 150-network-request
+budget, and a 20-minute deadline. Search and first-run individual lookups must be served from cache.
+The correction runner makes no batch request and does not use the unsafe first-run batch responses
+as evidence.

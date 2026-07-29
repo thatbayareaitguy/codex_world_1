@@ -257,6 +257,21 @@ describe("iTunes client safety", () => {
     expect(persistence.cacheHits).toHaveLength(1);
   });
 
+  it("reuses an individual candidate song lookup from cache", async () => {
+    const persistence = new MemoryPersistence();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(response({ resultCount: 1, results: [songResult] }));
+    const instance = client(persistence, fetchImpl);
+    const first = await instance.lookupSongs("run", ["42"]);
+    const second = await instance.lookupSongs("rerun", ["42"]);
+    expect(second).toEqual(first);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(persistence.cacheHits).toEqual([
+      expect.objectContaining({ endpointCategory: "artist_songs", runId: "rerun" }),
+    ]);
+  });
+
   it("propagates request-budget exhaustion before fetch", async () => {
     const persistence = new MemoryPersistence();
     persistence.acquireError = new Error("request_budget_exhausted");

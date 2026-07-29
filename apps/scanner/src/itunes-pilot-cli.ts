@@ -1,10 +1,16 @@
 import { execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { createDatabase, itunesPilotRequestEvents } from "@radar/db";
+import {
+  createDatabase,
+  itunesPilotRequestEvents,
+  itunesPilotResponseCache,
+  itunesPilotRuns,
+} from "@radar/db";
 import { loadProviderConfiguration } from "@radar/providers";
 import { count, eq } from "drizzle-orm";
 import { loadLocalEnvironment } from "./local-env";
+import { runCorrectedItunesPilot } from "./itunes-pilot-correction-runner";
 import {
   createItunesPilotPlan,
   importItunesSnapshot,
@@ -12,18 +18,39 @@ import {
   latestItunesSnapshot,
   pilotArtists,
   pilotEvaluationRows,
+  updateItunesRunMetrics,
 } from "./itunes-pilot-repository";
 import { buildItunesEvaluationMarkdown, runLiveItunesPilot } from "./itunes-pilot-runner";
 import { exportItunesPilotSnapshot, readItunesPilotSnapshot } from "./itunes-pilot-snapshot";
 
-type Command = "export-snapshot" | "import-snapshot" | "plan" | "live" | "evaluate" | "status";
+type Command =
+  | "export-snapshot"
+  | "import-snapshot"
+  | "plan"
+  | "plan-correction"
+  | "live"
+  | "live-correction"
+  | "evaluate"
+  | "status";
+
+const frozenSnapshotHash = "48259f7e2016aa8bbbabf4baa7e3baf8d4f9e9b53b413dab56f9d4fc70e1278a";
+const firstPilotRunId = "e51a57f6-2f95-4e6d-868b-f30ed43f90fd";
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2).filter((value) => value !== "--");
   const command = args[0] as Command | undefined;
   if (
     !command ||
-    !["export-snapshot", "import-snapshot", "plan", "live", "evaluate", "status"].includes(command)
+    ![
+      "export-snapshot",
+      "import-snapshot",
+      "plan",
+      "plan-correction",
+      "live",
+      "live-correction",
+      "evaluate",
+      "status",
+    ].includes(command)
   ) {
     throw new Error(usage());
   }
@@ -108,10 +135,91 @@ async function main(): Promise<void> {
       });
       return;
     }
+    if (command === "plan-correction") {
+      assertNonItunesProvidersDisabled(configuration);
+      if (configuration.itunes.enabled) {
+        throw new Error("Correction plan mode requires ITUNES_DISCOVERY_ENABLED=false.");
+      }
+      const snapshot = await latestItunesSnapshot(connection.db);
+      if (!snapshot || snapshot.snapshotHash !== frozenSnapshotHash) {
+        throw new Error("Correction planning requires the unchanged first-pilot snapshot.");
+      }
+      const artists = await pilotArtists(connection.db, snapshot.id);
+      if (artists.length !== 50)
+        throw new Error("Correction planning requires exactly 50 artists.");
+      const baseline = await connection.db.query.itunesPilotRuns.findFirst({
+        where: eq(itunesPilotRuns.id, firstPilotRunId),
+      });
+      if (
+        !baseline ||
+        baseline.status !== "completed" ||
+        baseline.requestCount !== 108 ||
+        baseline.stopReason !== "pilot_workflow_completed"
+      ) {
+        throw new Error("The complete first-pilot baseline was not found.");
+      }
+      const allRuns = await connection.db.select({ value: count() }).from(itunesPilotRuns);
+      if (allRuns[0]?.value !== 1) {
+        throw new Error("Correction planning requires exactly the completed first pilot.");
+      }
+      const [eventCount] = await connection.db
+        .select({ value: count() })
+        .from(itunesPilotRequestEvents);
+      const [cacheCount] = await connection.db
+        .select({ value: count() })
+        .from(itunesPilotResponseCache);
+      if (eventCount?.value !== 108 || cacheCount?.value !== 108) {
+        throw new Error("The first-pilot request or cache baseline is incomplete.");
+      }
+      const currentCommit = git(process.cwd(), ["rev-parse", "HEAD"]);
+      const status = git(process.cwd(), ["status", "--porcelain"]);
+      if (status)
+        throw new Error("Correction plan mode requires a clean implementation checkpoint.");
+      const run = await createItunesPilotPlan(connection.db, {
+        implementationCommit: currentCommit,
+        maximumRuntimeMs: 20 * 60_000,
+        minRequestIntervalMs: configuration.itunes.minRequestIntervalMs,
+        requestBudget: 150,
+        snapshotId: snapshot.id,
+      });
+      await updateItunesRunMetrics(connection.db, run.id, {
+        baselineRequestEvents: eventCount.value,
+        baselineRunId: firstPilotRunId,
+        correctionCandidateCatalogLimit: 75,
+        runKind: "identity_and_matching_correction",
+      });
+      output({
+        artistCount: artists.length,
+        baselineRequestEvents: eventCount.value,
+        cacheRows: cacheCount.value,
+        implementationCommit: currentCommit,
+        mainDatabaseConnection: false,
+        maximumRuntimeMs: run.maximumRuntimeMs,
+        requestBudget: run.requestBudget,
+        requestCount: run.requestCount,
+        runId: run.id,
+        snapshotHash: snapshot.snapshotHash,
+        status: run.status,
+      });
+      return;
+    }
     if (command === "live") {
       const run = await latestItunesRun(connection.db);
       if (!run || run.status !== "planned") throw new Error("A planned pilot run is required.");
       const result = await runLiveItunesPilot({
+        configuration,
+        db: connection.db,
+        runId: run.id,
+      });
+      output({ runId: run.id, ...result });
+      return;
+    }
+    if (command === "live-correction") {
+      const run = await latestItunesRun(connection.db);
+      if (!run || run.status !== "planned" || run.requestBudget !== 150) {
+        throw new Error("A planned 150-request correction run is required.");
+      }
+      const result = await runCorrectedItunesPilot({
         configuration,
         db: connection.db,
         runId: run.id,
@@ -201,7 +309,7 @@ function output(value: unknown): void {
 }
 
 function usage(): string {
-  return "Usage: itunes:pilot <export-snapshot|import-snapshot|plan|live|evaluate|status>";
+  return "Usage: itunes:pilot <export-snapshot|import-snapshot|plan|plan-correction|live|live-correction|evaluate|status>";
 }
 
 main().catch((error) => {

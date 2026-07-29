@@ -510,7 +510,7 @@ export function buildItunesEvaluationMarkdown(
   return `${lines.join("\n")}\n`;
 }
 
-function validateLiveConfiguration(configuration: ProviderConfiguration): void {
+export function validateLiveConfiguration(configuration: ProviderConfiguration): void {
   const database = configuration.databaseUrl ? new URL(configuration.databaseUrl) : null;
   if (
     !database ||
@@ -537,7 +537,7 @@ function validateLiveConfiguration(configuration: ProviderConfiguration): void {
   }
 }
 
-function toCollectionCandidate(collection: ItunesCollection): ItunesCollectionCandidate {
+export function toCollectionCandidate(collection: ItunesCollection): ItunesCollectionCandidate {
   return {
     ...(collection.artistId ? { artistId: collection.artistId } : {}),
     ...(collection.artistName ? { artistName: collection.artistName } : {}),
@@ -558,7 +558,7 @@ function toCollectionCandidate(collection: ItunesCollection): ItunesCollectionCa
   };
 }
 
-function collectionsFromTracks(tracks: ItunesTrack[]): ItunesCollectionCandidate[] {
+export function collectionsFromTracks(tracks: ItunesTrack[]): ItunesCollectionCandidate[] {
   const collections = new Map<string, ItunesCollectionCandidate>();
   for (const track of tracks) {
     if (!track.collectionId || !track.collectionName) continue;
@@ -579,7 +579,7 @@ function collectionsFromTracks(tracks: ItunesTrack[]): ItunesCollectionCandidate
   return [...collections.values()];
 }
 
-function toTrackCandidate(track: ItunesTrack): ItunesTrackCandidate {
+export function toTrackCandidate(track: ItunesTrack): ItunesTrackCandidate {
   return {
     ...(track.artistId ? { artistId: track.artistId } : {}),
     artistName: track.artistName,

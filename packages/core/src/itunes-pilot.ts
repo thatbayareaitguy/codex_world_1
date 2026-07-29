@@ -12,6 +12,7 @@ export interface ItunesArtistCandidate {
 
 export interface ItunesMappingDecision {
   ambiguityReason?: string;
+  candidateEvidence?: ItunesIdentityCandidateEvidence[];
   confidence: number;
   evidence: string[];
   reason: string;
@@ -73,6 +74,7 @@ export type ItunesComparisonClassification =
   | "exact_match"
   | "strong_probable_match"
   | "ambiguous_match"
+  | "invalid_match"
   | "apple_only_or_spotify_missing"
   | "spotify_ground_truth_missed_by_itunes"
   | "identity_mapping_failure";
@@ -83,6 +85,34 @@ export interface ItunesReleaseComparison {
   dateDifferenceDays?: number;
   reasons: string[];
   spotifyReleaseId?: string;
+  trackCountAgreement?: boolean;
+}
+
+export interface ItunesIdentityCandidateCatalog {
+  candidate: ItunesArtistCandidate;
+  collections: ItunesCollectionCandidate[];
+  tracks: ItunesTrackCandidate[];
+}
+
+export interface ItunesIdentityCandidateEvidence {
+  artistId: string;
+  confidence: number;
+  conflictingReleases: string[];
+  creditCompatible: boolean;
+  decision: "confirm" | "ambiguous" | "reject" | "not_examined";
+  decisionReason: string;
+  evidenceExamined: string[];
+  exactReleaseTitleMatches: number;
+  matchedReleases: string[];
+  score: number;
+  trackTitleOverlap: number;
+}
+
+export interface ItunesReleasePairEvaluation {
+  apple: ItunesCollectionCandidate;
+  classification: "exact_match" | "strong_probable_match" | "ambiguous_match" | "invalid_match";
+  dateDifferenceDays: number;
+  reasons: string[];
   trackCountAgreement?: boolean;
 }
 
@@ -148,6 +178,174 @@ export function decideItunesArtistMapping(input: {
     confidence: 0,
     evidence: [],
     reason: "Similar spelling, genre, rank, and partial words are insufficient.",
+    status: "ambiguous",
+  };
+}
+
+export function resolveItunesArtistFromCatalogEvidence(input: {
+  aliases: string[];
+  candidates: ItunesIdentityCandidateCatalog[];
+  canonicalName: string;
+  groundTruth: SpotifyGroundTruthRelease[];
+}): ItunesMappingDecision {
+  const canonical = normalizeArtistIdentity(input.canonicalName);
+  const aliases = new Set(input.aliases.map(normalizeArtistIdentity).filter(Boolean));
+  const groundTruthTrackTitles = new Set(
+    input.groundTruth.flatMap((release) =>
+      (release.tracks ?? []).map((track) => normalizeText(track.normalizedTitle || track.title)),
+    ),
+  );
+  const candidateEvidence = input.candidates.map((catalog): ItunesIdentityCandidateEvidence => {
+    const normalizedCandidate = normalizeArtistIdentity(catalog.candidate.artistName);
+    const nameCompatible = normalizedCandidate === canonical || aliases.has(normalizedCandidate);
+    const comparisons = compareItunesToSpotify(input.groundTruth, catalog.collections).filter(
+      (comparison) => comparison.spotifyReleaseId,
+    );
+    const matched = comparisons.filter((comparison) =>
+      ["exact_match", "strong_probable_match"].includes(comparison.classification),
+    );
+    const conflicting = comparisons.filter((comparison) =>
+      ["invalid_match"].includes(comparison.classification),
+    );
+    const exactReleaseTitleMatches = matched.filter((comparison) => {
+      const spotify = input.groundTruth.find(
+        (release) => release.spotifyReleaseId === comparison.spotifyReleaseId,
+      );
+      const apple = catalog.collections.find(
+        (collection) => collection.collectionId === comparison.appleCollectionId,
+      );
+      return Boolean(
+        spotify && apple && normalizeText(spotify.title) === normalizeText(apple.collectionName),
+      );
+    }).length;
+    const candidateTrackTitles = new Set(
+      catalog.tracks.map((track) => normalizeText(track.trackName)),
+    );
+    const trackTitleOverlap = [...groundTruthTrackTitles].filter((title) =>
+      candidateTrackTitles.has(title),
+    ).length;
+    const exactHighQualityMatch = matched.some(
+      (comparison) =>
+        comparison.classification === "exact_match" &&
+        comparison.trackCountAgreement !== false &&
+        (comparison.dateDifferenceDays ?? Number.POSITIVE_INFINITY) <= 1,
+    );
+    const creditCompatible =
+      catalog.collections.some(
+        (collection) =>
+          collection.artistId === catalog.candidate.artistId ||
+          collection.collectionArtistId === catalog.candidate.artistId,
+      ) ||
+      catalog.tracks.some(
+        (track) =>
+          track.artistId === catalog.candidate.artistId ||
+          track.collectionArtistId === catalog.candidate.artistId,
+      );
+    const strongCatalogOverlap =
+      nameCompatible &&
+      creditCompatible &&
+      conflicting.length === 0 &&
+      (matched.length >= 2 ||
+        (matched.length === 1 &&
+          exactReleaseTitleMatches === 1 &&
+          (exactHighQualityMatch || trackTitleOverlap >= 1)));
+    const score =
+      matched.length * 4 +
+      exactReleaseTitleMatches * 2 +
+      Math.min(trackTitleOverlap, 8) * 0.25 -
+      conflicting.length * 3;
+    const decision = !nameCompatible
+      ? "reject"
+      : strongCatalogOverlap
+        ? "confirm"
+        : conflicting.length > 0 && matched.length === 0
+          ? "reject"
+          : "ambiguous";
+    return {
+      artistId: catalog.candidate.artistId,
+      confidence: strongCatalogOverlap
+        ? Math.min(0.99, 0.8 + matched.length * 0.04 + Math.min(trackTitleOverlap, 5) * 0.01)
+        : Math.max(0, Math.min(0.74, score / 10)),
+      conflictingReleases: conflicting
+        .map((comparison) => comparison.spotifyReleaseId)
+        .filter((value): value is string => Boolean(value)),
+      creditCompatible,
+      decision,
+      decisionReason: !nameCompatible
+        ? "Candidate name is not an exact canonical or stored-alias match."
+        : !creditCompatible
+          ? "Returned catalog credits do not identify the candidate artist."
+          : strongCatalogOverlap
+            ? "Unique strong catalog overlap with compatible release evidence."
+            : conflicting.length > 0 && matched.length === 0
+              ? "Catalog evidence conflicts with frozen release identity."
+              : "Catalog overlap is insufficient for deterministic identity confirmation.",
+      evidenceExamined: [
+        `${catalog.collections.length} normalized collections`,
+        `${catalog.tracks.length} normalized tracks`,
+        `${input.groundTruth.length} frozen releases`,
+        "exact normalized release titles",
+        "version markers",
+        "release dates",
+        "track counts",
+        "track-title overlap",
+        "artist-credit IDs",
+      ],
+      exactReleaseTitleMatches,
+      matchedReleases: matched
+        .map((comparison) => comparison.spotifyReleaseId)
+        .filter((value): value is string => Boolean(value)),
+      score,
+      trackTitleOverlap,
+    };
+  });
+  const confirmed = candidateEvidence
+    .filter((evidence) => evidence.decision === "confirm")
+    .sort((left, right) => right.score - left.score || left.artistId.localeCompare(right.artistId));
+  const selectedEvidence = confirmed[0];
+  const nextBest = candidateEvidence
+    .filter((evidence) => evidence.artistId !== selectedEvidence?.artistId)
+    .sort(
+      (left, right) => right.score - left.score || left.artistId.localeCompare(right.artistId),
+    )[0];
+  const selectedCatalog = input.candidates.find(
+    (catalog) => catalog.candidate.artistId === selectedEvidence?.artistId,
+  );
+  if (
+    confirmed.length === 1 &&
+    selectedEvidence &&
+    selectedCatalog &&
+    selectedEvidence.score - (nextBest?.score ?? 0) >= 2
+  ) {
+    return {
+      candidateEvidence,
+      confidence: selectedEvidence.confidence,
+      evidence: [
+        `candidate:${selectedEvidence.artistId}`,
+        `matched_releases:${selectedEvidence.matchedReleases.length}`,
+        `track_title_overlap:${selectedEvidence.trackTitleOverlap}`,
+        `score_margin:${(selectedEvidence.score - (nextBest?.score ?? 0)).toFixed(2)}`,
+      ],
+      reason: "One same-name candidate has unique strong catalog overlap and no conflict.",
+      selected: selectedCatalog.candidate,
+      status: "evidence_confirmed",
+    };
+  }
+  return {
+    ambiguityReason:
+      confirmed.length > 1
+        ? "Multiple same-name candidates retain strong catalog evidence."
+        : "No same-name candidate has unique strong catalog evidence.",
+    candidateEvidence,
+    confidence: 0,
+    evidence: candidateEvidence.map(
+      (evidence) =>
+        `candidate:${evidence.artistId}:${evidence.decision}:score=${evidence.score.toFixed(2)}`,
+    ),
+    reason:
+      confirmed.length > 1
+        ? "Competing candidates remain plausible after catalog comparison."
+        : "Catalog evidence is insufficient for identity confirmation.",
     status: "ambiguous",
   };
 }
@@ -227,13 +425,20 @@ export function compareItunesToSpotify(
   const matchedCollections = new Set<string>();
   for (const spotify of groundTruth) {
     const scored = collections
-      .map((apple) => scoreReleasePair(spotify, apple))
-      .filter((value) => value.score > 0)
+      .map((apple) => evaluateItunesReleasePair(spotify, apple))
+      .filter((value): value is ItunesReleasePairEvaluation => Boolean(value))
       .sort(
-        (a, b) => b.score - a.score || a.apple.collectionId.localeCompare(b.apple.collectionId),
+        (left, right) =>
+          comparisonRank(right.classification) - comparisonRank(left.classification) ||
+          left.dateDifferenceDays - right.dateDifferenceDays ||
+          left.apple.collectionId.localeCompare(right.apple.collectionId),
       );
     const best = scored[0];
-    const tied = best && scored[1]?.score === best.score;
+    const tied =
+      best &&
+      scored[1] &&
+      comparisonRank(scored[1].classification) === comparisonRank(best.classification) &&
+      scored[1].dateDifferenceDays === best.dateDifferenceDays;
     if (!best) {
       comparisons.push({
         classification: "spotify_ground_truth_missed_by_itunes",
@@ -242,25 +447,19 @@ export function compareItunesToSpotify(
       });
       continue;
     }
-    const classification: ItunesComparisonClassification =
-      tied || best.versionConflict
-        ? "ambiguous_match"
-        : best.score >= 0.9
-          ? "exact_match"
-          : best.score >= 0.65
-            ? "strong_probable_match"
-            : "ambiguous_match";
-    if (classification !== "ambiguous_match") matchedCollections.add(best.apple.collectionId);
+    const classification: ItunesComparisonClassification = tied
+      ? "ambiguous_match"
+      : best.classification;
+    if (["exact_match", "strong_probable_match"].includes(classification)) {
+      matchedCollections.add(best.apple.collectionId);
+    }
     comparisons.push({
       appleCollectionId: best.apple.collectionId,
       classification,
-      ...(best.dateDifferenceDays === undefined
-        ? {}
-        : { dateDifferenceDays: best.dateDifferenceDays }),
+      dateDifferenceDays: best.dateDifferenceDays,
       reasons: [
         ...best.reasons,
-        ...(tied ? ["Another collection has the same score."] : []),
-        ...(best.versionConflict ? ["Version markers conflict."] : []),
+        ...(tied ? ["Another collection has the same evidence rank and date distance."] : []),
       ],
       spotifyReleaseId: spotify.spotifyReleaseId,
       ...(best.trackCountAgreement === undefined
@@ -278,6 +477,144 @@ export function compareItunesToSpotify(
     }
   }
   return comparisons;
+}
+
+export function evaluateItunesReleasePair(
+  spotify: SpotifyGroundTruthRelease,
+  apple: ItunesCollectionCandidate,
+): ItunesReleasePairEvaluation | undefined {
+  const spotifyTitle = normalizeText(spotify.title);
+  const appleTitle = normalizeText(apple.collectionName);
+  const titleEqual = spotifyTitle === appleTitle;
+  const versionBaseEqual = baseTitle(spotifyTitle) === baseTitle(appleTitle);
+  const contained =
+    !titleEqual &&
+    !versionBaseEqual &&
+    (spotifyTitle.includes(appleTitle) || appleTitle.includes(spotifyTitle));
+  if (!titleEqual && !contained && !versionBaseEqual) return undefined;
+
+  const reasons = [
+    titleEqual
+      ? "Normalized titles are identical."
+      : versionBaseEqual
+        ? "Base titles agree after isolating version markers."
+        : "One normalized title contains the other.",
+  ];
+  const spotifyVersion = spotify.version ?? extractVersion(spotify.title);
+  const appleVersion = extractVersion(apple.collectionName);
+  const versionConflict =
+    spotifyVersion !== appleVersion && Boolean(spotifyVersion || appleVersion);
+  const dateDifferenceDays = Math.abs(
+    Math.round((Date.parse(spotify.releaseDate) - Date.parse(apple.releaseDate)) / 86_400_000),
+  );
+  const trackCountAgreement =
+    spotify.trackCount !== undefined && apple.trackCount !== undefined
+      ? spotify.trackCount === apple.trackCount
+      : undefined;
+  const spotifyType = normalizedReleaseType(spotify.releaseType, spotify.title, spotify.trackCount);
+  const appleType = normalizedReleaseType(
+    classifyItunesCollectionType(apple),
+    apple.collectionName,
+    apple.trackCount,
+  );
+  const typeConflict =
+    (spotifyType === "single" && ["ep", "album"].includes(appleType)) ||
+    (appleType === "single" && ["ep", "album"].includes(spotifyType));
+
+  if (versionConflict) {
+    return {
+      apple,
+      classification: "invalid_match",
+      dateDifferenceDays,
+      reasons: [
+        ...reasons,
+        "Version markers conflict; original, remix, live, and studio forms remain distinct.",
+      ],
+      ...(trackCountAgreement === undefined ? {} : { trackCountAgreement }),
+    };
+  }
+  reasons.push("Version markers are compatible.");
+  if (dateDifferenceDays > 30) {
+    return {
+      apple,
+      classification: "invalid_match",
+      dateDifferenceDays,
+      reasons: [...reasons, "Release dates differ by more than 30 days without track-level proof."],
+      ...(trackCountAgreement === undefined ? {} : { trackCountAgreement }),
+    };
+  }
+  if (trackCountAgreement === false) {
+    return {
+      apple,
+      classification: "invalid_match",
+      dateDifferenceDays,
+      reasons: [...reasons, "Track counts conflict."],
+      trackCountAgreement,
+    };
+  }
+  if (typeConflict) {
+    return {
+      apple,
+      classification: "ambiguous_match",
+      dateDifferenceDays,
+      reasons: [
+        ...reasons,
+        "Single and album or EP appearances are related evidence, not the same confirmed release.",
+      ],
+      ...(trackCountAgreement === undefined ? {} : { trackCountAgreement }),
+    };
+  }
+  if (dateDifferenceDays > 14) {
+    return {
+      apple,
+      classification: "ambiguous_match",
+      dateDifferenceDays,
+      reasons: [...reasons, "Release dates differ by more than 14 days."],
+      ...(trackCountAgreement === undefined ? {} : { trackCountAgreement }),
+    };
+  }
+  if (titleEqual && dateDifferenceDays <= 1) {
+    return {
+      apple,
+      classification: "exact_match",
+      dateDifferenceDays,
+      reasons: [
+        ...reasons,
+        "Release dates differ by at most one day.",
+        ...(trackCountAgreement ? ["Track counts agree."] : []),
+      ],
+      ...(trackCountAgreement === undefined ? {} : { trackCountAgreement }),
+    };
+  }
+  if (
+    (titleEqual && dateDifferenceDays <= 7) ||
+    (titleEqual && dateDifferenceDays <= 14 && trackCountAgreement === true) ||
+    (versionBaseEqual && dateDifferenceDays <= 1 && trackCountAgreement === true) ||
+    (contained && dateDifferenceDays <= 1 && trackCountAgreement === true)
+  ) {
+    return {
+      apple,
+      classification: "strong_probable_match",
+      dateDifferenceDays,
+      reasons: [
+        ...reasons,
+        dateDifferenceDays <= 1
+          ? "Release dates differ by at most one day."
+          : dateDifferenceDays <= 7
+            ? "Release dates differ by at most seven days."
+            : "Release dates differ by at most fourteen days with matching track counts.",
+        ...(trackCountAgreement ? ["Track counts agree."] : []),
+      ],
+      ...(trackCountAgreement === undefined ? {} : { trackCountAgreement }),
+    };
+  }
+  return {
+    apple,
+    classification: "ambiguous_match",
+    dateDifferenceDays,
+    reasons: [...reasons, "Evidence is insufficient for a confirmed cross-store release match."],
+    ...(trackCountAgreement === undefined ? {} : { trackCountAgreement }),
+  };
 }
 
 export function batchEquivalentToIndividuals(input: {
@@ -318,66 +655,40 @@ export function batchEquivalentToIndividuals(input: {
   return { reasons, safe: reasons.length === 0 };
 }
 
-function scoreReleasePair(spotify: SpotifyGroundTruthRelease, apple: ItunesCollectionCandidate) {
-  const spotifyTitle = normalizeText(spotify.title);
-  const appleTitle = normalizeText(apple.collectionName);
-  const titleEqual = spotifyTitle === appleTitle;
-  const contained =
-    !titleEqual && (spotifyTitle.includes(appleTitle) || appleTitle.includes(spotifyTitle));
-  const versionBaseEqual = baseTitle(spotifyTitle) === baseTitle(appleTitle);
-  if (!titleEqual && !contained && !versionBaseEqual) {
-    return {
-      apple,
-      dateDifferenceDays: undefined,
-      reasons: [] as string[],
-      score: 0,
-      trackCountAgreement: undefined,
-      versionConflict: false,
-    };
+function comparisonRank(classification: ItunesReleasePairEvaluation["classification"]): number {
+  switch (classification) {
+    case "exact_match":
+      return 4;
+    case "strong_probable_match":
+      return 3;
+    case "ambiguous_match":
+      return 2;
+    case "invalid_match":
+      return 1;
   }
-  let score = titleEqual ? 0.55 : versionBaseEqual ? 0.45 : 0.3;
-  const reasons = [
-    titleEqual
-      ? "Normalized titles are identical."
-      : versionBaseEqual
-        ? "Base titles agree after isolating version markers."
-        : "One normalized title contains the other.",
-  ];
-  const spotifyVersion = spotify.version ?? extractVersion(spotify.title);
-  const appleVersion = extractVersion(apple.collectionName);
-  const versionConflict = Boolean(
-    spotifyVersion && appleVersion && spotifyVersion !== appleVersion,
-  );
-  if (!versionConflict && spotifyVersion === appleVersion) {
-    score += 0.15;
-    reasons.push("Version markers agree.");
+}
+
+function normalizedReleaseType(
+  releaseType: string,
+  title: string,
+  trackCount: number | undefined,
+): string {
+  const version = extractVersion(title);
+  if (version === "remix") return "remix";
+  if (version === "live") return "live";
+  const normalized = normalizeText(releaseType);
+  if (normalized.includes("remix")) return "remix";
+  if (normalized.includes("live")) return "live";
+  if (normalized.includes("single")) return "single";
+  if (normalized === "ep" || normalized.includes("extended play")) return "ep";
+  if (normalized.includes("album")) return "album";
+  if (normalized.includes("compilation")) return "compilation";
+  if (trackCount !== undefined) {
+    if (trackCount <= 3) return "single";
+    if (trackCount <= 6) return "ep";
+    return "album";
   }
-  const dateDifferenceDays = Math.abs(
-    Math.round((Date.parse(spotify.releaseDate) - Date.parse(apple.releaseDate)) / 86_400_000),
-  );
-  if (dateDifferenceDays <= 1) {
-    score += 0.2;
-    reasons.push("Release dates differ by at most one day.");
-  } else if (dateDifferenceDays <= 7) {
-    score += 0.1;
-    reasons.push("Release dates differ by at most seven days.");
-  }
-  const trackCountAgreement =
-    spotify.trackCount !== undefined && apple.trackCount !== undefined
-      ? spotify.trackCount === apple.trackCount
-      : undefined;
-  if (trackCountAgreement) {
-    score += 0.1;
-    reasons.push("Track counts agree.");
-  }
-  return {
-    apple,
-    dateDifferenceDays,
-    reasons,
-    score: Math.min(1, score),
-    trackCountAgreement,
-    versionConflict,
-  };
+  return normalized;
 }
 
 function baseTitle(value: string): string {

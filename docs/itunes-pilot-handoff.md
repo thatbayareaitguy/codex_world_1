@@ -74,7 +74,7 @@ playlist behavior exists.
 - Formatting: passed
 - Lint: passed with zero warnings
 - Strict TypeScript: passed across all six packages
-- Unit tests: 316 passed in 44 files
+- Unit tests: 328 passed in 44 files
 - PostgreSQL integration: 84 passed in 15 files against `radar_itunes_test`; the final
   corrected fixture passed two complete runs from fresh schemas
 - Clean and upgrade migration coverage: passed
@@ -119,6 +119,37 @@ workflow did not use extra catalog lookups to resolve competing exact-name candi
 release-title evidence, and one probable match accepted a 93-day date difference. Correct those
 specific weaknesses in a separate credential-free milestone before considering another live run.
 Do not merge this branch into the main application from the current result.
+
+## Identity and matching correction
+
+- Starting checkpoint: `d05d300645f0de412eb5a8d1323d4b3b1cb66601`
+- The frozen snapshot, cohort, first run, 108 request events, and 108 normalized cache rows were
+  verified unchanged before implementation.
+- The first exact-confirmed group contained 52 frozen releases and matched 41, for 78.8% mapped
+  release recall. All 16 exact-mapped artists with ground truth had a match.
+- The 24 ambiguous artists carried 54 frozen releases across 19 ground-truth artists that the first
+  run never evaluated.
+- The 24 ambiguous searches contain 119 exact-name Apple IDs. The 19 ground-truth artists contain
+  85 candidates, requiring 170 individual album and song requests to examine completely.
+- Correction planning uses a deterministic 75-candidate ceiling, or 150 network requests. It
+  covers 18 of the 19 ambiguous ground-truth artists and never partially examines the next artist.
+- Search responses and the 26 first-stage selected catalogs must be cache hits. Ambiguous artists
+  without frozen releases remain unresolved without unnecessary requests.
+- Candidate evidence now retains catalog size, matched and conflicting releases, exact release
+  titles, track-title overlap, credit compatibility, confidence, decision, and reason.
+- Corrected matching treats version conflict, track-count conflict, and date differences above 30
+  days as invalid. Differences above 14 days remain ambiguous. Exact titles within seven days may
+  be probable, and 14-day matches additionally require equal track counts.
+- The correction runner makes no batch lookup and does not use the unsafe first-run batch cache as
+  identity or release evidence.
+- Credential-free correction verification passed: formatting, lint with zero warnings, strict
+  TypeScript across all six packages, 328 unit tests in 44 files, 84 PostgreSQL integration tests
+  in 15 files, production build, and 23 Playwright tests.
+- The integration suite had one transient failure in an unrelated mocked Reddit assertion. A full
+  clean rerun passed all 84 tests without a source change.
+- Migration generation reported no schema changes. The correction stores structured candidate
+  evidence in the existing JSONB evidence field.
+- The pilot doctor remained `READY` with 18 migrations and isolated loopback port 3001 available.
 
 ## Final integrity evidence
 
