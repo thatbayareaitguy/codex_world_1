@@ -33,6 +33,7 @@
     "spotify:campaign": "tsx apps/scanner/src/spotify-sync-campaign-cli.ts",
     "itunes:pilot": "tsx apps/scanner/src/itunes-pilot-cli.ts",
     "itunes:pilot:offline": "tsx apps/scanner/src/itunes-pilot-offline-cli.ts",
+    "itunes:shadow:plan": "tsx apps/scanner/src/itunes-shadow-planning-cli.ts",
     "reddit:reconcile-deletions": "tsx apps/scanner/src/reddit-reconcile.ts",
     "test": "vitest run --exclude '**/*.integration.test.ts' --exclude '**/e2e/**'",
     "test:e2e": "playwright test",

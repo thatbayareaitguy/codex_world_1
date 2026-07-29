@@ -1,16 +1,79 @@
 # iTunes Pilot Handoff
 
-Updated: 2026-07-28
+Updated: 2026-07-29
 
 ## Repository state
 
 - Worktree: `C:\Users\taysh\Documents\Codex\codex_world_1_itunes`
 - Branch: `codex/itunes-discovery`
+- Milestone base: `484d10e5b4f436d57e934a49196b2da965b93ebf`
+- Upstream at milestone start: `origin/codex/itunes-discovery`, synchronized at `0/0`
 - Branch point: `c602929142291da9b99ee126c2ecf73b39b528b3`
-- Main worktree remains on `codex/release-radar-hardening`.
-- The main worktree's pre-existing `docs/AI_HANDOFF.md` modification was not changed.
+- Main worktree remains clean on `codex/release-radar-hardening` at
+  `6c21b23ad11eae638877e20e1b3e8d6eb4b81d11`.
+- No original-worktree file was changed. No current Spotify operational state was inferred from
+  older handoff text.
 
-## Main Spotify safety baseline
+Commit `bc865ceb82f1d95b08e2838d3b59f054f5bd8ba1` is reachable from this branch. It changed only
+`docs/AI_HANDOFF.md`, replacing an older main operational handoff with iTunes feature content.
+This milestone does not amend or revert it and does not modify `docs/AI_HANDOFF.md`. It is an
+integration-history concern because a future merge could overwrite the main branch's canonical
+handoff.
+
+## Full-watchlist census preparation
+
+No live census was run. One authorized main-database transaction exported identity-only data under
+`REPEATABLE READ READ ONLY`; the SQL path rejects writes, DDL, locks, advisory locks, and
+non-identity tables. No other main-database access occurred.
+
+- Shadow protocol: `docs/itunes-shadow-pilot-design.md`
+- Snapshot:
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\pilot-snapshots\itunes-full-watchlist-identity-2026-07-29T06-00-40-741Z.json`
+- Active artists: 593
+- Original pilot artists still present: 50 of 50
+- Snapshot `fileByteSha256`:
+  `f555e68c8c16ff78e4cc71e9200b6eddcbd2a7d6dc31f88f4b470d6f50357f23`
+- Snapshot `canonicalContentSha256`:
+  `e9967d5be4b3ddc9d75fcc7e992ea141cccaa2565d314be281ac3d266ea12040`
+- Dry-run manifest:
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\pilot-snapshots\itunes-artist-search-census-plan-2026-07-29T06-00-40-741Z.json`
+- Manifest `fileByteSha256`:
+  `d808dc6c10d6b1a280abe0aff0d4676360a0c3322a4aa0fa5ffc1ef1441af815`
+- Valid reusable artist-search cache rows: 50
+- Invalid rows and input failures: 0
+- New searches planned: 543
+- Deterministic shards: 150/125, 150/145, 150/139, and 143/134, where each pair is
+  artists/new searches
+- Total request-start pacing floor: 28 minutes 57.6 seconds at 3200 ms per new request
+- Network clients initialized by export and planning commands: 0
+- Provider requests and production writes: 0
+
+Only the identity snapshot and stage-2 dry-run plan are complete. A later live search census
+requires separate authorization. Later album and recent-song discovery, Apple evidence freeze,
+separate sanitized Spotify truth import, and offline evaluation also remain unexecuted.
+
+Full-watchlist preparation verification:
+
+- Formatting: passed after excluding the deterministic generated offline-evaluation JSON from
+  Prettier; the evidence file remained byte-identical
+- Lint: passed with zero warnings
+- Strict TypeScript: passed across all six packages
+- Unit tests: 350 passed in 47 files
+- PostgreSQL integration: 85 passed in 16 files against the isolated test database, including
+  clean migrations, upgrade migrations, and the real read-only identity query
+- One first integration attempt reproduced the previously documented intermittent mocked Reddit
+  fixture assertion at 84 of 85; a complete fresh-database rerun passed 85 of 85 without a source
+  change
+- Migration drift: no schema changes and no migration generated
+- Production build: passed
+- Mocked Playwright: 23 passed
+- Credential-free pilot doctor: `READY`, with 18 migrations and loopback port 3001 available
+- `git diff --check`: passed
+
+## Historical main Spotify observations
+
+The following values were observed during an older pilot milestone and are retained only as
+history. They are not assertions about current Spotify runtime state.
 
 - Main app remained on `127.0.0.1:3000`.
 - Main PostgreSQL remained on `127.0.0.1:5432`; its test service remained on `5433`.
@@ -210,10 +273,11 @@ Seven-day artist-level product result among 38 safely mapped artists:
 - Candidate-artist precision: 9 of 9, or 100.0%
 - Specificity: 26 of 26, or 100.0%
 
-Seven-day safe-fallback simulation across all 50 artists:
+Seven-day historical unresolved-identity fallback with Apple-negative suppression across all 50
+artists:
 
 - Unresolved or target-assisted artists sent to Spotify: 12
-- Safe Apple-candidate artists sent to Spotify: 9
+- Apple-candidate artists sent to Spotify: 9
 - Deduplicated Spotify artist queries: 21
 - Queries avoided: 29 of 50, or 58.0%
 - Spotify-positive artists still queried: 10 of 13, or 76.9%
@@ -222,6 +286,7 @@ Seven-day safe-fallback simulation across all 50 artists:
 
 The result justifies a separate randomized or full-watchlist Apple-only shadow pilot. It does not
 justify production use or a source classification. Representative prevalence remains unproven.
+The policy is evaluation-only and is not described as safe or production-ready.
 
 Offline verification passed:
 
