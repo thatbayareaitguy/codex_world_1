@@ -1,6 +1,6 @@
 # Apple Music Pilot Handoff
 
-Date: 2026-07-29
+Date: 2026-07-30
 
 ## Implemented checkpoint
 
@@ -13,7 +13,7 @@ Date: 2026-07-29
 - Database scope: Apple-specific run, request, cache, mapping, catalog, and comparison tables
 - Verification scope: credential-free tests plus one bounded live HTTP 200 authentication lookup
   that stopped on `unsafe_url` before identity confirmation, followed by a credential-free URL and
-  cache-ordering correction
+  cache-ordering correction and one bounded HTTP 200 retry
 
 ## Bounded live authentication result
 
@@ -44,6 +44,30 @@ pagination value. It separately discards descriptive sharing URLs, non-followed 
 links, resource-reference links, and unknown URL-bearing fields. Cache writes now occur only after
 schema validation, request-capable URL validation, and complete normalization. Unsafe URL, schema,
 or normalization failures create no cache entry and retain only fixed-category telemetry.
+
+## Bounded retry result
+
+The 2026-07-30 retry started from
+`40a985e3cb6d58f024ae291f6684a4a43a1f4803`. Pre-live formatting, zero-warning lint, strict
+TypeScript, and 71 focused Apple tests passed. Apple doctor was `READY` with 20 migrations. The
+plan validated the pinned snapshot, exactly 25 artists, the exact five-artist canary, a 55-of-75
+forecast, zero requests, and zero writes.
+
+One new BUNT. artist lookup returned HTTP 200. The descriptive and non-followed URL correction
+worked, but normalization stopped on the exact request-capable field
+`relationships.albums.next`. Sanitized telemetry classified it as relative HTTPS pagination on
+the allowed Apple API host with an `outside_allowlist` decision. The value itself was not
+persisted or reported. Identity comparison did not run, so BUNT. was not confirmed and the
+five-artist canary did not start.
+
+The run ended `failed/unsafe_url` after one request and 201 ms. It made zero searches, direct-view,
+followed-pagination, album-detail, or track requests, with zero retries and zero cache hits.
+Concurrency was one; a request-start interval could not be measured from one request. The lease
+was released, no cooldown was created, and Apple remained persistently disabled.
+
+The corrected cache ordering succeeded live: zero cache, mapping, album, song, and comparison rows
+were created. No raw response, descriptive URL, artwork, preview, token, credential, or
+authorization header was persisted. No remaining cohort artist or other provider was contacted.
 
 The Apple task did not modify the main or iTunes worktree. The final audit observed unrelated
 concurrent uncommitted changes in the iTunes worktree and left them untouched.
@@ -112,14 +136,17 @@ in source control, logs, telemetry, or reports.
 - Production build passed.
 - Mock-only Playwright: 23 tests passed.
 - Apple-scoped doctor: `READY`.
-- Final isolated development evidence remained at zero Apple requests, runs, leases, cooldowns,
-  cache rows, mappings, albums, songs, comparisons, and imported snapshots.
+- At that credential-free checkpoint, isolated development evidence remained at zero Apple
+  requests, runs, leases, cooldowns, cache rows, mappings, albums, songs, comparisons, and imported
+  snapshots.
 
-All Apple HTTP tests used injected responses. No live provider request occurred.
+All credential-free Apple HTTP tests used injected responses. The later separately authorized
+retry made exactly one live Apple request and stopped before the canary.
 
 ## Next milestone
 
-The URL-validation and cache-ordering defect is corrected with credential-free evidence. Any
-authentication recheck or five-artist canary retry requires a new explicitly bounded
-authorization. A complete 25-artist test is not justified because no five-artist canary
-measurements exist.
+The next source milestone should add credential-free coverage for the returned artist albums
+relationship pagination category and determine the smallest safe public-catalog allowlist change.
+No source change was made after the live retry. Any later authentication recheck or five-artist
+canary retry requires a new explicitly bounded authorization. No safe full-run ceiling can be
+recommended because no five-artist canary measurements exist.

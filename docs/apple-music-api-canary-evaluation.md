@@ -1,11 +1,12 @@
 # Apple Music API Authentication and Canary Evaluation
 
-Date: 2026-07-29
+Date: 2026-07-30
 
 ## Scope and checkpoint
 
 - Branch: `codex/apple-music-discovery`
 - Pre-live implementation checkpoint: `7577cca49ad946acfee1fb2e1a480419b97f0191`
+- Corrected retry checkpoint: `40a985e3cb6d58f024ae291f6684a4a43a1f4803`
 - Storefront: US
 - Authorized scope: one public-catalog authentication probe followed by the five-artist canary
   only if authentication and identity validation completed safely
@@ -164,10 +165,70 @@ Synthetic tests now prove:
 The real Apple request-event count remained one before and after this correction. No live Apple
 or other-provider request occurred.
 
+## 2026-07-30 bounded retry
+
+The separately authorized retry used the corrected checkpoint and the existing canary-only
+command. Pre-live checks confirmed the exact worktree, branch, HEAD, synchronized upstream, clean
+status, absent index lock, Apple doctor `READY`, 20 migrations, ignored and untracked runtime,
+`APPLE_MUSIC_ENABLED=false`, external private key, zero repository `.p8` files, no active lease,
+no cooldown, no incomplete run, and exactly one prior real Apple request event.
+
+Formatting, zero-warning lint, strict TypeScript, and 71 focused Apple tests passed before live
+access. The file-only plan validated the pinned snapshot hash, exactly 25 artists, the canary
+`1991`, `Alok`, `NURKO`, `G-Space`, and `BUNT.`, a 55-of-75 canary forecast, zero requests, and
+zero database writes.
+
+One BUNT. public-catalog artist lookup returned HTTP 200. Developer-token acceptance was therefore
+confirmed again, but normalization stopped before identity comparison. The corrected handling
+successfully avoided the prior non-followed `href` category. The new sanitized diagnostic
+identified the exact field as `relationships.albums.next`, with role `pagination`, relative form,
+HTTPS, allowed Apple API host, and rejection reason `outside_allowlist`. No URL value, query,
+artist identifier, response body, token, key path, or authorization header was recorded.
+
+The `next` value was request-capable pagination metadata, so the client did not discard or follow
+it. It stopped safely because the current catalog path allowlist did not recognize that
+relationship-pagination path. Source was not changed after the live request.
+
+| Measurement                            | Retry result                    |
+| -------------------------------------- | ------------------------------- |
+| HTTP status                            | 200                             |
+| Authentication attempts                | 1                               |
+| Developer credential accepted by Apple | Yes, based on HTTP 200          |
+| BUNT. normalization completed          | No                              |
+| BUNT. identity matched                 | No, not evaluated               |
+| Terminal result                        | `failed/unsafe_url`             |
+| New Apple HTTP starts                  | 1                               |
+| Artist ID lookups                      | 1                               |
+| Searches                               | 0                               |
+| Direct-view requests                   | 0                               |
+| Pagination requests followed           | 0                               |
+| Album-detail requests                  | 0                               |
+| Track requests                         | 0                               |
+| Retries                                | 0                               |
+| Cache hits                             | 0                               |
+| Maximum concurrency                    | 1                               |
+| Minimum request-start interval         | Not applicable with one request |
+| Persisted run duration                 | 201 ms                          |
+| HTTP 429 responses                     | 0                               |
+| Cooldown                               | Inactive                        |
+
+The five-artist canary did not start. Mapping outcomes were not attempted for `1991`, `Alok`,
+`NURKO`, or `G-Space`; BUNT. was not confirmed because normalization stopped before identity
+comparison. All six direct views had zero requests, resources, pagination pages, terminal
+pagination results, and relevant releases. Recall by 7, 14, 30, and 60 days and by singles, EPs,
+albums, remixes, compilations, and credited appearances remains unavailable. Mapping-caused,
+catalog-caused, matcher-caused, ambiguous, and Apple-only outcomes cannot be classified.
+
+Cache ordering behaved correctly during the real retry. The HTTP 200 validation failure created
+zero cache, mapping, album, song, and comparison rows. The terminal sanitized request event and
+failed run record were preserved. The lease was released, no cooldown was created, and no
+subsequent request occurred. The real Apple request-event baseline increased only from one to two.
+No remaining cohort artist or other provider was contacted.
+
 ## Full-run projection
 
 - Prior planning forecast: 217 of 225 requests.
-- Revised measured forecast: unavailable because the five-artist canary did not run.
+- Revised measured forecast: still unavailable because the five-artist canary did not run.
 - Expected pagination, searches, album-detail calls, track calls, and retry allowance cannot be
   recalculated from one authentication lookup.
 - A 225-request full-run ceiling is not supported by measured canary evidence.
@@ -196,9 +257,10 @@ A complete 25-artist test is not justified from this evidence.
 - Provider implemented: Yes
 - Pilot runner implemented: Yes
 - Plan mode executed: Yes
-- Authentication tested: Yes, HTTP 200 followed by safe-URL validation failure
-- URL-validation defect corrected credential-free: Yes
-- Five-artist canary tested: No
+- Authentication accepted: Yes, HTTP 200 on both bounded attempts
+- Non-followed URL category corrected credential-free: Yes
+- Relationship pagination allowlist complete: No
+- Five-artist canary: Controlled failure before the canary started
 - Full 25-artist cohort tested: No
 - Representative cohort tested: No
 - Production integration authorized: No

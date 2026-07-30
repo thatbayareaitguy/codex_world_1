@@ -1,12 +1,13 @@
 # AI Handoff
 
-Updated: 2026-07-29
+Updated: 2026-07-30
 
 ## Repository state
 
 - Worktree: `C:\Users\taysh\Documents\Codex\codex_world_1_apple`
 - Branch: `codex/apple-music-discovery`
 - Corrective starting checkpoint: `01de135281f12927fdf21e0d227d18b75b58c393`
+- Bounded retry starting checkpoint: `40a985e3cb6d58f024ae291f6684a4a43a1f4803`
 - Upstream: `origin/codex/apple-music-discovery`
 - Live-checkpoint commit: `7577cca49ad946acfee1fb2e1a480419b97f0191`
 - Scope: bounded Apple Music authentication probe and conditional five-artist canary
@@ -98,6 +99,18 @@ tests now complete the same response shape successfully, discard descriptive and
 metadata, and cache only after normalization. Unsafe pagination produces zero cache rows,
 sanitized telemetry, a released lease, and no subsequent request.
 
+A separately authorized retry then made one BUNT. artist lookup. HTTP 200 again confirmed
+developer-token acceptance. The non-followed `href` correction worked, but normalization stopped
+on the exact request-capable field `relationships.albums.next`. Sanitized telemetry classified it
+as relative HTTPS pagination on the allowed Apple API host with an `outside_allowlist` rejection.
+No URL value or response body was retained.
+
+The retry ended `failed/unsafe_url` after one request and 201 ms. BUNT. identity comparison did not
+run, and the five-artist canary did not start. Searches, direct views, followed pagination, album
+details, tracks, retries, and cache hits were all zero. Cache ordering succeeded live with zero
+cache, mapping, album, song, and comparison rows. The lease was released, no cooldown was created,
+and the real Apple request-event total is two. No source change was made after the live request.
+
 See `docs/apple-music-api-canary-evaluation.md`.
 
 ## Credential and provider boundaries
@@ -118,7 +131,8 @@ See `docs/apple-music-api-design.md`, `docs/apple-music-pilot-handoff.md`,
 
 ## Next milestone
 
-The next milestone is a separately authorized authentication recheck and five-artist canary retry.
-Do not make a live request without that authorization. The five-artist canary, complete 25-artist
-cohort, and representative cohort have not been tested. Production integration remains
-unauthorized.
+The next source milestone is a credential-free correction for the artist albums relationship
+pagination category, with synthetic tests for the smallest safe public-catalog allowlist. A later
+live authentication recheck and five-artist canary retry requires separate authorization. The
+five-artist canary, complete 25-artist cohort, and representative cohort have not been tested.
+Production integration remains unauthorized.
