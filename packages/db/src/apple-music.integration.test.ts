@@ -514,6 +514,103 @@ describe.sequential("Apple Music isolated persistence and global request gate", 
     }
   });
 
+  it("persists one sanitized artist-view HTTP 404 event with no successful cache row", async () => {
+    const run = await createAppleMusicComparisonRun(connection.db, {
+      implementationCommit: "4".repeat(40),
+      maximumRuntimeMs: 60_000,
+      minRequestIntervalMs: 1_100,
+      requestBudget: 1,
+      snapshotId,
+    });
+    const runLeaseToken = await claimAppleMusicPilotLease(connection.db, run.id);
+    const persistence = createAppleMusicRequestPersistence(connection.db, {
+      runLeaseToken,
+    });
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          errors: [
+            {
+              code: "40403",
+              detail: "Unsafe unavailable detail with artist-secret",
+              id: "error-occurrence-secret",
+              status: "404",
+              title: "Not Found",
+            },
+          ],
+        }),
+        { status: 404 },
+      ),
+    );
+    const client = new AppleMusicClient({
+      enabled: true,
+      fetchImpl,
+      maxRetries: 3,
+      persistence,
+      runId: run.id,
+      tokenProvider: { getToken: () => "synthetic-token" },
+    });
+
+    try {
+      await expect(client.getArtistView("artist-secret", "live-albums")).rejects.toMatchObject({
+        appleError: {
+          code: "40403",
+          endpointCategory: "artist_view",
+          status: 404,
+          titleCategory: "not_found",
+          view: "live-albums",
+        },
+        classification: "not_found",
+        status: 404,
+      });
+    } finally {
+      await finishAppleMusicComparisonRun(connection.db, run.id, {
+        metrics: {
+          viewResults: [
+            {
+              paginationRequests: 0,
+              requestCount: 1,
+              resourceCount: 0,
+              status: "unavailable_404",
+              terminalPagination: false,
+              view: "live-albums",
+            },
+          ],
+        },
+        status: "controlled_partial",
+        stopReason: "synthetic_unavailable_view",
+      });
+      await releaseAppleMusicPilotLease(connection.db, runLeaseToken);
+    }
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(await connection.db.select().from(appleMusicResponseCache)).toHaveLength(0);
+    expect(await connection.db.select().from(appleMusicAlbums)).toHaveLength(0);
+    expect(await connection.db.select().from(appleMusicSongs)).toHaveLength(0);
+    expect(await connection.db.select().from(appleMusicComparisons)).toHaveLength(0);
+    expect(await getAppleMusicOperationalStatus(connection.db)).toMatchObject({
+      cooldownActive: false,
+      leaseActive: false,
+      requestCount: 1,
+    });
+    const events = await connection.db.select().from(appleMusicRequestEvents);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ status: 404 });
+    expect(events[0]?.requestIdentity).toMatch(/^v2:artist_view:initial:[a-f0-9]{64}$/);
+    const retained = JSON.stringify(events);
+    expect(retained).toContain("not_found|s=404|c=40403");
+    for (const prohibited of [
+      "artist-secret",
+      "error-occurrence-secret",
+      "Unsafe unavailable detail",
+      "synthetic-token",
+      "authorization",
+      "/v1/catalog/",
+    ]) {
+      expect(retained).not.toContain(prohibited);
+    }
+  });
+
   it("reads the latest confirmed mapping for an imported snapshot without exposing it", async () => {
     const runId = await createRunningRun(1);
     const canonicalArtistId = randomUUID();

@@ -98,6 +98,18 @@ complete run, 75 request starts and 15 minutes through the canary, concurrency o
 the 75-request and 15-minute ceilings, records `canary_completed`, releases the lease, and never
 creates the full-phase client. The real plan command was executed credential-free.
 
+A supported direct artist view that returns HTTP 404 after the parent artist has been safely
+confirmed is recorded as `unavailable_404`. The runner does not retry it, cache an empty response,
+or treat it as an HTTP 200 empty catalog. It continues through the remaining supported views and
+artists, retains earlier successful resources, marks coverage incomplete, and does not create
+catalog-miss classifications from that incomplete coverage. All other operation and HTTP error
+semantics remain unchanged.
+
+Plan output separates base first-page view requests, pagination already observed in live evidence,
+unknown-pagination contingency, and remaining request headroom. A non-fitting plan is printable
+for diagnosis but the live controller rejects it before operational-state reads, database writes,
+token generation, private-key access, or HTTP initialization.
+
 Apple HTTP error bodies are read within the existing response-size limit and then discarded.
 Persisted telemetry can contain only status, bounded error code, fixed title and pointer
 categories, an allowlisted parameter name, detail-presence flag, endpoint category, view name,

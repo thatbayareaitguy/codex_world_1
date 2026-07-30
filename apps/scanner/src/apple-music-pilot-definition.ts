@@ -44,16 +44,20 @@ export interface AppleMusicPilotForecast {
   albumDetailRequests: number;
   artistBatchRequests: number;
   authenticationProbeRequests: number;
+  baseFirstPageViewRequests: number;
   directViewRequests: number;
   expectedPaginationRequests: number;
   failedKnownIdSearches: number;
   fitsBudget: boolean;
+  knownPaginationObserved: number;
   knownIdValidationRequests: number;
+  remainingRequestHeadroom: number;
   requestBudget: number;
   retryReserve: number;
   searchRequests: number;
   totalRequests: number;
   trackRequests: number;
+  unknownPaginationContingency: number;
 }
 
 export interface AppleMusicPilotPlanArtist {
@@ -111,9 +115,6 @@ export async function createAppleMusicPilotPlan(
   const artists = validateAppleMusicPilotSnapshot(snapshot);
   const fullForecast = forecastAppleMusicPilotRequests("full");
   const canaryForecast = forecastAppleMusicPilotRequests("canary");
-  if (!fullForecast.fitsBudget || !canaryForecast.fitsBudget) {
-    throw new Error("The conservative Apple Music request forecast exceeds a pilot budget.");
-  }
   return {
     allowedHost: "api.music.apple.com",
     allowedPathPrefix: "/v1/catalog/us/",
@@ -231,33 +232,45 @@ export function validateAppleMusicPilotSnapshot(
 
 export function forecastAppleMusicPilotRequests(phase: "canary" | "full"): AppleMusicPilotForecast {
   if (phase === "canary") {
+    const baseFirstPageViewRequests = 5 * appleMusicArtistViews.length;
+    const knownPaginationObserved = 6;
+    const unknownPaginationContingency = 4 * knownPaginationObserved;
     const forecast = {
       albumDetailRequests: 4,
       artistBatchRequests: 0,
       authenticationProbeRequests: 1,
-      directViewRequests: 5 * appleMusicArtistViews.length,
-      expectedPaginationRequests: 6,
+      baseFirstPageViewRequests,
+      directViewRequests: baseFirstPageViewRequests,
+      expectedPaginationRequests: knownPaginationObserved + unknownPaginationContingency,
       failedKnownIdSearches: 1,
+      knownPaginationObserved,
       knownIdValidationRequests: 1,
       requestBudget: appleMusicPilotDefinition.limits.canaryRequestBudget,
       retryReserve: 5,
       searchRequests: 3,
       trackRequests: 4,
+      unknownPaginationContingency,
     };
     return withForecastTotal(forecast);
   }
+  const baseFirstPageViewRequests = 25 * appleMusicArtistViews.length;
+  const knownPaginationObserved = 6;
+  const unknownPaginationContingency = 24 * knownPaginationObserved;
   const forecast = {
     albumDetailRequests: 8,
     artistBatchRequests: 1,
     authenticationProbeRequests: 1,
-    directViewRequests: 25 * appleMusicArtistViews.length,
-    expectedPaginationRequests: 12,
+    baseFirstPageViewRequests,
+    directViewRequests: baseFirstPageViewRequests,
+    expectedPaginationRequests: knownPaginationObserved + unknownPaginationContingency,
     failedKnownIdSearches: 3,
+    knownPaginationObserved,
     knownIdValidationRequests: 2,
     requestBudget: appleMusicPilotDefinition.limits.requestBudget,
     retryReserve: 10,
     searchRequests: 22,
     trackRequests: 8,
+    unknownPaginationContingency,
   };
   return withForecastTotal(forecast);
 }
@@ -283,7 +296,11 @@ export function formatAppleMusicPilotPlan(plan: AppleMusicPilotPlan): string {
     `Authentication probe: ${plan.authenticationArtist}`,
     `Canary: ${plan.canaryArtists.join(", ")}`,
     `Canary forecast: ${plan.canaryForecast.totalRequests}/${plan.canaryForecast.requestBudget} requests`,
+    `Canary view forecast: ${plan.canaryForecast.baseFirstPageViewRequests} base first pages, ${plan.canaryForecast.knownPaginationObserved} known pagination requests, ${plan.canaryForecast.unknownPaginationContingency} unknown pagination contingency`,
+    `Canary headroom: ${plan.canaryForecast.remainingRequestHeadroom} requests; fits budget: ${plan.canaryForecast.fitsBudget}`,
     `Full forecast: ${plan.fullForecast.totalRequests}/${plan.fullForecast.requestBudget} requests`,
+    `Full view forecast: ${plan.fullForecast.baseFirstPageViewRequests} base first pages, ${plan.fullForecast.knownPaginationObserved} known pagination requests, ${plan.fullForecast.unknownPaginationContingency} unknown pagination contingency`,
+    `Full headroom: ${plan.fullForecast.remainingRequestHeadroom} requests; fits budget: ${plan.fullForecast.fitsBudget}`,
     `Limits: ${plan.limits.runtimeMs / 60_000} minutes, concurrency ${plan.limits.concurrency}, ${plan.limits.minRequestIntervalMs} ms minimum interval`,
     "Plan effects: 0 network requests and 0 database writes",
     `Excluded: ${plan.excludedOperations.join(", ")}`,
@@ -355,7 +372,10 @@ function cohortEntries(definition: AppleMusicPilotDefinition): AppleMusicPilotPl
 }
 
 function withForecastTotal(
-  forecast: Omit<AppleMusicPilotForecast, "fitsBudget" | "totalRequests">,
+  forecast: Omit<
+    AppleMusicPilotForecast,
+    "fitsBudget" | "remainingRequestHeadroom" | "totalRequests"
+  >,
 ): AppleMusicPilotForecast {
   const totalRequests =
     forecast.albumDetailRequests +
@@ -368,7 +388,12 @@ function withForecastTotal(
     forecast.retryReserve +
     forecast.searchRequests +
     forecast.trackRequests;
-  return { ...forecast, fitsBudget: totalRequests <= forecast.requestBudget, totalRequests };
+  return {
+    ...forecast,
+    fitsBudget: totalRequests <= forecast.requestBudget,
+    remainingRequestHeadroom: forecast.requestBudget - totalRequests,
+    totalRequests,
+  };
 }
 
 function findProhibitedEvidenceKey(value: unknown, path = ""): string | undefined {

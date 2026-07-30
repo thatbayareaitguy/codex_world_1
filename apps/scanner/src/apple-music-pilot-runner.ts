@@ -7,8 +7,10 @@ import {
 } from "@radar/core";
 import {
   AppleMusicClientError,
+  appleMusicArtistViews,
   type AppleMusicAlbum,
   type AppleMusicArtist,
+  type AppleMusicArtistView,
   type AppleMusicBatchResult,
   type AppleMusicSong,
 } from "@radar/providers";
@@ -36,12 +38,26 @@ export interface AppleMusicPilotLiveAuthorization {
 }
 
 export interface AppleMusicPilotClient {
-  getAllArtistViews(artistId: string): Promise<Record<string, AppleMusicAlbum[]>>;
+  getAllArtistViews?(artistId: string): Promise<Record<string, AppleMusicAlbum[]>>;
   getAlbum?(albumId: string): Promise<AppleMusicAlbum | undefined>;
   getAlbumTracks?(albumId: string): Promise<AppleMusicSong[]>;
   getArtist(artistId: string): Promise<AppleMusicArtist | undefined>;
+  getArtistView?(artistId: string, view: AppleMusicArtistView): Promise<AppleMusicAlbum[]>;
   getArtists(artistIds: string[]): Promise<AppleMusicBatchResult<AppleMusicArtist>>;
   searchArtists(term: string): Promise<AppleMusicArtist[]>;
+}
+
+export type AppleMusicPilotViewStatus =
+  "available_with_results" | "available_empty" | "unavailable_404" | "failed" | "not_attempted";
+
+export interface AppleMusicPilotViewResult {
+  artist: string;
+  paginationRequests: number;
+  requestCount: number;
+  resourceCount: number;
+  status: AppleMusicPilotViewStatus;
+  terminalPagination: boolean;
+  view: AppleMusicArtistView;
 }
 
 export interface AppleMusicPilotStoredEvidence {
@@ -119,6 +135,7 @@ export interface AppleMusicPilotRunSummary {
     artist: string;
     status: AppleMusicMappingDecision["status"];
   }>;
+  incompleteViewArtists: string[];
   omittedArtists: string[];
   phases: {
     authentication: "completed" | "not_started" | "stopped";
@@ -129,6 +146,7 @@ export interface AppleMusicPilotRunSummary {
   snapshotHash: string;
   status: "canary_completed" | "completed" | "controlled_partial" | "failed";
   stopReason: string;
+  viewResults: AppleMusicPilotViewResult[];
 }
 
 export function authorizeAppleMusicPilotLive(input: {
@@ -185,6 +203,30 @@ export async function runBoundedAppleMusicPilot(input: {
   if (!forecast.fitsBudget) {
     throw new Error("The conservative Apple pilot forecast exceeds the full-run budget.");
   }
+  return runAppleMusicPilotAfterForecastGate(input, cohort);
+}
+
+/**
+ * Executes the injected runner after its caller has satisfied the conservative
+ * forecast gate. Production callers must use runBoundedAppleMusicPilot.
+ * Credential-free tests use this boundary with fake clients and stores.
+ */
+export async function runAppleMusicPilotAfterForecastGate(
+  input: {
+    authorization: AppleMusicPilotLiveAuthorization;
+    createClient: (
+      phase: "canary" | "full",
+      runId: string,
+      leaseToken: string,
+    ) => AppleMusicPilotClient;
+    implementationCommit: string;
+    now?: () => Date;
+    snapshot: ItunesPilotSnapshot;
+    store: AppleMusicPilotStore;
+  },
+  cohort: AppleMusicPilotPlanArtist[] = validateAppleMusicPilotSnapshot(input.snapshot),
+): Promise<AppleMusicPilotRunSummary> {
+  assertAuthorization(input.authorization);
   const status = await input.store.operationalStatus();
   if (status.cooldownActive) throw new Error("Apple Music has an active persisted cooldown.");
   if (status.leaseActive) throw new Error("Apple Music has an active request lease.");
@@ -343,6 +385,7 @@ interface MappingState {
   decision: AppleMusicMappingDecision;
   entry: AppleMusicPilotPlanArtist;
   songs?: AppleMusicSong[];
+  viewResults?: Partial<Record<AppleMusicArtistView, Omit<AppleMusicPilotViewResult, "artist">>>;
 }
 
 async function resolveArtist(
@@ -386,12 +429,22 @@ async function fetchAndPersistCatalog(
 ): Promise<void> {
   const selected = state.decision.selected;
   if (!selected) return;
-  const views = await client.getAllArtistViews(selected.artistId);
-  const albums = deduplicateAlbums(Object.values(views).flat());
-  const comparisons = compareAppleMusicToGroundTruth(
+  const views = await fetchConfirmedArtistViews(client, selected.artistId, state);
+  const albums = deduplicateAlbums(
+    appleMusicArtistViews.flatMap((view) => views[view]?.items ?? []),
+  );
+  const allComparisons = compareAppleMusicToGroundTruth(
     groundTruth(input.snapshot, state.entry.canonicalArtistId),
     albums,
   );
+  const incomplete = appleMusicArtistViews.some(
+    (view) => views[view]?.status === "unavailable_404",
+  );
+  const comparisons = incomplete
+    ? allComparisons.filter(
+        (comparison) => comparison.classification !== "spotify_ground_truth_missed_by_apple_music",
+      )
+    : allComparisons;
   state.albums = albums;
   state.songs = [];
   await input.store.saveCatalog({
@@ -405,6 +458,110 @@ async function fetchAndPersistCatalog(
     comparisons,
     runId,
   });
+}
+
+async function fetchConfirmedArtistViews(
+  client: AppleMusicPilotClient,
+  artistId: string,
+  state: MappingState,
+): Promise<
+  Record<
+    AppleMusicArtistView,
+    Omit<AppleMusicPilotViewResult, "artist"> & { items: AppleMusicAlbum[] }
+  >
+> {
+  if (!client.getArtistView) {
+    if (!client.getAllArtistViews) {
+      throw new Error("Apple Music pilot client has no artist-view operation.");
+    }
+    const legacy = await client.getAllArtistViews(artistId);
+    return Object.fromEntries(
+      appleMusicArtistViews.map((view) => {
+        const items = legacy[view] ?? [];
+        const pageCount = pageCountFor(items);
+        const evidence = {
+          paginationRequests: pageCount - 1,
+          requestCount: pageCount,
+          resourceCount: items.length,
+          status:
+            items.length > 0 ? ("available_with_results" as const) : ("available_empty" as const),
+          terminalPagination: true,
+          view,
+        };
+        const result = { items, ...evidence };
+        state.viewResults = { ...state.viewResults, [view]: evidence };
+        return [view, result] as const;
+      }),
+    ) as Record<
+      AppleMusicArtistView,
+      Omit<AppleMusicPilotViewResult, "artist"> & { items: AppleMusicAlbum[] }
+    >;
+  }
+
+  const results = {} as Record<
+    AppleMusicArtistView,
+    Omit<AppleMusicPilotViewResult, "artist"> & { items: AppleMusicAlbum[] }
+  >;
+  for (const view of appleMusicArtistViews) {
+    try {
+      const items = await client.getArtistView(artistId, view);
+      const pageCount = pageCountFor(items);
+      const evidence = {
+        paginationRequests: pageCount - 1,
+        requestCount: pageCount,
+        resourceCount: items.length,
+        status:
+          items.length > 0 ? ("available_with_results" as const) : ("available_empty" as const),
+        terminalPagination: true,
+        view,
+      };
+      const result = { items, ...evidence };
+      results[view] = result;
+      state.viewResults = { ...state.viewResults, [view]: evidence };
+    } catch (error) {
+      if (isUnavailableConfirmedArtistView(error, view)) {
+        const evidence = {
+          paginationRequests: 0,
+          requestCount: 1,
+          resourceCount: 0,
+          status: "unavailable_404" as const,
+          terminalPagination: false,
+          view,
+        };
+        const result = { items: [], ...evidence };
+        results[view] = result;
+        state.viewResults = { ...state.viewResults, [view]: evidence };
+        continue;
+      }
+      state.viewResults = {
+        ...state.viewResults,
+        [view]: {
+          paginationRequests: 0,
+          requestCount: error instanceof AppleMusicClientError && error.status ? 1 : 0,
+          resourceCount: 0,
+          status: "failed",
+          terminalPagination: false,
+          view,
+        },
+      };
+      throw error;
+    }
+  }
+  return results;
+}
+
+function isUnavailableConfirmedArtistView(error: unknown, view: AppleMusicArtistView): boolean {
+  return (
+    error instanceof AppleMusicClientError &&
+    error.status === 404 &&
+    error.classification === "not_found" &&
+    error.appleError?.endpointCategory === "artist_view" &&
+    error.appleError.view === view
+  );
+}
+
+function pageCountFor(items: AppleMusicAlbum[]): number {
+  return Math.max(1, ...items.map((item) => item.pageNumber));
 }
 
 async function inspectRequiredTrackEvidence(
@@ -499,6 +656,34 @@ function createSummary(input: {
   for (const state of input.mappings.values()) {
     mappingCounts[state.decision.status] = (mappingCounts[state.decision.status] ?? 0) + 1;
   }
+  const viewResults = [...input.mappings.values()].flatMap((state) =>
+    appleMusicArtistViews.map((view): AppleMusicPilotViewResult => {
+      const result = state.viewResults?.[view];
+      return result
+        ? { artist: state.entry.name, ...result }
+        : {
+            artist: state.entry.name,
+            paginationRequests: 0,
+            requestCount: 0,
+            resourceCount: 0,
+            status: "not_attempted",
+            terminalPagination: false,
+            view,
+          };
+    }),
+  );
+  const incompleteViewArtists = [
+    ...new Set(
+      viewResults
+        .filter(
+          (result) =>
+            result.status === "unavailable_404" ||
+            result.status === "failed" ||
+            result.status === "not_attempted",
+        )
+        .map((result) => result.artist),
+    ),
+  ].sort();
   const mappedNames = new Set(
     [...input.mappings.values()]
       .filter((state) => state.decision.selected)
@@ -529,6 +714,7 @@ function createSummary(input: {
     mappingResults: [...input.mappings.values()]
       .map((state) => ({ artist: state.entry.name, status: state.decision.status }))
       .sort((left, right) => left.artist.localeCompare(right.artist)),
+    incompleteViewArtists,
     omittedArtists: input.cohort
       .filter((entry) => !mappedNames.has(entry.name))
       .map((entry) => entry.name),
@@ -537,6 +723,7 @@ function createSummary(input: {
     snapshotHash: input.snapshotHash,
     status: input.status,
     stopReason: input.stopReason,
+    viewResults,
   };
   assertSanitizedAppleMusicPilotEvidence(summary);
   return summary;

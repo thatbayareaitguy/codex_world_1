@@ -23,6 +23,7 @@ import {
 } from "./apple-music-pilot-definition";
 import {
   authorizeAppleMusicPilotLive,
+  runAppleMusicPilotAfterForecastGate,
   runBoundedAppleMusicPilot,
   type AppleMusicPilotClient,
   type AppleMusicPilotStore,
@@ -153,17 +154,32 @@ describe("Apple Music pilot command and plan", () => {
     ).toThrow("non-Apple");
   });
 
-  it("pins conservative canary and full forecasts within immutable budgets", () => {
+  it("separates known and unknown pagination and rejects underfunded forecasts", () => {
     expect(forecastAppleMusicPilotRequests("canary")).toMatchObject({
-      fitsBudget: true,
+      baseFirstPageViewRequests: 30,
+      fitsBudget: false,
+      knownPaginationObserved: 6,
+      remainingRequestHeadroom: -4,
       requestBudget: 75,
-      totalRequests: 55,
+      totalRequests: 79,
+      unknownPaginationContingency: 24,
     });
     expect(forecastAppleMusicPilotRequests("full")).toMatchObject({
-      fitsBudget: true,
+      baseFirstPageViewRequests: 150,
+      fitsBudget: false,
+      knownPaginationObserved: 6,
+      remainingRequestHeadroom: -130,
       requestBudget: 225,
-      totalRequests: 217,
+      totalRequests: 355,
+      unknownPaginationContingency: 144,
     });
+  });
+
+  it("blocks live execution before operational state when the forecast exceeds budget", async () => {
+    const harness = runnerHarness({ stopAfterCanary: true });
+    await expect(runBoundedAppleMusicPilot(harness.input())).rejects.toThrow("forecast exceeds");
+    expect(harness.store.createdRun).toBeUndefined();
+    expect(harness.store.leaseActive).toBe(false);
   });
 
   it("pins only public IDs and no machine-specific snapshot path", () => {
@@ -397,6 +413,73 @@ describe("bounded Apple Music pilot controller", () => {
     expect(JSON.stringify(result)).not.toMatch(
       /authorization|developer.?token|private.?key|raw.?response|artwork|preview/i,
     );
+  });
+
+  it("continues across all supported views and artists after a confirmed-view HTTP 404", async () => {
+    const harness = runnerHarness({
+      confirmedView404: true,
+      stopAfterCanary: true,
+    });
+    const result = await harness.run();
+    const nurkoViews = result.viewResults.filter((entry) => entry.artist === "NURKO");
+    expect(nurkoViews).toEqual([
+      expect.objectContaining({
+        resourceCount: 1,
+        status: "available_with_results",
+        view: "latest-release",
+      }),
+      expect.objectContaining({
+        paginationRequests: 1,
+        requestCount: 2,
+        status: "available_with_results",
+        view: "singles",
+      }),
+      expect.objectContaining({
+        resourceCount: 1,
+        status: "available_with_results",
+        view: "full-albums",
+      }),
+      expect.objectContaining({
+        requestCount: 1,
+        status: "unavailable_404",
+        terminalPagination: false,
+        view: "live-albums",
+      }),
+      expect.objectContaining({
+        resourceCount: 0,
+        status: "available_empty",
+        view: "compilation-albums",
+      }),
+      expect.objectContaining({
+        resourceCount: 1,
+        status: "available_with_results",
+        view: "appears-on-albums",
+      }),
+    ]);
+    expect(result.incompleteViewArtists).toContain("NURKO");
+    expect(result.status).toBe("canary_completed");
+    expect(harness.calls.viewSequence.filter((entry) => entry.artist === "NURKO")).toEqual(
+      appleMusicArtistViews.map((view) => ({ artist: "NURKO", view })),
+    );
+    expect(harness.calls.viewSequence).toContainEqual({
+      artist: "BUNT.",
+      view: "appears-on-albums",
+    });
+    const nurkoCatalog = harness.store.catalogInputs.find((input) =>
+      input.albums.some((album) => album.sourceView === "appears-on-albums"),
+    );
+    expect(nurkoCatalog).toBeDefined();
+    expect(
+      harness.store.comparisonInputs
+        .filter((input) => input.canonicalArtistId === nurkoCatalog?.canonicalArtistId)
+        .flatMap((input) => input.comparisons)
+        .some(
+          (comparison) =>
+            comparison.classification === "spotify_ground_truth_missed_by_apple_music",
+        ),
+    ).toBe(false);
+    expect(harness.store.leaseActive).toBe(false);
+    expect(harness.store.releaseCount).toBe(1);
   });
 
   it("has no Spotify, free-iTunes, or other-provider dependency surface", () => {
@@ -654,6 +737,7 @@ function uuid(value: number): string {
 function runnerHarness(
   options: {
     authenticationStatus?: number;
+    confirmedView404?: boolean;
     evidenceRequestCount?: number;
     fullFailure?: "request_budget_exhausted" | "unexpected";
     now?: () => Date;
@@ -675,6 +759,7 @@ function runnerHarness(
     search: 0,
     views: 0,
     viewsByName: new Map<string, number>(),
+    viewSequence: [] as { artist: string; view: AppleMusicArtistView }[],
   };
   const store = new FakeStore(
     nameByCanonicalId,
@@ -683,21 +768,66 @@ function runnerHarness(
   const client = (phase: "canary" | "full"): AppleMusicPilotClient => {
     if (phase === "full") calls.fullClients += 1;
     return {
-      getAllArtistViews: (artistId) => {
-        if (phase === "full" && options.fullFailure) {
-          return Promise.reject(
-            options.fullFailure === "unexpected"
-              ? new Error("synthetic failure")
-              : new AppleMusicClientError("budget", "request_budget_exhausted"),
-          );
-        }
-        const name = nameByResolvedId.get(artistId) ?? "Unknown";
-        calls.views += 1;
-        calls.viewsByName.set(name, (calls.viewsByName.get(name) ?? 0) + 1);
-        return Promise.resolve(
-          Object.fromEntries(appleMusicArtistViews.map((view) => [view, [] as AppleMusicAlbum[]])),
-        );
-      },
+      ...(options.confirmedView404
+        ? {
+            getArtistView: (artistId: string, view: AppleMusicArtistView) => {
+              const name = nameByResolvedId.get(artistId) ?? "Unknown";
+              calls.viewSequence.push({ artist: name, view });
+              if (name === "NURKO" && view === "live-albums") {
+                calls.views += 1;
+                calls.viewsByName.set(name, (calls.viewsByName.get(name) ?? 0) + 1);
+                return Promise.reject(
+                  new AppleMusicClientError(
+                    "Apple Music request failed with HTTP 404.",
+                    "not_found",
+                    404,
+                    undefined,
+                    undefined,
+                    {
+                      bodyFormat: "apple_errors",
+                      code: "40403",
+                      detailPresent: true,
+                      endpointCategory: "artist_view",
+                      queryKeys: [],
+                      sourcePointer: "absent",
+                      status: 404,
+                      titleCategory: "not_found",
+                      view,
+                    },
+                  ),
+                );
+              }
+              const items =
+                name !== "NURKO" || view === "compilation-albums"
+                  ? []
+                  : view === "singles"
+                    ? [pilotAlbum(name, view, 1), pilotAlbum(name, view, 2)]
+                    : [pilotAlbum(name, view, 1)];
+              const requests = Math.max(1, ...items.map((item) => item.pageNumber));
+              calls.views += requests;
+              calls.viewsByName.set(name, (calls.viewsByName.get(name) ?? 0) + requests);
+              return Promise.resolve(items);
+            },
+          }
+        : {
+            getAllArtistViews: (artistId: string) => {
+              if (phase === "full" && options.fullFailure) {
+                return Promise.reject(
+                  options.fullFailure === "unexpected"
+                    ? new Error("synthetic failure")
+                    : new AppleMusicClientError("budget", "request_budget_exhausted"),
+                );
+              }
+              const name = nameByResolvedId.get(artistId) ?? "Unknown";
+              calls.views += 1;
+              calls.viewsByName.set(name, (calls.viewsByName.get(name) ?? 0) + 1);
+              return Promise.resolve(
+                Object.fromEntries(
+                  appleMusicArtistViews.map((view) => [view, [] as AppleMusicAlbum[]]),
+                ),
+              );
+            },
+          }),
       getArtist: (artistId) => {
         const name = nameByPublicId.get(artistId) ?? "Unknown";
         calls.artistByName.set(name, (calls.artistByName.get(name) ?? 0) + 1);
@@ -732,8 +862,25 @@ function runnerHarness(
   };
   return {
     calls,
+    input: () => ({
+      authorization: authorizeAppleMusicPilotLive({
+        confirmation: appleMusicLiveConfirmation,
+        executeLive: true,
+        otherProvidersDisabled: true,
+        persistentAppleMusicEnabled: "false",
+        ...(options.stopAfterCanary === undefined
+          ? {}
+          : { stopAfterCanary: options.stopAfterCanary }),
+        storefront: "us",
+      }),
+      createClient: (phase: "canary" | "full") => client(phase),
+      implementationCommit: "b".repeat(40),
+      ...(options.now ? { now: options.now } : {}),
+      snapshot: value,
+      store,
+    }),
     run: () =>
-      runBoundedAppleMusicPilot({
+      runAppleMusicPilotAfterForecastGate({
         authorization: authorizeAppleMusicPilotLive({
           confirmation: appleMusicLiveConfirmation,
           executeLive: true,
@@ -755,6 +902,8 @@ function runnerHarness(
 }
 
 class FakeStore implements AppleMusicPilotStore {
+  catalogInputs: Parameters<AppleMusicPilotStore["saveCatalog"]>[0][] = [];
+  comparisonInputs: Parameters<AppleMusicPilotStore["saveComparisons"]>[0][] = [];
   createdRun?: Parameters<AppleMusicPilotStore["createRun"]>[0];
   finished?: {
     metrics: Record<string, unknown>;
@@ -809,9 +958,15 @@ class FakeStore implements AppleMusicPilotStore {
     return Promise.resolve();
   };
 
-  saveCatalog = () => Promise.resolve();
+  saveCatalog: AppleMusicPilotStore["saveCatalog"] = (input) => {
+    this.catalogInputs.push(input);
+    return Promise.resolve();
+  };
 
-  saveComparisons = () => Promise.resolve();
+  saveComparisons: AppleMusicPilotStore["saveComparisons"] = (input) => {
+    this.comparisonInputs.push(input);
+    return Promise.resolve();
+  };
 
   saveMapping: AppleMusicPilotStore["saveMapping"] = (input) => {
     this.mappingDecisions.set(
@@ -889,6 +1044,25 @@ function artist(artistId: string, name: string): AppleMusicArtist {
     genreNames: [],
     name,
     sourceStorefront: "us",
+  };
+}
+
+function pilotAlbum(
+  artistName: string,
+  view: AppleMusicArtistView,
+  pageNumber: number,
+): AppleMusicAlbum {
+  return {
+    albumId: `${artistName}-${view}-${pageNumber}`,
+    artistIds: ["synthetic-artist"],
+    artistName,
+    genreNames: [],
+    pageNumber,
+    paginationPath: pageNumber === 1 ? "initial" : "pagination",
+    releaseDate: "2026-07-24",
+    sourceStorefront: "us",
+    sourceView: view,
+    title: `Synthetic ${view} ${pageNumber}`,
   };
 }
 

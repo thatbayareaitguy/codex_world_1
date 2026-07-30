@@ -165,6 +165,23 @@ The complete run remains bounded to 225 actual HTTP starts, 45 minutes, concurre
 minimum 1,100 millisecond request-start interval. Retries count against the request budget and
 cache hits do not. No live execution occurred in the command-implementation milestone.
 
+### Confirmed artist-view availability
+
+For a safely confirmed artist, HTTP 404 from one of the six supported direct artist views is an
+operation-specific availability result named `unavailable_404`. It is nonretryable, counts as one
+request start, creates no successful cache row or fabricated empty response, and does not stop
+later views or later artists. HTTP 200 with an empty `data` collection remains the distinct
+`available_empty` result. Successful view resources already collected remain eligible for
+evaluation, but an unavailable view marks coverage incomplete and suppresses catalog-miss
+classification for that artist.
+
+This exception does not apply to artist lookup, search, album detail, album tracks, unsupported
+views, authentication failures, throttling, unsafe pagination, or other provider operations.
+
+The forecast reports base first-page views, six known pagination requests observed for one prior
+NURKO view, an unknown-pagination contingency using that worst-known measured behavior for each
+remaining artist, and remaining headroom. It does not raise either immutable request ceiling.
+
 ## Mapping and comparison
 
 Artist mapping supports `existing_id_confirmed`, `search_confirmed`, `evidence_confirmed`,

@@ -14,6 +14,17 @@ Updated: 2026-07-30
 - Current historical Apple request total: 22
 - Provider state: disabled, no active run, lease, cooldown, or queue
 
+Credential-free source now treats HTTP 404 from one of the six valid views of a safely confirmed
+artist as `unavailable_404`. It does not retry or cache the result, continues later views and
+artists, retains earlier successful resources, distinguishes HTTP 200 empty, and suppresses false
+catalog misses from incomplete view coverage. Other 404 operations remain failures.
+
+The corrected conservative forecast uses 30 canary first pages, six pagination starts already
+observed, and 24 unknown-pagination contingency starts. Including mapping, detail, track, and
+retry contingency, the canary projects 79 requests against the unchanged limit of 75. The full
+pilot projects 355 against 225. Live execution must remain blocked unless a later authorized
+policy decision changes the ceiling or scope.
+
 ## Current canary result
 
 - BUNT.: `existing_id_confirmed` during authentication; its canary catalog loop was not reached.

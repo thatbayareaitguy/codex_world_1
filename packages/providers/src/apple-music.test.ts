@@ -725,6 +725,55 @@ describe("Apple Music catalog operations", () => {
     expect(result).toEqual({ items: [], nextPresent: false });
   });
 
+  it("reports a supported artist-view HTTP 404 once without caching an empty result", async () => {
+    const persistence = new MemoryPersistence();
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse(
+        {
+          errors: [
+            {
+              code: "40403",
+              detail: "Resource unavailable",
+              status: "404",
+              title: "Not Found",
+            },
+          ],
+        },
+        404,
+      ),
+    );
+    const failure = await createClient(persistence, fetchImpl, { maxRetries: 3 })
+      .getArtistView("42", "live-albums")
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      appleError: {
+        endpointCategory: "artist_view",
+        queryKeys: [],
+        status: 404,
+        titleCategory: "not_found",
+        view: "live-albums",
+      },
+      classification: "not_found",
+      status: 404,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(persistence.completions).toHaveLength(1);
+    expect(persistence.completions[0]?.cacheValue).toBeUndefined();
+    expect(persistence.cache).toHaveLength(0);
+  });
+
+  it("keeps album-detail HTTP 404 as a failed album operation", async () => {
+    const persistence = new MemoryPersistence();
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({}, 404));
+    await expect(createClient(persistence, fetchImpl).getAlbum("album-1")).rejects.toMatchObject({
+      appleError: { endpointCategory: "album", status: 404 },
+      classification: "not_found",
+      status: 404,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(persistence.cache).toHaveLength(0);
+  });
+
   it("retains only bounded safe fields from an Apple HTTP 400 errors response", async () => {
     const persistence = new MemoryPersistence();
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
