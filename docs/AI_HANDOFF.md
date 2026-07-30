@@ -6,11 +6,13 @@ Updated: 2026-07-30
 
 - Worktree: `C:\Users\taysh\Documents\Codex\codex_world_1_apple`
 - Branch: `codex/apple-music-discovery`
-- Canary starting checkpoint: `414b9c260e0f080a90d44d66a28d77ba80b823da`
+- Milestone starting checkpoint: `887599dc0768eb13c8ffa3dcd5e7192f78f0ad4b`
+- Unavailable-view correction checkpoint: `74321f97ea04fa427b31c6200fdfa8bc725c3224`
 - Identifier-policy checkpoint: `ebb153ad23c71c1855652126ca28fc38e37d9f34`
 - Upstream: `origin/codex/apple-music-discovery`
 - Scope: bounded five-artist Apple Music public-catalog canary
-- Current result: `failed/not_found` controlled stop after 14 live starts
+- Current milestone result: stopped credential-free at the 79-of-75 request gate
+- Most recent live result: `failed/not_found` controlled stop after 14 live starts
 - Current historical Apple request total: 22
 - Provider state: disabled, no active run, lease, cooldown, or queue
 
@@ -22,8 +24,9 @@ catalog misses from incomplete view coverage. Other 404 operations remain failur
 The corrected conservative forecast uses 30 canary first pages, six pagination starts already
 observed, and 24 unknown-pagination contingency starts. Including mapping, detail, track, and
 retry contingency, the canary projects 79 requests against the unchanged limit of 75. The full
-pilot projects 355 against 225. Live execution must remain blocked unless a later authorized
-policy decision changes the ceiling or scope.
+pilot projects 355 against 225. The required credential-free plan produced these values with zero
+requests and writes, so the authorized live command was not executed. Live execution must remain
+blocked unless a later authorized policy decision changes the ceiling or scope.
 
 ## Current canary result
 

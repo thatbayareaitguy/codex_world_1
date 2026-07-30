@@ -5,12 +5,25 @@ Date: 2026-07-30
 ## Current checkpoint
 
 - Branch: `codex/apple-music-discovery`
-- Canary starting checkpoint: `414b9c260e0f080a90d44d66a28d77ba80b823da`
+- Milestone starting checkpoint: `887599dc0768eb13c8ffa3dcd5e7192f78f0ad4b`
+- Unavailable-view correction checkpoint: `74321f97ea04fa427b31c6200fdfa8bc725c3224`
 - Pre-live identifier-policy checkpoint: `ebb153ad23c71c1855652126ca28fc38e37d9f34`
 - Current Apple request-event total: 22
 - Current provider state: disabled, no active run, lease, cooldown, or queue
-- Current canary result: controlled `failed/not_found` after 14 starts
+- Current milestone result: stopped at the credential-free 79-of-75 request gate
+- Most recent live result: controlled `failed/not_found` after 14 starts
 - Production integration and merge: not authorized
+
+Supported direct artist-view HTTP 404 is now operation-specifically recorded as
+`unavailable_404` after confirmed parent identity. It remains nonretryable and uncached, but it
+does not stop later views or artists. It remains distinct from HTTP 200 empty, preserves earlier
+successful resources, marks coverage incomplete, and prevents false catalog-miss classifications.
+Unrelated HTTP 404 and terminal error behavior is unchanged.
+
+The corrected plan separates 30 canary first pages, six known pagination starts, and 24
+unknown-pagination contingency starts. Its total is 79 against the immutable limit of 75. The
+full projection is 355 against 225. Because neither conservative forecast fits, the authorized
+five-artist command was not executed. The real Apple request total remains 22.
 
 The five-artist canary authenticated BUNT. and evaluated mapping for 1991, Alok, and NURKO before
 stopping on NURKO `live-albums` HTTP 404. Mapping results were `ambiguous` for 1991 and Alok,
@@ -34,9 +47,8 @@ Recall remains unavailable for every requested time window and release category.
 requests forecast for the entire canary. No defensible revised full-run total or safe ceiling can
 be established from this controlled failure, and the complete 25-artist pilot is not justified.
 
-The next milestone should determine credential-free whether an unavailable artist relationship
-view legitimately returns HTTP 404 and whether that status should normalize to an empty view.
-Any source correction and any additional live retry require separate authorization.
+The next milestone must explicitly authorize either a higher bounded request ceiling with
+headroom or a smaller live scope. No live retry should start under the current 75-request plan.
 
 ## Historical milestone record
 

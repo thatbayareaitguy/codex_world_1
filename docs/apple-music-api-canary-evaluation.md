@@ -5,14 +5,29 @@ Date: 2026-07-30
 ## Current canary state
 
 - Branch: `codex/apple-music-discovery`
-- Starting checkpoint: `414b9c260e0f080a90d44d66a28d77ba80b823da`
+- Milestone starting checkpoint: `887599dc0768eb13c8ffa3dcd5e7192f78f0ad4b`
+- Unavailable-view correction checkpoint: `74321f97ea04fa427b31c6200fdfa8bc725c3224`
 - Pre-live identifier-policy checkpoint: `ebb153ad23c71c1855652126ca28fc38e37d9f34`
 - Storefront: US public catalog
 - Starting real-request baseline: 8
 - Current real-request total: 22
 - Persistent provider state: `APPLE_MUSIC_ENABLED=false`
-- Terminal result: `failed/not_found`, a controlled nonretryable HTTP 404 stop
+- Current milestone result: stopped credential-free because the conservative canary forecast
+  exceeds the unchanged request ceiling
+- Most recent live result: `failed/not_found`, a controlled nonretryable HTTP 404 stop
 - Remaining 20 pilot artists: not contacted
+
+The credential-free correction now records HTTP 404 from a valid supported view of a confirmed
+artist as `unavailable_404`. It does not retry or cache the response, continues later views and
+artists, retains successful resources from other views, distinguishes HTTP 200 empty, and avoids
+catalog-miss classifications from incomplete view coverage. Artist lookup, search, album,
+authentication, throttling, and unsafe-pagination behavior remains unchanged.
+
+The revised zero-network plan reports 30 base canary first-page view requests, six pagination
+requests observed previously, and 24 unknown-pagination contingency requests. Including mapping,
+detail, track, and retry contingency, the result is 79 of 75 with negative 4 headroom. The full
+projection is 355 of 225 with negative 130 headroom. The immutable limits were not increased, so
+the five-artist command was not executed. The historical Apple request total remains 22.
 
 The credential-free plan validated the approved snapshot hash, exactly 25 pilot artists, the
 canary `1991`, `Alok`, `NURKO`, `G-Space`, and `BUNT.`, the 75-request and 15-minute canary limits,
@@ -84,9 +99,9 @@ full-run ceiling. A complete 25-artist pilot is not justified.
 
 This five-artist controlled failure is not representative of the complete watchlist.
 
-The next milestone should audit HTTP 404 semantics for an unavailable artist relationship view
-credential-free, add synthetic coverage if a correction is needed, and request separate bounded
-authorization before any live retry. No additional live request is authorized here.
+The next milestone must either authorize a larger bounded canary ceiling with meaningful
+pagination headroom or reduce the live scope and produce a new conservative forecast. The
+five-artist retry did not start under the current ceiling.
 
 ## Historical milestone record
 
