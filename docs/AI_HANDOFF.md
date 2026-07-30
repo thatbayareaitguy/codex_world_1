@@ -147,6 +147,24 @@ See `docs/apple-music-api-design.md`, `docs/apple-music-pilot-handoff.md`,
 
 ## Next milestone
 
-The next milestone is a separately authorized retry of the same five-artist canary. The
-five-artist canary, complete 25-artist cohort, and representative cohort have not been tested.
-Production integration remains unauthorized.
+The operation-scoped live retry started from
+`12ec1a4910fea9557549b13c6a3c358720306284`. BUNT. returned HTTP 200, normalized successfully,
+discarded embedded navigation before normalized caching, and was identity-confirmed. Neither
+prior `unsafe_url` failure recurred.
+
+The run mapped 1991 and Alok as ambiguous and NURKO as search-confirmed. NURKO's first explicit
+`latest-release` view returned HTTP 400, so the runner stopped `failed/http_error` without a
+source change. G-Space, BUNT.'s six-view catalog pass, and every remaining cohort artist were not
+reached. The run made five starts: one artist lookup, three searches, and one artist-view request.
+It recorded four HTTP 200 responses and one HTTP 400 response, no retries or pagination, a
+1,109 ms minimum interval, concurrency one, and a 4,609 ms duration.
+
+The lease is released, cooldown is inactive, Apple remains disabled, and four valid normalized
+cache rows remain. They contain no embedded navigation, artwork, previews, authorization data,
+token data, or evidence URLs. No album, song, or comparison result was persisted. No other
+provider or production state was touched.
+
+The next milestone is credential-free diagnosis and correction of the explicit artist-view
+incompatibility. No additional live request is authorized. The five-artist canary did not
+complete, the full 25-artist cohort and representative cohort were not tested, and production
+integration remains unauthorized.

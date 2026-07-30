@@ -296,3 +296,138 @@ A complete 25-artist test is not justified from this evidence.
 - Representative cohort tested: No
 - Production integration authorized: No
 - Merged: No
+
+## 2026-07-30 operation-scoped pagination retry
+
+The separately authorized retry started from
+`12ec1a4910fea9557549b13c6a3c358720306284`. The worktree was clean and synchronized, the
+index lock was absent, Apple doctor was `READY` with 20 migrations, the real Apple request-event
+baseline was exactly two, and there was no active run, lease, cooldown, cache, mapping, catalog,
+or comparison state. The ignored runtime remained untracked with `APPLE_MUSIC_ENABLED=false`.
+The private key remained outside all repositories, and no repository contained a `.p8` file.
+
+The credential-free plan validated the required snapshot hash, selected exactly 25 pilot artists
+from the 50-artist source snapshot, selected the exact canary `1991`, `Alok`, `NURKO`, `G-Space`,
+and `BUNT.`, used the US storefront, and forecast 55 of 75 canary requests within 15 minutes.
+Plan mode made zero requests and zero database writes. Formatting, zero-warning lint, strict
+TypeScript, 72 focused provider, command, and isolation tests, and 9 Apple database tests passed
+before live execution.
+
+Two command launches were rejected by local safety guards before token generation, database
+writes, or network access. The first found non-Apple provider defaults in the process environment.
+The second found no database URL. The successful launch used temporary process-only overrides to
+disable every non-Apple provider and select the isolated loopback Apple database. No runtime file
+was changed.
+
+### Authentication and BUNT. result
+
+The BUNT. public-catalog artist lookup returned HTTP 200. Parsing and normalization completed,
+embedded relationship navigation remained inert, identity evidence produced
+`existing_id_confirmed`, and the normalized artist response entered the cache. Neither prior
+`unsafe_url` failure recurred. The normalized cache contains no `href`, `next`, artwork, preview,
+authorization, bearer, or evidence-URL data.
+
+The authentication lookup was made once. The run stopped before reaching BUNT. in the canary
+catalog loop, so there was no duplicate BUNT. lookup, but catalog-loop reuse was not exercised.
+
+### Canary result
+
+The run ended `failed/http_error` after the first explicit artist-view request returned HTTP 400.
+The failing operation was NURKO `latest-release`, the first view in the fixed six-view sequence.
+The sanitized evidence does not retain a response body, complete URL, query value, or provider
+identifier, so the cause cannot be narrowed beyond an incompatibility in that explicit view
+request. The milestone prohibits a source correction, and no source or schema change was made.
+
+| Artist  | Mapping result          | Six-view result                                                     |
+| ------- | ----------------------- | ------------------------------------------------------------------- |
+| 1991    | `ambiguous`             | Not requested because no artist identity was confirmed              |
+| Alok    | `ambiguous`             | Not requested because no artist identity was confirmed              |
+| NURKO   | `search_confirmed`      | `latest-release` returned HTTP 400; the other five were not started |
+| G-Space | Not reached             | Not requested                                                       |
+| BUNT.   | `existing_id_confirmed` | Not reached after the earlier NURKO stop                            |
+
+Exactly four canary names were contacted: BUNT., 1991, Alok, and NURKO. G-Space was not
+contacted, and none of the remaining 20 cohort artists was contacted.
+
+No pagination cursor was followed. The initial `latest-release` request did not reach a terminal
+pagination state, so live operation-owned pagination could not be evaluated. Album details and
+album tracks were not requested. Credential-free coverage remains the evidence for rejecting
+cross-host, cross-storefront, cross-identity, cross-view, unsupported-route, unsupported-query,
+library, `/v1/me`, redirect, and duplicate-page navigation.
+
+### Request evidence
+
+| Measurement                             | Result           |
+| --------------------------------------- | ---------------- |
+| New Apple HTTP starts                   | 5                |
+| Historical Apple request-event total    | 7                |
+| HTTP statuses                           | 4 x 200; 1 x 400 |
+| Artist ID lookups                       | 1                |
+| Artist searches                         | 3                |
+| `latest-release` requests               | 1                |
+| Other direct-view requests              | 0                |
+| Pagination requests                     | 0                |
+| Album-detail requests                   | 0                |
+| Album-track requests                    | 0                |
+| Retries                                 | 0                |
+| Request-time cache hits                 | 0                |
+| New normalized cache entries            | 4                |
+| Minimum measured request-start interval | 1,109 ms         |
+| Maximum concurrency                     | 1                |
+| Persisted run duration                  | 4,609 ms         |
+| Client validation failures              | 0                |
+| HTTP errors                             | 1                |
+| Cooldown                                | Inactive         |
+
+The six-view request breakdown is therefore one `latest-release` request and zero requests for
+`singles`, `full-albums`, `live-albums`, `compilation-albums`, and `appears-on-albums`.
+Pagination by owning operation is zero for artist views and zero for album tracks. Embedded
+navigation was discarded without transport or cache persistence.
+
+### Recall and forecast
+
+No artist completed all six views, so release recall is unavailable for the 7-day, 14-day,
+30-day, and 60-day windows and for singles, EPs, albums, remixes, live releases, compilations,
+and credited appearances. No album, song, or comparison row was created.
+
+The ambiguous 1991 and Alok mappings block evaluation of 4 of the frozen canary's 16 releases.
+The explicit-view HTTP failure prevented catalog and matcher evaluation for the other 12.
+Therefore no Apple catalog miss, matcher-caused miss, ambiguous release match, or Apple-only
+candidate can be classified from this run.
+
+Measured behavior is insufficient to revise the full-pilot forecast. The run observed three
+searches, one of the planned 30 canary base-view requests, zero pagination, zero album-detail or
+track requests, and zero retries before stopping. The prior synthetic forecast of 217 of 225
+requests remains unvalidated. A safe full-run request ceiling and runtime cannot be established,
+and 225 requests is not justified as sufficient. A complete 25-artist run is not justified until
+the explicit-view incompatibility is corrected credential-free and the bounded five-artist
+canary completes.
+
+### Final safety evidence
+
+- The terminal run is `failed/http_error`; no run or lease remains active.
+- Apple remains persistently disabled, with no cooldown and an empty queue.
+- Four normalized cache entries remain as valid live evidence. They contain no embedded
+  navigation, artwork, previews, authorization data, token data, or evidence URLs.
+- No raw response, complete response or pagination URL, credential, authorization header,
+  private-key path, or provider identifier was recorded in this report.
+- No Music User Token, personal library, playback, playlist, Feed, production scanner,
+  scheduler, feed, artwork, or preview operation occurred.
+- No other provider was contacted, and no production state was mutated.
+- The main worktree remained clean. The iTunes worktree's pre-existing manifest and three
+  source-file changes were left untouched.
+- Apple doctor remained `READY`, the focused 9-test Apple database suite passed, and
+  `git diff --check` passed before checkpointing.
+
+Updated evidence classification:
+
+- Provider implemented: Yes
+- Pilot runner implemented: Yes
+- Plan mode executed: Yes
+- Authentication accepted: Yes, HTTP 200
+- BUNT. normalization and identity confirmation: Yes
+- Five-artist canary: Failed safely before completion
+- Full 25-artist cohort tested: No
+- Representative cohort tested: No
+- Production integration authorized: No
+- Merged: No

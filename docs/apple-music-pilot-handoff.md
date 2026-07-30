@@ -168,7 +168,19 @@ retry made exactly one live Apple request and stopped before the canary.
 
 ## Next milestone
 
-The next milestone is a separately authorized retry of the same five-artist canary. No safe
-full-run ceiling can be recommended because no five-artist canary measurements exist. The
-remaining 20 artists, complete cohort, representative cohort, and production integration remain
-unauthorized.
+The operation-scoped live retry from
+`12ec1a4910fea9557549b13c6a3c358720306284` authenticated BUNT. successfully, normalized and
+cached the response without embedded navigation, and confirmed BUNT. identity. It then mapped
+1991 and Alok as ambiguous and NURKO as search-confirmed before NURKO's first explicit
+`latest-release` view returned HTTP 400. The run stopped `failed/http_error` after five starts,
+with four HTTP 200 responses, one HTTP 400 response, no retry, no pagination, concurrency one,
+a 1,109 ms minimum start interval, and a 4,609 ms persisted runtime.
+
+G-Space and the remaining 20 cohort artists were not contacted. No artist completed all six
+views, so recall and a revised full-run ceiling remain unavailable. The prior 217-of-225
+synthetic forecast is not validated, and 225 is not justified as sufficient.
+
+The next milestone must be credential-free diagnosis and correction of the explicit
+artist-view incompatibility. No further live request is authorized. A future live canary requires
+new bounded authorization after focused tests pass. The complete cohort, representative cohort,
+production integration, and merge remain unauthorized.
