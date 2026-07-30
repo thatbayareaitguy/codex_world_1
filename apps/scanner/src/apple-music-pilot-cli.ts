@@ -160,10 +160,21 @@ async function readStoredEvidence(
     .where(eq(appleMusicRequestEvents.runId, runId))
     .orderBy(asc(appleMusicRequestEvents.startedAt));
   const network = events.filter((event) => !event.cacheHit);
+  const firstNonAuthenticationEvent = events.findIndex(
+    (event) => event.endpointCategory !== "artist",
+  );
+  const authenticationEvents = events
+    .slice(0, firstNonAuthenticationEvent < 0 ? events.length : firstNonAuthenticationEvent)
+    .filter((event) => !event.cacheHit);
   const intervals = network
     .slice(1)
     .map((event, index) => event.startedAt.getTime() - network[index]!.startedAt.getTime());
   return {
+    authenticationAttempts: authenticationEvents.length,
+    ...(authenticationEvents.at(-1)?.status === null ||
+    authenticationEvents.at(-1)?.status === undefined
+      ? {}
+      : { authenticationHttpStatus: authenticationEvents.at(-1)!.status! }),
     cacheHits: events.length - network.length,
     endpointRequestCounts: countBy(network.map((event) => event.endpointCategory)),
     httpStatusCounts: countBy(
@@ -175,6 +186,10 @@ async function readStoredEvidence(
       /[?&](?:offset|cursor)=/.test(event.requestIdentity),
     ).length,
     requestCount: network.length,
+    retryCount: Math.max(
+      0,
+      network.length - new Set(network.map((event) => event.requestIdentity)).size,
+    ),
   };
 }
 

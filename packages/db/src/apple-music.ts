@@ -442,7 +442,7 @@ export async function finishAppleMusicComparisonRun(
   runId: string,
   input: {
     metrics: Record<string, unknown>;
-    status: "completed" | "controlled_partial" | "failed";
+    status: "canary_completed" | "completed" | "controlled_partial" | "failed";
     stopReason: string;
   },
   now = new Date(),

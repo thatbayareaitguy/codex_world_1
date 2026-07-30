@@ -59,6 +59,12 @@ The implemented future live form is:
 pnpm apple:pilot -- --execute-live --confirm-live APPLE_PUBLIC_CATALOG_25 --snapshot <external-snapshot-path>
 ```
 
+An explicitly authorized authentication and five-artist canary can stop before the full cohort:
+
+```powershell
+pnpm apple:pilot -- --execute-live --confirm-live APPLE_PUBLIC_CATALOG_25 --stop-after-canary --snapshot <external-snapshot-path>
+```
+
 Live execution requires both the `--execute-live` flag and the exact independent confirmation
 value. It also requires the persistent runtime value `APPLE_MUSIC_ENABLED=false`. The command
 creates an in-memory pilot authorization and never rewrites the runtime file or changes that
@@ -66,5 +72,6 @@ persistent value.
 
 The controller is limited to the US public catalog, 225 request starts and 45 minutes for the
 complete run, 75 request starts and 15 minutes through the canary, concurrency one, and at least
-1,100 milliseconds between request starts. The real plan command was executed credential-free.
-No live Apple request occurred.
+1,100 milliseconds between request starts. `--stop-after-canary` binds the database run itself to
+the 75-request and 15-minute ceilings, records `canary_completed`, releases the lease, and never
+creates the full-phase client. The real plan command was executed credential-free.

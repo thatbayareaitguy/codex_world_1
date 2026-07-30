@@ -14,6 +14,7 @@ export type AppleMusicPilotCommand =
       confirmation: string;
       mode: "execute_live";
       snapshotPath: string;
+      stopAfterCanary: boolean;
     };
 
 export interface AppleMusicPilotCommandDependencies {
@@ -44,6 +45,7 @@ export async function executeAppleMusicPilotCommand(
   const authorization = authorizeAppleMusicPilotLive({
     confirmation: command.confirmation,
     executeLive: true,
+    stopAfterCanary: command.stopAfterCanary,
     ...safety,
   });
   return {
@@ -61,11 +63,13 @@ export function parseAppleMusicPilotCommand(args: string[]): AppleMusicPilotComm
   }
   const snapshotPath = requiredOption(values, "--snapshot");
   const confirmation = optionalOption(values, "--confirm-live");
+  const stopAfterCanary = values.includes("--stop-after-canary");
   const allowed = new Set([
     "--plan",
     "--execute-live",
     "--snapshot",
     "--confirm-live",
+    "--stop-after-canary",
     snapshotPath,
     ...(confirmation ? [confirmation] : []),
   ]);
@@ -77,12 +81,15 @@ export function parseAppleMusicPilotCommand(args: string[]): AppleMusicPilotComm
     if (confirmation !== undefined) {
       throw new Error("Plan mode does not accept --confirm-live.");
     }
+    if (stopAfterCanary) {
+      throw new Error("Plan mode does not accept --stop-after-canary.");
+    }
     return { mode: "plan", snapshotPath };
   }
   if (confirmation !== appleMusicLiveConfirmation) {
     throw new Error(`Live Apple execution requires --confirm-live ${appleMusicLiveConfirmation}.`);
   }
-  return { confirmation, mode: "execute_live", snapshotPath };
+  return { confirmation, mode: "execute_live", snapshotPath, stopAfterCanary };
 }
 
 function requiredOption(args: string[], name: string): string {

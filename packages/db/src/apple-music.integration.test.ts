@@ -187,8 +187,8 @@ describe.sequential("Apple Music isolated persistence and global request gate", 
     });
     await finishAppleMusicComparisonRun(connection.db, run.id, {
       metrics: { requestCount: 1 },
-      status: "completed",
-      stopReason: "synthetic_complete",
+      status: "canary_completed",
+      stopReason: "synthetic_canary_complete",
     });
     await releaseAppleMusicPilotLease(connection.db, leaseToken);
     expect(await getAppleMusicOperationalStatus(connection.db)).toMatchObject({
@@ -200,8 +200,8 @@ describe.sequential("Apple Music isolated persistence and global request gate", 
       }),
     ).toMatchObject({
       requestCount: 1,
-      status: "completed",
-      stopReason: "synthetic_complete",
+      status: "canary_completed",
+      stopReason: "synthetic_canary_complete",
     });
   });
 

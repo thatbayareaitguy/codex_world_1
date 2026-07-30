@@ -30,6 +30,8 @@ export interface AppleMusicPilotLiveAuthorization {
   readonly confirmation: typeof appleMusicLiveConfirmation;
   readonly mode: "bounded_public_catalog_25";
   readonly persistentProviderEnabled: false;
+  readonly scope: "canary_only" | "full_25";
+  readonly stopAfterCanary: boolean;
   readonly storefront: "us";
 }
 
@@ -43,6 +45,8 @@ export interface AppleMusicPilotClient {
 }
 
 export interface AppleMusicPilotStoredEvidence {
+  authenticationAttempts: number;
+  authenticationHttpStatus?: number;
   cacheHits: number;
   endpointRequestCounts: Record<string, number>;
   httpStatusCounts: Record<string, number>;
@@ -50,6 +54,7 @@ export interface AppleMusicPilotStoredEvidence {
   minimumRequestIntervalMs?: number;
   paginationRequests: number;
   requestCount: number;
+  retryCount: number;
 }
 
 export interface AppleMusicPilotStore {
@@ -65,7 +70,7 @@ export interface AppleMusicPilotStore {
     runId: string,
     input: {
       metrics: Record<string, unknown>;
-      status: "completed" | "controlled_partial" | "failed";
+      status: "canary_completed" | "completed" | "controlled_partial" | "failed";
       stopReason: string;
     },
   ): Promise<void>;
@@ -93,15 +98,27 @@ export interface AppleMusicPilotStore {
 }
 
 export interface AppleMusicPilotRunSummary {
+  authentication: {
+    accepted: boolean;
+    attempts: number;
+    httpStatus?: number;
+    identityMatched: boolean;
+  };
   batch: {
     confirmedIdsRequested: number;
     missingIds: string[];
     returnedIds: number;
   };
   cohortCount: 25;
+  contactedArtists: string[];
   evidence: AppleMusicPilotStoredEvidence;
+  executionScope: "canary_only" | "full_25";
   forecast: ReturnType<typeof forecastAppleMusicPilotRequests>;
   mappings: Record<string, number>;
+  mappingResults: Array<{
+    artist: string;
+    status: AppleMusicMappingDecision["status"];
+  }>;
   omittedArtists: string[];
   phases: {
     authentication: "completed" | "not_started" | "stopped";
@@ -110,7 +127,7 @@ export interface AppleMusicPilotRunSummary {
   };
   runId: string;
   snapshotHash: string;
-  status: "completed" | "controlled_partial" | "failed";
+  status: "canary_completed" | "completed" | "controlled_partial" | "failed";
   stopReason: string;
 }
 
@@ -119,6 +136,7 @@ export function authorizeAppleMusicPilotLive(input: {
   executeLive: boolean;
   otherProvidersDisabled: boolean;
   persistentAppleMusicEnabled: string | undefined;
+  stopAfterCanary?: boolean;
   storefront: string;
 }): AppleMusicPilotLiveAuthorization {
   if (!input.executeLive) {
@@ -141,6 +159,8 @@ export function authorizeAppleMusicPilotLive(input: {
     confirmation: appleMusicLiveConfirmation,
     mode: "bounded_public_catalog_25" as const,
     persistentProviderEnabled: false as const,
+    scope: input.stopAfterCanary ? ("canary_only" as const) : ("full_25" as const),
+    stopAfterCanary: input.stopAfterCanary ?? false,
     storefront: "us" as const,
   });
 }
@@ -159,7 +179,9 @@ export async function runBoundedAppleMusicPilot(input: {
 }): Promise<AppleMusicPilotRunSummary> {
   assertAuthorization(input.authorization);
   const cohort = validateAppleMusicPilotSnapshot(input.snapshot);
-  const forecast = forecastAppleMusicPilotRequests("full");
+  const forecast = forecastAppleMusicPilotRequests(
+    input.authorization.stopAfterCanary ? "canary" : "full",
+  );
   if (!forecast.fitsBudget) {
     throw new Error("The conservative Apple pilot forecast exceeds the full-run budget.");
   }
@@ -169,9 +191,13 @@ export async function runBoundedAppleMusicPilot(input: {
   const snapshotId = await input.store.importSnapshot(input.snapshot);
   const run = await input.store.createRun({
     implementationCommit: input.implementationCommit,
-    maximumRuntimeMs: appleMusicPilotDefinition.limits.runtimeMs,
+    maximumRuntimeMs: input.authorization.stopAfterCanary
+      ? appleMusicPilotDefinition.limits.canaryRuntimeMs
+      : appleMusicPilotDefinition.limits.runtimeMs,
     minRequestIntervalMs: appleMusicPilotDefinition.limits.minRequestIntervalMs,
-    requestBudget: appleMusicPilotDefinition.limits.requestBudget,
+    requestBudget: input.authorization.stopAfterCanary
+      ? appleMusicPilotDefinition.limits.canaryRequestBudget
+      : appleMusicPilotDefinition.limits.requestBudget,
     snapshotId,
   });
   const startedAt = (input.now ?? (() => new Date()))().getTime();
@@ -229,32 +255,41 @@ export async function runBoundedAppleMusicPilot(input: {
     }
     phases.canary = "completed";
 
-    phases.full = "stopped";
-    const fullClient = input.createClient("full", run.id, leaseToken);
-    for (const entry of cohort) {
-      const state =
-        mappings.get(entry.canonicalArtistId) ??
-        (await resolveArtist(fullClient, input.snapshot, entry));
-      mappings.set(entry.canonicalArtistId, state);
-      await persistMapping(input.store, run.id, state);
-    }
-    const confirmed = [...mappings.values()].filter((state) => state.decision.selected);
-    const confirmedIds = confirmed.map((state) => state.decision.selected!.artistId);
-    batchRequestedIds = confirmedIds.length;
-    if (confirmedIds.length > 0) {
-      const batch = await fullClient.getArtists(confirmedIds);
-      batchMissingIds = [...batch.missingIds].sort();
-      batchReturnedIds = batch.items.length;
-    }
-    for (const state of confirmed) {
-      if (!state.albums) {
-        await fetchAndPersistCatalog(fullClient, input, run.id, state);
+    const canaryConfirmed = [...mappings.values()].filter((state) => state.decision.selected);
+    await inspectRequiredTrackEvidence(canaryClient, input, run.id, canaryConfirmed);
+    await assertCanaryLimits(input.store, run.id, startedAt, input.now);
+
+    if (input.authorization.stopAfterCanary) {
+      terminalStatus = "canary_completed";
+      stopReason = "canary_workflow_completed";
+    } else {
+      phases.full = "stopped";
+      const fullClient = input.createClient("full", run.id, leaseToken);
+      for (const entry of cohort) {
+        const state =
+          mappings.get(entry.canonicalArtistId) ??
+          (await resolveArtist(fullClient, input.snapshot, entry));
+        mappings.set(entry.canonicalArtistId, state);
+        await persistMapping(input.store, run.id, state);
       }
+      const confirmed = [...mappings.values()].filter((state) => state.decision.selected);
+      const confirmedIds = confirmed.map((state) => state.decision.selected!.artistId);
+      batchRequestedIds = confirmedIds.length;
+      if (confirmedIds.length > 0) {
+        const batch = await fullClient.getArtists(confirmedIds);
+        batchMissingIds = [...batch.missingIds].sort();
+        batchReturnedIds = batch.items.length;
+      }
+      for (const state of confirmed) {
+        if (!state.albums) {
+          await fetchAndPersistCatalog(fullClient, input, run.id, state);
+        }
+      }
+      await inspectRequiredTrackEvidence(fullClient, input, run.id, confirmed);
+      phases.full = "completed";
+      terminalStatus = "completed";
+      stopReason = "pilot_workflow_completed";
     }
-    await inspectRequiredTrackEvidence(fullClient, input, run.id, confirmed);
-    phases.full = "completed";
-    terminalStatus = "completed";
-    stopReason = "pilot_workflow_completed";
   } catch (error) {
     const classified = classifyStop(error);
     terminalStatus = classified.status;
@@ -275,6 +310,7 @@ export async function runBoundedAppleMusicPilot(input: {
         batchReturnedIds,
         cohort,
         evidence,
+        executionScope: input.authorization.scope,
         mappings,
         phases,
         runId: run.id,
@@ -451,6 +487,7 @@ function createSummary(input: {
   batchReturnedIds: number;
   cohort: AppleMusicPilotPlanArtist[];
   evidence: AppleMusicPilotStoredEvidence;
+  executionScope: AppleMusicPilotRunSummary["executionScope"];
   mappings: Map<string, MappingState>;
   phases: AppleMusicPilotRunSummary["phases"];
   runId: string;
@@ -468,15 +505,30 @@ function createSummary(input: {
       .map((state) => state.entry.name),
   );
   const summary: AppleMusicPilotRunSummary = {
+    authentication: {
+      accepted: input.phases.authentication === "completed",
+      attempts: input.evidence.authenticationAttempts,
+      identityMatched: input.phases.authentication === "completed",
+      ...(input.evidence.authenticationHttpStatus === undefined
+        ? {}
+        : { httpStatus: input.evidence.authenticationHttpStatus }),
+    },
     batch: {
       confirmedIdsRequested: input.batchRequestedIds,
       missingIds: [...input.batchMissingIds],
       returnedIds: input.batchReturnedIds,
     },
     cohortCount: 25,
+    contactedArtists: [...input.mappings.values()].map((state) => state.entry.name),
     evidence: input.evidence,
-    forecast: forecastAppleMusicPilotRequests("full"),
+    executionScope: input.executionScope,
+    forecast: forecastAppleMusicPilotRequests(
+      input.executionScope === "canary_only" ? "canary" : "full",
+    ),
     mappings: mappingCounts,
+    mappingResults: [...input.mappings.values()]
+      .map((state) => ({ artist: state.entry.name, status: state.decision.status }))
+      .sort((left, right) => left.artist.localeCompare(right.artist)),
     omittedArtists: input.cohort
       .filter((entry) => !mappedNames.has(entry.name))
       .map((entry) => entry.name),
@@ -528,6 +580,7 @@ function assertAuthorization(authorization: AppleMusicPilotLiveAuthorization): v
     authorization.confirmation !== appleMusicLiveConfirmation ||
     authorization.mode !== "bounded_public_catalog_25" ||
     authorization.persistentProviderEnabled !== false ||
+    authorization.scope !== (authorization.stopAfterCanary ? "canary_only" : "full_25") ||
     authorization.storefront !== "us"
   ) {
     throw new Error("A valid command-scoped Apple pilot authorization is required.");
@@ -588,11 +641,13 @@ function deduplicateAlbums(albums: AppleMusicAlbum[]): AppleMusicAlbum[] {
 
 function emptyStoredEvidence(): AppleMusicPilotStoredEvidence {
   return {
+    authenticationAttempts: 0,
     cacheHits: 0,
     endpointRequestCounts: {},
     httpStatusCounts: {},
     maximumConcurrency: 0,
     paginationRequests: 0,
     requestCount: 0,
+    retryCount: 0,
   };
 }

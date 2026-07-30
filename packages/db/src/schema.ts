@@ -1769,7 +1769,7 @@ export const appleMusicComparisonRuns = pgTable(
   (table) => [
     check(
       "apple_music_comparison_run_status_check",
-      sql`${table.status} in ('planned', 'running', 'completed', 'controlled_partial', 'failed')`,
+      sql`${table.status} in ('planned', 'running', 'canary_completed', 'completed', 'controlled_partial', 'failed')`,
     ),
     check(
       "apple_music_comparison_run_budget_check",

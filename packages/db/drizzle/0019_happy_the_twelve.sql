@@ -1,0 +1,2 @@
+ALTER TABLE "apple_music_comparison_runs" DROP CONSTRAINT "apple_music_comparison_run_status_check";--> statement-breakpoint
+ALTER TABLE "apple_music_comparison_runs" ADD CONSTRAINT "apple_music_comparison_run_status_check" CHECK ("apple_music_comparison_runs"."status" in ('planned', 'running', 'canary_completed', 'completed', 'controlled_partial', 'failed'));

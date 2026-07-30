@@ -177,7 +177,15 @@ describe("Apple Music pilot command and plan", () => {
       confirmation: appleMusicLiveConfirmation,
       mode: "execute_live",
       snapshotPath: "synthetic.json",
+      stopAfterCanary: false,
     });
+    expect(parseAppleMusicPilotCommand(liveArgs(true))).toMatchObject({
+      mode: "execute_live",
+      stopAfterCanary: true,
+    });
+    expect(() =>
+      parseAppleMusicPilotCommand(["--plan", "--snapshot", "snapshot.json", "--stop-after-canary"]),
+    ).toThrow("Plan mode");
   });
 });
 
@@ -192,6 +200,33 @@ describe("bounded Apple Music pilot controller", () => {
       full: "completed",
     });
     expect(harness.store.finished?.status).toBe("completed");
+  });
+
+  it("stops after the exact five-artist canary with a bounded terminal status", async () => {
+    const harness = runnerHarness({ stopAfterCanary: true });
+    const result = await harness.run();
+    expect(result).toMatchObject({
+      executionScope: "canary_only",
+      status: "canary_completed",
+      stopReason: "canary_workflow_completed",
+      phases: {
+        authentication: "completed",
+        canary: "completed",
+        full: "not_started",
+      },
+    });
+    expect(result.contactedArtists).toHaveLength(5);
+    expect(new Set(result.contactedArtists)).toEqual(
+      new Set(appleMusicPilotDefinition.canaryArtists),
+    );
+    expect(harness.calls.fullClients).toBe(0);
+    expect(harness.calls.batchIds).toHaveLength(0);
+    expect(harness.store.finished?.status).toBe("canary_completed");
+    expect(harness.store.createdRun).toMatchObject({
+      maximumRuntimeMs: 15 * 60_000,
+      requestBudget: 75,
+    });
+    expect(harness.store.leaseActive).toBe(false);
   });
 
   it.each([401, 403])("stops after a mock HTTP %s authentication response", async (status) => {
@@ -323,13 +358,14 @@ describe("bounded Apple Music pilot controller", () => {
   });
 });
 
-function liveArgs(): string[] {
+function liveArgs(stopAfterCanary = false): string[] {
   return [
     "--execute-live",
     "--confirm-live",
     appleMusicLiveConfirmation,
     "--snapshot",
     "synthetic.json",
+    ...(stopAfterCanary ? ["--stop-after-canary"] : []),
   ];
 }
 
@@ -421,6 +457,7 @@ function runnerHarness(
     evidenceRequestCount?: number;
     fullFailure?: "request_budget_exhausted" | "unexpected";
     now?: () => Date;
+    stopAfterCanary?: boolean;
     wrongSearchArtist?: string;
   } = {},
 ) {
@@ -434,6 +471,7 @@ function runnerHarness(
   const calls = {
     artistByName: new Map<string, number>(),
     batchIds: [] as string[],
+    fullClients: 0,
     search: 0,
     views: 0,
     viewsByName: new Map<string, number>(),
@@ -442,53 +480,56 @@ function runnerHarness(
     nameByCanonicalId,
     () => options.evidenceRequestCount ?? calls.search + calls.views + sum(calls.artistByName),
   );
-  const client = (phase: "canary" | "full"): AppleMusicPilotClient => ({
-    getAllArtistViews: (artistId) => {
-      if (phase === "full" && options.fullFailure) {
-        return Promise.reject(
-          options.fullFailure === "unexpected"
-            ? new Error("synthetic failure")
-            : new AppleMusicClientError("budget", "request_budget_exhausted"),
+  const client = (phase: "canary" | "full"): AppleMusicPilotClient => {
+    if (phase === "full") calls.fullClients += 1;
+    return {
+      getAllArtistViews: (artistId) => {
+        if (phase === "full" && options.fullFailure) {
+          return Promise.reject(
+            options.fullFailure === "unexpected"
+              ? new Error("synthetic failure")
+              : new AppleMusicClientError("budget", "request_budget_exhausted"),
+          );
+        }
+        const name = nameByResolvedId.get(artistId) ?? "Unknown";
+        calls.views += 1;
+        calls.viewsByName.set(name, (calls.viewsByName.get(name) ?? 0) + 1);
+        return Promise.resolve(
+          Object.fromEntries(appleMusicArtistViews.map((view) => [view, [] as AppleMusicAlbum[]])),
         );
-      }
-      const name = nameByResolvedId.get(artistId) ?? "Unknown";
-      calls.views += 1;
-      calls.viewsByName.set(name, (calls.viewsByName.get(name) ?? 0) + 1);
-      return Promise.resolve(
-        Object.fromEntries(appleMusicArtistViews.map((view) => [view, [] as AppleMusicAlbum[]])),
-      );
-    },
-    getArtist: (artistId) => {
-      const name = nameByPublicId.get(artistId) ?? "Unknown";
-      calls.artistByName.set(name, (calls.artistByName.get(name) ?? 0) + 1);
-      if (name === "BUNT." && options.authenticationStatus) {
-        return Promise.reject(
-          new AppleMusicClientError(
-            "synthetic authentication result",
-            options.authenticationStatus === 429 ? "rate_limited" : "authentication_failed",
-            options.authenticationStatus,
-            options.authenticationStatus === 429 ? 60 : undefined,
-          ),
-        );
-      }
-      return Promise.resolve(artist(artistId, name));
-    },
-    getArtists: (artistIds) => {
-      calls.batchIds = [...artistIds];
-      return Promise.resolve({
-        items: artistIds.map((id) => artist(id, nameByResolvedId.get(id) ?? "Unknown")),
-        missingIds: [],
-      });
-    },
-    searchArtists: (term) => {
-      calls.search += 1;
-      const id = `search-${term}`;
-      nameByResolvedId.set(id, term);
-      return Promise.resolve([
-        artist(id, options.wrongSearchArtist === term ? "Wrong Candidate" : term),
-      ]);
-    },
-  });
+      },
+      getArtist: (artistId) => {
+        const name = nameByPublicId.get(artistId) ?? "Unknown";
+        calls.artistByName.set(name, (calls.artistByName.get(name) ?? 0) + 1);
+        if (name === "BUNT." && options.authenticationStatus) {
+          return Promise.reject(
+            new AppleMusicClientError(
+              "synthetic authentication result",
+              options.authenticationStatus === 429 ? "rate_limited" : "authentication_failed",
+              options.authenticationStatus,
+              options.authenticationStatus === 429 ? 60 : undefined,
+            ),
+          );
+        }
+        return Promise.resolve(artist(artistId, name));
+      },
+      getArtists: (artistIds) => {
+        calls.batchIds = [...artistIds];
+        return Promise.resolve({
+          items: artistIds.map((id) => artist(id, nameByResolvedId.get(id) ?? "Unknown")),
+          missingIds: [],
+        });
+      },
+      searchArtists: (term) => {
+        calls.search += 1;
+        const id = `search-${term}`;
+        nameByResolvedId.set(id, term);
+        return Promise.resolve([
+          artist(id, options.wrongSearchArtist === term ? "Wrong Candidate" : term),
+        ]);
+      },
+    };
+  };
   return {
     calls,
     run: () =>
@@ -498,6 +539,9 @@ function runnerHarness(
           executeLive: true,
           otherProvidersDisabled: true,
           persistentAppleMusicEnabled: "false",
+          ...(options.stopAfterCanary === undefined
+            ? {}
+            : { stopAfterCanary: options.stopAfterCanary }),
           storefront: "us",
         }),
         createClient: (phase) => client(phase),
@@ -511,9 +555,10 @@ function runnerHarness(
 }
 
 class FakeStore implements AppleMusicPilotStore {
+  createdRun?: Parameters<AppleMusicPilotStore["createRun"]>[0];
   finished?: {
     metrics: Record<string, unknown>;
-    status: "completed" | "controlled_partial" | "failed";
+    status: "canary_completed" | "completed" | "controlled_partial" | "failed";
     stopReason: string;
   };
   leaseActive = false;
@@ -530,7 +575,10 @@ class FakeStore implements AppleMusicPilotStore {
     return Promise.resolve("synthetic-lease");
   };
 
-  createRun = () => Promise.resolve({ id: uuid(9_999) });
+  createRun: AppleMusicPilotStore["createRun"] = (input) => {
+    this.createdRun = input;
+    return Promise.resolve({ id: uuid(9_999) });
+  };
 
   finishRun: AppleMusicPilotStore["finishRun"] = (_runId, input) => {
     this.finished = input;
@@ -543,6 +591,8 @@ class FakeStore implements AppleMusicPilotStore {
 
   readEvidence = (): Promise<AppleMusicPilotStoredEvidence> =>
     Promise.resolve({
+      authenticationAttempts: 1,
+      authenticationHttpStatus: 200,
       cacheHits: 0,
       endpointRequestCounts: {},
       httpStatusCounts: {},
@@ -550,6 +600,7 @@ class FakeStore implements AppleMusicPilotStore {
       minimumRequestIntervalMs: 1_100,
       paginationRequests: 0,
       requestCount: this.requestCount(),
+      retryCount: 0,
     });
 
   releaseLease = () => {
