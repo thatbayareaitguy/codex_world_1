@@ -184,3 +184,32 @@ The next milestone must be credential-free diagnosis and correction of the expli
 artist-view incompatibility. No further live request is authorized. A future live canary requires
 new bounded authorization after focused tests pass. The complete cohort, representative cohort,
 production integration, and merge remain unauthorized.
+
+## One-request artist-view diagnostic result
+
+The credential-free audit confirmed that the prior failed request had the documented method,
+Apple Music API host, US storefront placement, artist placement, `/view/` route, and
+`latest-release` spelling. It also included the optional `limit` and `with` query keys. Both
+query keys were removed so every first artist-view request now uses the minimal documented
+shape:
+
+`GET /v1/catalog/us/artists/<artist_id>/view/latest-release`
+
+The retained prior evidence cannot identify which optional parameter or value caused the
+earlier HTTP 400. The direct-view parser was verified against a top-level `data` collection and
+an optional top-level `next`; it does not require an embedded artist relationship.
+
+After the source, tests, and pre-live documentation were committed and pushed, the authorized
+diagnostic mode made exactly one live request. It used the existing confirmed NURKO mapping,
+sent no optional query parameters, did not search, did not retry, and did not follow pagination.
+Apple returned HTTP 200 with one resource and no top-level `next` cursor.
+
+The real Apple request-event count is now eight. One sanitized normalized probe cache row was
+created. No mapping, album, song, comparison, cooldown, or production row was created. The run
+completed with `view_probe_completed`, its lease was released, and
+`APPLE_MUSIC_ENABLED=false` remains persistently configured. No other artist or provider was
+contacted.
+
+No additional live request is authorized. The recommended next milestone is a separately
+authorized, bounded decision about the five-artist canary. The complete cohort, representative
+cohort, production integration, and merge remain prohibited.

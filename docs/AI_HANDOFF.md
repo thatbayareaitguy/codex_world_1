@@ -187,3 +187,30 @@ catalog identifier. No schema change was required.
 The next authorized action, only after a clean committed and pushed verification checkpoint, is
 one NURKO `latest-release` request through this probe mode. The five-artist canary, complete
 25-artist cohort, representative cohort, production integration, and merge remain unauthorized.
+
+## Live artist-view probe result
+
+The source and test checkpoint was committed and pushed before live execution. The diagnostic
+then made exactly one Apple request using the existing confirmed NURKO mapping:
+
+`GET /v1/catalog/us/artists/<artist_id>/view/latest-release`
+
+It used no optional query parameters, retries, searches, other artists, or pagination. Apple
+returned HTTP 200. The official direct-view response shape parsed successfully with one resource
+in the top-level `data` collection and no top-level `next` cursor.
+
+The real Apple request-event count increased from seven to eight. The run completed with
+`view_probe_completed`; one sanitized normalized probe cache row was created, while no mapping,
+album, song, or comparison row was created. The lease is released, no cooldown is active, the
+queue is empty, and Apple remains persistently disabled.
+
+The prior HTTP 400 request used the same documented route but added the optional `limit` and
+`with` query keys. The new minimal first-page builder removed both. Because the earlier raw error
+was intentionally discarded, retained evidence cannot prove which parameter or value Apple
+rejected.
+
+No other artist, provider, runtime database, or production state was contacted or modified. No
+credential, identifier, raw response, complete URL, header value, query value, or raw error was
+recorded. The next recommended milestone is a separately authorized decision about the bounded
+five-artist canary. No further live request, complete cohort, representative cohort, production
+integration, merge, or scheduler activation is authorized.

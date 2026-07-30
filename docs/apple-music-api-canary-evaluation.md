@@ -431,3 +431,50 @@ Updated evidence classification:
 - Representative cohort tested: No
 - Production integration authorized: No
 - Merged: No
+
+## 2026-07-30 one-request artist-view probe
+
+The post-checkpoint diagnostic made one live Apple request and stopped. Its sanitized request
+shape was:
+
+- Method: `GET`
+- Host classification: allowed Apple Music API host
+- Path template: `/v1/catalog/us/artists/<artist_id>/view/latest-release`
+- Storefront: `us`
+- View: `latest-release`
+- Query-key names: none
+
+The earlier failed request used the same method, host classification, storefront, artist
+placement, `/view/` route, and view spelling, but added the optional `limit` and `with` query
+keys. The diagnostic removed both optional parameters. The retained evidence from the earlier
+HTTP 400 does not establish which parameter or value Apple rejected.
+
+The minimal request returned HTTP 200. The direct-view response parsed successfully from its
+top-level `data` collection and returned one resource. No top-level `next` cursor was present,
+and pagination was not followed. No sanitized Apple error code, title category, or source
+parameter was produced because the request succeeded.
+
+The real Apple request-event count increased from seven to eight. The probe used the already
+confirmed NURKO mapping, performed no search, contacted no other artist or provider, and made no
+production mutation. One sanitized normalized probe cache row was created. It contains one
+resource and no cursor, artwork, previews, navigation, URL, credential, header, token, or raw
+response. The probe created no mapping, album, song, or comparison row. Its run completed with
+`view_probe_completed`; the lease was released, no cooldown was created, and Apple remains
+persistently disabled.
+
+Recommended next milestone: decide whether to authorize a newly bounded five-artist canary based
+on the successful direct-view probe. The canary, complete cohort, representative cohort,
+production integration, merge, and any additional live request remain unauthorized.
+
+Post-probe evidence classification:
+
+- Authentication accepted: Yes
+- Artist lookup proven: Yes
+- Artist search proven: Yes
+- Artist mapping partially tested: Yes
+- Direct artist-view probe: Passed
+- Five-artist canary completed: No
+- Full cohort tested: No
+- Representative cohort tested: No
+- Production integration authorized: No
+- Merged: No
