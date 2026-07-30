@@ -13,6 +13,29 @@ Date: 2026-07-29
 - Database scope: Apple-specific run, request, cache, mapping, catalog, and comparison tables
 - Verification scope: synthetic credentials and injected HTTP only
 
+## Bounded live authentication result
+
+The separately authorized authentication and five-artist canary milestone added
+`--stop-after-canary` and committed it before network access. The option binds the run to 75
+requests and 15 minutes, never creates the full-phase client, and records `canary_completed` only
+after a successful canary.
+
+One live BUNT. public-catalog artist lookup returned HTTP 200. Apple therefore accepted the
+developer credential, but URL metadata in the returned resource failed the existing safe-URL
+validation before identity confirmation. The run stopped `failed/unsafe_url` after one request.
+There were zero retries, searches, direct-view calls, pagination calls, album-detail calls, track
+calls, mappings, catalog rows, or comparisons. The five-artist canary did not start.
+
+The post-run audit found one parsed-response cache row created before normalization failed. That
+single row was removed while sanitized request telemetry and the terminal run result were
+preserved. No raw response remains. The lease is released, no cooldown is active, and Apple
+remains persistently disabled.
+
+The Apple task did not modify the main or iTunes worktree. The final audit observed unrelated
+concurrent uncommitted changes in the iTunes worktree and left them untouched.
+
+See `docs/apple-music-api-canary-evaluation.md` for the sanitized measurements.
+
 The provider supports artist search and lookup, a maximum 25-artist batch, all six required artist
 views, album details, paginated album tracks, and song batches. Every followed path is checked
 against the exact Apple catalog allowlist. Request concurrency, pacing, timeouts, response size,
@@ -42,7 +65,7 @@ separate from free-iTunes and Spotify state.
 
 ## Still prohibited
 
-- live Apple requests under this checkpoint;
+- any additional live Apple request without a new explicitly bounded milestone;
 - Music User Tokens, `/v1/me`, personal libraries, playback, playlists, and Apple Music Feed;
 - artwork or preview download, cache, or playback;
 - production scanning, scheduling, feed mutation, UI exposure, or playlist integration;
@@ -81,7 +104,8 @@ All Apple HTTP tests used injected responses. No live provider request occurred.
 
 ## Next milestone
 
-After review, the exact next milestone is the separately authorized bounded 25-artist Apple Music
-live completeness test. It must begin with the provider persistently disabled, use the implemented
-double-confirmed command, and stop immediately on a 401, 403, 429, budget, runtime, pagination, or
-isolation failure. It must not add production integration.
+The next source milestone should reproduce and resolve the `unsafe_url` normalization stop using
+credential-free, sanitized fixtures and official public-catalog URL rules. Source must not be
+changed under the completed live milestone. Any later authentication retry or canary requires a
+new explicitly bounded authorization. A complete 25-artist test is not justified because no
+five-artist canary measurements exist.
