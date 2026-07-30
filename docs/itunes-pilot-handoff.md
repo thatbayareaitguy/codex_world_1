@@ -6,11 +6,11 @@ Updated: 2026-07-29
 
 - Worktree: `C:\Users\taysh\Documents\Codex\codex_world_1_itunes`
 - Branch: `codex/itunes-discovery`
-- Milestone base: `484d10e5b4f436d57e934a49196b2da965b93ebf`
+- Current milestone base: `bfd305149ab6776bb84a0809009ff3ecc435d5ba`
 - Upstream at milestone start: `origin/codex/itunes-discovery`, synchronized at `0/0`
 - Branch point: `c602929142291da9b99ee126c2ecf73b39b528b3`
 - Main worktree remains clean on `codex/release-radar-hardening` at
-  `6c21b23ad11eae638877e20e1b3e8d6eb4b81d11`.
+  `7c2b381c0795d1933c13b55914c30900b2a0f63d`.
 - No original-worktree file was changed. No current Spotify operational state was inferred from
   older handoff text.
 
@@ -48,9 +48,64 @@ non-identity tables. No other main-database access occurred.
 - Network clients initialized by export and planning commands: 0
 - Provider requests and production writes: 0
 
-Only the identity snapshot and stage-2 dry-run plan are complete. A later live search census
-requires separate authorization. Later album and recent-song discovery, Apple evidence freeze,
-separate sanitized Spotify truth import, and offline evaluation also remain unexecuted.
+The identity snapshot and stage-2 dry-run plan are complete. The current milestone separately
+authorizes the four frozen live search shards only after the implementation checkpoint passes.
+Later album and recent-song discovery, Apple evidence freeze, separate sanitized Spotify truth
+import, and offline evaluation remain unexecuted and unauthorized.
+
+## Full-watchlist search-census implementation checkpoint
+
+The dedicated `pnpm itunes:shadow:search-census` command is implemented separately from the
+legacy 50-artist runner. At this pre-live stage it has made no provider request.
+
+- `execute` accepts only one frozen shard and requires explicit live mode, exact input hashes,
+  exact branch and commit, clean source, isolated `radar_itunes`, no active run or lease, exact
+  planned network budget no greater than 150, runtime no greater than 15 minutes, concurrency one,
+  and 3200 ms pacing.
+- The command constructs `ItunesClient` behind an `ArtistSearchOnlyClient` interface exposing only
+  `searchArtists`. It cannot generate album, song, collection-detail, batch, or `/lookup`
+  operations.
+- Cache hits create auditable request events and do not consume the persisted network budget.
+  Controlled-partial resume accepts a newly cached network identity only when the same run already
+  has its successful network event and terminal mapping.
+- Each shard has a separate run record and one deterministic terminal mapping per processed
+  artist. Structured JSONB evidence stores normalized candidates and search-stage state without
+  raw payloads, artwork, previews, releases, or tracks.
+- A 27-condition verifier checks exact counts and membership, duplicates, retries, HTTP and parse
+  failures, 429 and Retry-After, response bounds, redirects, global pacing, overlap, search-only
+  paths, provider isolation, run and lease termination, frozen hashes, source stability, and safe
+  persisted shape.
+- The artifact generator supports complete and controlled-partial states, fixed ordering,
+  repeated deterministic generation, candidate distributions, original-cohort comparison, and a
+  bounded projection for a later candidate-catalog evidence phase.
+- Schema limitation: the external 593-artist identity snapshot is linked through exact paths and
+  hashes in run metrics while the unchanged legacy 50-artist snapshot is used only as the required
+  foreign-key anchor. No migration or fabricated legacy snapshot row is needed.
+- Cache limitation: normalized cache rows still lack explicit normalizer and provider-client
+  version fields. The executor records a behavior fingerprint but does not change cache
+  versioning.
+- Artifact hash rule: embedded canonical and file-byte hashes are calculated before either hash
+  field is added. The command separately reports the SHA-256 of the exact final file bytes.
+
+Pre-live credential-free verification:
+
+- Formatting: passed
+- Lint: passed with zero warnings
+- Strict TypeScript: passed across all six packages
+- Unit tests: 376 passed in 48 files
+- PostgreSQL integration: 85 passed in 16 files against `radar_itunes_test`
+- Initial integration invocation: stopped before tests because the isolated compose overlay had
+  not been loaded and the default port 5433 was occupied; the correctly isolated rerun on port
+  55434 passed completely
+- Clean and upgrade migration coverage: passed
+- Migration drift: no schema changes and no migration generated
+- Production build: passed
+- Mocked Playwright: 23 passed
+- Credential-free pilot doctor: `READY`, with 18 migrations and loopback port 3001 available
+- Disabled command-level refusal: passed after verifying the exact frozen snapshot and manifest
+- `git diff --check`: passed
+- Isolated pre-live database baseline remained 360 request events, 258 cache rows, two historical
+  runs, zero active runs, and zero active request leases
 
 Full-watchlist preparation verification:
 

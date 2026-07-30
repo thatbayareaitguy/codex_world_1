@@ -4,10 +4,11 @@ Prepared: 2026-07-29
 
 ## Status and authorization boundary
 
-This document predeclares a prospective full-watchlist shadow evaluation. This milestone completed
-only an identity-only snapshot and offline planning for an Apple artist-search census. It did not
-run the census, make a provider request, authorize a live shard, import Apple results into
-production, or change Spotify behavior.
+This document predeclares a prospective full-watchlist shadow evaluation. The identity-only
+snapshot, offline plan, and dedicated search-census executor are implemented. No census request
+had been made at the pre-live implementation checkpoint. Live execution remains gated by the
+credential-free verification, clean pushed checkpoint, isolated runtime enablement, and shard-1
+canary described below.
 
 The completed 50-artist pilot remains evidence about that deliberately enriched cohort only. It
 does not establish full-watchlist mapping coverage, Apple-candidate prevalence, or a production
@@ -90,8 +91,9 @@ The later shadow pilot must preserve these seven stages:
 7. Offline evaluation. Join the two frozen artifacts by canonical identity and compute every
    predeclared policy.
 
-Only stage 1 and dry-run planning for stage 2 are complete. Stages 2 through 7 are not authorized
-for live execution by this milestone.
+Stage 1 and dry-run planning for stage 2 are complete. The dedicated stage-2 executor is
+implemented. This milestone authorizes its four frozen search-only shards only after the pre-live
+checkpoint passes. Stages 3 through 7 remain outside this milestone.
 
 ## Leakage prevention
 
@@ -199,9 +201,46 @@ retrieved row. Cache usability is therefore determined the same way as the live 
 well-formed hash metadata plus valid normalized response structure. Raw responses are not copied
 into the manifest.
 
-## Later live-census runbook
+## Dedicated search-census executor
 
-This is a preparation checklist, not authorization to execute.
+`pnpm itunes:shadow:search-census` is separate from the legacy 50-artist pilot runner. Its
+compile-time client boundary exposes only `searchArtists`; it never calls or imports the legacy
+runner. The command has three modes:
+
+- `execute` requires the exact snapshot and manifest paths and hashes, shard number, explicit
+  `--live`, exact branch and execution commit, exact shard network budget, and a runtime ceiling.
+- `verify` evaluates a completed shard against 27 deterministic integrity conditions.
+- `artifact` reconstructs a complete or controlled-partial external result from the frozen inputs
+  and existing pilot tables, generates it twice, and requires byte-identical output and identical
+  canonical hashes.
+
+Each shard receives its own `itunes_pilot_runs` row. One terminal mapping row per artist stores
+only normalized candidate IDs and names plus structured search-stage evidence. The evidence
+records identity linkage, aliases through the frozen snapshot, search identity, cache provenance,
+candidate counts, mapping state, reason, shard, run, and terminal state. Raw Apple payloads,
+artwork, previews, releases, and tracks are not stored.
+
+The existing schema cannot attach the external 593-artist snapshot directly because the snapshot
+tables require the legacy cohort and release shape. Without a migration, census runs therefore
+use the unchanged 50-artist pilot snapshot only as a foreign-key anchor. The exact external
+snapshot and manifest paths and hashes are stored in run metrics. The complete census is
+deterministically reconstructed by joining those immutable artifacts to per-run mapping and
+request-event rows. No legacy snapshot artist or release row is fabricated or changed.
+
+Controlled-partial runs can resume only from the same branch, commit, frozen inputs, and search
+behavior fingerprint. Newly cached network results from the same partial run are accepted only
+when both their successful network event and terminal artist mapping already exist. Completed
+artists are skipped, and completed shards are rejected as idempotent no-ops.
+
+The result artifact sorts artists by normalized name and canonical ID. Its
+`canonicalContentSha256` hashes compact JSON before either hash field is added.
+`fileByteSha256` hashes the indented, newline-terminated preimage before either hash field is
+added. The command also reports `actualFileByteSha256`, which hashes the final file containing
+both embedded hash fields. These exclusions avoid an impossible self-referential file hash.
+
+## Live-census runbook
+
+This is the mandatory execution checklist for the separately authorized live phase.
 
 1. Require the exact snapshot and manifest paths and hashes listed above.
 2. Verify both file-byte hashes and the snapshot canonical-content hash before creating any run.
@@ -231,18 +270,19 @@ Stop before or during a shard on:
 - HTTP 429 requiring delay beyond the authorized shard
 - any attempt to access Spotify or another provider
 
-No live Apple search shard is authorized by this document.
+No album, song, collection-detail, batch, or `/lookup` request is authorized by this document.
 
 ## Evidence levels
 
 - Implemented: identity-only exporter, SQL allowlist, snapshot validation, hash separation,
-  deterministic search planner, and manifest validation.
+  deterministic search planner, manifest validation, dedicated search-only census executor,
+  resume controls, canary verifier, and deterministic artifact generator.
 - Credential-free tested: focused unit and isolated-PostgreSQL tests plus the repository-wide
   verification recorded in `docs/itunes-pilot-handoff.md`.
 - Live iTunes tested: only the completed original and corrected 50-artist pilot.
 - Proven on the original cohort: the historical request, mapping, matching, and offline-evaluation
   measurements in the existing pilot documents.
 - Prepared for a full-watchlist census: 593-artist identity snapshot, 50 cache hits, 543 planned
-  searches, and four deterministic shards.
+  searches, four deterministic shards, and a separate search-only command.
 - Proven on a full watchlist: nothing yet. The search census and later catalog evaluation have not
   run.
