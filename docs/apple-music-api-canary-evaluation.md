@@ -2,7 +2,98 @@
 
 Date: 2026-07-30
 
-## Scope and checkpoint
+## Current canary state
+
+- Branch: `codex/apple-music-discovery`
+- Starting checkpoint: `414b9c260e0f080a90d44d66a28d77ba80b823da`
+- Pre-live identifier-policy checkpoint: `ebb153ad23c71c1855652126ca28fc38e37d9f34`
+- Storefront: US public catalog
+- Starting real-request baseline: 8
+- Current real-request total: 22
+- Persistent provider state: `APPLE_MUSIC_ENABLED=false`
+- Terminal result: `failed/not_found`, a controlled nonretryable HTTP 404 stop
+- Remaining 20 pilot artists: not contacted
+
+The credential-free plan validated the approved snapshot hash, exactly 25 pilot artists, the
+canary `1991`, `Alok`, `NURKO`, `G-Space`, and `BUNT.`, the 75-request and 15-minute canary limits,
+concurrency one, and at least 1,100 milliseconds between request starts. Plan mode made zero
+requests and zero database writes and did not access credentials or the private key. Public
+catalog IDs in local plan output were treated as non-secret operational values and were not copied
+into this report or sanitized telemetry.
+
+The committed request builder used minimal query-free first-page requests for all six artist
+views. The live command authenticated BUNT., searched for 1991, Alok, and NURKO, and began NURKO's
+views. It stopped when NURKO `live-albums` returned HTTP 404. G-Space and BUNT.'s catalog loop were
+not reached.
+
+## Current mapping and catalog evidence
+
+| Artist  | Mapping result          | Catalog result                                                         |
+| ------- | ----------------------- | ---------------------------------------------------------------------- |
+| 1991    | `ambiguous`             | No views requested                                                     |
+| Alok    | `ambiguous`             | No views requested                                                     |
+| NURKO   | `search_confirmed`      | Three views succeeded; `live-albums` returned HTTP 404                 |
+| G-Space | Not reached             | Not requested                                                          |
+| BUNT.   | `existing_id_confirmed` | Authentication identity confirmed; canary catalog loop was not reached |
+
+NURKO view evidence:
+
+| View                 | Result                                                     |
+| -------------------- | ---------------------------------------------------------- |
+| `latest-release`     | HTTP 200, 1 resource, terminal first page                  |
+| `singles`            | HTTP 200, 66 resources over 7 pages, 6 pagination requests |
+| `full-albums`        | HTTP 200, 5 resources, terminal first page                 |
+| `live-albums`        | HTTP 404 `not_found`, no retry                             |
+| `compilation-albums` | Not reached                                                |
+| `appears-on-albums`  | Not reached                                                |
+
+The HTTP 404 retained only sanitized classification: status, fixed `not_found` title category,
+machine-readable error code, detail-presence flag, `live-albums` view, and no query keys. No raw
+detail, occurrence ID, catalog identifier, URL, header, token, or body was retained.
+
+The run made 14 starts: one artist lookup, three artist searches, four first-page artist-view
+requests, and six operation-owned pagination requests. It received 13 HTTP 200 responses and one
+HTTP 404, with zero album-detail requests, track requests, retries, or cache hits. Minimum measured
+pacing was 1,107 milliseconds, maximum concurrency was one, and persisted runtime was 14,931
+milliseconds. Thirteen new sanitized cache rows were created, bringing the historical total to 18. The failed six-view collection created no album, song, or comparison row.
+
+No prior cache or mapping row was reused by the current run. The earlier one-request NURKO probe
+uses a deliberately separate cache identity, so `latest-release` was requested again. No network
+request was demonstrably avoided by prior evidence.
+
+## Current recall and forecast
+
+No artist completed all six views and no comparison row was produced. Recall is therefore
+unavailable for the 7-day, 14-day, 30-day, and 60-day windows and for singles, EPs, albums,
+remixes, live releases, compilations, and credited appearances.
+
+The frozen free-iTunes canary baseline remains 1991 at 0 of 1, Alok at 0 of 3, NURKO at 3 of 4,
+G-Space at 2 of 4, and BUNT. at 4 of 4, for 9 of 16 combined. Apple recall cannot be compared
+against that baseline from this incomplete run.
+
+Mapping uncertainty consists of 1991 and Alok remaining ambiguous and G-Space remaining untested.
+NURKO's `live-albums` HTTP 404 is a view-level controlled failure, not evidence of a ground-truth
+release miss. No genuine Apple catalog miss, matcher-caused miss, ambiguous release match, or
+Apple-only candidate can be classified.
+
+The previous 217-of-225 forecast allowed six pagination requests for the entire canary and twelve
+for the full 25-artist pilot. This partial run consumed six pagination requests on NURKO
+`singles` alone, before completing even one artist. The previous forecast is therefore not
+supported. The incomplete canary does not provide a defensible revised expected total or safe
+full-run ceiling. A complete 25-artist pilot is not justified.
+
+This five-artist controlled failure is not representative of the complete watchlist.
+
+The next milestone should audit HTTP 404 semantics for an unavailable artist relationship view
+credential-free, add synthetic coverage if a correction is needed, and request separate bounded
+authorization before any live retry. No additional live request is authorized here.
+
+## Historical milestone record
+
+The remaining sections preserve the earlier authentication, URL-safety, pagination, HTTP 400,
+and one-request diagnostic milestones in chronological form.
+
+## Initial scope and checkpoint
 
 - Branch: `codex/apple-music-discovery`
 - Pre-live implementation checkpoint: `7577cca49ad946acfee1fb2e1a480419b97f0191`

@@ -2,6 +2,47 @@
 
 Date: 2026-07-30
 
+## Current checkpoint
+
+- Branch: `codex/apple-music-discovery`
+- Canary starting checkpoint: `414b9c260e0f080a90d44d66a28d77ba80b823da`
+- Pre-live identifier-policy checkpoint: `ebb153ad23c71c1855652126ca28fc38e37d9f34`
+- Current Apple request-event total: 22
+- Current provider state: disabled, no active run, lease, cooldown, or queue
+- Current canary result: controlled `failed/not_found` after 14 starts
+- Production integration and merge: not authorized
+
+The five-artist canary authenticated BUNT. and evaluated mapping for 1991, Alok, and NURKO before
+stopping on NURKO `live-albums` HTTP 404. Mapping results were `ambiguous` for 1991 and Alok,
+`search_confirmed` for NURKO, and `existing_id_confirmed` for the BUNT. authentication identity.
+G-Space was not reached.
+
+NURKO `latest-release` returned one resource on one page. `singles` returned 66 resources over
+seven pages, including six validated operation-owned pagination requests. `full-albums` returned
+five resources on one page. `live-albums` returned HTTP 404 without retry.
+`compilation-albums` and `appears-on-albums` were not reached. No other canary artist entered the
+six-view catalog loop.
+
+The run recorded 13 HTTP 200 responses and one HTTP 404, one artist lookup, three searches, four
+first-page view requests, six pagination requests, zero album-detail or track requests, zero
+retries, zero cache hits, concurrency one, a 1,107 millisecond minimum interval, and a 14,931
+millisecond duration. Thirteen sanitized cache rows were added. No album, song, or comparison row
+was created because no six-view collection completed.
+
+Recall remains unavailable for every requested time window and release category. The earlier
+217-of-225 forecast is not supported because NURKO `singles` alone used the six pagination
+requests forecast for the entire canary. No defensible revised full-run total or safe ceiling can
+be established from this controlled failure, and the complete 25-artist pilot is not justified.
+
+The next milestone should determine credential-free whether an unavailable artist relationship
+view legitimately returns HTTP 404 and whether that status should normalize to an empty view.
+Any source correction and any additional live retry require separate authorization.
+
+## Historical milestone record
+
+The sections below preserve prior implementation, authentication, URL-safety, pagination, HTTP
+400, and one-request diagnostic history.
+
 ## Implemented checkpoint
 
 - Branch: `codex/apple-music-discovery`

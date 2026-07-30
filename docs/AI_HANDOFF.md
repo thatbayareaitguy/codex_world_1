@@ -6,11 +6,39 @@ Updated: 2026-07-30
 
 - Worktree: `C:\Users\taysh\Documents\Codex\codex_world_1_apple`
 - Branch: `codex/apple-music-discovery`
-- Corrective starting checkpoint: `01de135281f12927fdf21e0d227d18b75b58c393`
-- Bounded retry starting checkpoint: `40a985e3cb6d58f024ae291f6684a4a43a1f4803`
+- Canary starting checkpoint: `414b9c260e0f080a90d44d66a28d77ba80b823da`
+- Identifier-policy checkpoint: `ebb153ad23c71c1855652126ca28fc38e37d9f34`
 - Upstream: `origin/codex/apple-music-discovery`
-- Live-checkpoint commit: `7577cca49ad946acfee1fb2e1a480419b97f0191`
-- Scope: bounded Apple Music authentication probe and conditional five-artist canary
+- Scope: bounded five-artist Apple Music public-catalog canary
+- Current result: `failed/not_found` controlled stop after 14 live starts
+- Current historical Apple request total: 22
+- Provider state: disabled, no active run, lease, cooldown, or queue
+
+## Current canary result
+
+- BUNT.: `existing_id_confirmed` during authentication; its canary catalog loop was not reached.
+- 1991: `ambiguous`; no views requested.
+- Alok: `ambiguous`; no views requested.
+- NURKO: `search_confirmed`.
+- G-Space: not reached.
+
+NURKO `latest-release` returned one resource without pagination. `singles` returned 66 resources
+over seven pages with six validated pagination requests. `full-albums` returned five resources
+without pagination. `live-albums` returned HTTP 404 and was not retried.
+`compilation-albums` and `appears-on-albums` were not reached.
+
+The run recorded one artist lookup, three searches, four first-page view requests, six pagination
+requests, zero album-detail or track requests, 13 HTTP 200 responses, one HTTP 404, zero retries,
+zero cache hits, concurrency one, a 1,107 millisecond minimum request-start interval, and a 14,931
+millisecond runtime. It added 13 sanitized cache rows and no album, song, or comparison row.
+
+Recall is unavailable for every window and release type because no artist completed all six views
+and no comparison row was created. No Apple catalog miss, matcher miss, ambiguous release match,
+or Apple-only candidate can be classified.
+
+The prior 217-of-225 forecast is not supported. NURKO `singles` alone consumed the six pagination
+requests forecast for the entire canary. No defensible revised request total or safe full-run
+ceiling is available, and the complete 25-artist pilot is not justified.
 
 ## Runtime isolation
 
@@ -153,7 +181,7 @@ See `docs/apple-music-api-design.md`, `docs/apple-music-pilot-handoff.md`,
 `docs/apple-music-pilot-authorization.md`, `docs/apple-music-runtime.md`, and
 `docs/provider-capabilities.md`.
 
-## Next milestone
+## Historical retry and probe record
 
 The operation-scoped live retry started from
 `12ec1a4910fea9557549b13c6a3c358720306284`. BUNT. returned HTTP 200, normalized successfully,
@@ -222,3 +250,15 @@ credential, identifier, raw response, complete URL, header value, query value, o
 recorded. The next recommended milestone is a separately authorized decision about the bounded
 five-artist canary. No further live request, complete cohort, representative cohort, production
 integration, merge, or scheduler activation is authorized.
+
+## Next milestone
+
+Audit credential-free whether Apple uses HTTP 404 for an unavailable direct artist relationship
+view and whether the pilot should normalize that response to an empty view instead of stopping the
+run. Any application correction requires explicit source-change authorization, synthetic tests,
+and a clean committed checkpoint. Any additional live canary retry requires separate bounded
+authorization.
+
+The remaining 20 pilot artists, complete 25-artist cohort, representative cohort, production
+integration, scheduling, playlists, Music User Tokens, personal libraries, playback, Apple Music
+Feed, and merge remain unauthorized.
