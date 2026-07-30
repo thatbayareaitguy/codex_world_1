@@ -9,7 +9,7 @@ import type {
   AppleMusicSong,
 } from "@radar/providers";
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq, isNull, lte, or, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, lte, or, sql } from "drizzle-orm";
 import type { RadarDatabase } from "./client";
 import {
   appleMusicComparisonRuns,
@@ -51,8 +51,13 @@ export interface AppleMusicOperationalStatus {
   requestCount: number;
 }
 
+export interface AppleMusicRequestPersistenceOptions {
+  runLeaseToken?: string;
+}
+
 export function createAppleMusicRequestPersistence(
   db: RadarDatabase,
+  options: AppleMusicRequestPersistenceOptions = {},
 ): AppleMusicRequestPersistence {
   return {
     acquire: async (input) => {
@@ -104,9 +109,20 @@ export function createAppleMusicRequestPersistence(
               "provider_cooldown",
             );
           }
+          if (
+            options.runLeaseToken &&
+            (state?.leaseOwner !== options.runLeaseToken ||
+              !state.leaseExpiresAt ||
+              state.leaseExpiresAt <= now)
+          ) {
+            throw new AppleMusicGateError(
+              "The Apple Music pilot run lease is not active.",
+              "run_inactive",
+            );
+          }
           const waitUntil = Math.max(
             state?.nextRequestAt?.getTime() ?? 0,
-            state?.leaseExpiresAt && state.leaseExpiresAt > now
+            !options.runLeaseToken && state?.leaseExpiresAt && state.leaseExpiresAt > now
               ? state.leaseExpiresAt.getTime()
               : 0,
           );
@@ -114,7 +130,7 @@ export function createAppleMusicRequestPersistence(
             await delay(Math.min(100, waitUntil - now.getTime()));
             continue;
           }
-          const leaseToken = randomUUID();
+          const leaseToken = options.runLeaseToken ?? randomUUID();
           const eventId = randomUUID();
           const startedAt = new Date();
           const claimedRow = await db.transaction(async (tx) => {
@@ -122,8 +138,12 @@ export function createAppleMusicRequestPersistence(
               .update(appleMusicProviderState)
               .set({
                 lastRequestStartedAt: startedAt,
-                leaseExpiresAt: new Date(startedAt.getTime() + leaseDurationMs),
-                leaseOwner: leaseToken,
+                ...(options.runLeaseToken
+                  ? {}
+                  : {
+                      leaseExpiresAt: new Date(startedAt.getTime() + leaseDurationMs),
+                      leaseOwner: leaseToken,
+                    }),
                 nextRequestAt: new Date(startedAt.getTime() + input.minIntervalMs),
                 queueDepth: sql`greatest(${appleMusicProviderState.queueDepth} - 1, 0)`,
                 requestCount: sql`${appleMusicProviderState.requestCount} + 1`,
@@ -137,10 +157,15 @@ export function createAppleMusicRequestPersistence(
                     isNull(appleMusicProviderState.cooldownUntil),
                     lte(appleMusicProviderState.cooldownUntil, startedAt),
                   ),
-                  or(
-                    isNull(appleMusicProviderState.leaseExpiresAt),
-                    lte(appleMusicProviderState.leaseExpiresAt, startedAt),
-                  ),
+                  options.runLeaseToken
+                    ? and(
+                        eq(appleMusicProviderState.leaseOwner, options.runLeaseToken),
+                        gt(appleMusicProviderState.leaseExpiresAt, startedAt),
+                      )
+                    : or(
+                        isNull(appleMusicProviderState.leaseExpiresAt),
+                        lte(appleMusicProviderState.leaseExpiresAt, startedAt),
+                      ),
                   or(
                     isNull(appleMusicProviderState.nextRequestAt),
                     lte(appleMusicProviderState.nextRequestAt, startedAt),
@@ -164,14 +189,16 @@ export function createAppleMusicRequestPersistence(
               )
               .returning({ id: appleMusicComparisonRuns.id });
             if (!runRow) {
-              await tx
-                .update(appleMusicProviderState)
-                .set({
-                  leaseExpiresAt: null,
-                  leaseOwner: null,
-                  updatedAt: startedAt,
-                })
-                .where(eq(appleMusicProviderState.leaseOwner, leaseToken));
+              if (!options.runLeaseToken) {
+                await tx
+                  .update(appleMusicProviderState)
+                  .set({
+                    leaseExpiresAt: null,
+                    leaseOwner: null,
+                    updatedAt: startedAt,
+                  })
+                  .where(eq(appleMusicProviderState.leaseOwner, leaseToken));
+              }
               return false;
             }
             await tx.insert(appleMusicRequestEvents).values({
@@ -230,8 +257,7 @@ export function createAppleMusicRequestPersistence(
                   retryAfterSeconds: input.retryAfterSeconds ?? null,
                 }
               : {}),
-            leaseExpiresAt: null,
-            leaseOwner: null,
+            ...(options.runLeaseToken ? {} : { leaseExpiresAt: null, leaseOwner: null }),
             updatedAt: input.completedAt,
           })
           .where(
@@ -309,6 +335,128 @@ export async function getAppleMusicOperationalStatus(
     queueDepth: state?.queueDepth ?? 0,
     requestCount: state?.requestCount ?? 0,
   };
+}
+
+export async function createAppleMusicComparisonRun(
+  db: RadarDatabase,
+  input: {
+    implementationCommit: string;
+    maximumRuntimeMs: number;
+    minRequestIntervalMs: number;
+    requestBudget: number;
+    snapshotId: string;
+  },
+  now = new Date(),
+) {
+  const active = await db.query.appleMusicComparisonRuns.findFirst({
+    where: eq(appleMusicComparisonRuns.status, "running"),
+    columns: { id: true },
+  });
+  if (active) throw new Error("An Apple Music comparison run is already active.");
+  const [run] = await db
+    .insert(appleMusicComparisonRuns)
+    .values({
+      deadlineAt: new Date(now.getTime() + input.maximumRuntimeMs),
+      implementationCommit: input.implementationCommit,
+      maximumRuntimeMs: input.maximumRuntimeMs,
+      minRequestIntervalMs: input.minRequestIntervalMs,
+      requestBudget: input.requestBudget,
+      snapshotId: input.snapshotId,
+      startedAt: now,
+      status: "running",
+    })
+    .returning();
+  if (!run) throw new Error("The Apple Music comparison run could not be created.");
+  return run;
+}
+
+export async function claimAppleMusicPilotLease(
+  db: RadarDatabase,
+  runId: string,
+  now = new Date(),
+): Promise<string> {
+  await ensureState(db);
+  const run = await db.query.appleMusicComparisonRuns.findFirst({
+    where: eq(appleMusicComparisonRuns.id, runId),
+  });
+  if (!run || run.status !== "running" || !run.deadlineAt || run.deadlineAt <= now) {
+    throw new AppleMusicGateError("The Apple Music comparison run is not active.", "run_inactive");
+  }
+  const token = `pilot:${runId}:${randomUUID()}`;
+  const [claimed] = await db
+    .update(appleMusicProviderState)
+    .set({
+      leaseExpiresAt: run.deadlineAt,
+      leaseOwner: token,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(appleMusicProviderState.id, stateId),
+        eq(appleMusicProviderState.cooldownIndefinite, false),
+        or(
+          isNull(appleMusicProviderState.cooldownUntil),
+          lte(appleMusicProviderState.cooldownUntil, now),
+        ),
+        or(
+          isNull(appleMusicProviderState.leaseExpiresAt),
+          lte(appleMusicProviderState.leaseExpiresAt, now),
+        ),
+      ),
+    )
+    .returning({ id: appleMusicProviderState.id });
+  if (!claimed) {
+    const status = await getAppleMusicOperationalStatus(db, now);
+    throw new AppleMusicGateError(
+      status.cooldownActive
+        ? "Apple Music requests are blocked by a persisted cooldown."
+        : "An Apple Music request lease is already active.",
+      status.cooldownActive ? "provider_cooldown" : "run_inactive",
+    );
+  }
+  return token;
+}
+
+export async function releaseAppleMusicPilotLease(
+  db: RadarDatabase,
+  leaseToken: string,
+  now = new Date(),
+): Promise<void> {
+  await db
+    .update(appleMusicProviderState)
+    .set({
+      leaseExpiresAt: null,
+      leaseOwner: null,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(appleMusicProviderState.id, stateId),
+        eq(appleMusicProviderState.leaseOwner, leaseToken),
+      ),
+    );
+}
+
+export async function finishAppleMusicComparisonRun(
+  db: RadarDatabase,
+  runId: string,
+  input: {
+    metrics: Record<string, unknown>;
+    status: "completed" | "controlled_partial" | "failed";
+    stopReason: string;
+  },
+  now = new Date(),
+): Promise<void> {
+  await db
+    .update(appleMusicComparisonRuns)
+    .set({
+      completedAt: now,
+      metrics: input.metrics,
+      status: input.status,
+      stopReason: input.stopReason.slice(0, 500),
+      updatedAt: now,
+    })
+    .where(eq(appleMusicComparisonRuns.id, runId));
 }
 
 export async function resetAppleMusicStateForTest(db: RadarDatabase): Promise<void> {

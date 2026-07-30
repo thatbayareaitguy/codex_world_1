@@ -6,9 +6,9 @@ Updated: 2026-07-29
 
 - Worktree: `C:\Users\taysh\Documents\Codex\codex_world_1_apple`
 - Branch: `codex/apple-music-discovery`
-- Implementation starting checkpoint: `905838657fe014cbc50a81c12ef6c43702e466d6`
+- Pilot-command starting checkpoint: `f8a3de6331497cd68864db2e42cf32ee8bafe0f8`
 - Upstream: `origin/codex/apple-music-discovery`
-- Scope: credential-free Apple Music catalog provider implementation
+- Scope: credential-free Apple Music catalog provider and bounded pilot command implementation
 
 ## Runtime isolation
 
@@ -38,14 +38,28 @@ iTunes pilot snapshot is immutable input only.
   cooldowns.
 - Mapping and comparison logic is deterministic, evidence-based, and supports the frozen
   50-artist evaluation model.
-- The production scanner explicitly rejects the Apple provider. There is no production command,
+- `pnpm apple:pilot` provides a file-only plan mode and a separately double-confirmed future live
+  mode. The production scanner still explicitly rejects the Apple provider. There is no production
   scheduler, feed mutation, UI, or playlist path.
+- The tracked manifest pins the exact snapshot shape, 25 artists, three known public IDs, BUNT.
+  authentication probe, and the deterministic five-artist canary.
+- The live controller uses the existing request gate, cache, mapping, catalog, and comparison
+  persistence. It adds a run-scoped lease without changing the schema, reuses canary work, batches
+  only confirmed IDs, records sanitized terminal evidence, and releases the lease in a finally-safe
+  path.
 
-Credential-free verification passed formatting, lint, strict TypeScript, 377 unit tests, 5 Apple
-database tests, all 17 integration files independently with 90 tests, production build, 23
-mock-only Playwright tests, clean and upgrade migration paths, migration drift, and the
-Apple-scoped doctor. The aggregate integration invocation retains an existing order-dependent
-Spotify campaign-fixture leak into the scheduler suite; Spotify code and tests were not changed.
+The new focused command/controller suite has 32 passing injected tests. The Apple PostgreSQL file
+has 7 passing tests. The real plan command validated the frozen snapshot with credential variables
+and database configuration removed, and all isolated Apple database counts remained zero.
+
+The prior campaign-fixture leak did not reproduce in the latest pre-live attempt. One fresh
+aggregate run had two Spotify rate-gate timeouts, its focused rerun passed 11 of 11, and the second
+fresh aggregate run passed 90 of 90. No Spotify source or test correction was required.
+
+Final command-checkpoint verification passed formatting, zero-warning lint, strict TypeScript, 409
+unit tests, 92 aggregate integration tests against a fresh Apple test database, clean and upgrade
+migration coverage, no-drift migration generation, production build, 23 mock-only Playwright
+tests, and Apple doctor `READY`.
 
 ## Credential and provider boundaries
 
@@ -64,5 +78,12 @@ See `docs/apple-music-api-design.md`, `docs/apple-music-pilot-handoff.md`,
 
 ## Next milestone
 
-The exact next milestone is a separately authorized, bounded 25-artist Apple Music live
-completeness test. Do not begin it from this checkpoint.
+After review, the exact next milestone is the separately authorized, bounded 25-artist Apple Music
+live completeness test using:
+
+```powershell
+pnpm apple:pilot -- --execute-live --confirm-live APPLE_PUBLIC_CATALOG_25 --snapshot <external-snapshot-path>
+```
+
+Do not run it without that separate authorization. No live Apple request occurred in this
+checkpoint.

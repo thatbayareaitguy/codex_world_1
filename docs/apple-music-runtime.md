@@ -6,10 +6,11 @@ This runtime supports a disabled-by-default Apple Music public catalog pilot on
 `codex/apple-music-discovery`. Apple Developer Program membership is required. A regular Apple
 Music listener subscription is not required for public catalog discovery.
 
-The Apple catalog provider is implemented and credential-free tested, but it is not connected to a
-runtime command or production flow. Live Apple requests, production scheduling, production
-integration, Music User Tokens, personal-library access, playback, playlists, and Apple Music Feed
-remain prohibited.
+The Apple catalog provider and dedicated pilot command are implemented and credential-free tested.
+The command is isolated from the production scanner, scheduler, web application, feed, and
+playlist flows. Live Apple requests, production scheduling, production integration, Music User
+Tokens, personal-library access, playback, playlists, and Apple Music Feed remain prohibited until
+a separately authorized milestone.
 
 ## Credential Isolation
 
@@ -41,3 +42,29 @@ docker compose --env-file .app-runtime/apple-music.env -p codex_world_1_apple -f
 The Apple environment does not reuse Spotify or iTunes containers, volumes, database names, ports,
 or runtime files. Apple Music remains disabled until a separate milestone authorizes bounded live
 access.
+
+## Pilot command
+
+Plan mode validates the immutable snapshot and pinned cohort without loading the runtime file,
+opening a database connection, initializing the developer-token manager, reading a private key, or
+creating an HTTP transport:
+
+```powershell
+pnpm apple:pilot -- --plan --snapshot <external-snapshot-path>
+```
+
+The implemented future live form is:
+
+```powershell
+pnpm apple:pilot -- --execute-live --confirm-live APPLE_PUBLIC_CATALOG_25 --snapshot <external-snapshot-path>
+```
+
+Live execution requires both the `--execute-live` flag and the exact independent confirmation
+value. It also requires the persistent runtime value `APPLE_MUSIC_ENABLED=false`. The command
+creates an in-memory pilot authorization and never rewrites the runtime file or changes that
+persistent value.
+
+The controller is limited to the US public catalog, 225 request starts and 45 minutes for the
+complete run, 75 request starts and 15 minutes through the canary, concurrency one, and at least
+1,100 milliseconds between request starts. The real plan command was executed credential-free.
+No live Apple request occurred.

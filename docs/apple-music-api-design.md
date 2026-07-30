@@ -62,6 +62,41 @@ Apple tables are separate from Spotify and free-iTunes runtime state. The only i
 is the immutable frozen comparison snapshot. No authorization header, developer token, private
 credential, artwork, preview URL, or raw full response is stored.
 
+## Pilot command and bounded controller
+
+`pnpm apple:pilot` is the only repository-native Apple execution surface. It is not imported by
+the production scanner or scheduler.
+
+The tracked pilot manifest pins the sanitized snapshot hash and properties, the exact 25-artist
+cohort, three known public artist IDs, BUNT. as the authentication probe, and the canary of 1991,
+Alok, NURKO, G-Space, and BUNT. A machine-specific snapshot path is never tracked.
+
+Plan mode is file-only. It validates the snapshot and manifest, builds human-readable and
+machine-readable summaries, calculates conservative budgets, and creates no run, lease, request
+event, cache row, mapping, album, song, comparison, token manager, private-key read, HTTP
+transport, or database connection.
+
+Future live execution requires two independent command confirmations and rejects any persistent
+`APPLE_MUSIC_ENABLED` value other than `false`. Only after those checks does it create a
+command-scoped authorization. The controller then:
+
+1. validates the snapshot, cohort, US storefront, cooldown, lease, and conservative forecast;
+2. imports the immutable snapshot into the isolated Apple database and creates a bounded run;
+3. claims one run-scoped Apple lease;
+4. validates BUNT. as the authentication request;
+5. executes the five-artist canary within 75 requests and 15 minutes;
+6. reuses canary mappings, views, and cache entries;
+7. validates known IDs and uses evidence-safe searches for missing IDs;
+8. batches only the confirmed subset, up to 25;
+9. retrieves the six direct views with terminal, same-host pagination;
+10. retrieves bounded album and track evidence only where appearance matching requires it;
+11. persists normalized mappings, catalog evidence, comparisons, and sanitized metrics;
+12. records an explicit terminal status and releases the lease in a finally-safe path.
+
+The complete run remains bounded to 225 actual HTTP starts, 45 minutes, concurrency one, and a
+minimum 1,100 millisecond request-start interval. Retries count against the request budget and
+cache hits do not. No live execution occurred in the command-implementation milestone.
+
 ## Mapping and comparison
 
 Artist mapping supports `existing_id_confirmed`, `search_confirmed`, `evidence_confirmed`,

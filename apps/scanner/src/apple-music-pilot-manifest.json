@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "snapshot": {
+    "sha256": "48259f7e2016aa8bbbabf4baa7e3baf8d4f9e9b53b413dab56f9d4fc70e1278a",
+    "artistCount": 50,
+    "positiveArtistCount": 30,
+    "negativeArtistCount": 10,
+    "identityStressArtistCount": 10,
+    "windowStart": "2026-05-30",
+    "windowEnd": "2026-07-29",
+    "releaseCount": 106,
+    "releaseArtistCount": 35
+  },
+  "cohort": {
+    "identityFailures": [
+      "12th Planet",
+      "1991",
+      "4B",
+      "A.M.C",
+      "Alok",
+      "Anki",
+      "Anto",
+      "Babsy.",
+      "GRiZ",
+      "REAPER"
+    ],
+    "positiveReleaseArtists": [
+      "BARELY ALIVE",
+      "Habstrakt",
+      "NURKO",
+      "SVDDEN DEATH",
+      "Deorro",
+      "Martin Garrix",
+      "MUST DIE!",
+      "G-Space",
+      "SampliFire",
+      "Vibe Chemistry"
+    ],
+    "identityCatalogStressArtists": ["1788-L", "2TD", "3LAU", "Au5", "BUNT."]
+  },
+  "knownArtistIds": {
+    "G-Space": "511671481",
+    "SampliFire": "696018289",
+    "BUNT.": "1436090348"
+  },
+  "authenticationArtist": "BUNT.",
+  "canaryArtists": ["1991", "Alok", "NURKO", "G-Space", "BUNT."],
+  "storefront": "us",
+  "limits": {
+    "requestBudget": 225,
+    "runtimeMs": 2700000,
+    "canaryRequestBudget": 75,
+    "canaryRuntimeMs": 900000,
+    "concurrency": 1,
+    "minRequestIntervalMs": 1100
+  }
+}

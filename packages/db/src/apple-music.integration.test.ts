@@ -4,8 +4,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AppleMusicAlbum, AppleMusicSong } from "@radar/providers";
 import { createDatabase } from "./client";
 import {
+  claimAppleMusicPilotLease,
+  createAppleMusicComparisonRun,
   createAppleMusicRequestPersistence,
+  finishAppleMusicComparisonRun,
   getAppleMusicOperationalStatus,
+  releaseAppleMusicPilotLease,
   saveAppleMusicArtistMapping,
   saveAppleMusicCatalog,
   saveAppleMusicComparisons,
@@ -149,6 +153,91 @@ describe.sequential("Apple Music isolated persistence and global request gate", 
         runId,
       }),
     ).rejects.toMatchObject({ classification: "provider_cooldown" });
+  });
+
+  it("holds one run-scoped lease across paced requests and releases it explicitly", async () => {
+    const run = await createAppleMusicComparisonRun(connection.db, {
+      implementationCommit: "d".repeat(40),
+      maximumRuntimeMs: 60_000,
+      minRequestIntervalMs: 1_100,
+      requestBudget: 2,
+      snapshotId,
+    });
+    const leaseToken = await claimAppleMusicPilotLease(connection.db, run.id);
+    const persistence = createAppleMusicRequestPersistence(connection.db, {
+      runLeaseToken: leaseToken,
+    });
+    const permit = await persistence.acquire({
+      endpointCategory: "artist",
+      identity: "/v1/catalog/us/artists/scoped",
+      maxRequests: 2,
+      minIntervalMs: 1_100,
+      runId: run.id,
+    });
+    await persistence.complete({
+      bodyBytes: 10,
+      completedAt: new Date(),
+      eventId: permit.eventId,
+      leaseToken: permit.leaseToken,
+      status: 200,
+    });
+    expect(await getAppleMusicOperationalStatus(connection.db)).toMatchObject({
+      leaseActive: true,
+      requestCount: 1,
+    });
+    await finishAppleMusicComparisonRun(connection.db, run.id, {
+      metrics: { requestCount: 1 },
+      status: "completed",
+      stopReason: "synthetic_complete",
+    });
+    await releaseAppleMusicPilotLease(connection.db, leaseToken);
+    expect(await getAppleMusicOperationalStatus(connection.db)).toMatchObject({
+      leaseActive: false,
+    });
+    expect(
+      await connection.db.query.appleMusicComparisonRuns.findFirst({
+        where: eq(appleMusicComparisonRuns.id, run.id),
+      }),
+    ).toMatchObject({
+      requestCount: 1,
+      status: "completed",
+      stopReason: "synthetic_complete",
+    });
+  });
+
+  it("preserves an indefinite 429 cooldown while releasing the run-scoped lease", async () => {
+    const run = await createAppleMusicComparisonRun(connection.db, {
+      implementationCommit: "e".repeat(40),
+      maximumRuntimeMs: 60_000,
+      minRequestIntervalMs: 1_100,
+      requestBudget: 1,
+      snapshotId,
+    });
+    const leaseToken = await claimAppleMusicPilotLease(connection.db, run.id);
+    const persistence = createAppleMusicRequestPersistence(connection.db, {
+      runLeaseToken: leaseToken,
+    });
+    const permit = await persistence.acquire({
+      endpointCategory: "artist",
+      identity: "/v1/catalog/us/artists/rate-limited",
+      maxRequests: 1,
+      minIntervalMs: 1_100,
+      runId: run.id,
+    });
+    await persistence.complete({
+      bodyBytes: 0,
+      completedAt: new Date(),
+      errorClassification: "rate_limited",
+      eventId: permit.eventId,
+      leaseToken: permit.leaseToken,
+      status: 429,
+    });
+    await releaseAppleMusicPilotLease(connection.db, leaseToken);
+    expect(await getAppleMusicOperationalStatus(connection.db)).toMatchObject({
+      cooldownActive: true,
+      cooldownIndefinite: true,
+      leaseActive: false,
+    });
   });
 
   it("stores normalized cache and safe telemetry without authorization material", async () => {
