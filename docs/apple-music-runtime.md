@@ -20,7 +20,17 @@ Developer tokens are generated server-side and must not be logged or persisted. 
 are not used.
 
 The tracked `.env.example` contains placeholders only. Never replace those placeholders with real
-identifiers or paths.
+credential identifiers or paths.
+
+Public Apple catalog artist, album, and song IDs are non-secret operational lookup values. They
+may exist in the tracked pilot manifest, isolated Apple database state, process memory, and local
+plan output. They must remain excluded from committed evaluation reports, long-retained
+application logs, and sanitized request telemetry unless represented by a deterministic hash or
+fixed placeholder.
+
+Public catalog IDs are not equivalent to Team ID, Key ID, Media ID, developer tokens,
+authorization values, private-key paths, or private-key material. Those credential identifiers
+and secrets must never appear in source control, logs, telemetry, reports, or terminal output.
 
 ## Runtime Isolation
 

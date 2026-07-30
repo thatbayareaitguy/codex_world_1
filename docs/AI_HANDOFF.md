@@ -133,8 +133,16 @@ See `docs/apple-music-api-canary-evaluation.md`.
 
 - Local credentials remain in the ignored runtime file.
 - The private key remains outside every repository.
-- No identifier, private-key path, token, key content, signature, or authorization header is
-  recorded here.
+- Credential identifiers and secret material, including Team ID, Key ID, Media ID, developer
+  tokens, authorization values, private-key paths, key contents, and signatures, must never appear
+  in source control, logs, telemetry, reports, or terminal output.
+- Public Apple catalog artist, album, and song IDs are non-secret operational values. They may
+  exist in the tracked pilot manifest, isolated Apple database, process memory, and local plan
+  output. They remain excluded from committed evaluation reports, long-retained application logs,
+  and sanitized request telemetry unless represented by a deterministic hash or fixed
+  placeholder.
+- Public catalog IDs are not equivalent to credential identifiers, tokens, authorization values,
+  or key material.
 - No additional live Apple request is authorized by this checkpoint.
 - No Spotify, iTunes, or other-provider request occurred.
 - Music User Tokens, personal libraries, playback, playlists, Apple Music Feed, artwork and

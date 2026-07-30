@@ -133,8 +133,16 @@ separate from free-iTunes and Spotify state.
 - Spotify, iTunes, or any other provider request from the Apple pilot;
 - merge into `codex/release-radar-hardening`.
 
-No real identifier, token, private-key path, private-key material, or authorization header belongs
-in source control, logs, telemetry, or reports.
+Credential identifiers and secret material, including Team ID, Key ID, Media ID, developer
+tokens, authorization values, private-key paths, and private-key contents, must never appear in
+source control, logs, telemetry, reports, or terminal output.
+
+Public Apple catalog artist, album, and song IDs are non-secret operational lookup values. They
+may exist in the tracked pilot manifest, isolated Apple database state, process memory, and local
+plan output. They remain excluded from committed evaluation reports, long-retained application
+logs, and sanitized request telemetry unless represented by a deterministic hash or fixed
+placeholder. Public catalog IDs are not credentials and are not equivalent to Team ID, Key ID,
+Media ID, tokens, authorization values, or key material.
 
 ## Credential-free verification
 
