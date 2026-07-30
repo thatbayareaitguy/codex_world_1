@@ -16,6 +16,19 @@ Updated: 2026-07-30
 - Current historical Apple request total: 22
 - Provider state: disabled, no active run, lease, cooldown, or queue
 
+The current architecture result is a credential-free discovery-strategy analysis, not another
+live canary. NURKO's seven cached `singles` pages were duplicate-free and monotonically
+newest-to-oldest. Every observed Apple resource inside 14, 30, and 60 days was on page one, while
+six later pages added no resource inside 60 days. Available views still failed to contain every
+frozen recent NURKO release, and Apple does not document view ordering.
+
+The recommended model is shallow fresh weekly discovery plus monthly first-page reconciliation
+and slower bounded deep reconciliation. The single recommended next experiment is a five-artist,
+50-request, 12-minute comparison of six direct first pages, one individual embedded-view artist
+request, and one generic albums relationship first page per confirmed artist. It is not
+authorized or executed. See
+[apple-music-discovery-strategy-analysis.md](apple-music-discovery-strategy-analysis.md).
+
 Credential-free source now treats HTTP 404 from one of the six valid views of a safely confirmed
 artist as `unavailable_404`. It does not retry or cache the result, continues later views and
 artists, retains earlier successful resources, distinguishes HTTP 200 empty, and suppresses false

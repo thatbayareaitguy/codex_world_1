@@ -10,9 +10,21 @@ Date: 2026-07-30
 - Pre-live identifier-policy checkpoint: `ebb153ad23c71c1855652126ca28fc38e37d9f34`
 - Current Apple request-event total: 22
 - Current provider state: disabled, no active run, lease, cooldown, or queue
-- Current milestone result: stopped at the credential-free 79-of-75 request gate
+- Current milestone result: credential-free discovery-strategy analysis completed with no new
+  provider request
 - Most recent live result: controlled `failed/not_found` after 14 starts
 - Production integration and merge: not authorized
+
+The current strategy recommendation is no longer to increase the exhaustive weekly ceiling by
+default. Existing NURKO evidence shows all Apple resources inside the observed 14, 30, and 60-day
+windows on `singles` page one, while six later pages added only older history. However, available
+views still missed frozen recent releases, so endpoint coverage remains a separate recall risk.
+Apple does not document artist-view ordering, and NURKO is not representative.
+
+Use [apple-music-discovery-strategy-analysis.md](apple-music-discovery-strategy-analysis.md) as the
+current architecture record. It recommends one future five-artist, three-arm, first-page
+comparison of direct views, individual embedded views, and the generic albums relationship. The
+experiment is not authorized or executed by this checkpoint.
 
 Supported direct artist-view HTTP 404 is now operation-specifically recorded as
 `unavailable_404` after confirmed parent identity. It remains nonretryable and uncached, but it
