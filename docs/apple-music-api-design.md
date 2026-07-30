@@ -38,10 +38,13 @@ The typed client supports:
 - complete album-track pagination;
 - up to 25 songs by ID.
 
-Response schemas retain only identity and comparison metadata. Artwork and preview properties are
-discarded. Unknown properties are ignored. Returned API `href` and `next` paths are validated
-before use. Pagination continues to terminal, rejects repeated pages, deduplicates resources, and
-sorts releases and tracks locally.
+Response schemas retain only identity and comparison metadata. Artwork, preview properties, and
+descriptive Apple sharing URLs are discarded. Unknown properties are ignored. API request targets,
+top-level resource `href` values, followed view paths, relationship pagination, and `next` values
+use the strict catalog allowlist. Non-followed relationship `href` values and reference `href`
+values are discarded. An absolute `next` value is accepted only for HTTPS on the exact Apple API
+host and is reduced to its allowed relative path before use or caching. Pagination continues to
+terminal, rejects repeated pages, deduplicates resources, and sorts releases and tracks locally.
 
 ## Request safety and persistence
 
@@ -57,6 +60,13 @@ The Apple-specific database gate provides:
   `Retry-After` is returned;
 - sanitized request telemetry and cache-hit events;
 - normalized, sanitized response cache reuse.
+
+The response lifecycle is bounded body read, defensive JSON parse, schema validation, request and
+pagination URL validation, complete normalization, removal of unnecessary metadata, and then
+cache persistence. A parse, schema, URL-safety, or normalization failure records sanitized
+terminal telemetry but creates no cache entry. URL diagnostics contain only a fixed field path,
+role, relative or absolute form, scheme class, host class, and rejection reason. They never
+contain the URL value, query, identifier, token, authorization header, or response body.
 
 Apple tables are separate from Spotify and free-iTunes runtime state. The only iTunes-linked input
 is the immutable frozen comparison snapshot. No authorization header, developer token, private
@@ -110,9 +120,19 @@ iTunes request or cache state. It can measure mapping rate, 7, 14, 30, and 60 da
 EPs, albums, remixes, live releases, compilations, and appearances; batch versus direct-view
 completeness; and request pacing.
 
-## Verification boundary
+## Corrective verification boundary
 
-All implementation tests use generated synthetic EC keys, injected HTTP responses, fake time, and
-the isolated Apple test database. This milestone makes zero live Apple requests. The exact next
-milestone is a bounded 25-artist Apple Music live completeness test, which requires separate
-authorization.
+The prior live authentication lookup returned HTTP 200, establishing developer-token acceptance,
+then stopped on `unsafe_url` before identity confirmation. The retained telemetry does not contain
+the rejected value or exact field path. Code-path reconstruction proves that artist
+`attributes.url` could not throw that classification. The failure category was request-like
+response navigation metadata, with `data[].relationships.albums.href` the strongest exact-path
+match. That relationship `href` was not followed and did not need request-target validation.
+
+Credential-free synthetic HTTP 200 coverage now reproduces the response shape, completes artist
+identity normalization, and writes one sanitized cache entry only after success. Unsafe
+pagination produces `unsafe_url`, zero cache entries, sanitized telemetry, a released lease, and
+no subsequent request. All implementation tests use generated synthetic EC keys, injected HTTP
+responses, fake time, and the isolated Apple test database. This correction made zero live Apple
+requests. The exact next milestone is a separately authorized authentication recheck and
+five-artist canary retry.

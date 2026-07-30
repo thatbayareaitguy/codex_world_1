@@ -62,9 +62,14 @@ against the isolated Apple test database, the production build, Apple doctor, an
 | Terminal result                        | `failed`                                                    |
 | Stop reason                            | `unsafe_url`                                                |
 
-The response passed HTTP and schema checks, but URL metadata in the returned resource failed the
-existing safe-URL validation during normalization. The controller stopped immediately. It did not
-regenerate a token, retry authentication, or change source.
+The response passed HTTP and schema checks, but request-like URL metadata in the returned resource
+failed `assertAllowedAppleMusicPath` and then `assertAllowedAppleMusicUrl` during normalization.
+The retained sanitized evidence does not include the rejected value or exact field path. The code
+path rules out artist `attributes.url`, which was handled by a non-throwing descriptive URL
+function. The triggering category was resource or relationship navigation metadata. The strongest
+exact-path match is `data[].relationships.albums.href`, a relationship link that the client did
+not follow. The controller stopped immediately. It did not regenerate a token, retry
+authentication, or change source.
 
 The command summary's conservative `authentication.accepted=false` means the complete
 authentication and identity phase did not finish. It does not contradict the HTTP 200 evidence
@@ -139,6 +144,26 @@ No Apple response-cache row remains. No raw response, token, authorization heade
 identifier, or private-key path remains in the database, documentation, logs reviewed for this
 milestone, or source control.
 
+The credential-free correction changes the lifecycle so a response is cached only after bounded
+body reading, JSON parsing, schema validation, strict validation of request-capable URLs, complete
+normalization, and removal of descriptive or unused URL metadata. Non-followed relationship
+`href` values and Apple sharing URLs are discarded. They never become transport targets.
+
+Synthetic tests now prove:
+
+- a representative HTTP 200 artist response with relative API `href`, descriptive sharing `url`,
+  and non-followed albums relationship `href` normalizes successfully;
+- identity is available for comparison and one sanitized cache entry is created only after
+  success;
+- valid same-host pagination is normalized to a relative catalog path;
+- cross-host, non-catalog, and `/v1/me` pagination return `unsafe_url`, create zero cache rows,
+  release leases, retain only fixed-category telemetry, and make no subsequent request;
+- schema and normalization failures create zero cache rows; and
+- repeated pagination remains rejected before a third request.
+
+The real Apple request-event count remained one before and after this correction. No live Apple
+or other-provider request occurred.
+
 ## Full-run projection
 
 - Prior planning forecast: 217 of 225 requests.
@@ -172,6 +197,7 @@ A complete 25-artist test is not justified from this evidence.
 - Pilot runner implemented: Yes
 - Plan mode executed: Yes
 - Authentication tested: Yes, HTTP 200 followed by safe-URL validation failure
+- URL-validation defect corrected credential-free: Yes
 - Five-artist canary tested: No
 - Full 25-artist cohort tested: No
 - Representative cohort tested: No

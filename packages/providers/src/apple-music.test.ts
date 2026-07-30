@@ -72,6 +72,12 @@ const artist = (id = "42", name = "Artist") => ({
   },
   href: `/v1/catalog/us/artists/${id}`,
   id,
+  relationships: {
+    albums: {
+      data: [],
+      href: `/v1/catalog/us/artists/${id}/albums`,
+    },
+  },
   type: "artists",
 });
 
@@ -373,6 +379,9 @@ describe("Apple Music HTTP safety", () => {
     expect(serialized).not.toContain("synthetic-token");
     expect(serialized).not.toContain("artwork");
     expect(serialized).not.toContain("preview");
+    expect(serialized).not.toContain("music.apple.com");
+    expect(serialized).not.toContain('"href"');
+    expect(serialized).not.toContain('"url"');
   });
 
   it("enforces request and runtime budgets before HTTP", async () => {
@@ -399,6 +408,132 @@ describe("Apple Music HTTP safety", () => {
       classification: "runtime_budget_exhausted",
     });
     expect(runtimeFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("Apple Music response URL categories and cache ordering", () => {
+  it("accepts required resource hrefs while discarding valid or malformed sharing metadata", async () => {
+    for (const descriptiveUrl of ["https://music.apple.com/us/artist/synthetic", "not a URL"]) {
+      const persistence = new MemoryPersistence();
+      const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse({
+          data: [
+            {
+              ...artist(),
+              attributes: {
+                ...artist().attributes,
+                url: descriptiveUrl,
+              },
+              unexpectedUrl: "https://untrusted.invalid/must-not-be-used",
+            },
+          ],
+        }),
+      );
+      await expect(createClient(persistence, fetchImpl).getArtist("42")).resolves.toEqual(
+        expect.objectContaining({ artistId: "42", name: "Artist" }),
+      );
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(persistence.cache).toHaveLength(1);
+      const cache = JSON.stringify([...persistence.cache.values()]);
+      expect(cache).not.toContain("music.apple.com");
+      expect(cache).not.toContain("untrusted.invalid");
+      expect(cache).not.toContain('"href"');
+      expect(cache).not.toContain('"url"');
+    }
+  });
+
+  it("accepts same-host absolute pagination and stores only normalized relative navigation", async () => {
+    const persistence = new MemoryPersistence();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: [album("first")],
+          next: "https://api.music.apple.com/v1/catalog/us/artists/42/view/singles?offset=1",
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ data: [album("second")] }));
+    const result = await createClient(persistence, fetchImpl).getArtistView("42", "singles");
+    expect(result.map((value) => value.albumId)).toEqual(["first", "second"]);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect((persistence.completions[0]?.cacheValue as { next?: string } | undefined)?.next).toBe(
+      "/v1/catalog/us/artists/42/view/singles?offset=1",
+    );
+  });
+
+  it.each([
+    [
+      "cross-host",
+      "https://outside.invalid/v1/catalog/us/artists/private-id/view/singles?token=secret",
+      "cross_host",
+    ],
+    ["non-catalog", "/unrelated/path", "non_catalog_path"],
+    ["personal scope", "/v1/me/library", "personal_scope"],
+  ])(
+    "rejects %s pagination before caching or making a subsequent request",
+    async (_, next, reason) => {
+      const persistence = new MemoryPersistence();
+      const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ data: [], next }));
+      const failure = await createClient(persistence, fetchImpl)
+        .getArtistView("42", "singles")
+        .catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(AppleMusicClientError);
+      expect(failure).toMatchObject({
+        classification: "unsafe_url",
+        urlDiagnostic: {
+          fieldPath: "response.next",
+          reason,
+          role: "pagination",
+        },
+      });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(persistence.cache).toHaveLength(0);
+      expect(persistence.active).toBe(0);
+      const evidence = JSON.stringify({ error: failure, telemetry: persistence.completions });
+      for (const prohibited of [
+        "outside.invalid",
+        "private-id",
+        "token=secret",
+        "synthetic-token",
+        "authorization",
+        "/v1/me/library",
+        "/unrelated/path",
+      ]) {
+        expect(evidence).not.toContain(prohibited);
+      }
+    },
+  );
+
+  it("rejects repeated pagination without a third request", async () => {
+    const repeated = "/v1/catalog/us/artists/42/view/singles?offset=1";
+    const persistence = new MemoryPersistence();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ data: [], next: repeated }))
+      .mockResolvedValueOnce(jsonResponse({ data: [], next: repeated }));
+    await expect(
+      createClient(persistence, fetchImpl).getArtistView("42", "singles"),
+    ).rejects.toMatchObject({ classification: "duplicate_next_page" });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("creates no cache entry for schema or normalization failure", async () => {
+    for (const body of [
+      { data: [{ id: "42", type: "not-artists" }] },
+      { data: [{ href: "/v1/catalog/us/artists/42", id: "42", type: "artists" }] },
+    ]) {
+      const persistence = new MemoryPersistence();
+      await expect(
+        createClient(
+          persistence,
+          vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(body)),
+        ).getArtist("42"),
+      ).rejects.toMatchObject({ classification: "invalid_payload" });
+      expect(persistence.cache).toHaveLength(0);
+      expect(persistence.completions).toHaveLength(1);
+      expect(persistence.completions[0]?.cacheValue).toBeUndefined();
+      expect(persistence.active).toBe(0);
+    }
   });
 });
 

@@ -6,7 +6,7 @@ Updated: 2026-07-29
 
 - Worktree: `C:\Users\taysh\Documents\Codex\codex_world_1_apple`
 - Branch: `codex/apple-music-discovery`
-- Pilot-command starting checkpoint: `f8a3de6331497cd68864db2e42cf32ee8bafe0f8`
+- Corrective starting checkpoint: `01de135281f12927fdf21e0d227d18b75b58c393`
 - Upstream: `origin/codex/apple-music-discovery`
 - Live-checkpoint commit: `7577cca49ad946acfee1fb2e1a480419b97f0191`
 - Scope: bounded Apple Music authentication probe and conditional five-artist canary
@@ -32,8 +32,13 @@ iTunes pilot snapshot is immutable input only.
 - `AppleMusicClient` permits only exact-host public catalog GET requests and implements artist
   search, single and maximum-25 artist lookup, six artist views, album lookup, paginated album
   tracks, and song batches.
-- Every followed path is relative and allowlisted. Pagination is terminal, duplicate-safe, and
-  locally sorted.
+- Every request-capable path is allowlisted. Relative and same-host absolute pagination is reduced
+  to an allowed relative path. Pagination is terminal, duplicate-safe, and locally sorted.
+- Descriptive Apple sharing URLs, non-followed relationship links, resource-reference links, and
+  unknown URL-bearing fields are discarded and never become transport targets or cached data.
+- A response enters the cache only after schema validation, request-capable URL validation, and
+  complete normalization succeed. Unsafe URL, schema, and normalization failures create no cache
+  entry.
 - The Apple-only database gate enforces concurrency one, at least 1,100 milliseconds between
   starts, request/runtime budgets, safe telemetry, normalized cache reuse, and persisted 429
   cooldowns.
@@ -51,8 +56,8 @@ iTunes pilot snapshot is immutable input only.
   only confirmed IDs, records sanitized terminal evidence, and releases the lease in a finally-safe
   path.
 
-The new focused command/controller suite has 32 passing injected tests. The Apple PostgreSQL file
-has 7 passing tests. The real plan command validated the frozen snapshot with credential variables
+The focused command/controller suite has 33 passing injected tests. The Apple PostgreSQL file has
+8 passing tests. The real plan command validated the frozen snapshot with credential variables
 and database configuration removed, and all isolated Apple database counts remained zero.
 
 The prior campaign-fixture leak did not reproduce in the latest pre-live attempt. One fresh
@@ -68,6 +73,11 @@ The canary-only checkpoint passed 410 unit tests, 33 focused pilot tests, 7 Appl
 92 canonical aggregate integration tests, formatting, zero-warning lint, strict TypeScript, the
 production build, and Apple doctor `READY` with 20 migrations.
 
+The corrective checkpoint passed formatting, zero-warning lint, strict TypeScript, 417 unit
+tests, 33 focused pilot-command tests, 8 focused Apple database tests, 93 canonical aggregate
+integration tests on the isolated Apple test database, the production build, 23 mock-only
+Playwright tests, migration drift checks, and Apple doctor `READY` with 20 migrations.
+
 ## Live authentication evidence
 
 One separately authorized public-catalog artist lookup returned HTTP 200, showing that Apple
@@ -79,6 +89,14 @@ The run used the canary-only 75-request and 15-minute database limits. The lease
 there is no cooldown, and Apple remains persistently disabled. A single parsed-response cache row
 created before normalization failed was removed after the audit. Sanitized request telemetry and
 the terminal run record remain. No raw response remains.
+
+The retained telemetry cannot recover the rejected value or exact field. The throwing code path
+rules out artist `attributes.url`. The failure category was response navigation metadata handled
+by `assertAllowedAppleMusicPath` and `assertAllowedAppleMusicUrl`, with
+`data[].relationships.albums.href` the strongest exact-path match. Credential-free injected HTTP
+tests now complete the same response shape successfully, discard descriptive and non-followed URL
+metadata, and cache only after normalization. Unsafe pagination produces zero cache rows,
+sanitized telemetry, a released lease, and no subsequent request.
 
 See `docs/apple-music-api-canary-evaluation.md`.
 
@@ -100,7 +118,7 @@ See `docs/apple-music-api-design.md`, `docs/apple-music-pilot-handoff.md`,
 
 ## Next milestone
 
-Reproduce and correct the `unsafe_url` normalization stop with credential-free sanitized fixtures
-and official public-catalog URL policy under a new source milestone. Do not retry live
-authentication or run the canary without another explicitly bounded authorization. The
-five-artist canary and complete 25-artist cohort have not been tested.
+The next milestone is a separately authorized authentication recheck and five-artist canary retry.
+Do not make a live request without that authorization. The five-artist canary, complete 25-artist
+cohort, and representative cohort have not been tested. Production integration remains
+unauthorized.

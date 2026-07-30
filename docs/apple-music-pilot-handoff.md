@@ -12,7 +12,8 @@ Date: 2026-07-29
 - API scope: public catalog only
 - Database scope: Apple-specific run, request, cache, mapping, catalog, and comparison tables
 - Verification scope: credential-free tests plus one bounded live HTTP 200 authentication lookup
-  that stopped on `unsafe_url` before identity confirmation
+  that stopped on `unsafe_url` before identity confirmation, followed by a credential-free URL and
+  cache-ordering correction
 
 ## Bounded live authentication result
 
@@ -31,6 +32,18 @@ The post-run audit found one parsed-response cache row created before normalizat
 single row was removed while sanitized request telemetry and the terminal run result were
 preserved. No raw response remains. The lease is released, no cooldown is active, and Apple
 remains persistently disabled.
+
+The retained evidence cannot identify the rejected value or exact field path. Code-path
+reconstruction rules out artist `attributes.url`. The failure category was response navigation
+metadata validated by `assertAllowedAppleMusicPath` and `assertAllowedAppleMusicUrl`, with
+`data[].relationships.albums.href` the strongest exact-path match. That relationship link was not
+followed.
+
+The correction keeps strict validation on every API request target, followed resource path, and
+pagination value. It separately discards descriptive sharing URLs, non-followed relationship
+links, resource-reference links, and unknown URL-bearing fields. Cache writes now occur only after
+schema validation, request-capable URL validation, and complete normalization. Unsafe URL, schema,
+or normalization failures create no cache entry and retain only fixed-category telemetry.
 
 The Apple task did not modify the main or iTunes worktree. The final audit observed unrelated
 concurrent uncommitted changes in the iTunes worktree and left them untouched.
@@ -78,10 +91,11 @@ in source control, logs, telemetry, or reports.
 
 ## Credential-free verification
 
-- Focused pilot command and controller suite: 32 tests passed with injected clients and synthetic
+- Focused pilot command and controller suite: 33 tests passed with injected clients and synthetic
   evidence.
-- Apple PostgreSQL suite: 7 tests passed, including run-scoped lease retention, explicit release,
-  and indefinite 429 cooldown persistence.
+- Apple PostgreSQL suite: 8 tests passed, including zero-cache unsafe pagination, sanitized
+  telemetry, run-scoped lease retention, explicit release, and indefinite 429 cooldown
+  persistence.
 - The prior reported campaign-fixture leak did not reproduce in the latest pre-live attempt. One
   fresh aggregate run had two Spotify rate-gate test timeouts. The focused rerun passed 11 of 11,
   and the second fresh aggregate run passed 90 of 90. No Spotify product or test source change was
@@ -91,9 +105,9 @@ in source control, logs, telemetry, or reports.
   request events, runs, leases, cooldowns, cache rows, mappings, albums, songs, comparisons, and
   imported snapshot rows.
 - Formatting, zero-warning lint, and strict TypeScript passed.
-- Unit suite: 51 files and 409 tests passed.
-- Canonical aggregate PostgreSQL suite: 17 files and 92 tests passed against a freshly reset Apple
-  test database. This includes clean and upgrade migration coverage with 19 migrations.
+- Unit suite: 51 files and 417 tests passed.
+- Canonical aggregate PostgreSQL suite: 17 files and 93 tests passed against a freshly reset Apple
+  test database. This includes clean and upgrade migration coverage with 20 migrations.
 - Migration generation reported no schema drift and created no migration.
 - Production build passed.
 - Mock-only Playwright: 23 tests passed.
@@ -105,8 +119,7 @@ All Apple HTTP tests used injected responses. No live provider request occurred.
 
 ## Next milestone
 
-The next source milestone should reproduce and resolve the `unsafe_url` normalization stop using
-credential-free, sanitized fixtures and official public-catalog URL rules. Source must not be
-changed under the completed live milestone. Any later authentication retry or canary requires a
-new explicitly bounded authorization. A complete 25-artist test is not justified because no
-five-artist canary measurements exist.
+The URL-validation and cache-ordering defect is corrected with credential-free evidence. Any
+authentication recheck or five-artist canary retry requires a new explicitly bounded
+authorization. A complete 25-artist test is not justified because no five-artist canary
+measurements exist.

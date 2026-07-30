@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { AppleMusicAlbum, AppleMusicSong } from "@radar/providers";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { AppleMusicClient, type AppleMusicAlbum, type AppleMusicSong } from "@radar/providers";
 import { createDatabase } from "./client";
 import {
   claimAppleMusicPilotLease,
@@ -281,6 +281,84 @@ describe.sequential("Apple Music isolated persistence and global request gate", 
     expect(JSON.stringify(await connection.db.select().from(appleMusicResponseCache))).not.toMatch(
       /artwork|preview|token/i,
     );
+  });
+
+  it("keeps unsafe pagination out of cache and releases leases with sanitized telemetry", async () => {
+    const run = await createAppleMusicComparisonRun(connection.db, {
+      implementationCommit: "f".repeat(40),
+      maximumRuntimeMs: 60_000,
+      minRequestIntervalMs: 1_100,
+      requestBudget: 2,
+      snapshotId,
+    });
+    const runLeaseToken = await claimAppleMusicPilotLease(connection.db, run.id);
+    const persistence = createAppleMusicRequestPersistence(connection.db, {
+      runLeaseToken,
+    });
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [],
+          next: "https://outside.invalid/v1/catalog/us/artists/private-id/view/singles?token=secret",
+        }),
+        { status: 200 },
+      ),
+    );
+    const client = new AppleMusicClient({
+      enabled: true,
+      fetchImpl,
+      maxRetries: 0,
+      persistence,
+      runId: run.id,
+      tokenProvider: { getToken: () => "synthetic-token" },
+    });
+
+    try {
+      await expect(client.getArtistView("synthetic", "singles")).rejects.toMatchObject({
+        classification: "unsafe_url",
+      });
+    } finally {
+      await finishAppleMusicComparisonRun(connection.db, run.id, {
+        metrics: { requestCount: 1 },
+        status: "failed",
+        stopReason: "unsafe_url",
+      });
+      await releaseAppleMusicPilotLease(connection.db, runLeaseToken);
+    }
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(await connection.db.select().from(appleMusicResponseCache)).toHaveLength(0);
+    expect(await connection.db.select().from(appleMusicArtistMappings)).toHaveLength(0);
+    expect(await connection.db.select().from(appleMusicAlbums)).toHaveLength(0);
+    expect(await connection.db.select().from(appleMusicSongs)).toHaveLength(0);
+    expect(await connection.db.select().from(appleMusicComparisons)).toHaveLength(0);
+    expect(await getAppleMusicOperationalStatus(connection.db)).toMatchObject({
+      cooldownActive: false,
+      leaseActive: false,
+      requestCount: 1,
+    });
+    expect(
+      await connection.db.query.appleMusicComparisonRuns.findFirst({
+        where: eq(appleMusicComparisonRuns.id, run.id),
+      }),
+    ).toMatchObject({ status: "failed", stopReason: "unsafe_url" });
+    const events = await connection.db.select().from(appleMusicRequestEvents);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      errorClassification:
+        "unsafe_url:response.next:pagination:absolute:https:cross_host:cross_host",
+      status: 200,
+    });
+    const telemetry = JSON.stringify(events);
+    for (const prohibited of [
+      "outside.invalid",
+      "private-id",
+      "token=secret",
+      "synthetic-token",
+      "authorization",
+    ]) {
+      expect(telemetry).not.toContain(prohibited);
+    }
   });
 
   it("persists mapping evidence, normalized catalog rows, and comparisons idempotently", async () => {

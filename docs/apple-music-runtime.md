@@ -75,3 +75,23 @@ complete run, 75 request starts and 15 minutes through the canary, concurrency o
 1,100 milliseconds between request starts. `--stop-after-canary` binds the database run itself to
 the 75-request and 15-minute ceilings, records `canary_completed`, releases the lease, and never
 creates the full-phase client. The real plan command was executed credential-free.
+
+## URL and cache correction
+
+The prior bounded authentication request returned HTTP 200, but response navigation metadata was
+handled as if every URL-like field could become a request target. The retained evidence does not
+permit recovery of the exact value or field. The code path rules out the descriptive artist
+sharing `url`; a non-followed artist albums relationship `href` is the strongest exact-field
+match.
+
+The client now distinguishes strict request and pagination URLs from descriptive catalog
+metadata. API targets, followed resource paths, and `next` links retain the exact-host, HTTPS,
+US-catalog, no-`/v1/me`, no-cross-host, and duplicate-page protections. Descriptive sharing URLs,
+non-followed relationship links, and unknown fields are discarded and never transported or
+persisted. Cache persistence occurs only after schema checks, navigation checks, and complete
+normalization succeed.
+
+Credential-free unit and isolated PostgreSQL tests cover the corrected HTTP 200 sequence and
+unsafe pagination failure. This correction made no live Apple or other-provider request.
+`APPLE_MUSIC_ENABLED=false` remains required. The next live step is a separately authorized
+authentication recheck and five-artist canary retry.
