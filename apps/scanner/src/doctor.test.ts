@@ -31,7 +31,58 @@ describe("doctor", () => {
     expect(report.overall).toBe("READY");
     expect(
       report.checks.filter((check) => check.state === "OPTIONAL_PROVIDER_DISABLED"),
-    ).toHaveLength(4);
+    ).toHaveLength(5);
+  });
+
+  it("reports Apple Music disabled without exposing credential configuration", async () => {
+    const report = await collectDoctorReport(
+      {
+        APPLE_MUSIC_ENABLED: "false",
+        APPLE_MUSIC_KEY_ID: "ABCDE12345",
+        APPLE_MUSIC_MEDIA_ID: "synthetic.media",
+        APPLE_MUSIC_PRIVATE_KEY_PATH: "C:\\external\\synthetic.p8",
+        APPLE_MUSIC_TEAM_ID: "TEAMID1234",
+        DATABASE_URL: "postgresql://secret:secret@127.0.0.1:5432/radar",
+        MUSICBRAINZ_ENABLED: "false",
+        REDDIT_ENABLED: "false",
+        SPOTIFY_ENABLED: "false",
+      },
+      {
+        databaseProbe: () => Promise.resolve(databaseReady),
+        directoryProbe: () => true,
+        expectedMigrationCount: 6,
+        pnpmVersion: "11.9.0",
+        portProbe: () => Promise.resolve("available"),
+      },
+    );
+    const output = formatDoctorReport(report);
+    expect(output).toContain("Apple Music is disabled");
+    expect(output).not.toContain("ABCDE12345");
+    expect(output).not.toContain("TEAMID1234");
+    expect(output).not.toContain("synthetic.p8");
+  });
+
+  it("requires complete Apple catalog credentials when explicitly enabled", async () => {
+    const report = await collectDoctorReport(
+      {
+        APPLE_MUSIC_ENABLED: "true",
+        DATABASE_URL: "postgresql://secret:secret@127.0.0.1:5432/radar",
+        MUSICBRAINZ_ENABLED: "false",
+        REDDIT_ENABLED: "false",
+        SPOTIFY_ENABLED: "false",
+      },
+      {
+        databaseProbe: () => Promise.resolve(databaseReady),
+        directoryProbe: () => true,
+        expectedMigrationCount: 6,
+        pnpmVersion: "11.9.0",
+        portProbe: () => Promise.resolve("available"),
+      },
+    );
+    expect(report.overall).toBe("ACTION_REQUIRED");
+    expect(report.checks.find((check) => check.name === "Apple Music catalog")).toMatchObject({
+      state: "ACTION_REQUIRED",
+    });
   });
 
   it("does not require an encryption key when Spotify is explicitly disabled", async () => {

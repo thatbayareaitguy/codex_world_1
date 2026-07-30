@@ -1,4 +1,5 @@
 export * from "./logger";
+export * from "./apple-music-pilot";
 export * from "./itunes-pilot";
 export * from "./itunes-pilot-offline-evaluation";
 export * from "./matching";

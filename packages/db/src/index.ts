@@ -1,4 +1,5 @@
 export * from "./client";
+export * from "./apple-music";
 export * from "./repositories";
 export * from "./feed-preferences";
 export * from "./review-decisions";

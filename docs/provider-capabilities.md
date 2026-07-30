@@ -19,7 +19,37 @@
   reference confirms `track_artist` release browsing for appearances and supports release media,
   recordings, release groups, artist credits, and ISRC includes.
 
-The only permitted paid prerequisite is the owner's existing Spotify Premium subscription. No provider adapter may require a paid developer membership, API subscription, or commercial plan.
+The general rule permits no paid prerequisite other than the owner's existing Spotify Premium
+subscription. The narrow branch-only exception in `AGENTS.md` permits Apple Developer Program
+access for the isolated catalog experiment on `codex/apple-music-discovery`. It does not change
+policy on any other branch or authorize another paid provider.
+
+## Apple Music API catalog verification (2026-07-29)
+
+- Scope: public catalog reads from exactly `https://api.music.apple.com`. The experimental client
+  supports catalog artist search, one or up to 25 artists by ID, six documented artist views,
+  albums, album-track relationships, and songs by ID.
+- Authentication: server-generated developer tokens use ES256 with a configured Team ID, Key ID,
+  and external P-256 private key. Tokens are cached only in process memory and regenerated before
+  expiration. Music User Tokens are not implemented.
+- Request safety: the provider defaults off. A PostgreSQL-backed Apple-only gate enforces
+  concurrency one, at least 1,100 milliseconds between request starts, request and runtime budgets,
+  bounded response bodies, timeouts, normalized cache reuse, safe telemetry, and persisted 429
+  cooldowns. This interval is an internal conservative control, not a claim of a published Apple
+  numeric rate allowance.
+- Pagination: only relative allowlisted catalog paths may be followed. Every `next` path is checked,
+  repeated pages are rejected, and release sorting is local.
+- Exclusions: no user library, playback, playlists, Apple Music Feed, artwork or preview download,
+  production scanner integration, or live request is part of this implementation checkpoint.
+- Official documentation:
+  [Generating Developer Tokens](https://developer.apple.com/documentation/applemusicapi/generating-developer-tokens),
+  [Get Multiple Catalog Artists](https://developer.apple.com/documentation/applemusicapi/get-multiple-catalog-artists),
+  [Fetch an Artist View](https://developer.apple.com/documentation/applemusicapi/fetch-a-view-on-this-resource-by-name-4kow5),
+  [Fetching Resources by Page](https://developer.apple.com/documentation/applemusicapi/fetching_resources_by_page),
+  [Get a Catalog Album](https://developer.apple.com/documentation/applemusicapi/get-a-catalog-album),
+  [Get Multiple Catalog Songs](https://developer.apple.com/documentation/applemusicapi/get-multiple-catalog-songs-by-id),
+  and
+  [Handling Requests and Responses](https://developer.apple.com/documentation/applemusicapi/handling-requests-and-responses).
 
 ## iTunes Search API pilot verification (2026-07-28)
 
@@ -62,7 +92,7 @@ The only permitted paid prerequisite is the owner's existing Spotify Premium sub
 | SoundCloud                                                   | Manual feature only, off by default | No automated request                                                                | None                                                    | None                                                                                       | None     | None                                               | No account for outbound links; API registration requires paid Artist Pro and is excluded | None                                                  | User-directed HTTPS links only, no metadata fetch or availability claim                                                                  |
 | iTunes Search (`apple_music` family, `itunes_search` source) | Isolated pilot only                 | Artist mapping, album lookup, and recent-song lookup                                | None                                                    | None                                                                                       | None     | Catalog dates only                                 | No account or payment documented for the archived public endpoints                       | None                                                  | Archived API; approximately 20 calls per minute; 200-result cap; no proven paging; restrictive promotional-content terms                 |
 | YouTube                                                      | Deferred                            | None                                                                                | None                                                    | None                                                                                       | None     | None                                               | Not evaluated for this milestone                                                         | None                                                  | Spotify coexistence policy unresolved                                                                                                    |
-| Apple Music authenticated API                                | Excluded                            | None                                                                                | None                                                    | None                                                                                       | None     | None                                               | Apple Developer Program payment required                                                 | Developer token                                       | Violates cost gate and is outside the iTunes Search pilot                                                                                |
+| Apple Music authenticated API                                | Branch-only isolated implementation | Public catalog artist, view, album, and song metadata                               | None                                                    | None                                                                                       | None     | Catalog dates only                                 | Apple Developer Program membership under the explicit branch exception                   | Server developer token                                | Disabled by default; credential-free tested; no live access, production integration, or Music User Token support                         |
 | TIDAL                                                        | Deferred                            | None                                                                                | None                                                    | None                                                                                       | None     | None                                               | Free access may exist but compatibility is not established                               | None                                                  | No adapter until a new official review                                                                                                   |
 
 ## Spotify Verification

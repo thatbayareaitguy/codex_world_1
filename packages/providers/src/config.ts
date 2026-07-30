@@ -13,6 +13,38 @@ const optionalSpotifyPlaylistId = z.preprocess(
 );
 
 const environmentSchema = z.object({
+  APPLE_MUSIC_CONCURRENCY: z.coerce.number().int().min(1).max(1).default(1),
+  APPLE_MUSIC_ENABLED: booleanFlag(false),
+  APPLE_MUSIC_KEY_ID: z
+    .string()
+    .regex(/^[A-Z0-9]{10}$/)
+    .optional(),
+  APPLE_MUSIC_MAX_REQUESTS_PER_RUN: z.coerce.number().int().min(1).max(500).default(200),
+  APPLE_MUSIC_MAX_RESPONSE_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1024)
+    .max(10 * 1024 * 1024)
+    .default(5 * 1024 * 1024),
+  APPLE_MUSIC_MAX_RUNTIME_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(1_800_000),
+  APPLE_MUSIC_MEDIA_ID: z.string().min(1).max(255).optional(),
+  APPLE_MUSIC_MIN_REQUEST_INTERVAL_MS: z.coerce.number().int().min(1_100).default(1_100),
+  APPLE_MUSIC_PRIVATE_KEY_PATH: z.string().min(1).optional(),
+  APPLE_MUSIC_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(15_000),
+  APPLE_MUSIC_STOREFRONT: z
+    .string()
+    .regex(/^[a-z]{2}$/)
+    .default("us"),
+  APPLE_MUSIC_TEAM_ID: z
+    .string()
+    .regex(/^[A-Z0-9]{10}$/)
+    .optional(),
+  APPLE_MUSIC_TOKEN_LIFETIME_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(300)
+    .max(15_777_000)
+    .default(3_600),
   APP_BASE_URL: z.url().default("http://127.0.0.1:3000"),
   APP_ENCRYPTION_KEY: z.string().min(1).optional(),
   DATABASE_URL: z.string().min(1).optional(),
@@ -72,6 +104,22 @@ const environmentSchema = z.object({
 });
 
 export interface ProviderConfiguration {
+  appleMusic: {
+    concurrency: 1;
+    configured: boolean;
+    enabled: boolean;
+    keyId?: string;
+    maxRequestsPerRun: number;
+    maxResponseBytes: number;
+    maximumRuntimeMs: number;
+    mediaId?: string;
+    minRequestIntervalMs: number;
+    privateKeyPath?: string;
+    requestTimeoutMs: number;
+    storefront: string;
+    teamId?: string;
+    tokenLifetimeSeconds: number;
+  };
   appBaseUrl: string;
   appEncryptionKey?: string;
   databaseUrl?: string;
@@ -154,8 +202,33 @@ export function loadProviderConfiguration(
     parsed.REDDIT_CLIENT_SECRET &&
     redditUserAgentValid,
   );
+  const appleMusicConfigured = Boolean(
+    parsed.APPLE_MUSIC_ENABLED &&
+    parsed.APPLE_MUSIC_TEAM_ID &&
+    parsed.APPLE_MUSIC_KEY_ID &&
+    parsed.APPLE_MUSIC_MEDIA_ID &&
+    parsed.APPLE_MUSIC_PRIVATE_KEY_PATH,
+  );
 
   return {
+    appleMusic: {
+      concurrency: 1,
+      configured: appleMusicConfigured,
+      enabled: parsed.APPLE_MUSIC_ENABLED,
+      ...(parsed.APPLE_MUSIC_KEY_ID ? { keyId: parsed.APPLE_MUSIC_KEY_ID } : {}),
+      maxRequestsPerRun: parsed.APPLE_MUSIC_MAX_REQUESTS_PER_RUN,
+      maxResponseBytes: parsed.APPLE_MUSIC_MAX_RESPONSE_BYTES,
+      maximumRuntimeMs: parsed.APPLE_MUSIC_MAX_RUNTIME_MS,
+      ...(parsed.APPLE_MUSIC_MEDIA_ID ? { mediaId: parsed.APPLE_MUSIC_MEDIA_ID } : {}),
+      minRequestIntervalMs: parsed.APPLE_MUSIC_MIN_REQUEST_INTERVAL_MS,
+      ...(parsed.APPLE_MUSIC_PRIVATE_KEY_PATH
+        ? { privateKeyPath: parsed.APPLE_MUSIC_PRIVATE_KEY_PATH }
+        : {}),
+      requestTimeoutMs: parsed.APPLE_MUSIC_REQUEST_TIMEOUT_MS,
+      storefront: parsed.APPLE_MUSIC_STOREFRONT,
+      ...(parsed.APPLE_MUSIC_TEAM_ID ? { teamId: parsed.APPLE_MUSIC_TEAM_ID } : {}),
+      tokenLifetimeSeconds: parsed.APPLE_MUSIC_TOKEN_LIFETIME_SECONDS,
+    },
     appBaseUrl: parsed.APP_BASE_URL,
     ...(parsed.APP_ENCRYPTION_KEY ? { appEncryptionKey: parsed.APP_ENCRYPTION_KEY } : {}),
     ...(parsed.DATABASE_URL ? { databaseUrl: parsed.DATABASE_URL } : {}),

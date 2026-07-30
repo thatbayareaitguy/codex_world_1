@@ -298,6 +298,7 @@ export async function collectDoctorReport(
     );
   }
   if (configuration) {
+    checks.push(...appleMusicChecks(configuration));
     checks.push(...spotifyChecks(configuration, environment));
     checks.push(...musicBrainzChecks(configuration));
     checks.push(...redditChecks(configuration, environment));
@@ -471,6 +472,36 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
   } finally {
     await client.end();
   }
+}
+
+function appleMusicChecks(
+  configuration: ReturnType<typeof loadProviderConfiguration>,
+): DoctorCheck[] {
+  if (!configuration.appleMusic.enabled) {
+    return [
+      optional("Apple Music", "Apple Music is disabled; no Apple catalog request can occur."),
+    ];
+  }
+  return [
+    configuration.appleMusic.configured
+      ? ready("Apple Music catalog", "Apple Music catalog credentials are configured and hidden.")
+      : action(
+          "Apple Music catalog",
+          "Apple Music is enabled without complete catalog credentials.",
+          "Configure all required local credentials or disable Apple Music.",
+        ),
+    configuration.appleMusic.concurrency === 1 &&
+    configuration.appleMusic.minRequestIntervalMs >= 1_100
+      ? ready(
+          "Apple Music request gate",
+          `Concurrency is one and the request-start interval is ${configuration.appleMusic.minRequestIntervalMs} milliseconds.`,
+        )
+      : error(
+          "Apple Music request gate",
+          "Apple Music request safety limits are invalid.",
+          "Set concurrency to one and the request-start interval to at least 1100 milliseconds.",
+        ),
+  ];
 }
 
 function spotifyChecks(

@@ -1,6 +1,7 @@
 export * from "./config";
 export * from "./contracts";
 export * from "./future";
+export * from "./apple-music";
 export * from "./itunes";
 export * from "./mock-provider";
 export * from "./musicbrainz";

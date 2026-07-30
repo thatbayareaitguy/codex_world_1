@@ -6,7 +6,8 @@ This runtime supports a disabled-by-default Apple Music public catalog pilot on
 `codex/apple-music-discovery`. Apple Developer Program membership is required. A regular Apple
 Music listener subscription is not required for public catalog discovery.
 
-The Apple provider is not implemented. Live Apple requests, production scheduling, production
+The Apple catalog provider is implemented and credential-free tested, but it is not connected to a
+runtime command or production flow. Live Apple requests, production scheduling, production
 integration, Music User Tokens, personal-library access, playback, playlists, and Apple Music Feed
 remain prohibited.
 

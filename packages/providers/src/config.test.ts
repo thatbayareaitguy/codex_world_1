@@ -21,6 +21,18 @@ describe("provider configuration", () => {
       internalMaxQpm: 30,
     });
     expect(config.initialBackfillDays).toBe(60);
+    expect(config.appleMusic).toMatchObject({
+      concurrency: 1,
+      configured: false,
+      enabled: false,
+      maxRequestsPerRun: 200,
+      maxResponseBytes: 5 * 1024 * 1024,
+      maximumRuntimeMs: 1_800_000,
+      minRequestIntervalMs: 1_100,
+      requestTimeoutMs: 15_000,
+      storefront: "us",
+      tokenLifetimeSeconds: 3_600,
+    });
     expect(config.itunes).toEqual({
       concurrency: 1,
       enabled: false,
@@ -31,6 +43,29 @@ describe("provider configuration", () => {
       requestTimeoutMs: 15_000,
       storefront: "US",
     });
+  });
+
+  it("keeps Apple Music disabled by default and validates bounded catalog settings", () => {
+    expect(
+      loadProviderConfiguration({
+        APPLE_MUSIC_ENABLED: "true",
+        APPLE_MUSIC_KEY_ID: "ABCDE12345",
+        APPLE_MUSIC_MEDIA_ID: "media.com.example",
+        APPLE_MUSIC_PRIVATE_KEY_PATH: "C:\\external\\AuthKey_ABCDE12345.p8",
+        APPLE_MUSIC_TEAM_ID: "FGHIJ67890",
+      }).appleMusic,
+    ).toMatchObject({ configured: true, enabled: true });
+    for (const environment of [
+      { APPLE_MUSIC_CONCURRENCY: "2" },
+      { APPLE_MUSIC_KEY_ID: "short" },
+      { APPLE_MUSIC_MAX_REQUESTS_PER_RUN: "501" },
+      { APPLE_MUSIC_MIN_REQUEST_INTERVAL_MS: "1099" },
+      { APPLE_MUSIC_STOREFRONT: "USA" },
+      { APPLE_MUSIC_TEAM_ID: "short" },
+      { APPLE_MUSIC_TOKEN_LIFETIME_SECONDS: "15777001" },
+    ]) {
+      expect(() => loadProviderConfiguration(environment)).toThrow();
+    }
   });
 
   it("requires explicit iTunes enablement and rejects unsafe pilot limits", () => {
