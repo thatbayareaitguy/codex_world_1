@@ -11,7 +11,8 @@ Date: 2026-07-29
 - Authentication: developer token only, ES256 with an external P-256 key, memory-only token cache
 - API scope: public catalog only
 - Database scope: Apple-specific run, request, cache, mapping, catalog, and comparison tables
-- Verification scope: synthetic credentials and injected HTTP only
+- Verification scope: credential-free tests plus one bounded live HTTP 200 authentication lookup
+  that stopped on `unsafe_url` before identity confirmation
 
 ## Bounded live authentication result
 
