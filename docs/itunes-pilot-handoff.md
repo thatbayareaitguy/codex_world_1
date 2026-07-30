@@ -107,6 +107,52 @@ Pre-live credential-free verification:
 - Isolated pre-live database baseline remained 360 request events, 258 cache rows, two historical
   runs, zero active runs, and zero active request leases
 
+## Complete full-watchlist artist-search census
+
+The dedicated census completed all four frozen shards at execution commit
+`3f83ac4189609f2171a92d4216c0bc3dbd92e140`. The detailed record is
+`docs/itunes-full-watchlist-search-census.md`.
+
+- Shard run IDs: `e44e708d-8eff-4c95-a660-6ae3f6448b32`,
+  `a2845562-7c31-44af-86ae-d14cfaf8eff6`,
+  `e6b380fe-23a1-4363-b250-846a0d6d5948`, and
+  `0cbb85f2-e2f8-4a09-9cbe-2cb761bdf5d1`
+- Completed artists: 593
+- Original cache hits: 50
+- New artist searches: 543
+- Minimum observed per-shard request-start interval: 3201, 3201, 3202, and 3202 ms
+- Retries, HTTP errors, 429s, Retry-After rows, parsing errors, response-bound errors, overlaps,
+  `/lookup` events, batch events, and other-provider events: 0
+- Search-stage results: 307 unique exact canonical, 0 unique alias supported, 285 competing exact
+  or alias, 1 without an exact or alias candidate, 0 invalid inputs, and 0 unsafe results
+- Search-stage mapping coverage: 51.8%; unresolved identity rate: 48.2%
+- Normalized Apple candidates: 3,149; plausible exact or alias candidate IDs: 1,693
+- Artists reaching the configured search result limit: 225
+- Original cohort: all 50 included, all 50 search rows reused, 26 unique exact and 24 competing,
+  with no discrepancy from prior search evidence
+- Later catalog-evidence projection: 101 candidate IDs already have album cache and 101 have song
+  cache; 1,592 new album plus 1,592 new song requests remain, split into 22 runs at a 2:49:48.8
+  pacing floor
+- Final historical request-event count: 953
+- Final normalized-cache count: 801
+- Active run and request lease: none
+- `ITUNES_DISCOVERY_ENABLED=false`
+
+Complete external artifact:
+
+`C:\Users\taysh\AppData\Local\TSNewMusicRadar\pilot-snapshots\itunes-full-watchlist-search-census-2026-07-30T02-10-30Z.json`
+
+- Exact final file SHA-256:
+  `ee785fcc0831c462ea7e4dbd59fc7c6fc9fccde652c30739212e69740b1913fa`
+- Canonical-content SHA-256:
+  `8b78dd990907e321f037ef16eb5b883ff369bea935d7024b22e0e7a9a184c33d`
+- Search-behavior fingerprint:
+  `1493cc6db2ae9e939ea6ae904f6a2625b760be96feef3a6820151126118cd4a4`
+
+The result establishes operational feasibility for full-watchlist artist search. It justifies
+preparing a separately authorized candidate-catalog evidence phase because the remaining burden
+is bounded, but it does not authorize those requests or any production classification.
+
 Full-watchlist preparation verification:
 
 - Formatting: passed after excluding the deterministic generated offline-evaluation JSON from

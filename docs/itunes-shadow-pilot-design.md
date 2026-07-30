@@ -279,10 +279,12 @@ No album, song, collection-detail, batch, or `/lookup` request is authorized by 
   resume controls, canary verifier, and deterministic artifact generator.
 - Credential-free tested: focused unit and isolated-PostgreSQL tests plus the repository-wide
   verification recorded in `docs/itunes-pilot-handoff.md`.
-- Live iTunes tested: only the completed original and corrected 50-artist pilot.
+- Live iTunes tested: the completed original and corrected 50-artist pilot plus the complete
+  full-watchlist search-only census.
 - Proven on the original cohort: the historical request, mapping, matching, and offline-evaluation
   measurements in the existing pilot documents.
 - Prepared for a full-watchlist census: 593-artist identity snapshot, 50 cache hits, 543 planned
   searches, four deterministic shards, and a separate search-only command.
-- Proven on a full watchlist: nothing yet. The search census and later catalog evaluation have not
-  run.
+- Proven on a full watchlist: search-stage identity coverage and candidate burden only, as
+  documented in `docs/itunes-full-watchlist-search-census.md`. Candidate-catalog and release
+  evaluation have not run.
