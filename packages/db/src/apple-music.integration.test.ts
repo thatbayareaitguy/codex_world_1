@@ -8,6 +8,7 @@ import {
   createAppleMusicComparisonRun,
   createAppleMusicRequestPersistence,
   finishAppleMusicComparisonRun,
+  getConfirmedAppleMusicArtistMapping,
   getAppleMusicOperationalStatus,
   releaseAppleMusicPilotLease,
   saveAppleMusicArtistMapping,
@@ -421,6 +422,119 @@ describe.sequential("Apple Music isolated persistence and global request gate", 
     ]) {
       expect(telemetry).not.toContain(prohibited);
     }
+  });
+
+  it("retains safe HTTP 400 diagnostics with zero cache or result rows and a released lease", async () => {
+    const run = await createAppleMusicComparisonRun(connection.db, {
+      implementationCommit: "f".repeat(40),
+      maximumRuntimeMs: 60_000,
+      minRequestIntervalMs: 1_100,
+      requestBudget: 1,
+      snapshotId,
+    });
+    const runLeaseToken = await claimAppleMusicPilotLease(connection.db, run.id);
+    const persistence = createAppleMusicRequestPersistence(connection.db, {
+      runLeaseToken,
+    });
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          errors: [
+            {
+              code: "PARAMETER_ERROR.INVALID",
+              detail: "Unsafe raw detail with artist-secret and a complete URL",
+              id: "error-occurrence-secret",
+              source: { parameter: "limit", pointer: "/data/artist-secret" },
+              status: "400",
+              title: "A parameter has an invalid value",
+            },
+          ],
+        }),
+        { status: 400 },
+      ),
+    );
+    const client = new AppleMusicClient({
+      enabled: true,
+      fetchImpl,
+      maxRetries: 0,
+      persistence,
+      runId: run.id,
+      tokenProvider: { getToken: () => "synthetic-token" },
+    });
+
+    try {
+      await expect(
+        client.getArtistViewFirstPage("artist-secret", "latest-release"),
+      ).rejects.toMatchObject({
+        appleError: {
+          code: "PARAMETER_ERROR.INVALID",
+          detailPresent: true,
+          sourceParameter: "limit",
+          sourcePointer: "json_pointer",
+          titleCategory: "invalid_request",
+        },
+        classification: "bad_request",
+        status: 400,
+      });
+    } finally {
+      await finishAppleMusicComparisonRun(connection.db, run.id, {
+        metrics: { requestCount: 1 },
+        status: "controlled_partial",
+        stopReason: "view_probe_http_400",
+      });
+      await releaseAppleMusicPilotLease(connection.db, runLeaseToken);
+    }
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(await connection.db.select().from(appleMusicResponseCache)).toHaveLength(0);
+    expect(await connection.db.select().from(appleMusicArtistMappings)).toHaveLength(0);
+    expect(await connection.db.select().from(appleMusicAlbums)).toHaveLength(0);
+    expect(await connection.db.select().from(appleMusicSongs)).toHaveLength(0);
+    expect(await connection.db.select().from(appleMusicComparisons)).toHaveLength(0);
+    expect(await getAppleMusicOperationalStatus(connection.db)).toMatchObject({
+      cooldownActive: false,
+      leaseActive: false,
+      requestCount: 1,
+    });
+    const events = await connection.db.select().from(appleMusicRequestEvents);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.status).toBe(400);
+    expect(events[0]?.requestIdentity).toMatch(/^v2:artist_view:initial:[a-f0-9]{64}$/);
+    const retained = JSON.stringify(events);
+    expect(retained).toContain("PARAMETER_ERROR.INVALID");
+    for (const prohibited of [
+      "artist-secret",
+      "error-occurrence-secret",
+      "Unsafe raw detail",
+      "synthetic-token",
+      "authorization",
+      "/v1/catalog/",
+    ]) {
+      expect(retained).not.toContain(prohibited);
+    }
+  });
+
+  it("reads the latest confirmed mapping for an imported snapshot without exposing it", async () => {
+    const runId = await createRunningRun(1);
+    const canonicalArtistId = randomUUID();
+    await saveAppleMusicArtistMapping(connection.db, {
+      canonicalArtistId,
+      decision: {
+        candidates: [],
+        confidence: 1,
+        evidence: [],
+        reason: "Synthetic exact identity.",
+        selected: { artistId: "synthetic-private", name: "Synthetic" },
+        status: "search_confirmed",
+      },
+      runId,
+    });
+    await expect(
+      getConfirmedAppleMusicArtistMapping(connection.db, {
+        canonicalArtistId,
+        snapshotId,
+      }),
+    ).resolves.toEqual({ appleArtistId: "synthetic-private" });
   });
 
   it("persists mapping evidence, normalized catalog rows, and comparisons idempotently", async () => {

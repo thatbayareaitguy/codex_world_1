@@ -57,6 +57,41 @@ library or user routes, arbitrary artist relationships, or unknown resource fami
 continues to terminal, rejects repeated pages, deduplicates resources, and sorts releases and
 tracks locally.
 
+## Artist-view contract audit and diagnostic mode
+
+The current official Apple endpoint is
+`GET /v1/catalog/{storefront}/artists/{id}/view/{view}`. The six configured pilot names are valid:
+`latest-release`, `singles`, `full-albums`, `live-albums`, `compilation-albums`, and
+`appears-on-albums`. Apple documents `extend`, `include`, `l`, `limit`, and `with` as optional
+query keys for the endpoint, and explicitly documents `with=attributes`. A successful direct
+relationship-view response has a required top-level `data` collection and may have a top-level
+`next` cursor.
+
+The request that previously returned HTTP 400 used the correct GET method, API host, US
+storefront, artist-ID path position, `/view/` segment, and `latest-release` spelling. It added
+`limit=100` and `with=attributes`. It did not add `offset`, `include`, `extend`, or `l`; it had no
+undocumented, empty, or duplicated query key, encoded path separator, or trailing component.
+Because the prior error body was intentionally discarded, credential-free evidence cannot prove
+which optional parameter or value Apple rejected. The endpoint documentation confirms
+`with=attributes` is valid but does not establish that 100 is valid for this view's `limit`.
+
+All normal artist-view first pages now use the minimal documented request with no optional query
+parameters. Normal operation may still follow a validated top-level `next`. The diagnostic
+first-page method records only whether `next` was present, stores no cursor, and cannot issue a
+second request.
+
+The command adds an exact NURKO `latest-release` view-probe mode with a one-request budget, zero
+retries, no authentication lookup, no search, no other artist, and no pagination. It reads the
+existing confirmed mapping from isolated Apple state and stops with zero requests if that mapping
+is unavailable.
+
+Official contract references:
+
+- [Get a Catalog Artist's Relationship View Directly by Name](https://developer.apple.com/documentation/applemusicapi/fetch-a-view-on-this-resource-by-name-4kow5)
+- [RelationshipViewResponse](https://developer.apple.com/documentation/applemusicapi/relationshipviewresponse)
+- [Handling Requests and Responses](https://developer.apple.com/documentation/applemusicapi/handling-requests-and-responses)
+- [Error](https://developer.apple.com/documentation/applemusicapi/error)
+
 ## Request safety and persistence
 
 The Apple-specific database gate provides:
@@ -82,6 +117,18 @@ contain the URL value, query, identifier, token, authorization header, or respon
 Apple tables are separate from Spotify and free-iTunes runtime state. The only iTunes-linked input
 is the immutable frozen comparison snapshot. No authorization header, developer token, private
 credential, artwork, preview URL, or raw full response is stored.
+
+Non-success bodies receive the same bounded body read and are never persisted. When an Apple
+`errors` array is valid, diagnostics retain only HTTP status, a bounded machine code, a fixed
+title category, an allowlisted `source.parameter`, a fixed pointer classification, whether detail
+was present, endpoint category, view name, and query-key names. Error occurrence IDs, raw titles,
+raw details, pointer values, complete paths or URLs, query values, artist IDs, headers, and bodies
+are discarded. Malformed or non-Apple error bodies receive a fixed body-format classification.
+HTTP 400 is not retried and creates no successful cache entry.
+
+Future Apple request and cache identities are deterministic hashes prefixed only with operation
+and initial-or-pagination classification. They no longer persist a request path or catalog
+identifier. Existing historical evidence is not rewritten.
 
 ## Pilot command and bounded controller
 

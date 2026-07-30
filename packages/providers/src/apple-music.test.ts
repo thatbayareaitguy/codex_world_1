@@ -5,6 +5,7 @@ import {
   AppleMusicAuthenticationError,
   AppleMusicClient,
   AppleMusicClientError,
+  appleMusicArtistViewRequestShape,
   appleMusicArtistViews,
   assertAllowedAppleMusicPath,
   assertAllowedAppleMusicUrl,
@@ -364,9 +365,9 @@ describe("Apple Music HTTP safety", () => {
     });
     expect(persistence.completions[0]).toMatchObject({
       cooldownUntil: new Date("2026-07-29T00:02:00Z"),
-      errorClassification: "rate_limited",
       retryAfterSeconds: 120,
     });
+    expect(persistence.completions[0]?.errorClassification).toContain("rate_limited|s=429");
     expect(parseAppleRetryAfter("Wed, 29 Jul 2026 00:00:05 GMT", fixedNow)).toBe(5);
     expect(parseAppleRetryAfter("invalid", fixedNow)).toBeUndefined();
   });
@@ -651,6 +652,168 @@ describe("Apple Music response URL categories and cache ordering", () => {
 });
 
 describe("Apple Music catalog operations", () => {
+  it("constructs all six direct artist-view requests with the exact minimal contract", async () => {
+    const persistence = new MemoryPersistence();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockImplementation(() => Promise.resolve(jsonResponse({ data: [] })));
+    await createClient(persistence, fetchImpl).getAllArtistViews("42");
+    expect(fetchImpl).toHaveBeenCalledTimes(6);
+    for (const [index, view] of appleMusicArtistViews.entries()) {
+      const input = fetchImpl.mock.calls[index]?.[0];
+      const init = fetchImpl.mock.calls[index]?.[1];
+      expect(input).toBeInstanceOf(URL);
+      if (!(input instanceof URL)) throw new Error("Expected an Apple Music URL.");
+      expect(input.hostname).toBe("api.music.apple.com");
+      expect(input.pathname).toBe(`/v1/catalog/us/artists/42/view/${view}`);
+      expect([...input.searchParams.entries()]).toEqual([]);
+      expect(init).toMatchObject({ method: "GET", redirect: "error" });
+      expect(Object.keys(init?.headers ?? {}).sort()).toEqual(["accept", "authorization"]);
+      expect(persistence.permits[index]?.identity).toMatch(/^v2:artist_view:initial:[a-f0-9]{64}$/);
+      expect(persistence.permits[index]?.identity).not.toMatch(/[/?=]|artists/);
+      expect(appleMusicArtistViewRequestShape(view)).toEqual({
+        headerNames: ["accept", "authorization"],
+        host: "allowed_api",
+        method: "GET",
+        pathTemplate: `/v1/catalog/us/artists/<artist_id>/view/${view}`,
+        queryKeys: [],
+        storefront: "us",
+        view,
+      });
+    }
+  });
+
+  it("parses one top-level relationship-view page without following or retaining next", async () => {
+    const persistence = new MemoryPersistence();
+    const resource = { ...album("first-page"), relationships: undefined };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        attributes: { title: "Latest releases" },
+        data: [resource],
+        meta: { arbitrary: "discarded" },
+        next: "/v1/catalog/us/artists/42/view/latest-release?offset=1",
+      }),
+    );
+    const result = await createClient(persistence, fetchImpl).getArtistViewFirstPage(
+      "42",
+      "latest-release",
+    );
+    expect(result).toMatchObject({
+      items: [expect.objectContaining({ albumId: "first-page", sourceView: "latest-release" })],
+      nextPresent: true,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const cached = JSON.stringify([...persistence.cache.values()]);
+    expect(cached).toContain('"next":true');
+    for (const prohibited of [
+      '"artwork"',
+      '"preview"',
+      '"href"',
+      '"url"',
+      "music.apple.com",
+      "/v1/catalog/us/artists/42",
+    ]) {
+      expect(cached).not.toContain(prohibited);
+    }
+  });
+
+  it("handles a valid empty direct-view page", async () => {
+    const result = await createClient(
+      new MemoryPersistence(),
+      vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ data: [] })),
+    ).getArtistViewFirstPage("42", "latest-release");
+    expect(result).toEqual({ items: [], nextPresent: false });
+  });
+
+  it("retains only bounded safe fields from an Apple HTTP 400 errors response", async () => {
+    const persistence = new MemoryPersistence();
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse(
+        {
+          errors: [
+            {
+              code: "PARAMETER_ERROR.INVALID",
+              detail:
+                "Raw detail mentions an artist identifier and https://example.invalid/private",
+              id: "error-occurrence-secret",
+              source: {
+                parameter: "limit",
+                pointer: "/data/artist-secret",
+              },
+              status: "400",
+              title: "A parameter has an invalid value",
+            },
+          ],
+        },
+        400,
+      ),
+    );
+    const failure = await createClient(persistence, fetchImpl, { maxRetries: 0 })
+      .getArtistViewFirstPage("42", "latest-release")
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AppleMusicClientError);
+    expect(failure).toMatchObject({
+      appleError: {
+        bodyFormat: "apple_errors",
+        code: "PARAMETER_ERROR.INVALID",
+        detailPresent: true,
+        endpointCategory: "artist_view",
+        queryKeys: [],
+        sourceParameter: "limit",
+        sourcePointer: "json_pointer",
+        status: 400,
+        titleCategory: "invalid_request",
+        view: "latest-release",
+      },
+      classification: "bad_request",
+      status: 400,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(persistence.cache).toHaveLength(0);
+    expect(persistence.completions).toHaveLength(1);
+    expect(persistence.completions[0]?.cacheValue).toBeUndefined();
+    const retained = JSON.stringify({
+      completion: persistence.completions[0],
+      error: failure,
+      permit: persistence.permits[0],
+    });
+    for (const prohibited of [
+      "error-occurrence-secret",
+      "Raw detail",
+      "artist-secret",
+      "example.invalid/private",
+      "synthetic-token",
+      "authorization",
+      "/v1/catalog/us/artists/42",
+    ]) {
+      expect(retained).not.toContain(prohibited);
+    }
+  });
+
+  it("classifies malformed non-success bodies without retaining them or retrying", async () => {
+    const persistence = new MemoryPersistence();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse("<html>identifier-secret</html>", 400));
+    const failure = await createClient(persistence, fetchImpl, { maxRetries: 3 })
+      .getArtistViewFirstPage("42", "latest-release")
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      appleError: {
+        bodyFormat: "malformed_json",
+        code: "unavailable",
+        detailPresent: false,
+        status: 400,
+      },
+      classification: "bad_request",
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(persistence.cache).toHaveLength(0);
+    expect(JSON.stringify({ error: failure, telemetry: persistence.completions })).not.toContain(
+      "identifier-secret",
+    );
+  });
+
   it("searches and fetches single and batched artists with missing and duplicate IDs", async () => {
     const persistence = new MemoryPersistence();
     const fetchImpl = vi

@@ -65,6 +65,18 @@ An explicitly authorized authentication and five-artist canary can stop before t
 pnpm apple:pilot -- --execute-live --confirm-live APPLE_PUBLIC_CATALOG_25 --stop-after-canary --snapshot <external-snapshot-path>
 ```
 
+The separately confirmed one-request artist-view diagnostic form is:
+
+```powershell
+pnpm apple:pilot -- --execute-live --confirm-live APPLE_PUBLIC_CATALOG_VIEW_PROBE --probe-artist-view NURKO --view latest-release --snapshot <external-snapshot-path>
+```
+
+The diagnostic mode accepts only NURKO and `latest-release`. It reads the existing confirmed
+mapping from the isolated Apple database, never searches, never performs the BUNT. authentication
+lookup, never contacts another artist, uses a request budget of one with retries disabled, and
+never follows pagination. Its first-page request has no optional query parameters. A returned
+cursor is reduced to a presence boolean and is not followed or persisted.
+
 Live execution requires both the `--execute-live` flag and the exact independent confirmation
 value. It also requires the persistent runtime value `APPLE_MUSIC_ENABLED=false`. The command
 creates an in-memory pilot authorization and never rewrites the runtime file or changes that
@@ -75,6 +87,13 @@ complete run, 75 request starts and 15 minutes through the canary, concurrency o
 1,100 milliseconds between request starts. `--stop-after-canary` binds the database run itself to
 the 75-request and 15-minute ceilings, records `canary_completed`, releases the lease, and never
 creates the full-phase client. The real plan command was executed credential-free.
+
+Apple HTTP error bodies are read within the existing response-size limit and then discarded.
+Persisted telemetry can contain only status, bounded error code, fixed title and pointer
+categories, an allowlisted parameter name, detail-presence flag, endpoint category, view name,
+and query-key names. It never contains an error occurrence ID, raw title or detail, pointer value,
+complete URL, query value, catalog identifier, header, token, or response body. HTTP 400 is never
+retried and never creates a successful response cache row.
 
 ## URL and cache correction
 

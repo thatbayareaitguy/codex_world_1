@@ -132,6 +132,11 @@ const songsResponseSchema = z.object({
   next: z.string().optional(),
 });
 
+const artistViewFirstPageResponseSchema = z.object({
+  data: z.array(albumResourceSchema),
+  next: z.union([z.string(), z.boolean()]).optional(),
+});
+
 const searchResponseSchema = z.object({
   results: z.object({
     artists: z
@@ -192,6 +197,11 @@ export interface AppleMusicSong {
 export interface AppleMusicBatchResult<T> {
   items: T[];
   missingIds: string[];
+}
+
+export interface AppleMusicArtistViewPage {
+  items: AppleMusicAlbum[];
+  nextPresent: boolean;
 }
 
 export type AppleMusicEndpointCategory =
@@ -375,6 +385,27 @@ export interface AppleMusicUrlDiagnostic {
   scheme: "http" | "https" | "none" | "other";
 }
 
+export interface AppleMusicErrorDiagnostic {
+  bodyFormat: "apple_errors" | "malformed_json" | "unrecognized_json";
+  code: string;
+  detailPresent: boolean;
+  endpointCategory: AppleMusicEndpointCategory;
+  queryKeys: string[];
+  sourceParameter?: string;
+  sourcePointer: "absent" | "json_pointer" | "present";
+  status: number;
+  titleCategory:
+    | "bad_request"
+    | "forbidden"
+    | "invalid_request"
+    | "not_found"
+    | "other"
+    | "rate_limited"
+    | "server_error"
+    | "unauthorized";
+  view?: AppleMusicArtistView;
+}
+
 export class AppleMusicClientError extends Error {
   constructor(
     message: string,
@@ -382,6 +413,7 @@ export class AppleMusicClientError extends Error {
     readonly status?: number,
     readonly retryAfterSeconds?: number,
     readonly urlDiagnostic?: AppleMusicUrlDiagnostic,
+    readonly appleError?: AppleMusicErrorDiagnostic,
   ) {
     super(message);
     this.name = "AppleMusicClientError";
@@ -496,8 +528,30 @@ export class AppleMusicClient {
     view: AppleMusicArtistView,
     signal?: AbortSignal,
   ): Promise<AppleMusicAlbum[]> {
-    const initialPath = `/v1/catalog/${this.storefront}/artists/${encodeIdentifier(artistId)}/view/${view}?limit=100&with=attributes`;
+    const initialPath = artistViewPath(this.storefront, artistId, view);
     return this.paginateAlbums(initialPath, view, signal);
+  }
+
+  async getArtistViewFirstPage(
+    artistId: string,
+    view: AppleMusicArtistView,
+    signal?: AbortSignal,
+  ): Promise<AppleMusicArtistViewPage> {
+    const initialPath = artistViewPath(this.storefront, artistId, view);
+    const response = await this.request(
+      new URL(initialPath, APPLE_MUSIC_ORIGIN),
+      "artist_view",
+      artistViewFirstPageResponseSchema,
+      (value) => sanitizeArtistViewFirstPage(value, this.storefront, view, initialPath),
+      signal,
+      "view_probe",
+    );
+    return {
+      items: response.data.map((resource) =>
+        normalizeAlbum(resource, this.storefront, view, 1, initialPath),
+      ),
+      nextPresent: response.next === true,
+    };
   }
 
   async getAllArtistViews(
@@ -667,6 +721,7 @@ export class AppleMusicClient {
     schema: z.ZodType<T>,
     sanitize: (value: T) => T,
     signal?: AbortSignal,
+    identityScope = "catalog",
   ): Promise<T> {
     this.assertEnabled();
     assertAllowedAppleMusicUrl(url, this.storefront, {
@@ -674,7 +729,7 @@ export class AppleMusicClient {
       operation: endpointCategory,
       role: "request",
     });
-    const identity = normalizedAppleMusicRequestIdentity(url);
+    const identity = normalizedAppleMusicRequestIdentity(url, identityScope);
     const cached = await this.options.persistence.loadCache(identity);
     if (cached !== null && cached !== undefined) {
       const parsed = sanitize(schema.parse(cached));
@@ -715,6 +770,13 @@ export class AppleMusicClient {
         );
         if (!response.ok) {
           const classification = classifyHttpStatus(response.status);
+          const appleError = parseAppleMusicErrorResponse(
+            body.text,
+            response.status,
+            endpointCategory,
+            url,
+            this.storefront,
+          );
           const cooldownUntil =
             response.status === 429 && retryAfterSeconds !== undefined
               ? new Date(this.now().getTime() + retryAfterSeconds * 1_000)
@@ -723,7 +785,7 @@ export class AppleMusicClient {
             bodyBytes: body.bytes,
             completedAt: this.now(),
             ...(cooldownUntil ? { cooldownUntil } : {}),
-            errorClassification: classification,
+            errorClassification: appleMusicErrorTelemetry(classification, appleError),
             eventId: permit.eventId,
             leaseToken: permit.leaseToken,
             ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
@@ -735,6 +797,8 @@ export class AppleMusicClient {
             classification,
             response.status,
             retryAfterSeconds,
+            undefined,
+            appleError,
           );
           if (response.status >= 500 && attempt < this.maxRetries) {
             lastError = error;
@@ -1014,7 +1078,7 @@ function hasUnsupportedQuery(url: URL, operation: AppleMusicRouteClassification)
       : operation === "artists_batch"
         ? ["ids"]
         : operation === "artist_view"
-          ? ["cursor", "limit", "offset", "with"]
+          ? ["extend", "include", "l", "limit", "offset", "with"]
           : operation === "album"
             ? ["include"]
             : operation === "album_tracks"
@@ -1023,7 +1087,12 @@ function hasUnsupportedQuery(url: URL, operation: AppleMusicRouteClassification)
                 ? ["ids", "include"]
                 : [],
   );
-  return [...url.searchParams.keys()].some((key) => !allowed.has(key));
+  const keys = [...url.searchParams.keys()];
+  return (
+    keys.some((key) => !allowed.has(key)) ||
+    new Set(keys).size !== keys.length ||
+    keys.some((key) => url.searchParams.getAll(key).some((value) => value.length === 0))
+  );
 }
 
 function paginationOwnerMatches(
@@ -1046,10 +1115,18 @@ function paginationOwnerMatches(
   return operation !== "artist_view" || expected.view === actual.view;
 }
 
-export function normalizedAppleMusicRequestIdentity(url: URL): string {
+export function normalizedAppleMusicRequestIdentity(url: URL, scope = "catalog"): string {
   const normalized = new URL(url);
   normalized.searchParams.sort();
-  return `${normalized.pathname}${normalized.search}`;
+  const storefront = normalized.pathname.split("/")[3] ?? "";
+  const route = /^[a-z]{2}$/.test(storefront)
+    ? classifyAppleMusicRoute(normalized.pathname, storefront).classification
+    : "unsupported";
+  const page = normalized.searchParams.has("offset") ? "pagination" : "initial";
+  const digest = createHash("sha256")
+    .update(`${scope}:${normalized.pathname}${normalized.search}`)
+    .digest("hex");
+  return `v2:${route}:${page}:${digest}`;
 }
 
 export function parseAppleRetryAfter(value: string | null, now = new Date()): number | undefined {
@@ -1149,6 +1226,20 @@ function sanitizeAlbumsResponse(
       sanitizeAlbumResource(resource, storefront, sourceView, pageNumber, paginationPath),
     ),
     ...(next ? { next } : {}),
+  };
+}
+
+function sanitizeArtistViewFirstPage(
+  response: z.infer<typeof artistViewFirstPageResponseSchema>,
+  storefront: string,
+  view: AppleMusicArtistView,
+  paginationPath: string,
+): z.infer<typeof artistViewFirstPageResponseSchema> {
+  return {
+    data: response.data.map((resource) =>
+      sanitizeAlbumResource(resource, storefront, view, 1, paginationPath),
+    ),
+    ...(response.next === undefined ? {} : { next: true }),
   };
 }
 
@@ -1469,7 +1560,155 @@ function classifyHttpStatus(status: number): string {
   if (status === 404) return "not_found";
   if (status === 429) return "rate_limited";
   if (status >= 500) return "temporary_server_error";
+  if (status === 400) return "bad_request";
   return "http_error";
+}
+
+const appleErrorResponseSchema = z.object({
+  errors: z
+    .array(
+      z.object({
+        code: z.string().optional(),
+        detail: z.string().optional(),
+        id: z.string().optional(),
+        source: z
+          .object({
+            parameter: z.string().optional(),
+            pointer: z.string().optional(),
+          })
+          .optional(),
+        status: z.string().optional(),
+        title: z.string().optional(),
+      }),
+    )
+    .min(1),
+});
+
+function parseAppleMusicErrorResponse(
+  body: string,
+  status: number,
+  endpointCategory: AppleMusicEndpointCategory,
+  url: URL,
+  storefront: string,
+): AppleMusicErrorDiagnostic {
+  const route = classifyAppleMusicRoute(url.pathname, storefront);
+  const base = {
+    endpointCategory,
+    queryKeys: sanitizeAppleQueryKeys(url),
+    sourcePointer: "absent" as const,
+    status,
+    ...(route.classification === "artist_view" && route.view ? { view: route.view } : {}),
+  };
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(body);
+  } catch {
+    return {
+      ...base,
+      bodyFormat: "malformed_json",
+      code: "unavailable",
+      detailPresent: false,
+      titleCategory: titleCategory(undefined, status),
+    };
+  }
+  const parsed = appleErrorResponseSchema.safeParse(decoded);
+  if (!parsed.success) {
+    return {
+      ...base,
+      bodyFormat: "unrecognized_json",
+      code: "unavailable",
+      detailPresent: false,
+      titleCategory: titleCategory(undefined, status),
+    };
+  }
+  const error = parsed.data.errors[0]!;
+  const sourceParameter = sanitizeSourceParameter(error.source?.parameter);
+  return {
+    ...base,
+    bodyFormat: "apple_errors",
+    code: sanitizeAppleErrorCode(error.code),
+    detailPresent: typeof error.detail === "string" && error.detail.length > 0,
+    ...(sourceParameter ? { sourceParameter } : {}),
+    sourcePointer: classifySourcePointer(error.source?.pointer),
+    titleCategory: titleCategory(error.title, status),
+  };
+}
+
+function sanitizeAppleErrorCode(value: string | undefined): string {
+  if (!value || !/^[A-Za-z0-9._-]{1,32}$/.test(value)) return "unavailable";
+  return value;
+}
+
+function sanitizeSourceParameter(value: string | undefined): string | undefined {
+  const allowed = new Set([
+    "extend",
+    "ids",
+    "include",
+    "l",
+    "limit",
+    "offset",
+    "term",
+    "types",
+    "with",
+  ]);
+  return value && allowed.has(value) ? value : undefined;
+}
+
+function classifySourcePointer(
+  value: string | undefined,
+): AppleMusicErrorDiagnostic["sourcePointer"] {
+  if (!value) return "absent";
+  return value.startsWith("/") ? "json_pointer" : "present";
+}
+
+function titleCategory(
+  value: string | undefined,
+  status: number,
+): AppleMusicErrorDiagnostic["titleCategory"] {
+  const normalized = value?.toLowerCase() ?? "";
+  if (normalized.includes("invalid")) return "invalid_request";
+  if (normalized.includes("bad request")) return "bad_request";
+  if (normalized.includes("unauthorized") || status === 401) return "unauthorized";
+  if (normalized.includes("forbidden") || status === 403) return "forbidden";
+  if (normalized.includes("not found") || status === 404) return "not_found";
+  if (normalized.includes("rate") || status === 429) return "rate_limited";
+  if (normalized.includes("server") || status >= 500) return "server_error";
+  return "other";
+}
+
+function sanitizeAppleQueryKeys(url: URL): string[] {
+  const allowed = new Set([
+    "extend",
+    "ids",
+    "include",
+    "l",
+    "limit",
+    "offset",
+    "term",
+    "types",
+    "with",
+  ]);
+  return [...new Set([...url.searchParams.keys()].map((key) => (allowed.has(key) ? key : "other")))]
+    .sort()
+    .slice(0, 8);
+}
+
+function appleMusicErrorTelemetry(
+  classification: string,
+  diagnostic: AppleMusicErrorDiagnostic,
+): string {
+  const fields = [
+    classification,
+    `s=${diagnostic.status}`,
+    `c=${diagnostic.code}`,
+    `t=${diagnostic.titleCategory}`,
+    `p=${diagnostic.sourceParameter ?? "none"}`,
+    `x=${diagnostic.sourcePointer}`,
+    `d=${diagnostic.detailPresent ? "1" : "0"}`,
+    `v=${diagnostic.view ?? "none"}`,
+    `q=${diagnostic.queryKeys.join(",") || "none"}`,
+  ];
+  return fields.join("|").slice(0, 100);
 }
 
 function classifyTransportError(error: unknown): AppleMusicClientError {
@@ -1514,6 +1753,30 @@ function encodeIdentifier(value: string): string {
     throw new AppleMusicClientError("Apple Music identifier is invalid.", "invalid_identifier");
   }
   return encodeURIComponent(value);
+}
+
+function artistViewPath(storefront: string, artistId: string, view: AppleMusicArtistView): string {
+  return `/v1/catalog/${storefront}/artists/${encodeIdentifier(artistId)}/view/${view}`;
+}
+
+export function appleMusicArtistViewRequestShape(view: AppleMusicArtistView): {
+  headerNames: ["accept", "authorization"];
+  host: "allowed_api";
+  method: "GET";
+  pathTemplate: string;
+  queryKeys: [];
+  storefront: "us";
+  view: AppleMusicArtistView;
+} {
+  return {
+    headerNames: ["accept", "authorization"],
+    host: "allowed_api",
+    method: "GET",
+    pathTemplate: `/v1/catalog/us/artists/<artist_id>/view/${view}`,
+    queryKeys: [],
+    storefront: "us",
+    view,
+  };
 }
 
 function uniqueIdentifiers(ids: string[], maximum: number, label: string): string[] {

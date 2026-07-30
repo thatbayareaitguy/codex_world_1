@@ -4,6 +4,7 @@ import {
   appleMusicArtistViews,
   type AppleMusicAlbum,
   type AppleMusicArtist,
+  type AppleMusicArtistView,
 } from "@radar/providers";
 import type { AppleMusicMappingDecision } from "@radar/core";
 import {
@@ -27,6 +28,12 @@ import {
   type AppleMusicPilotStore,
   type AppleMusicPilotStoredEvidence,
 } from "./apple-music-pilot-runner";
+import {
+  appleMusicViewProbeConfirmation,
+  authorizeAppleMusicViewProbe,
+  runBoundedAppleMusicViewProbe,
+  type AppleMusicViewProbeStore,
+} from "./apple-music-view-probe";
 import type { ItunesPilotSnapshot } from "./itunes-pilot-snapshot";
 
 describe("Apple Music pilot command and plan", () => {
@@ -186,6 +193,48 @@ describe("Apple Music pilot command and plan", () => {
     expect(() =>
       parseAppleMusicPilotCommand(["--plan", "--snapshot", "snapshot.json", "--stop-after-canary"]),
     ).toThrow("Plan mode");
+    expect(
+      parseAppleMusicPilotCommand([
+        "--execute-live",
+        "--confirm-live",
+        appleMusicViewProbeConfirmation,
+        "--probe-artist-view",
+        "NURKO",
+        "--view",
+        "latest-release",
+        "--snapshot",
+        "synthetic.json",
+      ]),
+    ).toEqual({
+      artist: "NURKO",
+      confirmation: appleMusicViewProbeConfirmation,
+      mode: "execute_view_probe",
+      snapshotPath: "synthetic.json",
+      view: "latest-release",
+    });
+  });
+
+  it("rejects an unconfirmed view probe before loading runtime or initializing HTTP", async () => {
+    for (const confirmation of [undefined, "WRONG"]) {
+      const dependencies = commandDependencies();
+      const args = [
+        "--execute-live",
+        "--probe-artist-view",
+        "NURKO",
+        "--view",
+        "latest-release",
+        "--snapshot",
+        "synthetic.json",
+      ];
+      if (confirmation) args.splice(1, 0, "--confirm-live", confirmation);
+      await expect(executeAppleMusicPilotCommand(args, dependencies)).rejects.toThrow(
+        appleMusicViewProbeConfirmation,
+      );
+      expect((dependencies.loadLiveSafety as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+      expect((dependencies.executeViewProbe as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(
+        0,
+      );
+    }
   });
 });
 
@@ -358,6 +407,156 @@ describe("bounded Apple Music pilot controller", () => {
   });
 });
 
+describe("bounded Apple Music artist-view probe", () => {
+  it("permits only the exact NURKO latest-release probe and persistent disablement", () => {
+    expect(() =>
+      authorizeAppleMusicViewProbe({
+        artist: "Another Artist",
+        confirmation: appleMusicViewProbeConfirmation,
+        executeLive: true,
+        otherProvidersDisabled: true,
+        persistentAppleMusicEnabled: "false",
+        storefront: "us",
+        view: "latest-release",
+      }),
+    ).toThrow("only NURKO");
+    expect(() =>
+      authorizeAppleMusicViewProbe({
+        artist: "NURKO",
+        confirmation: appleMusicViewProbeConfirmation,
+        executeLive: true,
+        otherProvidersDisabled: true,
+        persistentAppleMusicEnabled: "false",
+        storefront: "us",
+        view: "singles",
+      }),
+    ).toThrow("only latest-release");
+    expect(() =>
+      authorizeAppleMusicViewProbe({
+        artist: "NURKO",
+        confirmation: appleMusicViewProbeConfirmation,
+        executeLive: true,
+        otherProvidersDisabled: true,
+        persistentAppleMusicEnabled: "true",
+        storefront: "us",
+        view: "latest-release",
+      }),
+    ).toThrow("exactly false");
+  });
+
+  it("uses one confirmed mapping, one first-page call, and never follows next", async () => {
+    const store = new FakeViewProbeStore(true);
+    const firstPage = vi.fn((artistId: string, view: AppleMusicArtistView) => {
+      expect(artistId).toBe("artist-secret");
+      expect(view).toBe("latest-release");
+      return Promise.resolve({
+        items: [],
+        nextPresent: true,
+      });
+    });
+    const result = await runBoundedAppleMusicViewProbe({
+      authorization: probeAuthorization(),
+      createClient: () => ({ getArtistViewFirstPage: firstPage }),
+      implementationCommit: "c".repeat(40),
+      snapshot: snapshot(),
+      store,
+    });
+    expect(firstPage).toHaveBeenCalledTimes(1);
+    expect(firstPage.mock.calls[0]?.[1]).toBe("latest-release");
+    expect(store.createdRun).toMatchObject({
+      maximumRuntimeMs: 5 * 60_000,
+      minRequestIntervalMs: 1_100,
+      requestBudget: 1,
+    });
+    expect(result).toMatchObject({
+      artist: "NURKO",
+      mappingConfirmed: true,
+      nextPresent: true,
+      paginationFollowed: false,
+      requestCount: 1,
+      status: "completed",
+      stopReason: "view_probe_completed",
+      view: "latest-release",
+    });
+    expect(result.requestShape).toEqual({
+      headerNames: ["accept", "authorization"],
+      host: "allowed_api",
+      method: "GET",
+      pathTemplate: "/v1/catalog/us/artists/<artist_id>/view/latest-release",
+      queryKeys: [],
+      storefront: "us",
+      view: "latest-release",
+    });
+    expect(store.leaseActive).toBe(false);
+    expect(store.releaseCount).toBe(1);
+  });
+
+  it("stops without a client or request when the confirmed mapping is missing", async () => {
+    const store = new FakeViewProbeStore(false);
+    const createClient = vi.fn();
+    const result = await runBoundedAppleMusicViewProbe({
+      authorization: probeAuthorization(),
+      createClient,
+      implementationCommit: "c".repeat(40),
+      snapshot: snapshot(),
+      store,
+    });
+    expect(result).toMatchObject({
+      mappingConfirmed: false,
+      requestCount: 0,
+      status: "controlled_partial",
+      stopReason: "view_probe_mapping_missing",
+    });
+    expect(createClient).not.toHaveBeenCalled();
+    expect(store.createdRun).toBeUndefined();
+  });
+
+  it("records a safe controlled HTTP 400 and releases the lease", async () => {
+    const store = new FakeViewProbeStore(true);
+    const diagnostic = {
+      bodyFormat: "apple_errors" as const,
+      code: "PARAMETER_ERROR.INVALID",
+      detailPresent: true,
+      endpointCategory: "artist_view" as const,
+      queryKeys: [],
+      sourceParameter: "limit",
+      sourcePointer: "absent" as const,
+      status: 400,
+      titleCategory: "invalid_request" as const,
+      view: "latest-release" as const,
+    };
+    const result = await runBoundedAppleMusicViewProbe({
+      authorization: probeAuthorization(),
+      createClient: () => ({
+        getArtistViewFirstPage: () =>
+          Promise.reject(
+            new AppleMusicClientError(
+              "Apple Music request failed with HTTP 400.",
+              "bad_request",
+              400,
+              undefined,
+              undefined,
+              diagnostic,
+            ),
+          ),
+      }),
+      implementationCommit: "c".repeat(40),
+      snapshot: snapshot(),
+      store,
+    });
+    expect(result).toMatchObject({
+      error: diagnostic,
+      httpStatus: 400,
+      requestCount: 1,
+      status: "controlled_partial",
+      stopReason: "view_probe_http_400",
+    });
+    expect(store.leaseActive).toBe(false);
+    expect(store.finished?.status).toBe("controlled_partial");
+    expect(JSON.stringify(result)).not.toMatch(/artist-secret|raw detail|https?:\/\//);
+  });
+});
+
 function liveArgs(stopAfterCanary = false): string[] {
   return [
     "--execute-live",
@@ -381,6 +580,7 @@ function commandDependencies(
       createAppleMusicPilotPlan("synthetic.json", () => Promise.resolve(snapshot())),
     ),
     executeLive: vi.fn(() => Promise.reject(new Error("not invoked"))),
+    executeViewProbe: vi.fn(() => Promise.reject(new Error("not invoked"))),
     loadLiveSafety: vi.fn(() =>
       Promise.resolve({
         otherProvidersDisabled: overrides.otherProvidersDisabled ?? true,
@@ -618,6 +818,67 @@ class FakeStore implements AppleMusicPilotStore {
       this.nameByCanonicalId.get(input.canonicalArtistId) ?? "Unknown",
       input.decision,
     );
+    return Promise.resolve();
+  };
+}
+
+function probeAuthorization() {
+  return authorizeAppleMusicViewProbe({
+    artist: "NURKO",
+    confirmation: appleMusicViewProbeConfirmation,
+    executeLive: true,
+    otherProvidersDisabled: true,
+    persistentAppleMusicEnabled: "false",
+    storefront: "us",
+    view: "latest-release",
+  });
+}
+
+class FakeViewProbeStore implements AppleMusicViewProbeStore {
+  createdRun?: Parameters<AppleMusicViewProbeStore["createRun"]>[0];
+  finished?: Parameters<AppleMusicViewProbeStore["finishRun"]>[1];
+  leaseActive = false;
+  releaseCount = 0;
+
+  constructor(private readonly mappingConfirmed: boolean) {}
+
+  claimLease = () => {
+    this.leaseActive = true;
+    return Promise.resolve("synthetic-probe-lease");
+  };
+
+  createRun: AppleMusicViewProbeStore["createRun"] = (input) => {
+    this.createdRun = input;
+    return Promise.resolve({ id: uuid(7_777) });
+  };
+
+  findConfirmedMapping: AppleMusicViewProbeStore["findConfirmedMapping"] = () =>
+    Promise.resolve(this.mappingConfirmed ? { appleArtistId: "artist-secret" } : undefined);
+
+  finishRun: AppleMusicViewProbeStore["finishRun"] = (_runId, input) => {
+    this.finished = input;
+    return Promise.resolve();
+  };
+
+  importSnapshot = () => Promise.resolve(uuid(8_888));
+
+  operationalStatus = () => Promise.resolve({ cooldownActive: false, leaseActive: false });
+
+  readEvidence = (): Promise<AppleMusicPilotStoredEvidence> =>
+    Promise.resolve({
+      authenticationAttempts: 0,
+      cacheHits: 0,
+      endpointRequestCounts: { artist_view: 1 },
+      httpStatusCounts: { "200": 1 },
+      maximumConcurrency: 1,
+      paginationRequests: 0,
+      requestCount: 1,
+      retryCount: 0,
+    });
+
+  releaseLease = () => {
+    this.leaseActive = false;
+    this.releaseCount += 1;
     return Promise.resolve();
   };
 }

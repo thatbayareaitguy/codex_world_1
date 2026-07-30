@@ -164,7 +164,26 @@ cache rows remain. They contain no embedded navigation, artwork, previews, autho
 token data, or evidence URLs. No album, song, or comparison result was persisted. No other
 provider or production state was touched.
 
-The next milestone is credential-free diagnosis and correction of the explicit artist-view
-incompatibility. No additional live request is authorized. The five-artist canary did not
-complete, the full 25-artist cohort and representative cohort were not tested, and production
-integration remains unauthorized.
+The credential-free artist-view contract audit found that the failed request had the correct
+method, host, storefront, route, artist placement, and view spelling but appended `limit=100` and
+`with=attributes`. Both keys are documented as optional, and Apple explicitly permits
+`with=attributes`; the retained prior evidence cannot prove which optional parameter or value
+caused HTTP 400. All six normal artist-view first pages now use the documented minimal request
+with no query parameters.
+
+The direct-view parser accepts the official top-level `data` collection and optional top-level
+`next`. The one-page diagnostic parser retains only a cursor-presence boolean and cannot follow or
+persist the cursor. Apple HTTP errors now retain bounded safe status, code, title category,
+parameter name, pointer classification, detail presence, endpoint, view, and query-key evidence.
+Occurrence IDs, raw titles and details, pointer values, paths, URLs, query values, identifiers,
+headers, tokens, and bodies are discarded. HTTP 400 is not retried and creates no cache or result
+row.
+
+The exact NURKO `latest-release` probe mode reads the existing confirmed mapping, has a
+one-request budget and zero retries, cannot search, cannot request BUNT. or another artist, and
+cannot follow pagination. Future request identities are hashed and contain no request path or
+catalog identifier. No schema change was required.
+
+The next authorized action, only after a clean committed and pushed verification checkpoint, is
+one NURKO `latest-release` request through this probe mode. The five-artist canary, complete
+25-artist cohort, representative cohort, production integration, and merge remain unauthorized.

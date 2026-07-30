@@ -7,6 +7,7 @@ import {
   createAppleMusicRequestPersistence,
   createDatabase,
   finishAppleMusicComparisonRun,
+  getConfirmedAppleMusicArtistMapping,
   getAppleMusicOperationalStatus,
   releaseAppleMusicPilotLease,
   saveAppleMusicArtistMapping,
@@ -32,6 +33,11 @@ import {
   type AppleMusicPilotStore,
   type AppleMusicPilotStoredEvidence,
 } from "./apple-music-pilot-runner";
+import {
+  runBoundedAppleMusicViewProbe,
+  type AppleMusicViewProbeAuthorization,
+  type AppleMusicViewProbeStore,
+} from "./apple-music-view-probe";
 import { importItunesSnapshot } from "./itunes-pilot-repository";
 import { readItunesPilotSnapshot } from "./itunes-pilot-snapshot";
 import { loadLocalEnvironment } from "./local-env";
@@ -40,6 +46,7 @@ async function main(): Promise<void> {
   const result = await executeAppleMusicPilotCommand(process.argv.slice(2), {
     createPlan: createAppleMusicPilotPlan,
     executeLive: executeLive,
+    executeViewProbe: executeViewProbeLive,
     loadLiveSafety: loadLiveSafety,
   });
   if (result.mode === "plan") {
@@ -127,6 +134,57 @@ async function executeLive(authorization: AppleMusicPilotLiveAuthorization, snap
   }
 }
 
+async function executeViewProbeLive(
+  authorization: AppleMusicViewProbeAuthorization,
+  snapshotPath: string,
+) {
+  const snapshot = await readItunesPilotSnapshot(snapshotPath);
+  const environment = loadLocalEnvironment(
+    process.env,
+    resolve(process.cwd(), ".app-runtime/apple-music.env"),
+  );
+  const configuration = loadProviderConfiguration(environment);
+  if (!configuration.databaseUrl) throw new Error("DATABASE_URL is required.");
+  assertAppleDatabase(configuration.databaseUrl);
+  assertAppleBranch();
+  assertLiveCredentialShape(configuration.appleMusic);
+  const connection = createDatabase(configuration.databaseUrl);
+  let tokenManager: AppleDeveloperTokenManager | undefined;
+  try {
+    return await runBoundedAppleMusicViewProbe({
+      authorization,
+      createClient: (runId, leaseToken) => {
+        tokenManager ??= new AppleDeveloperTokenManager({
+          keyId: configuration.appleMusic.keyId!,
+          privateKeyPath: configuration.appleMusic.privateKeyPath!,
+          teamId: configuration.appleMusic.teamId!,
+          tokenLifetimeSeconds: configuration.appleMusic.tokenLifetimeSeconds,
+        });
+        return new AppleMusicClient({
+          enabled: authorization.mode === "bounded_public_catalog_view_probe",
+          maxRequestsPerRun: 1,
+          maxResponseBytes: configuration.appleMusic.maxResponseBytes,
+          maximumRuntimeMs: 5 * 60_000,
+          maxRetries: 0,
+          minRequestIntervalMs: appleMusicPilotDefinition.limits.minRequestIntervalMs,
+          persistence: createAppleMusicRequestPersistence(connection.db, {
+            runLeaseToken: leaseToken,
+          }),
+          requestTimeoutMs: configuration.appleMusic.requestTimeoutMs,
+          runId,
+          storefront: authorization.storefront,
+          tokenProvider: tokenManager,
+        });
+      },
+      implementationCommit: git(["rev-parse", "HEAD"]),
+      snapshot,
+      store: createViewProbeStore(connection.db),
+    });
+  } finally {
+    await connection.client.end();
+  }
+}
+
 function createStore(db: RadarDatabase): AppleMusicPilotStore {
   return {
     claimLease: (runId) => claimAppleMusicPilotLease(db, runId),
@@ -141,6 +199,19 @@ function createStore(db: RadarDatabase): AppleMusicPilotStore {
     saveMapping: async (input) => {
       await saveAppleMusicArtistMapping(db, input);
     },
+  };
+}
+
+function createViewProbeStore(db: RadarDatabase): AppleMusicViewProbeStore {
+  return {
+    claimLease: (runId) => claimAppleMusicPilotLease(db, runId),
+    createRun: (input) => createAppleMusicComparisonRun(db, input),
+    findConfirmedMapping: (input) => getConfirmedAppleMusicArtistMapping(db, input),
+    finishRun: (runId, input) => finishAppleMusicComparisonRun(db, runId, input),
+    importSnapshot: (snapshot) => importItunesSnapshot(db, snapshot),
+    operationalStatus: () => getAppleMusicOperationalStatus(db),
+    readEvidence: (runId) => readStoredEvidence(db, runId),
+    releaseLease: (leaseToken) => releaseAppleMusicPilotLease(db, leaseToken),
   };
 }
 
@@ -182,9 +253,8 @@ async function readStoredEvidence(
     ),
     maximumConcurrency: network.length > 0 ? 1 : 0,
     ...(intervals.length > 0 ? { minimumRequestIntervalMs: Math.min(...intervals) } : {}),
-    paginationRequests: network.filter((event) =>
-      /[?&](?:offset|cursor)=/.test(event.requestIdentity),
-    ).length,
+    paginationRequests: network.filter((event) => event.requestIdentity.includes(":pagination:"))
+      .length,
     requestCount: network.length,
     retryCount: Math.max(
       0,

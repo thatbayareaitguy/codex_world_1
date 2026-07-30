@@ -9,7 +9,7 @@ import type {
   AppleMusicSong,
 } from "@radar/providers";
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq, gt, isNull, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { RadarDatabase } from "./client";
 import {
   appleMusicComparisonRuns,
@@ -457,6 +457,38 @@ export async function finishAppleMusicComparisonRun(
       updatedAt: now,
     })
     .where(eq(appleMusicComparisonRuns.id, runId));
+}
+
+export async function getConfirmedAppleMusicArtistMapping(
+  db: RadarDatabase,
+  input: {
+    canonicalArtistId: string;
+    snapshotId: string;
+  },
+): Promise<{ appleArtistId: string } | undefined> {
+  const [mapping] = await db
+    .select({
+      appleArtistId: appleMusicArtistMappings.selectedAppleArtistId,
+    })
+    .from(appleMusicArtistMappings)
+    .innerJoin(
+      appleMusicComparisonRuns,
+      eq(appleMusicComparisonRuns.id, appleMusicArtistMappings.runId),
+    )
+    .where(
+      and(
+        eq(appleMusicArtistMappings.canonicalArtistId, input.canonicalArtistId),
+        eq(appleMusicComparisonRuns.snapshotId, input.snapshotId),
+        inArray(appleMusicArtistMappings.status, [
+          "existing_id_confirmed",
+          "search_confirmed",
+          "evidence_confirmed",
+        ]),
+      ),
+    )
+    .orderBy(desc(appleMusicArtistMappings.createdAt))
+    .limit(1);
+  return mapping?.appleArtistId ? { appleArtistId: mapping.appleArtistId } : undefined;
 }
 
 export async function resetAppleMusicStateForTest(db: RadarDatabase): Promise<void> {
