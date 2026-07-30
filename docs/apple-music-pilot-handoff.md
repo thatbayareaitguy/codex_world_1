@@ -69,6 +69,29 @@ The corrected cache ordering succeeded live: zero cache, mapping, album, song, a
 were created. No raw response, descriptive URL, artwork, preview, token, credential, or
 authorization header was persisted. No remaining cohort artist or other provider was contacted.
 
+## Embedded-pagination correction
+
+The exact second failure field, `relationships.albums.next`, was embedded navigation metadata from
+the artist identity response. The runner never follows that relationship because the pilot
+retrieves the six approved artist views explicitly. Normalization had incorrectly treated every
+relationship `next` as request-capable.
+
+The credential-free correction makes embedded relationship navigation inert and removes it before
+cache persistence. Explicit pagination is limited to the artist-view and album-track operations.
+Each cursor must match its operation, route family, US storefront, resource identity, and artist
+view where applicable. The transport rejects redirects, and the grammar rejects cross-host,
+cross-operation, cross-identity, `/v1/me`, library, unsupported-resource, unsupported-query, and
+duplicate-page paths.
+
+Verification passed 425 unit tests, 80 focused Apple tests, 9 Apple PostgreSQL tests, 94 aggregate
+integration tests, formatting, zero-warning lint, strict TypeScript, the production build, 23
+mock-only Playwright tests, migration drift checks, Apple doctor, and `git diff --check`. The
+synthetic HTTP 200 reproduction produced usable identity and exactly one sanitized cache row.
+Unsafe pagination produced zero cache or result rows and released the lease.
+
+No live request occurred during this correction. The real Apple request-event total remains two,
+Apple remains persistently disabled, and no other provider or production path was contacted.
+
 The Apple task did not modify the main or iTunes worktree. The final audit observed unrelated
 concurrent uncommitted changes in the iTunes worktree and left them untouched.
 
@@ -145,8 +168,7 @@ retry made exactly one live Apple request and stopped before the canary.
 
 ## Next milestone
 
-The next source milestone should add credential-free coverage for the returned artist albums
-relationship pagination category and determine the smallest safe public-catalog allowlist change.
-No source change was made after the live retry. Any later authentication recheck or five-artist
-canary retry requires a new explicitly bounded authorization. No safe full-run ceiling can be
-recommended because no five-artist canary measurements exist.
+The next milestone is a separately authorized retry of the same five-artist canary. No safe
+full-run ceiling can be recommended because no five-artist canary measurements exist. The
+remaining 20 artists, complete cohort, representative cohort, and production integration remain
+unauthorized.

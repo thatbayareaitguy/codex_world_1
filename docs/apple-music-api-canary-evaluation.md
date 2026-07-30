@@ -225,6 +225,36 @@ failed run record were preserved. The lease was released, no cooldown was create
 subsequent request occurred. The real Apple request-event baseline increased only from one to two.
 No remaining cohort artist or other provider was contacted.
 
+## Credential-free embedded-pagination correction
+
+Code-path reconstruction confirmed that `relationships.albums.next` was classified as executable
+only because artist normalization validated every relationship `next`. The pilot does not follow
+the embedded albums relationship. It obtains catalog evidence through the six explicit artist
+views, and album tracks through the explicit album-track operation.
+
+The correction makes URL handling execution-driven. Embedded artist, album, song, view, search,
+and unknown relationship navigation is discarded. Only the explicit artist-view and album-track
+loops retain pagination. Their cursors are validated against the owning operation, exact route
+family, US storefront, originating resource identity, and originating artist view. Query keys are
+operation-specific, duplicate detection uses canonical query ordering, and redirects are blocked.
+
+Credential-free reproduction now proves:
+
+- an HTTP 200 artist response with embedded albums `href` and `next` normalizes to usable identity;
+- unknown embedded relationships and fields named `next` remain inert;
+- embedded navigation does not reach transport or sanitized cache persistence;
+- one sanitized cache row is created only after complete normalization;
+- direct artist-view and album-track pagination is followed;
+- cross-operation, cross-identity, wrong-storefront, cross-host, `/v1/me`, library,
+  unsupported-resource, unsupported-query, and duplicate pagination stops before another request;
+- unsafe pagination creates zero cache or result rows, retains sanitized terminal evidence, and
+  releases the lease.
+
+Verification passed formatting, zero-warning lint, strict TypeScript, 425 unit tests, 80 focused
+Apple tests, 9 Apple PostgreSQL tests, 94 canonical aggregate integration tests, the production
+build, 23 mock-only Playwright tests, migration drift checks, Apple doctor, and
+`git diff --check`. All HTTP responses were injected. The real Apple request count remained two.
+
 ## Full-run projection
 
 - Prior planning forecast: 217 of 225 requests.
@@ -259,7 +289,8 @@ A complete 25-artist test is not justified from this evidence.
 - Plan mode executed: Yes
 - Authentication accepted: Yes, HTTP 200 on both bounded attempts
 - Non-followed URL category corrected credential-free: Yes
-- Relationship pagination allowlist complete: No
+- Embedded relationship pagination corrected credential-free: Yes
+- Executable pagination operation-scoped: Yes
 - Five-artist canary: Controlled failure before the canary started
 - Full 25-artist cohort tested: No
 - Representative cohort tested: No

@@ -39,12 +39,23 @@ The typed client supports:
 - up to 25 songs by ID.
 
 Response schemas retain only identity and comparison metadata. Artwork, preview properties, and
-descriptive Apple sharing URLs are discarded. Unknown properties are ignored. API request targets,
-top-level resource `href` values, followed view paths, relationship pagination, and `next` values
-use the strict catalog allowlist. Non-followed relationship `href` values and reference `href`
-values are discarded. An absolute `next` value is accepted only for HTTPS on the exact Apple API
-host and is reduced to its allowed relative path before use or caching. Pagination continues to
-terminal, rejects repeated pages, deduplicates resources, and sorts releases and tracks locally.
+descriptive Apple sharing URLs are discarded. Unknown properties are ignored. Resource `href`
+values and embedded relationship `href` and `next` values are inert metadata and are removed
+unless the client is executing the collection that owns pagination. Search-result pagination is
+also discarded because this pilot does not follow it.
+
+Executable routes are classified by operation: artist search, one artist, artist batch, one of the
+six approved artist views, album detail, album tracks, or song batch. Only artist-view and
+album-track operations currently own pagination. Each cursor must retain the originating
+storefront, route family, resource identity, and artist view where applicable. Query keys are
+operation-specific, parameter order is canonicalized before duplicate detection, and HTTP
+redirects are rejected. An absolute cursor is accepted only for HTTPS on the exact Apple API host
+and is reduced to its allowed relative path before use or caching.
+
+The grammar does not permit genres, playlists, stations, music videos, recommendations, charts,
+library or user routes, arbitrary artist relationships, or unknown resource families. Pagination
+continues to terminal, rejects repeated pages, deduplicates resources, and sorts releases and
+tracks locally.
 
 ## Request safety and persistence
 
@@ -136,3 +147,11 @@ no subsequent request. All implementation tests use generated synthetic EC keys,
 responses, fake time, and the isolated Apple test database. This correction made zero live Apple
 requests. The exact next milestone is a separately authorized authentication recheck and
 five-artist canary retry.
+
+The second authorized lookup also returned HTTP 200, then stopped on the exact embedded field
+`relationships.albums.next`. The runner does not follow that embedded albums relationship because
+it retrieves the six approved views explicitly. The execution-driven correction now discards the
+embedded cursor without validating or persisting it. Credential-free tests prove identity remains
+available, cache ordering succeeds, explicit view and album-track pagination still execute, and
+cross-operation or cross-identity cursor substitution fails before transport. The real Apple
+request count remained two during this correction.

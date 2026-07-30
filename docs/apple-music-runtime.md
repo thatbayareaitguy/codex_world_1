@@ -95,3 +95,21 @@ Credential-free unit and isolated PostgreSQL tests cover the corrected HTTP 200 
 unsafe pagination failure. This correction made no live Apple or other-provider request.
 `APPLE_MUSIC_ENABLED=false` remains required. The next live step is a separately authorized
 authentication recheck and five-artist canary retry.
+
+## Execution-owned pagination
+
+The second bounded authentication lookup returned HTTP 200 and stopped on
+`relationships.albums.next`. That cursor belonged to an albums relationship embedded in the
+artist identity response. The pilot never follows that relationship. It requests each of the six
+approved artist views directly, so the embedded relationship navigation is unnecessary.
+
+Embedded relationship and resource navigation is now discarded without becoming a request
+target. Only the explicit artist-view and album-track loops own pagination. Their cursors must
+match the operation, US storefront, route family, originating resource identity, and originating
+view where applicable. Cross-host, cross-operation, cross-identity, unsupported-query, user,
+library, unknown-resource, redirect, and duplicate-page paths remain blocked.
+
+Credential-free injected HTTP and isolated PostgreSQL tests reproduce the second response shape,
+complete identity normalization, discard all embedded navigation, and write one sanitized cache
+row only after success. This correction made no live request. The real Apple request-event count
+remains two, and a retry of the same five-artist canary requires separate authorization.

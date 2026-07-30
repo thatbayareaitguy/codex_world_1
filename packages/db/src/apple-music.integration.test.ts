@@ -283,6 +283,69 @@ describe.sequential("Apple Music isolated persistence and global request gate", 
     );
   });
 
+  it("caches artist identity only after inert embedded pagination is discarded", async () => {
+    const runId = await createRunningRun(1);
+    const persistence = createAppleMusicRequestPersistence(connection.db);
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              attributes: {
+                genreNames: [],
+                name: "Synthetic",
+                url: "https://music.apple.com/us/artist/synthetic",
+              },
+              href: "https://outside.invalid/non-followed-resource",
+              id: "synthetic",
+              relationships: {
+                albums: {
+                  data: [],
+                  href: "https://outside.invalid/embedded-href",
+                  next: "/v1/catalog/us/artists/synthetic/albums?offset=25",
+                },
+                unsupported: {
+                  data: [],
+                  next: "/v1/me/library",
+                },
+              },
+              type: "artists",
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const client = new AppleMusicClient({
+      enabled: true,
+      fetchImpl,
+      maxRetries: 0,
+      persistence,
+      runId,
+      tokenProvider: { getToken: () => "synthetic-token" },
+    });
+
+    await expect(client.getArtist("synthetic")).resolves.toMatchObject({
+      artistId: "synthetic",
+      name: "Synthetic",
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const cache = await connection.db.select().from(appleMusicResponseCache);
+    expect(cache).toHaveLength(1);
+    const serialized = JSON.stringify(cache);
+    expect(serialized).not.toMatch(
+      /music\.apple\.com|outside\.invalid|embedded|\/v1\/me|"href"|"next"|"url"/,
+    );
+    const events = await connection.db.select().from(appleMusicRequestEvents);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ errorClassification: null, status: 200 });
+    expect(await getAppleMusicOperationalStatus(connection.db)).toMatchObject({
+      cooldownActive: false,
+      leaseActive: false,
+      requestCount: 1,
+    });
+  });
+
   it("keeps unsafe pagination out of cache and releases leases with sanitized telemetry", async () => {
     const run = await createAppleMusicComparisonRun(connection.db, {
       implementationCommit: "f".repeat(40),
@@ -345,8 +408,7 @@ describe.sequential("Apple Music isolated persistence and global request gate", 
     const events = await connection.db.select().from(appleMusicRequestEvents);
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
-      errorClassification:
-        "unsafe_url:response.next:pagination:absolute:https:cross_host:cross_host",
+      errorClassification: "unsafe_url:response.next:artist_view:artist_view:cross_host",
       status: 200,
     });
     const telemetry = JSON.stringify(events);

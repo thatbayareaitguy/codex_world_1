@@ -37,6 +37,9 @@ iTunes pilot snapshot is immutable input only.
   to an allowed relative path. Pagination is terminal, duplicate-safe, and locally sorted.
 - Descriptive Apple sharing URLs, non-followed relationship links, resource-reference links, and
   unknown URL-bearing fields are discarded and never become transport targets or cached data.
+- Embedded relationship `href` and `next` fields are inert. Only explicit artist-view and
+  album-track operations own pagination, with operation, route, storefront, resource identity,
+  view, query-key, redirect, and duplicate-page enforcement.
 - A response enters the cache only after schema validation, request-capable URL validation, and
   complete normalization succeed. Unsafe URL, schema, and normalization failures create no cache
   entry.
@@ -79,6 +82,11 @@ tests, 33 focused pilot-command tests, 8 focused Apple database tests, 93 canoni
 integration tests on the isolated Apple test database, the production build, 23 mock-only
 Playwright tests, migration drift checks, and Apple doctor `READY` with 20 migrations.
 
+The embedded-pagination corrective checkpoint passed 425 unit tests, 80 focused Apple tests, 9
+Apple PostgreSQL tests, 94 aggregate integration tests, formatting, zero-warning lint, strict
+TypeScript, the production build, 23 mock-only Playwright tests, migration drift checks, and Apple
+doctor `READY` with 20 migrations.
+
 ## Live authentication evidence
 
 One separately authorized public-catalog artist lookup returned HTTP 200, showing that Apple
@@ -111,6 +119,14 @@ details, tracks, retries, and cache hits were all zero. Cache ordering succeeded
 cache, mapping, album, song, and comparison rows. The lease was released, no cooldown was created,
 and the real Apple request-event total is two. No source change was made after the live request.
 
+Credential-free reconstruction confirmed the runner never follows the embedded albums
+relationship because it retrieves the six approved views explicitly. Artist normalization no
+longer treats embedded `href` or `next` metadata as executable. Explicit artist-view and
+album-track pagination is now bound to the owning operation, route family, storefront, resource
+identity, and view. Synthetic HTTP 200 identity normalization and sanitized cache persistence
+pass, while unsafe cursor substitution creates zero cache or result rows and releases the lease.
+No live request occurred during this correction.
+
 See `docs/apple-music-api-canary-evaluation.md`.
 
 ## Credential and provider boundaries
@@ -131,8 +147,6 @@ See `docs/apple-music-api-design.md`, `docs/apple-music-pilot-handoff.md`,
 
 ## Next milestone
 
-The next source milestone is a credential-free correction for the artist albums relationship
-pagination category, with synthetic tests for the smallest safe public-catalog allowlist. A later
-live authentication recheck and five-artist canary retry requires separate authorization. The
+The next milestone is a separately authorized retry of the same five-artist canary. The
 five-artist canary, complete 25-artist cohort, and representative cohort have not been tested.
 Production integration remains unauthorized.
