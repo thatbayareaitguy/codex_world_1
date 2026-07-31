@@ -2,7 +2,152 @@
 
 Date: 2026-07-30
 
-## Checkpoint and scope
+## Current optimization result
+
+The `optimized_four_source` implementation and credential-free verification were committed and
+pushed at `5089359cf5a3205af18b41d7366eb7037b326db9` before live execution. The bounded
+experiment then used the same exact ten artists and fixed evaluation time as the prior MVP. It
+made only the two newly required fresh operations for each artist:
+
+- one minimal first-page `top-songs` request;
+- one catalog search for the canonical artist name plus `Remix`, requesting separate album and
+  song collections with the documented maximum `limit=25`.
+
+Prior `singles` and `full-albums` pages remained frozen comparison evidence and were not
+refetched. All ten persisted mappings were confirmed before the HTTP client and run were
+created. No artist lookup, artist search, detail request, pagination request, or other-provider
+request occurred.
+
+The exact command was:
+
+```powershell
+pnpm apple:recent -- --execute-live --confirm-live APPLE_RECENT_MVP_SAMPLE --snapshot "C:\Users\taysh\AppData\Local\TSNewMusicRadar\pilot-snapshots\itunes-pilot-2026-07-28T18-00-19.json" --sample --evaluation-as-of "2026-07-29T23:59:59Z" --profile optimized_four_source
+```
+
+### Search-limit audit
+
+The prior generic query was `<canonical artist name> Remix` with resource types
+`albums,songs`. It omitted `limit`, so Apple applied the documented default of five results for
+each requested type. Album and song results were separate collections. Sanitized prior evidence
+shows that `LOL OK (Axel Boy Remix)` was absent from both returned collections. It was not
+returned and rejected, and it was not lost during deduplication.
+
+The corrected query keeps the same generic term and resource types, sets the documented
+per-type maximum `limit=25`, makes one request per artist, and does not paginate. It does not
+seed a title, remixer, or catalog identifier.
+
+### Top Songs result
+
+All ten `top-songs` requests returned HTTP 200 with ten resources and a top-level next cursor.
+No cursor was followed. Old results were retained only as normalized evidence and rejected as
+`date_out_of_scope`.
+
+| Artist         | In-window eligible Top Songs discovery                 |
+| -------------- | ------------------------------------------------------ |
+| NURKO          | None                                                   |
+| G-Space        | `Regenerate (feat. Injustice)`, exact frozen match     |
+| BUNT.          | `World Away`, previously observed Apple-only candidate |
+| SampliFire     | `Riddim N Dabs` and `Fusion`, exact frozen matches     |
+| Vibe Chemistry | None                                                   |
+| BARELY ALIVE   | None                                                   |
+| Habstrakt      | None                                                   |
+| MUST DIE!      | `LOL OK (Axel Boy Remix)`, recovered known release     |
+| 1788-L         | None                                                   |
+| 3LAU           | None                                                   |
+
+The MUST DIE! result was discovered generically through `top-songs`. The song title contained
+the explicit named remixer `Axel Boy`, and the safely confirmed parent-artist relationship bound
+it to MUST DIE!. It was correctly classified
+`remix_of_watched_artist_by_other`. Popularity was not used as direction evidence.
+
+The persisted comparison marked this candidate Apple-only because the comparison function used
+its parent album title, `Never Say Die Legacy`, rather than its song title. The song title is the
+exact frozen release title and date. This is one deterministic matcher miss after successful
+discovery, not a catalog miss, an Apple-only candidate, or an invalid directional match.
+
+The widened search continued to find `All Cried Out (NURKO Remix)` in both album and song
+collections. It did not find the MUST DIE! release and added no newly accepted in-window
+candidate compared with the earlier default-size search.
+
+### Strategy comparison
+
+The recall denominator is seven primary releases plus three directional remixes in the frozen
+30-day scope.
+
+| Measure                            | A: current five-source | B: without latest | C: optimized four-source |
+| ---------------------------------- | ---------------------: | ----------------: | -----------------------: |
+| Primary recall                     |          7 / 7, 100.0% |     7 / 7, 100.0% |            7 / 7, 100.0% |
+| Remix recall                       |           2 / 3, 66.7% |      2 / 3, 66.7% |            3 / 3, 100.0% |
+| Combined discovery recall          |          9 / 10, 90.0% |     9 / 10, 90.0% |          10 / 10, 100.0% |
+| Accepted candidates                |                     13 |                13 |                       14 |
+| Automated exact frozen matches     |                      9 |                 9 |                        9 |
+| Known matcher misses               |                      0 |                 0 |                        1 |
+| Unconfirmed Apple-only candidates  |                      4 |                 4 |                        4 |
+| False directional matches          |                      0 |                 0 |                        0 |
+| Directionally uncertain candidates |                      0 |                 0 |                        0 |
+| Requests per mapped artist         |                      5 |                 4 |                        4 |
+| Requests for 593 mapped artists    |                  2,965 |             2,372 |                    2,372 |
+| Minimum pacing time at 1,100 ms    |         about 54.4 min |    about 43.5 min |           about 43.5 min |
+
+Strategy A uses `latest-release`, `singles`, `full-albums`, `appears-on-albums`, and search.
+Strategy B removes `latest-release`. Prior persisted evidence contains zero eligible candidate
+found only by `latest-release`, so B preserves all measured matches and accepted candidates.
+Strategy C replaces both `latest-release` and `appears-on-albums` with `top-songs`, retaining
+`singles`, `full-albums`, and search.
+
+The four Apple-only candidates from the prior run remain unconfirmed. The recovered MUST DIE!
+song is reported separately as a matcher miss and does not increase that count.
+
+### Live request and persistence evidence
+
+| Metric                      |    Result |
+| --------------------------- | --------: |
+| New Apple HTTP starts       |        20 |
+| `top-songs` starts          |        10 |
+| Widened catalog searches    |        10 |
+| HTTP 200                    |        20 |
+| Mapping or detail starts    |         0 |
+| Pagination starts           |         0 |
+| Retries                     |         0 |
+| Cache hits                  |         0 |
+| Minimum live-start interval |  1,108 ms |
+| Maximum concurrency         |         1 |
+| Runtime                     | 21,678 ms |
+| Request budget remaining    |         5 |
+| Historical HTTP starts      | 90 to 110 |
+
+The run wrote ten reused mapping records, 68 normalized album rows, 335 normalized song rows,
+403 candidate-evidence rows, and 20 sanitized response-cache rows in the isolated Apple
+database. These are evidence-row counts, not accepted-candidate counts. The lease was released,
+the queue is empty, no cooldown is active, and persistent `APPLE_MUSIC_ENABLED=false` remains
+unchanged. The new cache rows contain no artwork, previews, sharing URLs, authorization data,
+credentials, private-key information, or complete URLs.
+
+### Decision and next milestone
+
+Strategy C meets the provisional-selection rule: 7 of 7 primary recall, no invalid directional
+match, 10 of 10 combined discovery recall, and four requests per mapped artist. It is selected
+as the provisional strategy for a representative pilot, while the production default remains
+unchanged.
+
+The next milestone should first correct and credential-free test song-title comparison for
+song-level candidates, then run the exact representative 25-artist cohort with fresh first pages
+for `singles`, `full-albums`, and `top-songs` plus one widened generic remix search per confirmed
+artist. It should use no pagination or detail requests, a base ceiling of 100 starts, a maximum
+ceiling of 125 including temporary-5xx headroom, concurrency one, at least 1,100 milliseconds
+between starts, and a 15-minute runtime ceiling. That milestone requires separate authorization.
+
+This positive-heavy ten-artist result does not establish representative watchlist performance,
+an Apple request allowance, production readiness, or merge readiness.
+
+Official references:
+
+- [Direct artist view](https://developer.apple.com/documentation/applemusicapi/fetch-a-view-on-this-resource-by-name-4kow5)
+- [Artists Top Songs view](https://developer.apple.com/documentation/applemusicapi/artists/views/artiststopsongsview?changes=la_6_5)
+- [Relationship-view response](https://developer.apple.com/documentation/applemusicapi/relationshipviewresponse?changes=_2_4)
+- [Catalog search](https://developer.apple.com/documentation/applemusicapi/search?changes=_3)
+
+## Prior MVP checkpoint and scope
 
 The source, migration, tests, and pre-live documentation were committed and pushed at
 `378c19590bd325b40e09e9536f38cbd6cf0e45de` before live execution. The bounded command then

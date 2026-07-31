@@ -4,40 +4,47 @@ Updated: 2026-07-30
 
 ## Repository state
 
-The isolated `pnpm apple:recent` MVP is implemented and live-tested. It leaves `apple:pilot` and
-all production behavior unchanged. Every discovery source is first-page only and fresh per run.
-Arm A uses `latest-release` plus artist albums, Arm B reuses `latest-release` plus `singles` and
-`full-albums`, and Arm C uses `appears-on-albums` plus one album-and-song catalog remix search.
+The isolated `pnpm apple:recent` MVP and its optional `optimized_four_source` supplement are
+implemented and live-tested. The exhaustive `apple:pilot`, existing default recent profile, and
+all production behavior remain unchanged.
 
 - Worktree: `C:\Users\taysh\Documents\Codex\codex_world_1_apple`
 - Branch: `codex/apple-music-discovery`
-- Milestone starting checkpoint: `575a1d41a3b3f083e3c1b5851d322741730f0a50`
-- Pre-live source checkpoint: `378c19590bd325b40e09e9536f38cbd6cf0e45de`
+- Optimization milestone starting checkpoint: `121c948459f3d166472f1aa44f67ba9596192a4b`
+- Pre-live source checkpoint: `5089359cf5a3205af18b41d7366eb7037b326db9`
 - Upstream: `origin/codex/apple-music-discovery`
-- Latest live run: `completed/recent_sample_completed`
-- Current historical Apple HTTP-start total: 90
+- Latest live run: `completed/recent_optimized_sample_completed`
+- Current historical Apple HTTP-start total: 110
 - Provider state: disabled, no active run, lease, cooldown, or queue
 
-The exact sample was NURKO, G-Space, BUNT., SampliFire, Vibe Chemistry, BARELY ALIVE, Habstrakt,
-MUST DIE!, 1788-L, and 3LAU. All 10 mapped safely. The scoped frozen evidence contained 10
-releases. Arm A found 7, Arm B found 8, and Arm B plus Arm C found 9. The only frozen miss was
-`LOL OK (Axel Boy Remix)` for MUST DIE!.
+The exact sample remained NURKO, G-Space, BUNT., SampliFire, Vibe Chemistry, BARELY ALIVE,
+Habstrakt, MUST DIE!, 1788-L, and 3LAU. All ten confirmed mappings were required before the
+client and run were created. The experiment made only ten fresh `top-songs` requests and ten
+fresh generic album-and-song searches widened from Apple's default five to the documented
+maximum 25 results per type.
 
-Both NURKO remix directions passed. Catalog search found `All Cried Out (NURKO Remix)` as
-`remix_by_watched_artist`; `latest-release` and `singles` found
-`I Want You (PatFromLastYear Remix)` as `remix_of_watched_artist_by_other`. No false directional
-or directionally uncertain remix was accepted.
+All 20 requests returned HTTP 200. There were zero mapping, detail, pagination, retry,
+cache-hit, or other-provider requests. Concurrency was one, the minimum start interval was 1,108
+milliseconds, and runtime was 21,678 milliseconds. Every Top Songs page returned ten resources
+and a next cursor, which was not followed.
 
-The run used 68 live starts: eight mapping starts and 60 discovery starts. It recorded 65 HTTP
-200 responses, three nonterminal `appears-on-albums` HTTP 404 responses, zero retries, zero
-pagination, zero detail requests, one permitted mapping cache hit, concurrency one, a 1,107
-millisecond minimum interval, and a 74,991 millisecond runtime.
+Top Songs recovered `LOL OK (Axel Boy Remix)` for MUST DIE! and correctly classified it
+`remix_of_watched_artist_by_other`. The widened search did not recover it and added no newly
+accepted in-window candidate compared with the earlier default-size search. It continued to
+find the known NURKO remix. The stored comparison used the recovered song's parent album title
+and therefore marked it Apple-only. This is one matcher miss after successful discovery, not a
+catalog miss or invalid remix direction.
 
-The provisional measured winner is Arm B plus Arm C. Arm B found all seven primary releases and
-Arm C supplied the otherwise-missing remix made by NURKO. `latest-release` added no unique
-accepted candidate. The next milestone should compare Arm B with and without `latest-release`
-and test a targeted improvement for the remaining remix miss. No live request is authorized by
-this handoff.
+Combining frozen `singles` and `full-albums` evidence with fresh Top Songs and widened-search
+evidence produced 7 of 7 primary recall, 3 of 3 remix recall, and 10 of 10 combined discovery
+recall. There were zero false directional matches and zero directionally uncertain in-window
+candidates. Four prior Apple-only candidates remain unconfirmed.
+
+The provisional representative-pilot strategy is `singles`, `full-albums`, `top-songs`, and one
+widened generic remix search, all first page only. It costs four requests per confirmed artist:
+2,372 starts and about 43.5 minutes of minimum pacing time for 593 mapped artists. A
+representative 25-artist live test is justified after a credential-free song-title matcher
+correction, but it is not authorized by this handoff.
 
 See [apple-music-recent-mvp-evaluation.md](apple-music-recent-mvp-evaluation.md) for the complete
 sanitized result.

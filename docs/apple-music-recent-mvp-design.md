@@ -128,3 +128,30 @@ targeted-detail starts, and 10 retry starts.
 The optimized plan reports the 20 fresh requests authorized for this experiment, a five-request
 temporary-5xx reserve, no mapping or detail requests, and the 25-request ceiling. A later normal
 recurring run of all four sources would use 40 starts for ten confirmed artists before retries.
+
+## Optimization experiment result
+
+The source checkpoint was committed and pushed at
+`5089359cf5a3205af18b41d7366eb7037b326db9` before live execution. The exact ten-artist
+supplement experiment then completed with 20 new HTTP starts: ten fresh `top-songs` requests and
+ten fresh searches using `limit=25`. All returned HTTP 200. There were no cache hits, retries,
+pagination requests, mapping requests, detail requests, or requests to another provider.
+
+Every `top-songs` page contained ten resources and reported a next cursor, which was not
+followed. Top Songs recovered the remaining known release, `LOL OK (Axel Boy Remix)` for
+MUST DIE!, and the directional classifier correctly recorded
+`remix_of_watched_artist_by_other`. The widened generic search did not return that release and
+added no newly accepted in-window candidate compared with the earlier default-size search. It
+continued to find the known NURKO remix.
+
+Combining prior `singles` and `full-albums` evidence with fresh `top-songs` and widened search
+evidence gives 7 of 7 primary releases, 3 of 3 remixes, and 10 of 10 combined discovery recall.
+The stored comparison still labels the recovered MUST DIE! song as Apple-only because it compares
+the parent album title instead of the song title. This is one matcher miss, not a discovery miss
+or invalid remix direction, and must be corrected credential-free before a representative live
+test.
+
+The provisional representative-pilot strategy is therefore `optimized_four_source`. It costs
+four first-page discovery requests per confirmed artist, or 2,372 starts for 593 mapped artists.
+The minimum start-to-start pacing time is about 43.5 minutes before processing and retry
+headroom. Production behavior and the default recent profile remain unchanged.

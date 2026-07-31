@@ -4,52 +4,58 @@ Date: 2026-07-30
 
 ## Current checkpoint
 
-The isolated recent-release MVP is implemented, credential-free verified, committed, pushed, and
-live-tested on the exact authorized 10-artist sample. The exhaustive `apple:pilot` remains
-unchanged and available only as research evidence.
+The isolated recent-release MVP and its `optimized_four_source` supplement are implemented,
+credential-free verified, committed, pushed, and live-tested on the exact authorized ten-artist
+sample. The exhaustive `apple:pilot`, production scanner, scheduler, feed, and default recent
+profile remain unchanged.
 
 - Branch: `codex/apple-music-discovery`
-- Milestone starting checkpoint: `575a1d41a3b3f083e3c1b5851d322741730f0a50`
-- Pre-live source checkpoint: `378c19590bd325b40e09e9536f38cbd6cf0e45de`
-- Current Apple HTTP-start total: 90
-- Latest run: `completed/recent_sample_completed`, 68 new starts, 74,991 ms
+- Optimization milestone starting checkpoint: `121c948459f3d166472f1aa44f67ba9596192a4b`
+- Pre-live source checkpoint: `5089359cf5a3205af18b41d7366eb7037b326db9`
+- Current Apple HTTP-start total: 110
+- Latest run: `completed/recent_optimized_sample_completed`, 20 new starts, 21,678 ms
 - Runtime state: provider disabled, no active run, lease, cooldown, or queue
 - Production integration and merge: not authorized
 
-All 10 artists mapped safely. The scoped frozen ground truth contained 10 releases. Arm A found
-7 of 10, Arm B found 8 of 10, and Arm B plus the bidirectional-remix Arm C found 9 of 10. The
-combined accepted set contained nine exact frozen matches and four Apple-only candidates. No
-strong-probable, ambiguous, directionally uncertain, or invalid directional remix match was
-created.
+The prior generic remix search omitted `limit`, which invoked Apple's documented default of five
+results per requested type. Sanitized evidence proved the remaining MUST DIE! remix was absent
+from the separate album and song collections. The new request keeps the generic canonical-artist
+term, sets the documented maximum `limit=25`, makes one request per artist, and does not
+paginate.
 
-NURKO's two required remix directions both passed. Catalog remix search found
-`All Cried Out (NURKO Remix)` as `remix_by_watched_artist`. `latest-release` and `singles` found
-`I Want You (PatFromLastYear Remix)` as `remix_of_watched_artist_by_other`. The June releases
-remained outside the fixed window. The only scoped frozen miss was
-`LOL OK (Axel Boy Remix)` for MUST DIE!.
+The bounded optimization run reused all ten confirmed mappings without an Apple mapping request.
+It made ten fresh minimal `top-songs` requests and ten fresh widened searches. All 20 starts
+returned HTTP 200. There were zero retries, pagination requests, detail requests, cache hits, or
+other-provider events. Every Top Songs page returned ten resources and a next cursor, which was
+recorded but not followed.
 
-The run made 60 fresh discovery starts and eight mapping starts. It recorded 65 HTTP 200
-responses, three nonterminal and nonretryable `appears-on-albums` HTTP 404 responses, zero
-pagination, zero retries, zero detail requests, one permitted mapping cache hit, concurrency one,
-and a 1,107 millisecond minimum interval. The lease was released and no cooldown was created.
+Top Songs recovered `LOL OK (Axel Boy Remix)` for MUST DIE! and correctly classified it
+`remix_of_watched_artist_by_other`. The widened search did not return it and added no newly
+accepted in-window candidate compared with the previous default-size search. The stored
+comparison labeled the recovered song Apple-only because it compared the parent album title
+instead of the song title. This is one matcher miss after successful discovery, not a catalog
+miss or invalid remix direction.
 
-Arm B plus Arm C is the provisional measured winner. Arm B recovered all seven primary releases,
-while Arm C supplied the otherwise-missing remix made by NURKO. `latest-release` contributed no
-unique accepted candidate in this sample, so the next experiment should compare Arm B with and
-without it and should target the remaining remix miss. The implementation default was not
-changed after live execution.
+Using prior `singles` and `full-albums` evidence, the optimized four-source strategy found 7 of 7
+primary releases, 3 of 3 remixes, and 10 of 10 combined releases. It has four unconfirmed
+Apple-only candidates, zero false directional matches, and zero directionally uncertain
+in-window candidates. The prior five-source strategy and the same strategy without
+`latest-release` each remain at 9 of 10 because `latest-release` supplied no unique accepted
+candidate.
 
-At the current five-request discovery shape, 593 mapped artists project to 2,965 discovery
-starts, or about 54.4 minutes at 1,100 millisecond pacing before mapping refresh and targeted
-details. This positive-heavy sample is not representative. A representative 25-artist test,
-production scheduling, production integration, and merge remain unauthorized.
+The provisional representative-pilot profile is now `singles`, `full-albums`, `top-songs`, and
+one widened generic remix search, all first page only. It costs four requests per confirmed
+artist. For 593 mapped artists that is 2,372 starts and about 43.5 minutes of minimum pacing time
+before processing and retry headroom.
 
 See [apple-music-recent-mvp-evaluation.md](apple-music-recent-mvp-evaluation.md) for the complete
 sanitized result and [apple-music-recent-mvp-design.md](apple-music-recent-mvp-design.md) for the
 implemented contract.
 
-The next milestone must explicitly authorize either a higher bounded request ceiling with
-headroom or a smaller live scope. No live retry should start under the current 75-request plan.
+The next milestone should first correct song-title comparison credential-free, then run the
+exact representative 25-artist cohort with the four first-page sources, no pagination or detail
+requests, a 100-request base, a 125-request ceiling including temporary-5xx headroom, and a
+15-minute limit. No such live run is authorized by this handoff.
 
 ## Historical milestone record
 
