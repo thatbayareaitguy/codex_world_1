@@ -158,6 +158,56 @@ describe("iTunes client safety", () => {
     });
   });
 
+  it("executes only an exact targeted album search under the supplied v2 identity", async () => {
+    const persistence = new MemoryPersistence();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(response({ resultCount: 0, results: [] }));
+    const parameters = {
+      country: "US",
+      entity: "album",
+      explicit: "Yes",
+      lang: "en_us",
+      limit: "25",
+      media: "music",
+      term: "Artist Distinctive Record",
+    };
+    await client(persistence, fetchImpl).searchCollectionsExact("run", {
+      cacheIdentity: "itunes-cache:v2:test",
+      parameters,
+    });
+    const requestUrl = fetchImpl.mock.calls[0]?.[0];
+    expect(requestUrl).toBeInstanceOf(URL);
+    const url = new URL((requestUrl as URL).toString());
+    expect(url.pathname).toBe("/search");
+    expect(Object.fromEntries(url.searchParams)).toEqual(parameters);
+    expect(persistence.permits[0]).toMatchObject({
+      endpointCategory: "targeted_collection_search",
+      identity: "itunes-cache:v2:test",
+    });
+  });
+
+  it("does not retry a targeted experiment request", async () => {
+    const persistence = new MemoryPersistence();
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response({}, 500));
+    await expect(
+      client(persistence, fetchImpl).searchCollectionsExact("run", {
+        cacheIdentity: "itunes-cache:v2:test",
+        parameters: {
+          country: "US",
+          entity: "album",
+          explicit: "Yes",
+          lang: "en_us",
+          limit: "25",
+          media: "music",
+          term: "Artist Distinctive Record",
+        },
+      }),
+    ).rejects.toMatchObject({ classification: "server_error" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(persistence.permits).toHaveLength(1);
+  });
+
   it("rejects unsafe schemes, hosts, credentials, and paths", () => {
     for (const value of [
       "http://itunes.apple.com/search",

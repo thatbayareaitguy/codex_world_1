@@ -73,6 +73,7 @@ export interface ItunesNormalizedResponse {
 
 export type ItunesEndpointCategory =
   | "artist_search"
+  | "targeted_collection_search"
   | "artist_albums"
   | "artist_songs"
   | "batch_albums"
@@ -177,6 +178,37 @@ export class ItunesClient {
     });
   }
 
+  searchCollectionsExact(
+    runId: string,
+    input: {
+      cacheIdentity: string;
+      parameters: Record<string, string>;
+    },
+  ): Promise<ItunesNormalizedResponse> {
+    const expected = new Set(["country", "entity", "explicit", "lang", "limit", "media", "term"]);
+    if (
+      !input.cacheIdentity.startsWith("itunes-cache:v2:") ||
+      Object.keys(input.parameters).some((key) => !expected.has(key)) ||
+      Object.keys(input.parameters).length !== expected.size ||
+      input.parameters.country !== this.storefront ||
+      input.parameters.entity !== "album" ||
+      input.parameters.explicit !== "Yes" ||
+      input.parameters.lang !== this.language ||
+      input.parameters.limit !== "25" ||
+      input.parameters.media !== "music" ||
+      !input.parameters.term?.trim()
+    ) {
+      throw new ItunesClientError(
+        "Targeted collection search differs from the frozen request shape.",
+        "invalid_request",
+      );
+    }
+    return this.request(runId, "targeted_collection_search", "/search", input.parameters, {
+      identityOverride: input.cacheIdentity,
+      maximumAttempts: 1,
+    });
+  }
+
   lookupAlbums(runId: string, artistIds: string[]): Promise<ItunesNormalizedResponse> {
     return this.lookupArtists(runId, artistIds, "album");
   }
@@ -228,6 +260,7 @@ export class ItunesClient {
     endpointCategory: ItunesEndpointCategory,
     path: "/search" | "/lookup",
     parameters: Record<string, string>,
+    behavior: { identityOverride?: string; maximumAttempts?: number } = {},
   ): Promise<ItunesNormalizedResponse> {
     if (!this.options.enabled) {
       throw new ItunesClientError(
@@ -236,7 +269,13 @@ export class ItunesClient {
       );
     }
     const url = buildItunesUrl(path, parameters);
-    const identity = normalizedRequestIdentity(url);
+    const identity = behavior.identityOverride ?? normalizedRequestIdentity(url);
+    if (
+      behavior.identityOverride !== undefined &&
+      !behavior.identityOverride.startsWith("itunes-cache:v2:")
+    ) {
+      throw new ItunesClientError("Invalid v2 cache identity override.", "invalid_request");
+    }
     const cached = await this.options.persistence.loadCache(identity);
     if (cached !== null) {
       const parsed = normalizedResponseSchema.parse(cached);
@@ -244,7 +283,8 @@ export class ItunesClient {
       return parsed;
     }
 
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const maximumAttempts = behavior.maximumAttempts ?? 3;
+    for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
       const permit = await this.options.persistence.acquire({
         endpointCategory,
         identity,
@@ -276,7 +316,7 @@ export class ItunesClient {
             status: response.status,
           });
           completionRecorded = true;
-          if (response.status >= 500 && attempt < 3) continue;
+          if (response.status >= 500 && attempt < maximumAttempts) continue;
           throw new ItunesClientError(
             `iTunes request failed with HTTP ${response.status}.`,
             classification,
@@ -338,7 +378,7 @@ export class ItunesClient {
           eventId: permit.eventId,
           leaseToken: permit.leaseToken,
         });
-        if (attempt < 3) continue;
+        if (attempt < maximumAttempts) continue;
         throw new ItunesClientError("iTunes request could not be completed.", classification);
       } finally {
         clearTimeout(timeout);

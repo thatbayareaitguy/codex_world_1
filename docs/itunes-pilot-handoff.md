@@ -4,6 +4,12 @@ Updated: 2026-07-30
 
 ## Adaptive identity-resolution milestone
 
+The bounded live experiment executor is now under implementation. Its frozen scope is unchanged:
+50 artists, 98 operations, 19 cache hits, 79 new requests, 73 album lookups, and 25 targeted album
+searches. The dedicated command, gates, decision rules, canary, and external artifacts are described
+in `docs/itunes-adaptive-identity-experiment.md`. No live experiment request is permitted until the
+implementation passes full credential-free verification and its checkpoint is pushed and clean.
+
 The adaptive full-watchlist identity strategy is implemented and documented in
 `docs/itunes-adaptive-identity-resolution.md`.
 
@@ -27,7 +33,8 @@ The adaptive full-watchlist identity strategy is implemented and documented in
   `b24b51bfbeba03c75e74ed2a59d5d7c7bff0dcadce5e12147af9c2c6413211e0`, canonical
   `271012f7cb5b8c2d95e6a59b76a51dbc67f4b76452b2dcbff342530c3869683d`.
 - Future cohort: 50 artists, 98 planned operations, 19 cache hits, and 79 new requests.
-- Recommended next separately authorized test: hybrid targeted search plus adaptive lookup.
+- Authorized next bounded test: hybrid targeted search plus adaptive lookup through the frozen
+  experiment manifest only.
 
 The replacement main-database export ran exactly once under `REPEATABLE READ READ ONLY`. No
 further main-database access or provider request occurred. `ITUNES_DISCOVERY_ENABLED=false`.

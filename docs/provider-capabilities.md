@@ -21,7 +21,7 @@
 
 The only permitted paid prerequisite is the owner's existing Spotify Premium subscription. No provider adapter may require a paid developer membership, API subscription, or commercial plan.
 
-## iTunes Search API pilot verification (2026-07-28)
+## iTunes Search API pilot verification (2026-07-30)
 
 - Scope: the archived, unauthenticated iTunes Search API at only
   `https://itunes.apple.com/search` and `https://itunes.apple.com/lookup`. This is not the
@@ -33,6 +33,9 @@ The only permitted paid prerequisite is the owner's existing Spotify Premium sub
 - Functionality: music-artist search supports `musicArtist`; lookup supports artist albums and
   recent songs; limits are documented from 1 through 200. Server-side recent sorting is documented
   for song lookup examples, not as a completeness guarantee.
+- The bounded adaptive identity experiment additionally permits only its frozen `/search` requests
+  with `media=music`, `entity=album`, and `limit=25`, plus frozen individual artist album lookups.
+  The executor cannot issue song, collection-detail, batch, or fallback requests.
 - Rate allowance: approximately 20 calls per minute, subject to change. The isolated pilot uses
   concurrency one, a durable global gate, at least 3.2 seconds between request starts, caching, and
   at most 200 requests. It does not probe for a higher limit.

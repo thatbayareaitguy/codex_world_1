@@ -175,9 +175,10 @@ The planned request classes are separate from legacy artist-name search:
 - Artist plus track-title search: a normalized combined term when a future provider method
   explicitly supports it.
 
-The current provider abstraction does not expose these targeted methods. A later authorized
-milestone must add the minimum safe interface and client behavior before any request. This
-milestone implements only credential-free request identities and dry-run planning.
+The provider now exposes one narrow targeted collection-search method for the separately
+authorized bounded experiment. It accepts only the exact frozen album-search parameter shape, a
+v2 cache identity, and one network attempt. The dedicated executor remains incapable of song,
+collection-detail, batch, or dynamic fallback requests.
 
 A result never confirms identity by rank alone. It must have compatible artist naming and exact
 distinctive title evidence, then add compatible release type, version, date, track count, or
@@ -223,7 +224,7 @@ Changing any dimension changes the identity. Identical repeated inputs are idemp
 targeted-search identities cannot collide with legacy artist search. An unchanged legacy album
 lookup can still reuse its exact legacy cache row.
 
-## Future bounded experiment
+## Bounded experiment
 
 The dry-run manifest is:
 
@@ -253,7 +254,9 @@ The manifest's canonical SHA-256 excludes only `canonicalContentSha256` and uses
 sorted compact JSON. The file SHA-256 covers the final indented, newline-terminated manifest.
 Request identities are unique and ordered deterministically.
 
-The future experiment is not authorized. No Apple request was executed.
+The experiment is authorized only through the dedicated command documented in
+`docs/itunes-adaptive-identity-experiment.md`. Live execution remains blocked until the
+credential-free verification checkpoint is committed, pushed, synchronized, and clean.
 
 ## Interpretation limits
 
