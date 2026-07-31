@@ -1,5 +1,10 @@
 import { validateAppleMusicPilotSnapshot } from "./apple-music-pilot-definition";
 import {
+  createAppleMusicIdentityBootstrapPlan,
+  readAppleMusicIdentityBootstrapArtifact,
+  type AppleMusicIdentityBootstrapPlan,
+} from "./apple-music-identity-bootstrap";
+import {
   appleMusicRecentConfirmation,
   appleMusicRecentEvaluationTime,
   appleMusicRecentSample,
@@ -49,6 +54,11 @@ export interface AppleMusicRecentPlan {
 
 export type AppleMusicRecentCommand =
   | {
+      identitySeedsPath: string;
+      mode: "mapping_bootstrap_plan";
+      snapshotPath: string;
+    }
+  | {
       cohortManifestPath?: string;
       mode: "plan";
       profile: AppleMusicRecentProfile;
@@ -73,6 +83,34 @@ export function parseAppleMusicRecentCommand(args: string[]): AppleMusicRecentCo
   if (plan === live) throw new Error("Choose exactly one of --plan or --execute-live.");
   const sample = values.includes("--sample");
   const cohortManifestPath = optionalOption(values, "--cohort-manifest");
+  const mappingBootstrap = values.includes("--mapping-bootstrap");
+  const identitySeedsPath = optionalOption(values, "--identity-seeds");
+  if (mappingBootstrap) {
+    if (!plan || live || sample || cohortManifestPath) {
+      throw new Error("Mapping bootstrap requires --plan and no release-discovery cohort.");
+    }
+    if (!identitySeedsPath || identitySeedsPath.startsWith("--")) {
+      throw new Error("Mapping bootstrap requires --identity-seeds.");
+    }
+    const snapshotPath = requiredOption(values, "--snapshot");
+    const optionNames = new Set([
+      "--plan",
+      "--mapping-bootstrap",
+      "--identity-seeds",
+      "--snapshot",
+    ]);
+    const optionValues = new Set([identitySeedsPath, snapshotPath]);
+    const unexpected = values.find((value) => !optionNames.has(value) && !optionValues.has(value));
+    if (unexpected) throw new Error(`Unexpected Apple mapping bootstrap argument: ${unexpected}`);
+    return {
+      identitySeedsPath,
+      mode: "mapping_bootstrap_plan",
+      snapshotPath,
+    };
+  }
+  if (identitySeedsPath) {
+    throw new Error("--identity-seeds requires --mapping-bootstrap.");
+  }
   if (sample === Boolean(cohortManifestPath)) {
     throw new Error("Choose exactly one of --sample or --cohort-manifest.");
   }
@@ -90,6 +128,8 @@ export function parseAppleMusicRecentCommand(args: string[]): AppleMusicRecentCo
     "--confirm-live",
     "--evaluation-as-of",
     "--profile",
+    "--mapping-bootstrap",
+    "--identity-seeds",
   ]);
   const optionValues = new Set(
     [snapshotPath, cohortManifestPath, confirmation, evaluationAsOf, profile].filter(
@@ -140,6 +180,19 @@ export function parseAppleMusicRecentCommand(args: string[]): AppleMusicRecentCo
     scope,
     snapshotPath,
   };
+}
+
+export async function createAppleMusicRecentMappingBootstrapPlan(
+  snapshotPath: string,
+  identitySeedsPath: string,
+  readSnapshot: (path: string) => Promise<ItunesPilotSnapshot> = readItunesPilotSnapshot,
+  readArtifact = readAppleMusicIdentityBootstrapArtifact,
+): Promise<AppleMusicIdentityBootstrapPlan> {
+  const [snapshot, artifact] = await Promise.all([
+    readSnapshot(snapshotPath),
+    readArtifact(identitySeedsPath),
+  ]);
+  return createAppleMusicIdentityBootstrapPlan(artifact, snapshot);
 }
 
 export async function createAppleMusicRecentPlan(

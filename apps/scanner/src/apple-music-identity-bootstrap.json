@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "snapshotHash": "48259f7e2016aa8bbbabf4baa7e3baf8d4f9e9b53b413dab56f9d4fc70e1278a",
+  "evidenceAsOf": "2026-07-31",
+  "artists": [
+    {
+      "canonicalArtistName": "ZHU",
+      "plausibleExactNameCandidates": 2,
+      "frozenReleaseCount": 1,
+      "candidateArtistId": "261545033",
+      "evidenceSource": "docs/itunes-pilot-identity-provenance.csv"
+    },
+    {
+      "canonicalArtistName": "Alok",
+      "plausibleExactNameCandidates": 15,
+      "frozenReleaseCount": 3,
+      "candidateEvidenceArtistIds": ["1151138463", "1193063258"],
+      "candidateEvidenceSource": "isolated-apple-search-cache"
+    },
+    {
+      "canonicalArtistName": "Don Diablo",
+      "plausibleExactNameCandidates": 2,
+      "frozenReleaseCount": 3,
+      "candidateArtistId": "76849154",
+      "evidenceSource": "docs/itunes-pilot-identity-provenance.csv"
+    },
+    {
+      "canonicalArtistName": "SISTO",
+      "plausibleExactNameCandidates": 3,
+      "frozenReleaseCount": 4,
+      "candidateArtistId": "1526157202",
+      "evidenceSource": "docs/itunes-pilot-identity-provenance.csv"
+    },
+    {
+      "canonicalArtistName": "William Black",
+      "plausibleExactNameCandidates": 2,
+      "frozenReleaseCount": 3,
+      "candidateArtistId": "1297084102",
+      "evidenceSource": "docs/itunes-pilot-identity-provenance.csv"
+    },
+    {
+      "canonicalArtistName": "YUSSI",
+      "plausibleExactNameCandidates": 2,
+      "frozenReleaseCount": 4,
+      "candidateArtistId": "1614562965",
+      "evidenceSource": "docs/itunes-pilot-identity-provenance.csv"
+    },
+    {
+      "canonicalArtistName": "Babsy.",
+      "plausibleExactNameCandidates": 7,
+      "frozenReleaseCount": 0,
+      "candidateEvidenceArtistIds": ["1082852204", "1528400638"],
+      "candidateEvidenceSource": "isolated-apple-search-cache"
+    },
+    {
+      "canonicalArtistName": "GRiZ",
+      "plausibleExactNameCandidates": 2,
+      "frozenReleaseCount": 1,
+      "candidateEvidenceArtistIds": ["1514766386", "980722716"],
+      "candidateEvidenceSource": "isolated-apple-search-cache"
+    },
+    {
+      "canonicalArtistName": "Anto",
+      "plausibleExactNameCandidates": 16,
+      "frozenReleaseCount": 0,
+      "candidateEvidenceArtistIds": ["1097979314", "1112148987"],
+      "candidateEvidenceSource": "isolated-apple-search-cache"
+    },
+    {
+      "canonicalArtistName": "Rueben",
+      "plausibleExactNameCandidates": 2,
+      "frozenReleaseCount": 3,
+      "candidateEvidenceArtistIds": ["1592550904", "1783637264"],
+      "candidateEvidenceSource": "isolated-apple-search-cache"
+    },
+    {
+      "canonicalArtistName": "1991",
+      "plausibleExactNameCandidates": 12,
+      "frozenReleaseCount": 1,
+      "candidateEvidenceArtistIds": ["1020307242", "1097602547"],
+      "candidateEvidenceSource": "isolated-apple-search-cache"
+    },
+    {
+      "canonicalArtistName": "12th Planet",
+      "plausibleExactNameCandidates": 2,
+      "frozenReleaseCount": 0,
+      "candidateEvidenceArtistIds": ["1747936330", "183237859"],
+      "candidateEvidenceSource": "isolated-apple-search-cache"
+    },
+    {
+      "canonicalArtistName": "4B",
+      "plausibleExactNameCandidates": 13,
+      "frozenReleaseCount": 1,
+      "candidateEvidenceArtistIds": ["1151465795", "1206463209"],
+      "candidateEvidenceSource": "isolated-apple-search-cache"
+    }
+  ],
+  "artifactHash": "a07a90fafa78cc099a864117e58f1ce1e0da745e0c36904d935dc3197249ca67"
+}

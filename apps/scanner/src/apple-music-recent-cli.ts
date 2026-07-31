@@ -23,6 +23,7 @@ import {
 } from "@radar/providers";
 import { asc, eq } from "drizzle-orm";
 import {
+  createAppleMusicRecentMappingBootstrapPlan,
   createAppleMusicRecentPlan,
   parseAppleMusicRecentCommand,
 } from "./apple-music-recent-command";
@@ -41,6 +42,19 @@ import { loadLocalEnvironment } from "./local-env";
 
 async function main(): Promise<void> {
   const command = parseAppleMusicRecentCommand(process.argv.slice(2));
+  if (command.mode === "mapping_bootstrap_plan") {
+    process.stdout.write(
+      `${JSON.stringify(
+        await createAppleMusicRecentMappingBootstrapPlan(
+          command.snapshotPath,
+          command.identitySeedsPath,
+        ),
+        null,
+        2,
+      )}\n`,
+    );
+    return;
+  }
   if (command.mode === "plan") {
     process.stdout.write(
       `${JSON.stringify(

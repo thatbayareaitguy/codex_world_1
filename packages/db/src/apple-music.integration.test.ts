@@ -637,6 +637,46 @@ describe.sequential("Apple Music isolated persistence and global request gate", 
     ).resolves.toEqual({ appleArtistId: "synthetic-private" });
   });
 
+  it("keeps a confirmed mapping reusable after a later failed ambiguous run", async () => {
+    const canonicalArtistId = randomUUID();
+    const confirmedRunId = await createRunningRun(1);
+    await saveAppleMusicArtistMapping(connection.db, {
+      canonicalArtistId,
+      decision: {
+        candidates: [],
+        confidence: 1,
+        evidence: [],
+        reason: "Synthetic confirmed identity.",
+        selected: { artistId: "durable-synthetic-id", name: "Synthetic" },
+        status: "evidence_confirmed",
+      },
+      runId: confirmedRunId,
+    });
+    const failedRunId = await createRunningRun(1);
+    await saveAppleMusicArtistMapping(connection.db, {
+      canonicalArtistId,
+      decision: {
+        candidates: [{ artistId: "ambiguous-synthetic-id", name: "Synthetic" }],
+        confidence: 0,
+        evidence: [],
+        reason: "Synthetic ambiguity.",
+        status: "ambiguous",
+      },
+      runId: failedRunId,
+    });
+    await finishAppleMusicComparisonRun(connection.db, failedRunId, {
+      metrics: { mode: "mapping_bootstrap" },
+      status: "failed",
+      stopReason: "identity_ambiguous",
+    });
+    await expect(
+      getConfirmedAppleMusicArtistMapping(connection.db, {
+        canonicalArtistId,
+        snapshotId,
+      }),
+    ).resolves.toEqual({ appleArtistId: "durable-synthetic-id" });
+  });
+
   it("persists mapping evidence, normalized catalog rows, and comparisons idempotently", async () => {
     const runId = await createRunningRun(5);
     const canonicalArtistId = randomUUID();

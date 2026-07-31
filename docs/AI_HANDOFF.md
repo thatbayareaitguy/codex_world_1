@@ -1,32 +1,36 @@
 # AI Handoff
 
-Updated: 2026-07-30
+Updated: 2026-07-31
 
 ## Repository state
 
 The isolated `pnpm apple:recent` MVP and its `optimized_four_source` profile are implemented.
-Song-level comparison is corrected, the prior ten-artist evidence replays at 10 of 10 exact, and
-the deterministic 25-artist validation is complete. The exhaustive `apple:pilot`, existing
-default recent profile, and all production behavior remain unchanged.
+Feature-credit and terminal EP normalization are corrected credential-free. The ten-artist
+evidence replays at 10 of 10 exact, and the 25-artist evidence replays at 9 of 21 full-cohort and
+9 of 12 mapped-artist exact recall. Both replays have zero matcher misses. The exhaustive
+`apple:pilot`, existing default recent profile, and all production behavior remain unchanged.
 
 - Worktree: `C:\Users\taysh\Documents\Codex\codex_world_1_apple`
 - Branch: `codex/apple-music-discovery`
-- Optimization milestone starting checkpoint: `121c948459f3d166472f1aa44f67ba9596192a4b`
-- Pre-live source checkpoint: `5089359cf5a3205af18b41d7366eb7037b326db9`
+- Normalization milestone starting checkpoint: `74f6e840d3477fd5eb904d0ff55faf9e3f4b761c`
 - Upstream: `origin/codex/apple-music-discovery`
 - Latest live run: `completed/recent_optimized_validation_25_completed`
 - Current historical Apple HTTP-start total: 181
 - Provider state: disabled, no active run, lease, cooldown, or queue
 
-The 25-artist validation completed with 12 search-confirmed and 13 ambiguous mappings. It reached
-7 of 21 full-cohort recall, 7 of 12 mapped-artist recall, 5 of 13 primary recall, and 2 of 8 remix
-recall. It made 71 starts in 80,292 ms with concurrency one, a 1,103 ms minimum interval, no retry,
-no pagination, 69 HTTP 200 responses, and two nonterminal HTTP 404 responses. The current total is
-181 real Apple starts.
+The 25-artist validation completed with 12 search-confirmed and 13 ambiguous mappings. The
+credential-free replay now gives 9 of 21 full-cohort exact recall, 9 of 12 mapped-artist exact
+recall, zero matcher misses, nine mapping-unevaluable releases, and three mapped catalog misses.
+The original live run made 71 starts in 80,292 ms with concurrency one, a 1,103 ms minimum
+interval, no retry, no pagination, 69 HTTP 200 responses, and two nonterminal HTTP 404 responses.
+The current total remains 181 real Apple starts.
 
-Apple fails the primary-provider thresholds on this cohort. The next milestone should correct
-punctuation-equivalent feature credits and EP suffix normalization credential-free, then replay
-stored evidence. Do not start another live run, production integration, or merge.
+The 13 ambiguous identities resulted from a cold-start name-search stress test. The validation
+manifest omitted public IDs and the runner had no prior confirmed mapping for them. The
+existing-ID path was not defective. A tracked self-hashed identity artifact contains five
+approved offline public-ID seeds and two-candidate cached-search shortlists for the other eight.
+Seeds remain unconfirmed. The plan forecasts 21 future starts under a proposed 25-start,
+60-second ceiling, with no retry or release discovery.
 
 The exact sample remained NURKO, G-Space, BUNT., SampliFire, Vibe Chemistry, BARELY ALIVE,
 Habstrakt, MUST DIE!, 1788-L, and 3LAU. All ten confirmed mappings were required before the
@@ -53,9 +57,8 @@ candidates. Four prior Apple-only candidates remain unconfirmed.
 
 The provisional representative-pilot strategy is `singles`, `full-albums`, `top-songs`, and one
 widened generic remix search, all first page only. It costs four requests per confirmed artist:
-2,372 starts and about 43.5 minutes of minimum pacing time for 593 mapped artists. A
-representative 25-artist live test is justified after a credential-free song-title matcher
-correction, but it is not authorized by this handoff.
+2,372 starts and about 43.5 minutes of minimum pacing time for 593 mapped artists. A mapping-only
+live run is the next proposed experiment, but it is not authorized by this handoff.
 
 See [apple-music-recent-mvp-evaluation.md](apple-music-recent-mvp-evaluation.md) for the complete
 sanitized result.

@@ -2,14 +2,22 @@ import { describe, expect, it, vi } from "vitest";
 import { normalizeText } from "@radar/core";
 import { AppleMusicClientError, type AppleMusicAlbum, type AppleMusicSong } from "@radar/providers";
 import {
+  computeAppleMusicIdentityBootstrapHash,
+  createAppleMusicIdentityBootstrapPlan,
+  validateAppleMusicIdentityBootstrapArtifact,
+  type AppleMusicIdentityBootstrapArtifact,
+} from "./apple-music-identity-bootstrap";
+import {
   appleMusicRecentWindow,
   classifyAppleMusicRecentCandidate,
   compareAppleMusicRecentCandidate,
   extractNamedRemixer,
   mergeAppleMusicRecentCandidates,
+  normalizeAppleMusicReleaseComparisonTitle,
   scopedAppleMusicRecentGroundTruth,
 } from "./apple-music-recent";
 import {
+  createAppleMusicRecentMappingBootstrapPlan,
   createAppleMusicRecentPlan,
   parseAppleMusicRecentCommand,
 } from "./apple-music-recent-command";
@@ -159,6 +167,77 @@ describe("Apple recent command gate", () => {
         "snapshot.json",
       ]),
     ).toThrow("exactly one");
+  });
+
+  it("parses mapping-bootstrap plan mode without a discovery cohort", () => {
+    expect(
+      parseAppleMusicRecentCommand([
+        "--plan",
+        "--mapping-bootstrap",
+        "--snapshot",
+        "snapshot.json",
+        "--identity-seeds",
+        "seeds.json",
+      ]),
+    ).toEqual({
+      identitySeedsPath: "seeds.json",
+      mode: "mapping_bootstrap_plan",
+      snapshotPath: "snapshot.json",
+    });
+    expect(() =>
+      parseAppleMusicRecentCommand([
+        "--execute-live",
+        "--mapping-bootstrap",
+        "--snapshot",
+        "snapshot.json",
+        "--identity-seeds",
+        "seeds.json",
+      ]),
+    ).toThrow("requires --plan");
+  });
+});
+
+describe("Apple identity bootstrap", () => {
+  it("validates a candidate seed without treating the seed as confirmation", () => {
+    const value = identityBootstrapFixture();
+    const valid = validateAppleMusicIdentityBootstrapArtifact(value.artifact, value.snapshot);
+    const plan = createAppleMusicIdentityBootstrapPlan(valid, value.snapshot);
+    expect(plan).toMatchObject({
+      artistsRequiringIdConfirmation: ["NURKO"],
+      artistsRequiringZeroRequests: [],
+      confirmationRequests: 1,
+      mode: "mapping_bootstrap_plan",
+      networkRequestsStarted: 0,
+      seedIsConfirmation: false,
+      writes: 0,
+    });
+  });
+
+  it("rejects a changed seed when its artifact hash is not updated", () => {
+    const value = identityBootstrapFixture();
+    value.artifact.artists[0]!.candidateArtistId = "999";
+    expect(() =>
+      validateAppleMusicIdentityBootstrapArtifact(value.artifact, value.snapshot),
+    ).toThrow("artifact hash");
+  });
+
+  it("creates a plan without database, credential, token, or HTTP callbacks", async () => {
+    const value = identityBootstrapFixture();
+    const readSnapshot = vi.fn(() => Promise.resolve(value.snapshot));
+    const readArtifact = vi.fn(() => Promise.resolve(value.artifact));
+    const plan = await createAppleMusicRecentMappingBootstrapPlan(
+      "snapshot.json",
+      "seeds.json",
+      readSnapshot,
+      readArtifact,
+    );
+    expect(plan).toMatchObject({
+      networkRequestsStarted: 0,
+      requestForecast: 1,
+      writes: 0,
+    });
+    expect(readSnapshot).toHaveBeenCalledOnce();
+    expect(readArtifact).toHaveBeenCalledOnce();
   });
 });
 
@@ -367,6 +446,77 @@ describe("Apple recent candidate classification", () => {
       comparisonTitle: "Signal - Single",
       granularity: "album",
     });
+  });
+
+  it("normalizes punctuation-equivalent feature markers without losing the credited artist", () => {
+    const variants = [
+      "Signal Ft. Virus Syndicate",
+      "Signal Ft Virus Syndicate",
+      "Signal Feat. Virus Syndicate",
+      "Signal Feat Virus Syndicate",
+      "Signal (feat. Virus Syndicate)",
+      "Signal [Feat. Virus Syndicate]",
+      "Signal Featuring Virus Syndicate",
+    ];
+    expect(
+      new Set(variants.map((value) => normalizeAppleMusicReleaseComparisonTitle(value))),
+    ).toEqual(new Set(["signal feat virus syndicate"]));
+    expect(normalizeAppleMusicReleaseComparisonTitle("Signal (VIP Edit)")).toBe("signal vip edit");
+  });
+
+  it("matches feature-credit marker variants through general comparison rules", () => {
+    const candidate = classifyTopSong(
+      song({
+        albumName: "Like This - Single",
+        artistName: "Other",
+        title: "Like This (feat. Virus Syndicate) [Skybreak Remix]",
+      }),
+      "Skybreak",
+    );
+    expect(
+      compareAppleMusicRecentCandidate(candidate, [
+        release("Like This Ft. Virus Syndicate (Skybreak Remix)", "2026-07-10", "remix"),
+      ]),
+    ).toBe("exact_match");
+  });
+
+  it("normalizes only a terminal EP release-kind marker", () => {
+    expect(normalizeAppleMusicReleaseComparisonTitle("KEY BINDZ", "ep")).toBe("key bindz");
+    expect(normalizeAppleMusicReleaseComparisonTitle("KEY BINDZ EP", "ep")).toBe("key bindz");
+    expect(normalizeAppleMusicReleaseComparisonTitle("KEY BINDZ - EP", "ep")).toBe("key bindz");
+    expect(normalizeAppleMusicReleaseComparisonTitle("EP Control", "ep")).toBe("ep control");
+    expect(normalizeAppleMusicReleaseComparisonTitle("The EP Sessions")).toBe("the ep sessions");
+    expect(normalizeAppleMusicReleaseComparisonTitle("Signal EP")).toBe("signal ep");
+    expect(normalizeAppleMusicReleaseComparisonTitle("Signal EP (Deluxe)", "ep")).toBe(
+      "signal ep deluxe",
+    );
+  });
+
+  it("deduplicates EP album and song representations without losing source evidence", () => {
+    const albumCandidate = classify(
+      album({
+        albumId: "key-bindz",
+        isSingle: false,
+        title: "KEY BINDZ - EP",
+        trackCount: 4,
+      }),
+    );
+    const songCandidate: ReturnType<typeof classifyTopSong> = {
+      ...albumCandidate,
+      albumTitle: "KEY BINDZ - EP",
+      comparisonTitle: "KEY BINDZ",
+      granularity: "song",
+      songId: "key-bindz-song",
+      songTitle: "KEY BINDZ",
+      sources: ["top-songs"],
+    };
+    expect(mergeAppleMusicRecentCandidates([albumCandidate, songCandidate])).toMatchObject([
+      {
+        comparisonTitle: "KEY BINDZ",
+        granularity: "album_and_song",
+        sources: ["singles", "top-songs"],
+      },
+    ]);
   });
 
   it("deduplicates album and song representations while retaining both source granularities", () => {
@@ -852,6 +1002,35 @@ function recentSnapshot(entries: AppleMusicPilotPlanArtist[]): ItunesPilotSnapsh
     version: 1,
     windowEnd: "2026-07-29",
     windowStart: "2026-05-30",
+  };
+}
+
+function identityBootstrapFixture(): {
+  artifact: AppleMusicIdentityBootstrapArtifact;
+  snapshot: ItunesPilotSnapshot;
+} {
+  const artist = snapshotArtist();
+  const value = snapshot(artist, []);
+  const payload = {
+    artists: [
+      {
+        candidateArtistId: "123",
+        canonicalArtistName: artist.canonicalName,
+        evidenceSource: "synthetic-offline-artifact",
+        frozenReleaseCount: 0,
+        plausibleExactNameCandidates: 2,
+      },
+    ],
+    evidenceAsOf: "2026-07-31",
+    snapshotHash: value.snapshotHash,
+    version: 1 as const,
+  };
+  return {
+    artifact: {
+      ...payload,
+      artifactHash: computeAppleMusicIdentityBootstrapHash(payload),
+    },
+    snapshot: value,
   };
 }
 

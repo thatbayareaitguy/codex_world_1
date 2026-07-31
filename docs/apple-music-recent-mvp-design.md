@@ -1,6 +1,6 @@
 # Apple Music Recent-Release MVP
 
-Date: 2026-07-30
+Date: 2026-07-31
 
 ## Authorization and boundary
 
@@ -19,9 +19,10 @@ concurrency one, and the same pacing floor. Its conservative forecast is 100 fre
 starts, up to 25 mapping starts, 10 targeted-detail starts, 25 bounded-retry starts, and 15 starts
 of safety headroom. Plan mode performs no writes, credential access, token generation, or HTTP.
 
-That validation is now complete. Twelve artists mapped safely, 13 remained ambiguous, and the run
-made 71 network starts. Full-cohort recall was 7 of 21 and mapped-artist recall was 7 of 12.
-Mapping and recall do not support production integration. The result and focused matcher follow-up
+That validation and its credential-free normalization replay are complete. Twelve artists mapped
+safely, 13 remained ambiguous, and the live run made 71 network starts. Corrected full-cohort
+exact recall is 9 of 21 and mapped-artist exact recall is 9 of 12. Matcher misses are zero.
+Mapping and recall do not support production integration. The result and mapping-only follow-up
 are recorded in `docs/apple-music-recent-validation-25.md`.
 
 ## Window
@@ -58,6 +59,15 @@ fallback of normalized artist, comparison title, version markers, and release da
 merge remix and original, live and studio, different named remixers, materially distinct content
 ratings, or releases with different dates absent stronger identity. The existing schema already
 stores album title and song title separately, so no migration is required.
+
+Release-title comparison canonicalizes `Ft.`, `Ft`, `Feat.`, `Feat`, bracketed `feat.`, and
+`Featuring` to one feature marker after Unicode normalization. The credited artist tokens remain
+in the comparison. Remix, live, VIP, edit, clean, explicit, and named-remixer markers remain
+available to the existing compatibility checks.
+
+A terminal `EP` marker is removed only when the candidate or frozen release is explicitly typed as
+an EP. Internal `EP` text and suffixes followed by deluxe, remix, live, anniversary, or edition
+markers are retained. Original Apple titles remain stored separately from comparison titles.
 
 Apple documents the direct artist view, generic artist relationship, and catalog search
 operations used here:
@@ -142,6 +152,7 @@ pnpm apple:recent -- --plan --snapshot <external-snapshot-path> --sample
 pnpm apple:recent -- --execute-live --confirm-live APPLE_RECENT_MVP_SAMPLE --snapshot <external-snapshot-path> --sample --evaluation-as-of 2026-07-29T23:59:59Z
 pnpm apple:recent -- --plan --snapshot <external-snapshot-path> --sample --profile optimized_four_source
 pnpm apple:recent -- --execute-live --confirm-live APPLE_RECENT_MVP_SAMPLE --snapshot <external-snapshot-path> --sample --evaluation-as-of 2026-07-29T23:59:59Z --profile optimized_four_source
+pnpm apple:recent -- --plan --mapping-bootstrap --snapshot <external-snapshot-path> --identity-seeds apps/scanner/src/apple-music-identity-bootstrap.json
 ```
 
 Plan mode validates the pinned snapshot and exact sample without credentials, private-key access,
@@ -152,6 +163,14 @@ targeted-detail starts, and 10 retry starts.
 The optimized plan reports the 20 fresh requests authorized for this experiment, a five-request
 temporary-5xx reserve, no mapping or detail requests, and the 25-request ceiling. A later normal
 recurring run of all four sources would use 40 starts for ten confirmed artists before retries.
+
+The mapping-bootstrap plan is credential-free and separate from release discovery. It validates
+the artifact self-hash, frozen snapshot hash, exact canonical names, frozen-release counts, numeric
+public candidate IDs, evidence sources, uniqueness, and the two-candidate maximum. It does not
+open a database, read runtime credentials, initialize a token or HTTP client, or write state.
+A public-ID seed remains unconfirmed until a separately authorized Apple artist lookup validates
+the ID and compatible name. A later ambiguous or failed attempt cannot replace a prior durable
+confirmed mapping.
 
 ## Optimization experiment result
 

@@ -1,30 +1,38 @@
 # Apple Music Pilot Handoff
 
-Date: 2026-07-30
+Date: 2026-07-31
 
 ## Current checkpoint
 
-The isolated recent-release MVP and `optimized_four_source` profile are implemented. Song-level
-comparison is corrected, the prior ten-artist evidence replays at 10 of 10 exact, and the
-deterministic 25-artist validation is complete. The exhaustive `apple:pilot`, production scanner,
-scheduler, feed, and default recent profile remain unchanged.
+The isolated recent-release MVP and `optimized_four_source` profile are implemented. Feature-credit
+and terminal EP normalization are corrected credential-free. The ten-artist evidence replays at
+10 of 10 exact with zero matcher misses. The 25-artist evidence replays at 9 of 21 full-cohort and
+9 of 12 mapped-artist exact recall, also with zero matcher misses. The exhaustive `apple:pilot`,
+production scanner, scheduler, feed, and default recent profile remain unchanged.
 
 - Branch: `codex/apple-music-discovery`
-- Optimization milestone starting checkpoint: `121c948459f3d166472f1aa44f67ba9596192a4b`
-- Pre-live source checkpoint: `5089359cf5a3205af18b41d7366eb7037b326db9`
+- Normalization milestone starting checkpoint: `74f6e840d3477fd5eb904d0ff55faf9e3f4b761c`
 - Current Apple HTTP-start total: 181
 - Latest run: `completed/recent_optimized_validation_25_completed`, 71 new starts, 80,292 ms
 - Runtime state: provider disabled, no active run, lease, cooldown, or queue
 - Production integration and merge: not authorized
 
-The 25-artist run produced 12 search-confirmed and 13 ambiguous mappings. Recall was 7 of 21 for
-the full cohort and 7 of 12 among mapped artists. Primary recall was 5 of 13 and remix recall was 2
-of 8. The run made 71 starts, used no pagination or retry, and received 69 HTTP 200 and two
-nonterminal HTTP 404 responses. The result does not meet the primary-provider thresholds.
+The 25-artist live run produced 12 search-confirmed and 13 ambiguous mappings. Corrected replay
+raises exact recall from 7 to 9 without changing live evidence. The remaining nine
+mapping-unevaluable releases belong to ambiguous artists, and the three remaining mapped misses
+are catalog misses. The result still does not meet the primary-provider thresholds.
 
-The immediate follow-up is credential-free only: normalize punctuation-equivalent feature credits
-and the EP release suffix, then replay stored evidence. Do not authorize a broader live run,
-production integration, or merge from this result.
+The validation was an intentional cold-start name-search stress test. Its manifest supplied no
+public IDs, its runner constructed all entries as search-required, and none of the 13 artists had
+a prior confirmed mapping for the frozen snapshot. The existing-ID path was intact but had no seed
+to validate.
+
+A tracked identity-bootstrap artifact now freezes all 13 ambiguity records. Five artists have
+approved offline public-ID seeds that still require one Apple identity confirmation each. Eight
+artists have deterministic two-candidate shortlists from retained Apple search evidence. The
+credential-free plan forecasts 21 starts, proposes a 25-start and 60-second future ceiling, and
+performs zero requests, writes, database access, credential access, or token generation. A future
+live mapping-only run is not authorized by this handoff.
 
 The prior generic remix search omitted `limit`, which invoked Apple's documented default of five
 results per requested type. Sanitized evidence proved the remaining MUST DIE! remix was absent
@@ -61,10 +69,9 @@ See [apple-music-recent-mvp-evaluation.md](apple-music-recent-mvp-evaluation.md)
 sanitized result and [apple-music-recent-mvp-design.md](apple-music-recent-mvp-design.md) for the
 implemented contract.
 
-The next milestone should first correct song-title comparison credential-free, then run the
-exact representative 25-artist cohort with the four first-page sources, no pagination or detail
-requests, a 100-request base, a 125-request ceiling including temporary-5xx headroom, and a
-15-minute limit. No such live run is authorized by this handoff.
+The next milestone should be the 13-artist mapping-only run described in
+`docs/apple-music-recent-validation-25.md`. It must not execute the four-source discovery profile.
+No such live run is authorized by this handoff.
 
 ## Historical milestone record
 

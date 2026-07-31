@@ -229,10 +229,21 @@ export function compareAppleMusicRecentCandidate(
   | "excluded"
   | "strong_probable_match" {
   if (!candidate.eligible) return "excluded";
-  const candidateTitle = comparableReleaseTitle(candidate.comparisonTitle);
+  const candidateTitle = comparableReleaseTitle(
+    candidate.comparisonTitle,
+    candidateReleaseKind(candidate),
+  );
   const sameTitle = groundTruth.filter((release) =>
     releaseComparisonTitles(candidate, release).some(
-      (title) => comparableReleaseTitle(title) === candidateTitle,
+      (title) =>
+        comparableReleaseTitle(
+          title,
+          release.releaseType === "ep"
+            ? "ep"
+            : release.releaseType === "single"
+              ? "single"
+              : undefined,
+        ) === candidateTitle,
     ),
   );
   const compatible = sameTitle.filter((release) => releaseDirectionCompatible(candidate, release));
@@ -313,7 +324,8 @@ function sameCandidateIdentity(
     left.releaseDate !== undefined &&
     left.releaseDate === right.releaseDate &&
     artistComparable(left.appleArtistName) === artistComparable(right.appleArtistName) &&
-    comparableReleaseTitle(left.comparisonTitle) === comparableReleaseTitle(right.comparisonTitle)
+    comparableReleaseTitle(left.comparisonTitle, candidateReleaseKind(left)) ===
+      comparableReleaseTitle(right.comparisonTitle, candidateReleaseKind(right))
   );
 }
 
@@ -392,10 +404,26 @@ function isRemixClassification(classification: AppleMusicRecentClassification): 
   ].includes(classification);
 }
 
-function comparableReleaseTitle(value: string): string {
-  return normalizeText(value)
-    .replace(/\s+(?:single|ep)$/u, "")
+export function normalizeAppleMusicReleaseComparisonTitle(
+  value: string,
+  releaseKind?: "ep" | "single",
+): string {
+  const normalized = normalizeText(value)
+    .replace(/\b(?:ft|feat|featuring)\b/gu, "feat")
+    .replace(/\s+/gu, " ")
     .trim();
+  if (releaseKind === "ep") return normalized.replace(/\s+ep$/u, "").trim();
+  return normalized.replace(/\s+single$/u, "").trim();
+}
+
+function comparableReleaseTitle(value: string, releaseKind?: "ep" | "single"): string {
+  return normalizeAppleMusicReleaseComparisonTitle(value, releaseKind);
+}
+
+function candidateReleaseKind(candidate: AppleMusicRecentCandidate): "ep" | "single" | undefined {
+  if (candidate.classification === "primary_ep") return "ep";
+  if (candidate.classification === "primary_single") return "single";
+  return undefined;
 }
 
 function versionMarkers(value: string): string {
