@@ -4,70 +4,49 @@ Date: 2026-07-30
 
 ## Current checkpoint
 
-The current pre-live checkpoint implements a separate recent-release MVP without changing the
-exhaustive pilot. It uses a maximum 30-day window with a 48-hour overlap after the last successful
-run, fresh first pages, no pagination, two primary-release comparison arms, and a third
-bidirectional-remix arm. The exact 10-artist plan forecasts 93 of 100 starts. Credential-free
-verification must be committed and pushed before the one authorized sample can begin.
-
-Both `remix_by_watched_artist` and `remix_of_watched_artist_by_other` are in scope when explicit
-directional evidence and a full in-window date are present. The fixed NURKO ground truth is two
-such releases. The implementation does not seed their catalog IDs.
+The isolated recent-release MVP is implemented, credential-free verified, committed, pushed, and
+live-tested on the exact authorized 10-artist sample. The exhaustive `apple:pilot` remains
+unchanged and available only as research evidence.
 
 - Branch: `codex/apple-music-discovery`
-- Milestone starting checkpoint: `887599dc0768eb13c8ffa3dcd5e7192f78f0ad4b`
-- Unavailable-view correction checkpoint: `74321f97ea04fa427b31c6200fdfa8bc725c3224`
-- Pre-live identifier-policy checkpoint: `ebb153ad23c71c1855652126ca28fc38e37d9f34`
-- Current Apple request-event total: 22
-- Current provider state: disabled, no active run, lease, cooldown, or queue
-- Current milestone result: credential-free discovery-strategy analysis completed with no new
-  provider request
-- Most recent live result: controlled `failed/not_found` after 14 starts
+- Milestone starting checkpoint: `575a1d41a3b3f083e3c1b5851d322741730f0a50`
+- Pre-live source checkpoint: `378c19590bd325b40e09e9536f38cbd6cf0e45de`
+- Current Apple HTTP-start total: 90
+- Latest run: `completed/recent_sample_completed`, 68 new starts, 74,991 ms
+- Runtime state: provider disabled, no active run, lease, cooldown, or queue
 - Production integration and merge: not authorized
 
-The current strategy recommendation is no longer to increase the exhaustive weekly ceiling by
-default. Existing NURKO evidence shows all Apple resources inside the observed 14, 30, and 60-day
-windows on `singles` page one, while six later pages added only older history. However, available
-views still missed frozen recent releases, so endpoint coverage remains a separate recall risk.
-Apple does not document artist-view ordering, and NURKO is not representative.
+All 10 artists mapped safely. The scoped frozen ground truth contained 10 releases. Arm A found
+7 of 10, Arm B found 8 of 10, and Arm B plus the bidirectional-remix Arm C found 9 of 10. The
+combined accepted set contained nine exact frozen matches and four Apple-only candidates. No
+strong-probable, ambiguous, directionally uncertain, or invalid directional remix match was
+created.
 
-Use [apple-music-discovery-strategy-analysis.md](apple-music-discovery-strategy-analysis.md) as the
-current architecture record. It recommends one future five-artist, three-arm, first-page
-comparison of direct views, individual embedded views, and the generic albums relationship. The
-experiment is not authorized or executed by this checkpoint.
+NURKO's two required remix directions both passed. Catalog remix search found
+`All Cried Out (NURKO Remix)` as `remix_by_watched_artist`. `latest-release` and `singles` found
+`I Want You (PatFromLastYear Remix)` as `remix_of_watched_artist_by_other`. The June releases
+remained outside the fixed window. The only scoped frozen miss was
+`LOL OK (Axel Boy Remix)` for MUST DIE!.
 
-Supported direct artist-view HTTP 404 is now operation-specifically recorded as
-`unavailable_404` after confirmed parent identity. It remains nonretryable and uncached, but it
-does not stop later views or artists. It remains distinct from HTTP 200 empty, preserves earlier
-successful resources, marks coverage incomplete, and prevents false catalog-miss classifications.
-Unrelated HTTP 404 and terminal error behavior is unchanged.
+The run made 60 fresh discovery starts and eight mapping starts. It recorded 65 HTTP 200
+responses, three nonterminal and nonretryable `appears-on-albums` HTTP 404 responses, zero
+pagination, zero retries, zero detail requests, one permitted mapping cache hit, concurrency one,
+and a 1,107 millisecond minimum interval. The lease was released and no cooldown was created.
 
-The corrected plan separates 30 canary first pages, six known pagination starts, and 24
-unknown-pagination contingency starts. Its total is 79 against the immutable limit of 75. The
-full projection is 355 against 225. Because neither conservative forecast fits, the authorized
-five-artist command was not executed. The real Apple request total remains 22.
+Arm B plus Arm C is the provisional measured winner. Arm B recovered all seven primary releases,
+while Arm C supplied the otherwise-missing remix made by NURKO. `latest-release` contributed no
+unique accepted candidate in this sample, so the next experiment should compare Arm B with and
+without it and should target the remaining remix miss. The implementation default was not
+changed after live execution.
 
-The five-artist canary authenticated BUNT. and evaluated mapping for 1991, Alok, and NURKO before
-stopping on NURKO `live-albums` HTTP 404. Mapping results were `ambiguous` for 1991 and Alok,
-`search_confirmed` for NURKO, and `existing_id_confirmed` for the BUNT. authentication identity.
-G-Space was not reached.
+At the current five-request discovery shape, 593 mapped artists project to 2,965 discovery
+starts, or about 54.4 minutes at 1,100 millisecond pacing before mapping refresh and targeted
+details. This positive-heavy sample is not representative. A representative 25-artist test,
+production scheduling, production integration, and merge remain unauthorized.
 
-NURKO `latest-release` returned one resource on one page. `singles` returned 66 resources over
-seven pages, including six validated operation-owned pagination requests. `full-albums` returned
-five resources on one page. `live-albums` returned HTTP 404 without retry.
-`compilation-albums` and `appears-on-albums` were not reached. No other canary artist entered the
-six-view catalog loop.
-
-The run recorded 13 HTTP 200 responses and one HTTP 404, one artist lookup, three searches, four
-first-page view requests, six pagination requests, zero album-detail or track requests, zero
-retries, zero cache hits, concurrency one, a 1,107 millisecond minimum interval, and a 14,931
-millisecond duration. Thirteen sanitized cache rows were added. No album, song, or comparison row
-was created because no six-view collection completed.
-
-Recall remains unavailable for every requested time window and release category. The earlier
-217-of-225 forecast is not supported because NURKO `singles` alone used the six pagination
-requests forecast for the entire canary. No defensible revised full-run total or safe ceiling can
-be established from this controlled failure, and the complete 25-artist pilot is not justified.
+See [apple-music-recent-mvp-evaluation.md](apple-music-recent-mvp-evaluation.md) for the complete
+sanitized result and [apple-music-recent-mvp-design.md](apple-music-recent-mvp-design.md) for the
+implemented contract.
 
 The next milestone must explicitly authorize either a higher bounded request ceiling with
 headroom or a smaller live scope. No live retry should start under the current 75-request plan.
