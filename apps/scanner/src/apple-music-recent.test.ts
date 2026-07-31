@@ -4,6 +4,7 @@ import { AppleMusicClientError, type AppleMusicAlbum, type AppleMusicSong } from
 import {
   appleMusicRecentWindow,
   classifyAppleMusicRecentCandidate,
+  compareAppleMusicRecentCandidate,
   extractNamedRemixer,
   mergeAppleMusicRecentCandidates,
   scopedAppleMusicRecentGroundTruth,
@@ -49,7 +50,12 @@ describe("Apple recent command gate", () => {
   it("parses plan mode without accepting live-only options", () => {
     expect(
       parseAppleMusicRecentCommand(["--plan", "--sample", "--snapshot", "snapshot.json"]),
-    ).toEqual({ mode: "plan", profile: "current", snapshotPath: "snapshot.json" });
+    ).toEqual({
+      mode: "plan",
+      profile: "current",
+      scope: "sample",
+      snapshotPath: "snapshot.json",
+    });
     expect(() =>
       parseAppleMusicRecentCommand([
         "--plan",
@@ -121,6 +127,38 @@ describe("Apple recent command gate", () => {
       profile: "optimized_four_source",
       writes: 0,
     });
+  });
+
+  it("requires the committed-manifest validation scope and exact confirmation", () => {
+    const base = [
+      "--execute-live",
+      "--snapshot",
+      "snapshot.json",
+      "--cohort-manifest",
+      "manifest.json",
+      "--profile",
+      "optimized_four_source",
+      "--evaluation-as-of",
+      "2026-07-29T23:59:59Z",
+    ];
+    expect(() => parseAppleMusicRecentCommand(base)).toThrow("APPLE_RECENT_MVP_VALIDATION_25");
+    expect(
+      parseAppleMusicRecentCommand([...base, "--confirm-live", "APPLE_RECENT_MVP_VALIDATION_25"]),
+    ).toMatchObject({
+      cohortManifestPath: "manifest.json",
+      mode: "execute_live",
+      scope: "validation_25",
+    });
+    expect(() =>
+      parseAppleMusicRecentCommand([
+        "--plan",
+        "--sample",
+        "--cohort-manifest",
+        "manifest.json",
+        "--snapshot",
+        "snapshot.json",
+      ]),
+    ).toThrow("exactly one");
   });
 });
 
@@ -266,6 +304,134 @@ describe("Apple recent candidate classification", () => {
     expect(extractNamedRemixer("Signal Remix by NURKO")).toBe("NURKO");
     expect(extractNamedRemixer("Signal (Remix)")).toBeUndefined();
   });
+
+  it("matches a Top Songs remix by song title when the parent album title differs", () => {
+    const candidate = classifyTopSong(
+      song({
+        albumName: "Never Say Die Legacy",
+        artistName: "MUST DIE!, Akeos & Skream",
+        releaseDate: "2026-07-03",
+        title: "LOL OK (Axel Boy Remix)",
+      }),
+      "MUST DIE!",
+    );
+    expect(candidate).toMatchObject({
+      albumTitle: "Never Say Die Legacy",
+      classification: "remix_of_watched_artist_by_other",
+      comparisonTitle: "LOL OK (Axel Boy Remix)",
+      granularity: "song",
+      songTitle: "LOL OK (Axel Boy Remix)",
+    });
+    expect(
+      compareAppleMusicRecentCandidate(candidate, [
+        release("LOL OK (Axel Boy Remix)", "2026-07-03", "remix"),
+      ]),
+    ).toBe("exact_match");
+  });
+
+  it("does not let a matching parent album override a nonmatching song title", () => {
+    const candidate = classifyTopSong(
+      song({
+        albumName: "Expected Single",
+        artistName: "NURKO",
+        title: "Different Song",
+      }),
+    );
+    expect(
+      compareAppleMusicRecentCandidate(candidate, [
+        release("Expected Single", "2026-07-10", "single"),
+      ]),
+    ).toBe("apple_only_candidate");
+  });
+
+  it("compares ordinary song and album candidates at their explicit granularity", () => {
+    const songCandidate = classifyTopSong(
+      song({
+        albumName: "Collection - Single",
+        artistName: "NURKO",
+        title: "Signal",
+      }),
+    );
+    const albumCandidate = classify(album({ title: "Signal - Single", isSingle: true }));
+    const truth = [release("Signal", "2026-07-10", "single")];
+    expect(compareAppleMusicRecentCandidate(songCandidate, truth)).toBe("exact_match");
+    expect(compareAppleMusicRecentCandidate(albumCandidate, truth)).toBe("exact_match");
+    expect(songCandidate).toMatchObject({
+      albumTitle: "Collection - Single",
+      comparisonTitle: "Signal",
+      granularity: "song",
+      songTitle: "Signal",
+    });
+    expect(albumCandidate).toMatchObject({
+      albumTitle: "Signal - Single",
+      comparisonTitle: "Signal - Single",
+      granularity: "album",
+    });
+  });
+
+  it("deduplicates album and song representations while retaining both source granularities", () => {
+    const albumCandidate = classify(
+      album({
+        albumId: "release-synthetic",
+        isSingle: true,
+        title: "Signal - Single",
+      }),
+    );
+    const songCandidate = classifyTopSong(
+      song({
+        albumId: "release-synthetic",
+        albumName: "Signal - Single",
+        artistName: "NURKO",
+        songId: "song-synthetic",
+        title: "Signal",
+      }),
+    );
+    expect(mergeAppleMusicRecentCandidates([albumCandidate, songCandidate])).toMatchObject([
+      {
+        albumTitle: "Signal - Single",
+        comparisonTitle: "Signal",
+        granularity: "album_and_song",
+        songTitle: "Signal",
+        sources: ["singles", "top-songs"],
+      },
+    ]);
+  });
+
+  it("keeps remixes, originals, named remixers, live versions, and distant dates distinct", () => {
+    const original = classify(album({ albumId: "original", title: "Signal - Single" }));
+    const remixA = classify(album({ albumId: "remix-a", title: "Signal (Alpha Remix) - Single" }));
+    const remixB = classify(album({ albumId: "remix-b", title: "Signal (Beta Remix) - Single" }));
+    const live = classify(album({ albumId: "live", title: "Signal (Live) - Single" }));
+    expect(mergeAppleMusicRecentCandidates([original, remixA, remixB, live])).toHaveLength(4);
+    expect(
+      compareAppleMusicRecentCandidate(original, [release("Signal", "2026-01-01", "single")]),
+    ).toBe("ambiguous_match");
+    expect(
+      compareAppleMusicRecentCandidate(remixA, [release("Signal", "2026-07-10", "single")]),
+    ).toBe("apple_only_candidate");
+  });
+
+  it("does not merge the same recording when it appears on distinct dated releases", () => {
+    const single = classifyTopSong(
+      song({
+        albumId: "single-release",
+        albumName: "Signal - Single",
+        isrc: "SYNTHETICISRC",
+        releaseDate: "2026-07-10",
+        songId: "single-song",
+      }),
+    );
+    const albumAppearance = classifyTopSong(
+      song({
+        albumId: "later-album",
+        albumName: "Later Album",
+        isrc: "SYNTHETICISRC",
+        releaseDate: "2026-07-20",
+        songId: "album-song",
+      }),
+    );
+    expect(mergeAppleMusicRecentCandidates([single, albumAppearance])).toHaveLength(2);
+  });
 });
 
 describe("Apple recent frozen scope", () => {
@@ -377,6 +543,34 @@ describe("Apple recent bounded runner", () => {
     expect(client.getArtistViewFirstPage).not.toHaveBeenCalled();
     expect(client.getArtistTopSongsFirstPage).toHaveBeenCalledTimes(10);
     expect(client.searchRecentRemixes).toHaveBeenCalledTimes(10);
+    expect(store.releaseLease).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs four fresh sources for exactly 25 validation artists under the 175-request gate", async () => {
+    const entries = validationEntries();
+    const client = recentClient();
+    const store = recentStore();
+    const summary = await runAppleMusicRecentOptimizationAfterValidation(
+      {
+        authorization: recentValidationAuthorization(),
+        createClient: () => client,
+        implementationCommit: "a".repeat(40),
+        snapshot: recentSnapshot(entries),
+        store,
+      },
+      entries,
+      { freshSupplementOnly: false, validation: true },
+    );
+    expect(summary).toMatchObject({
+      mode: "recent_optimized_validation_25",
+      requestBudget: 175,
+      status: "completed",
+    });
+    expect(summary.artists).toHaveLength(25);
+    expect(client.getArtistViewFirstPage).toHaveBeenCalledTimes(50);
+    expect(client.getArtistTopSongsFirstPage).toHaveBeenCalledTimes(25);
+    expect(client.searchRecentRemixes).toHaveBeenCalledTimes(25);
+    expect(client.getArtistAlbumsFirstPage).not.toHaveBeenCalled();
     expect(store.releaseLease).toHaveBeenCalledTimes(1);
   });
 
@@ -595,6 +789,18 @@ function recentAuthorization() {
   });
 }
 
+function recentValidationAuthorization() {
+  return authorizeAppleMusicRecent({
+    confirmation: "APPLE_RECENT_MVP_VALIDATION_25",
+    evaluationAsOf: "2026-07-29T23:59:59Z",
+    executeLive: true,
+    otherProvidersDisabled: true,
+    persistentAppleMusicEnabled: "false",
+    scope: "validation_25",
+    storefront: "us",
+  });
+}
+
 function recentEntries(): AppleMusicPilotPlanArtist[] {
   const names = [
     "NURKO",
@@ -612,6 +818,15 @@ function recentEntries(): AppleMusicPilotPlanArtist[] {
     canonicalArtistId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
     category: "positive_release",
     name,
+    requiresSearch: true,
+  }));
+}
+
+function validationEntries(): AppleMusicPilotPlanArtist[] {
+  return Array.from({ length: 25 }, (_, index) => ({
+    canonicalArtistId: `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    category: "identity_catalog_stress",
+    name: `Validation Artist ${index + 1}`,
     requiresSearch: true,
   }));
 }

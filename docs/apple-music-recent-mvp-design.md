@@ -8,10 +8,16 @@ This branch implements a separate, disabled-by-default Apple public-catalog expe
 `apple:recent`. It does not change `apple:pilot`, the production scanner, scheduler, feed,
 playlists, or provider enablement. Persistent `APPLE_MUSIC_ENABLED=false` is required.
 
-The exact live sample, if separately gated after credential-free verification, is NURKO, G-Space,
+The original exact live sample is NURKO, G-Space,
 BUNT., SampliFire, Vibe Chemistry, BARELY ALIVE, Habstrakt, MUST DIE!, 1788-L, and 3LAU. The
 ceiling is 100 HTTP starts, 15 minutes, concurrency one, and at least 1,100 milliseconds between
 starts.
+
+The separate 25-artist validation scope requires the tracked deterministic manifest, confirmation
+`APPLE_RECENT_MVP_VALIDATION_25`, `optimized_four_source`, a 175-start ceiling, 20 minutes,
+concurrency one, and the same pacing floor. Its conservative forecast is 100 fresh discovery
+starts, up to 25 mapping starts, 10 targeted-detail starts, 25 bounded-retry starts, and 15 starts
+of safety headroom. Plan mode performs no writes, credential access, token generation, or HTTP.
 
 ## Window
 
@@ -34,6 +40,19 @@ frozen comparison.
 No arm follows pagination. Every discovery request has a run-scoped cache identity. This keeps
 historical cache evidence intact, prevents an old row from satisfying a later scan, and permits
 duplicate reuse only within the same run.
+
+## Candidate granularity and comparison
+
+Album resources retain their release title as the comparison title. Song resources retain the
+song title as the comparison title and the parent album title as separate context. Song candidates
+may compare against a frozen single or remix release title or track title, but a parent album title
+cannot establish a song match.
+
+Cross-source deduplication preserves every source and uses compatible resource identity before a
+fallback of normalized artist, comparison title, version markers, and release date. It does not
+merge remix and original, live and studio, different named remixers, materially distinct content
+ratings, or releases with different dates absent stronger identity. The existing schema already
+stores album title and song title separately, so no migration is required.
 
 Apple documents the direct artist view, generic artist relationship, and catalog search
 operations used here:
@@ -146,10 +165,9 @@ continued to find the known NURKO remix.
 
 Combining prior `singles` and `full-albums` evidence with fresh `top-songs` and widened search
 evidence gives 7 of 7 primary releases, 3 of 3 remixes, and 10 of 10 combined discovery recall.
-The stored comparison still labels the recovered MUST DIE! song as Apple-only because it compares
-the parent album title instead of the song title. This is one matcher miss, not a discovery miss
-or invalid remix direction, and must be corrected credential-free before a representative live
-test.
+A credential-free replay with explicit song granularity now gives 10 of 10 automated exact
+matches, zero matcher misses, zero invalid directional matches, and four unconfirmed Apple-only
+candidates. No historical request telemetry was rewritten.
 
 The provisional representative-pilot strategy is therefore `optimized_four_source`. It costs
 four first-page discovery requests per confirmed artist, or 2,372 starts for 593 mapped artists.

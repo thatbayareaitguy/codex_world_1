@@ -4,9 +4,11 @@ Updated: 2026-07-30
 
 ## Repository state
 
-The isolated `pnpm apple:recent` MVP and its optional `optimized_four_source` supplement are
-implemented and live-tested. The exhaustive `apple:pilot`, existing default recent profile, and
-all production behavior remain unchanged.
+The isolated `pnpm apple:recent` MVP and its `optimized_four_source` supplement are implemented
+and live-tested on the original ten-artist sample. Song-level comparison is corrected
+credential-free, and a deterministic 25-artist validation gate is prepared but not yet
+live-executed. The exhaustive `apple:pilot`, existing default recent profile, and all production
+behavior remain unchanged.
 
 - Worktree: `C:\Users\taysh\Documents\Codex\codex_world_1_apple`
 - Branch: `codex/apple-music-discovery`
@@ -16,6 +18,12 @@ all production behavior remain unchanged.
 - Latest live run: `completed/recent_optimized_sample_completed`
 - Current historical Apple HTTP-start total: 110
 - Provider state: disabled, no active run, lease, cooldown, or queue
+
+The credential-free replay of the prior sanitized evidence produces 7 of 7 primary releases, 3 of
+3 remixes, 10 of 10 combined and automated exact matches, zero matcher misses, zero invalid
+directional matches, and four unconfirmed Apple-only candidates. The validation manifest contains
+10 positive, 10 negative, and 5 identity/catalog-stress artists. Its no-pagination plan forecasts
+160 of 175 starts with 15 starts of headroom and a 20-minute ceiling.
 
 The exact sample remained NURKO, G-Space, BUNT., SampliFire, Vibe Chemistry, BARELY ALIVE,
 Habstrakt, MUST DIE!, 1788-L, and 3LAU. All ten confirmed mappings were required before the

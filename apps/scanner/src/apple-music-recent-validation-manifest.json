@@ -1,0 +1,53 @@
+{
+  "artists": [
+    { "frozenReleaseCount": 3, "name": "SVDDEN DEATH", "selectionCategory": "positive" },
+    { "frozenReleaseCount": 1, "name": "ZHU", "selectionCategory": "positive" },
+    { "frozenReleaseCount": 1, "name": "Alok", "selectionCategory": "positive" },
+    { "frozenReleaseCount": 2, "name": "Don Diablo", "selectionCategory": "positive" },
+    { "frozenReleaseCount": 3, "name": "SISTO", "selectionCategory": "positive" },
+    { "frozenReleaseCount": 2, "name": "Virus Syndicate", "selectionCategory": "positive" },
+    { "frozenReleaseCount": 2, "name": "Dr. Ozi", "selectionCategory": "positive" },
+    { "frozenReleaseCount": 1, "name": "William Black", "selectionCategory": "positive" },
+    { "frozenReleaseCount": 1, "name": "YUSSI", "selectionCategory": "positive" },
+    { "frozenReleaseCount": 3, "name": "Leotrix", "selectionCategory": "positive" },
+    { "frozenReleaseCount": 0, "name": "Babsy.", "selectionCategory": "negative" },
+    { "frozenReleaseCount": 0, "name": "Bad Chicken!", "selectionCategory": "negative" },
+    { "frozenReleaseCount": 0, "name": "Bad Computer", "selectionCategory": "negative" },
+    { "frozenReleaseCount": 0, "name": "Apashe", "selectionCategory": "negative" },
+    { "frozenReleaseCount": 0, "name": "Andromedik", "selectionCategory": "negative" },
+    { "frozenReleaseCount": 0, "name": "GRiZ", "selectionCategory": "negative" },
+    { "frozenReleaseCount": 0, "name": "Anto", "selectionCategory": "negative" },
+    { "frozenReleaseCount": 0, "name": "Rueben", "selectionCategory": "negative" },
+    { "frozenReleaseCount": 0, "name": "Autograf", "selectionCategory": "negative" },
+    { "frozenReleaseCount": 0, "name": "ATLiens", "selectionCategory": "negative" },
+    {
+      "frozenReleaseCount": 1,
+      "name": "Au5",
+      "selectionCategory": "identity_catalog_stress"
+    },
+    {
+      "frozenReleaseCount": 1,
+      "name": "2TD",
+      "selectionCategory": "identity_catalog_stress"
+    },
+    {
+      "frozenReleaseCount": 0,
+      "name": "1991",
+      "selectionCategory": "identity_catalog_stress"
+    },
+    {
+      "frozenReleaseCount": 0,
+      "name": "12th Planet",
+      "selectionCategory": "identity_catalog_stress"
+    },
+    {
+      "frozenReleaseCount": 0,
+      "name": "4B",
+      "selectionCategory": "identity_catalog_stress"
+    }
+  ],
+  "evaluationAsOf": "2026-07-29T23:59:59Z",
+  "seed": "apple-recent-validation-25-v1",
+  "snapshotHash": "48259f7e2016aa8bbbabf4baa7e3baf8d4f9e9b53b413dab56f9d4fc70e1278a",
+  "version": 1
+}

@@ -4,10 +4,11 @@ Date: 2026-07-30
 
 ## Current checkpoint
 
-The isolated recent-release MVP and its `optimized_four_source` supplement are implemented,
-credential-free verified, committed, pushed, and live-tested on the exact authorized ten-artist
-sample. The exhaustive `apple:pilot`, production scanner, scheduler, feed, and default recent
-profile remain unchanged.
+The isolated recent-release MVP and its `optimized_four_source` supplement are implemented and
+live-tested on the original ten-artist sample. The song-level comparison correction and a
+deterministic 25-artist validation gate are now credential-free verified but not yet live-executed.
+The exhaustive `apple:pilot`, production scanner, scheduler, feed, and default recent profile
+remain unchanged.
 
 - Branch: `codex/apple-music-discovery`
 - Optimization milestone starting checkpoint: `121c948459f3d166472f1aa44f67ba9596192a4b`
@@ -16,6 +17,11 @@ profile remain unchanged.
 - Latest run: `completed/recent_optimized_sample_completed`, 20 new starts, 21,678 ms
 - Runtime state: provider disabled, no active run, lease, cooldown, or queue
 - Production integration and merge: not authorized
+
+The credential-free ten-artist replay now yields 10 of 10 automated exact matches, zero matcher
+misses, zero invalid directional matches, and four unconfirmed Apple-only candidates. The
+25-artist manifest contains 10 positive, 10 negative, and 5 identity/catalog-stress artists. Its
+conservative plan uses 160 of the 175-start ceiling and does not paginate.
 
 The prior generic remix search omitted `limit`, which invoked Apple's documented default of five
 results per requested type. Sanitized evidence proved the remaining MUST DIE! remix was absent

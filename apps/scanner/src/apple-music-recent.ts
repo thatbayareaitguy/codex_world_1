@@ -55,8 +55,12 @@ export interface AppleMusicRecentCandidate {
   albumTitle: string;
   appleArtistName: string;
   classification: AppleMusicRecentClassification;
+  comparisonTitle: string;
+  contentRating?: "clean" | "explicit";
   eligible: boolean;
   evidenceStrength: "explicit" | "relationship_confirmed" | "uncertain";
+  granularity: "album" | "album_and_song" | "song";
+  isrc?: string;
   namedRemixer?: string;
   releaseDate?: string;
   songId?: string;
@@ -93,6 +97,7 @@ export function classifyAppleMusicRecentCandidate(input: {
   const albumTitle = input.album?.title ?? input.song?.albumName ?? input.song?.title ?? "";
   const releaseDate = input.song?.releaseDate ?? input.album?.releaseDate;
   const artistName = input.song?.artistName ?? input.album?.artistName ?? "";
+  const contentRating = input.song?.contentRating ?? input.album?.contentRating;
   const base: Omit<AppleMusicRecentCandidate, "classification" | "eligible" | "evidenceStrength"> =
     {
       ...(input.album?.albumId
@@ -102,6 +107,10 @@ export function classifyAppleMusicRecentCandidate(input: {
           : {}),
       albumTitle,
       appleArtistName: artistName,
+      comparisonTitle: title,
+      ...(contentRating ? { contentRating } : {}),
+      granularity: input.song ? ("song" as const) : ("album" as const),
+      ...(input.song?.isrc ? { isrc: input.song.isrc } : {}),
       ...(releaseDate ? { releaseDate } : {}),
       ...(input.song?.songId ? { songId: input.song.songId, songTitle: input.song.title } : {}),
       sources: [input.source],
@@ -120,7 +129,7 @@ export function classifyAppleMusicRecentCandidate(input: {
     return rejected(base, "date_out_of_scope");
   }
   if (input.album?.isCompilation) return rejected(base, "compilation_only");
-  if (/\b(?:live|in concert)\b/iu.test(normalizeText(albumTitle))) {
+  if (/\b(?:live|in concert)\b/iu.test(normalizeText(`${title} ${albumTitle}`))) {
     return rejected(base, "live_release");
   }
 
@@ -194,32 +203,52 @@ function classifySongRelease(song: AppleMusicSong): "primary_single" | "primary_
 export function mergeAppleMusicRecentCandidates(
   candidates: AppleMusicRecentCandidate[],
 ): AppleMusicRecentCandidate[] {
-  const merged = new Map<string, AppleMusicRecentCandidate>();
+  const merged: AppleMusicRecentCandidate[] = [];
   for (const candidate of candidates) {
-    const key =
-      candidate.albumId ??
-      candidate.songId ??
-      [
-        normalizeText(candidate.appleArtistName),
-        normalizeText(candidate.albumTitle),
-        candidate.releaseDate ?? "",
-      ].join(":");
-    const current = merged.get(key);
-    if (!current) {
-      merged.set(key, candidate);
+    const index = merged.findIndex((current) => sameCandidateIdentity(current, candidate));
+    if (index < 0) {
+      merged.push(candidate);
       continue;
     }
-    merged.set(key, {
-      ...current,
-      ...candidate,
-      sources: [...new Set([...current.sources, ...candidate.sources])].sort(),
-    });
+    merged[index] = mergeCandidateEvidence(merged[index]!, candidate);
   }
-  return [...merged.values()].sort(
+  return merged.sort(
     (left, right) =>
       (right.releaseDate ?? "").localeCompare(left.releaseDate ?? "") ||
-      left.albumTitle.localeCompare(right.albumTitle),
+      left.comparisonTitle.localeCompare(right.comparisonTitle),
   );
+}
+
+export function compareAppleMusicRecentCandidate(
+  candidate: AppleMusicRecentCandidate,
+  groundTruth: ItunesPilotGroundTruthRelease[],
+):
+  | "ambiguous_match"
+  | "apple_only_candidate"
+  | "exact_match"
+  | "excluded"
+  | "strong_probable_match" {
+  if (!candidate.eligible) return "excluded";
+  const candidateTitle = comparableReleaseTitle(candidate.comparisonTitle);
+  const sameTitle = groundTruth.filter((release) =>
+    releaseComparisonTitles(candidate, release).some(
+      (title) => comparableReleaseTitle(title) === candidateTitle,
+    ),
+  );
+  const compatible = sameTitle.filter((release) => releaseDirectionCompatible(candidate, release));
+  if (compatible.some((release) => release.releaseDate === candidate.releaseDate)) {
+    return "exact_match";
+  }
+  if (
+    compatible.some(
+      (release) =>
+        candidate.releaseDate &&
+        Math.abs(Date.parse(release.releaseDate) - Date.parse(candidate.releaseDate)) <= 86_400_000,
+    )
+  ) {
+    return "strong_probable_match";
+  }
+  return compatible.length > 0 ? "ambiguous_match" : "apple_only_candidate";
 }
 
 export function scopedAppleMusicRecentGroundTruth(
@@ -252,6 +281,128 @@ export function extractNamedRemixer(value: string): string | undefined {
   if (dashed) return dashed.trim();
   const by = /\bremix\s+by\s+([^()[\],-]+)\s*$/iu.exec(normalized)?.[1];
   return by?.trim();
+}
+
+function sameCandidateIdentity(
+  left: AppleMusicRecentCandidate,
+  right: AppleMusicRecentCandidate,
+): boolean {
+  if (!variantCompatible(left, right)) return false;
+  const leftHasSong = left.granularity !== "album";
+  const rightHasSong = right.granularity !== "album";
+  if (left.songId && right.songId && left.songId === right.songId) return true;
+  if (
+    left.isrc &&
+    right.isrc &&
+    left.isrc === right.isrc &&
+    left.releaseDate !== undefined &&
+    left.releaseDate === right.releaseDate
+  ) {
+    return true;
+  }
+  if (left.upc && right.upc && left.upc === right.upc) return true;
+  if (
+    left.albumId &&
+    right.albumId &&
+    left.albumId === right.albumId &&
+    (!leftHasSong || !rightHasSong)
+  ) {
+    return true;
+  }
+  return (
+    left.releaseDate !== undefined &&
+    left.releaseDate === right.releaseDate &&
+    artistComparable(left.appleArtistName) === artistComparable(right.appleArtistName) &&
+    comparableReleaseTitle(left.comparisonTitle) === comparableReleaseTitle(right.comparisonTitle)
+  );
+}
+
+function mergeCandidateEvidence(
+  left: AppleMusicRecentCandidate,
+  right: AppleMusicRecentCandidate,
+): AppleMusicRecentCandidate {
+  const song =
+    left.granularity === "song" ? left : right.granularity === "song" ? right : undefined;
+  const preferred =
+    [left, right].find((candidate) => candidate.eligible) ??
+    [left, right].find((candidate) => candidate.evidenceStrength === "explicit") ??
+    left;
+  return {
+    ...left,
+    ...right,
+    ...preferred,
+    ...(left.albumId || right.albumId ? { albumId: left.albumId ?? right.albumId } : {}),
+    albumTitle: song?.albumTitle ?? preferred.albumTitle,
+    comparisonTitle: song?.comparisonTitle ?? preferred.comparisonTitle,
+    ...(left.contentRating || right.contentRating
+      ? { contentRating: left.contentRating ?? right.contentRating }
+      : {}),
+    granularity: left.granularity === right.granularity ? left.granularity : "album_and_song",
+    ...(left.isrc || right.isrc ? { isrc: left.isrc ?? right.isrc } : {}),
+    ...(left.songId || right.songId ? { songId: left.songId ?? right.songId } : {}),
+    ...(left.songTitle || right.songTitle ? { songTitle: left.songTitle ?? right.songTitle } : {}),
+    sources: [...new Set([...left.sources, ...right.sources])].sort(),
+    ...(left.upc || right.upc ? { upc: left.upc ?? right.upc } : {}),
+  };
+}
+
+function variantCompatible(
+  left: AppleMusicRecentCandidate,
+  right: AppleMusicRecentCandidate,
+): boolean {
+  if (left.contentRating && right.contentRating && left.contentRating !== right.contentRating) {
+    return false;
+  }
+  const leftRemixer = left.namedRemixer ? artistComparable(left.namedRemixer) : undefined;
+  const rightRemixer = right.namedRemixer ? artistComparable(right.namedRemixer) : undefined;
+  if (leftRemixer && rightRemixer && leftRemixer !== rightRemixer) return false;
+  if (isRemixClassification(left.classification) !== isRemixClassification(right.classification)) {
+    return false;
+  }
+  return versionMarkers(left.comparisonTitle) === versionMarkers(right.comparisonTitle);
+}
+
+function releaseComparisonTitles(
+  candidate: AppleMusicRecentCandidate,
+  release: ItunesPilotGroundTruthRelease,
+): string[] {
+  if (candidate.granularity === "album") return [release.title];
+  if (!["single", "ep", "feature", "remix"].includes(release.releaseType)) return [];
+  return [release.title, ...release.tracks.map((track) => track.title)];
+}
+
+function releaseDirectionCompatible(
+  candidate: AppleMusicRecentCandidate,
+  release: ItunesPilotGroundTruthRelease,
+): boolean {
+  const candidateIsRemix = isRemixClassification(candidate.classification);
+  const releaseRemixer = extractNamedRemixer(release.title);
+  if (candidateIsRemix !== Boolean(releaseRemixer)) return false;
+  if (!candidateIsRemix) return true;
+  return Boolean(
+    candidate.namedRemixer && releaseRemixer && sameArtist(candidate.namedRemixer, releaseRemixer),
+  );
+}
+
+function isRemixClassification(classification: AppleMusicRecentClassification): boolean {
+  return [
+    "remix_by_watched_artist",
+    "remix_of_watched_artist_by_other",
+    "remix_direction_uncertain",
+  ].includes(classification);
+}
+
+function comparableReleaseTitle(value: string): string {
+  return normalizeText(value)
+    .replace(/\s+(?:single|ep)$/u, "")
+    .trim();
+}
+
+function versionMarkers(value: string): string {
+  return [
+    /\bremix(?:es)?\b/iu.test(value) ? "remix" : "original",
+    /\b(?:live|in concert)\b/iu.test(value) ? "live" : "studio",
+  ].join(":");
 }
 
 function classifyOrdinaryRelease(

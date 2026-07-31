@@ -517,6 +517,8 @@ export async function saveAppleMusicRecentCandidates(
       albumTitle: string;
       appleArtistName: string;
       classification: string;
+      comparisonTitle: string;
+      granularity: "album" | "album_and_song" | "song";
       comparisonStatus: string;
       eligible: boolean;
       evidenceStrength: string;
@@ -535,15 +537,17 @@ export async function saveAppleMusicRecentCandidates(
   for (const candidate of input.candidates) {
     const identityKey = createHash("sha256")
       .update(
-        candidate.albumId
-          ? `album:${candidate.albumId}`
-          : candidate.songId
-            ? `song:${candidate.songId}`
-            : [
-                normalizeText(candidate.appleArtistName),
-                normalizeText(candidate.albumTitle),
-                candidate.releaseDate ?? "",
-              ].join(":"),
+        candidate.granularity === "song" && candidate.songId
+          ? `song:${candidate.songId}`
+          : candidate.albumId
+            ? `album:${candidate.albumId}`
+            : candidate.songId
+              ? `song:${candidate.songId}`
+              : [
+                  normalizeText(candidate.appleArtistName),
+                  normalizeText(candidate.comparisonTitle),
+                  candidate.releaseDate ?? "",
+                ].join(":"),
       )
       .digest("hex");
     await db

@@ -30,8 +30,10 @@ import {
   authorizeAppleMusicRecent,
   runAppleMusicRecent,
   runAppleMusicRecentOptimization,
+  runAppleMusicRecentValidation,
   type AppleMusicRecentStore,
 } from "./apple-music-recent-runner";
+import { readAppleMusicRecentValidationManifest } from "./apple-music-recent-validation";
 import type { AppleMusicPilotStoredEvidence } from "./apple-music-pilot-runner";
 import { importItunesSnapshot } from "./itunes-pilot-repository";
 import { readItunesPilotSnapshot } from "./itunes-pilot-snapshot";
@@ -42,7 +44,13 @@ async function main(): Promise<void> {
   if (command.mode === "plan") {
     process.stdout.write(
       `${JSON.stringify(
-        await createAppleMusicRecentPlan(command.snapshotPath, command.profile),
+        await createAppleMusicRecentPlan(
+          command.snapshotPath,
+          command.profile,
+          readItunesPilotSnapshot,
+          undefined,
+          command.cohortManifestPath,
+        ),
         null,
         2,
       )}\n`,
@@ -67,6 +75,7 @@ async function main(): Promise<void> {
       !configuration.soundcloudManualLinksEnabled,
     persistentAppleMusicEnabled: environment.APPLE_MUSIC_ENABLED,
     storefront: configuration.appleMusic.storefront,
+    scope: command.scope,
   });
   if (!configuration.databaseUrl) throw new Error("DATABASE_URL is required.");
   assertAppleDatabase(configuration.databaseUrl);
@@ -76,15 +85,16 @@ async function main(): Promise<void> {
   const connection = createDatabase(configuration.databaseUrl);
   let tokenManager: AppleDeveloperTokenManager | undefined;
   try {
-    const requestBudget = command.profile === "optimized_four_source" ? 25 : 100;
-    const maximumRuntimeMs = command.profile === "optimized_four_source" ? 300_000 : 900_000;
-    const run =
-      command.profile === "optimized_four_source"
-        ? runAppleMusicRecentOptimization
-        : runAppleMusicRecent;
-    const summary = await run({
+    const validation = command.scope === "validation_25";
+    const requestBudget = validation ? 175 : command.profile === "optimized_four_source" ? 25 : 100;
+    const maximumRuntimeMs = validation
+      ? 1_200_000
+      : command.profile === "optimized_four_source"
+        ? 300_000
+        : 900_000;
+    const common = {
       authorization,
-      createClient: (runId, leaseToken) => {
+      createClient: (runId: string, leaseToken: string) => {
         tokenManager ??= new AppleDeveloperTokenManager({
           keyId: configuration.appleMusic.keyId!,
           privateKeyPath: configuration.appleMusic.privateKeyPath!,
@@ -96,7 +106,7 @@ async function main(): Promise<void> {
           maxRequestsPerRun: requestBudget,
           maxResponseBytes: configuration.appleMusic.maxResponseBytes,
           maximumRuntimeMs,
-          maxRetries: 2,
+          maxRetries: validation ? 1 : 2,
           minRequestIntervalMs: 1_100,
           persistence: createAppleMusicRequestPersistence(connection.db, {
             runLeaseToken: leaseToken,
@@ -110,7 +120,15 @@ async function main(): Promise<void> {
       implementationCommit: git(["rev-parse", "HEAD"]),
       snapshot,
       store: createStore(connection.db),
-    });
+    };
+    const summary = validation
+      ? await runAppleMusicRecentValidation({
+          ...common,
+          manifest: await readAppleMusicRecentValidationManifest(command.cohortManifestPath!),
+        })
+      : command.profile === "optimized_four_source"
+        ? await runAppleMusicRecentOptimization(common)
+        : await runAppleMusicRecent(common);
     process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
   } finally {
     await connection.client.end();

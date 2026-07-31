@@ -4,6 +4,17 @@ Date: 2026-07-30
 
 ## Current optimization result
 
+The song-level comparison defect is corrected credential-free. A Top Songs candidate now compares
+with its song title while retaining its parent album title as context. Replaying the persisted
+sanitized ten-artist evidence produces 7 of 7 primary releases, 3 of 3 remixes, 10 of 10 combined,
+10 of 10 automated exact matches, zero matcher misses, zero invalid directional matches, and four
+unconfirmed Apple-only candidates. This replay made no HTTP request and did not rewrite historical
+telemetry.
+
+The next authorized validation is not yet executed. Its tracked manifest contains 10 positive, 10
+negative, and 5 identity/catalog-stress artists selected from the remaining 40 by the fixed seed.
+The credential-free plan is 160 of 175 starts with 15 starts of headroom and a 20-minute ceiling.
+
 The `optimized_four_source` implementation and credential-free verification were committed and
 pushed at `5089359cf5a3205af18b41d7366eb7037b326db9` before live execution. The bounded
 experiment then used the same exact ten artists and fixed evaluation time as the prior MVP. It
