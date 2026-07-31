@@ -210,6 +210,25 @@ export function resolveAppleMusicArtistFromCatalogEvidence(input: {
   };
 }
 
+export function selectAppleMusicCatalogEvidenceCandidates(input: {
+  aliases: string[];
+  candidates: AppleMusicArtistCandidate[];
+  canonicalName: string;
+  maximumCandidates?: number;
+}): AppleMusicArtistCandidate[] {
+  const eligibleNames = new Set([
+    normalizeArtist(input.canonicalName),
+    ...input.aliases.map(normalizeArtist),
+  ]);
+  const maximumCandidates = input.maximumCandidates ?? 2;
+  if (!Number.isInteger(maximumCandidates) || maximumCandidates < 1) {
+    throw new Error("Apple catalog-evidence candidate limit must be a positive integer.");
+  }
+  return input.candidates
+    .filter((candidate) => eligibleNames.has(normalizeArtist(candidate.name)))
+    .slice(0, maximumCandidates);
+}
+
 export function compareAppleMusicToGroundTruth(
   groundTruth: SpotifyGroundTruthRelease[],
   albums: AppleMusicAlbumCandidate[],

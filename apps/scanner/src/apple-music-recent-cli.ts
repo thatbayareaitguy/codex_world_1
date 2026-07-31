@@ -28,6 +28,15 @@ import {
   parseAppleMusicRecentCommand,
 } from "./apple-music-recent-command";
 import {
+  authorizeAppleMusicIdentityBootstrap,
+  runAppleMusicIdentityBootstrap,
+} from "./apple-music-identity-bootstrap-runner";
+import {
+  readAppleMusicIdentityBootstrapArtifact,
+  validateAppleMusicIdentityBootstrapArtifact,
+  validateAppleMusicIdentityBootstrapSources,
+} from "./apple-music-identity-bootstrap";
+import {
   authorizeAppleMusicRecent,
   runAppleMusicRecent,
   runAppleMusicRecentOptimization,
@@ -71,6 +80,69 @@ async function main(): Promise<void> {
     );
     return;
   }
+  if (command.mode === "mapping_bootstrap_live") {
+    const snapshot = await readItunesPilotSnapshot(command.snapshotPath);
+    const artifact = validateAppleMusicIdentityBootstrapArtifact(
+      await readAppleMusicIdentityBootstrapArtifact(command.identitySeedsPath),
+      snapshot,
+    );
+    await validateAppleMusicIdentityBootstrapSources(artifact);
+    const environment = loadLocalEnvironment(
+      process.env,
+      resolve(process.cwd(), ".app-runtime/apple-music.env"),
+    );
+    const configuration = loadProviderConfiguration(environment);
+    const authorization = authorizeAppleMusicIdentityBootstrap({
+      confirmation: command.confirmation,
+      evidenceSourcesValidated: true,
+      executeLive: true,
+      otherProvidersDisabled: otherProvidersDisabled(configuration),
+      persistentAppleMusicEnabled: environment.APPLE_MUSIC_ENABLED,
+      storefront: configuration.appleMusic.storefront,
+    });
+    if (!configuration.databaseUrl) throw new Error("DATABASE_URL is required.");
+    assertAppleDatabase(configuration.databaseUrl);
+    assertAppleBranch();
+    assertLiveCredentialShape(configuration.appleMusic);
+    const connection = createDatabase(configuration.databaseUrl);
+    let tokenManager: AppleDeveloperTokenManager | undefined;
+    try {
+      const summary = await runAppleMusicIdentityBootstrap({
+        artifact,
+        authorization,
+        createClient: (runId, leaseToken) => {
+          tokenManager ??= new AppleDeveloperTokenManager({
+            keyId: configuration.appleMusic.keyId!,
+            privateKeyPath: configuration.appleMusic.privateKeyPath!,
+            teamId: configuration.appleMusic.teamId!,
+            tokenLifetimeSeconds: configuration.appleMusic.tokenLifetimeSeconds,
+          });
+          return new AppleMusicClient({
+            enabled: true,
+            maxRequestsPerRun: 25,
+            maxResponseBytes: configuration.appleMusic.maxResponseBytes,
+            maximumRuntimeMs: 60_000,
+            maxRetries: 0,
+            minRequestIntervalMs: 1_100,
+            persistence: createAppleMusicRequestPersistence(connection.db, {
+              runLeaseToken: leaseToken,
+            }),
+            requestTimeoutMs: configuration.appleMusic.requestTimeoutMs,
+            runId,
+            storefront: authorization.storefront,
+            tokenProvider: tokenManager,
+          });
+        },
+        implementationCommit: git(["rev-parse", "HEAD"]),
+        snapshot,
+        store: createStore(connection.db),
+      });
+      process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+    } finally {
+      await connection.client.end();
+    }
+    return;
+  }
   const environment = loadLocalEnvironment(
     process.env,
     resolve(process.cwd(), ".app-runtime/apple-music.env"),
@@ -80,13 +152,7 @@ async function main(): Promise<void> {
     confirmation: command.confirmation,
     evaluationAsOf: command.evaluationAsOf,
     executeLive: true,
-    otherProvidersDisabled:
-      !configuration.spotify.enabled &&
-      !configuration.spotify.playlistWritesEnabled &&
-      !configuration.itunes.enabled &&
-      !configuration.musicbrainz.enabled &&
-      !configuration.reddit.enabled &&
-      !configuration.soundcloudManualLinksEnabled,
+    otherProvidersDisabled: otherProvidersDisabled(configuration),
     persistentAppleMusicEnabled: environment.APPLE_MUSIC_ENABLED,
     storefront: configuration.appleMusic.storefront,
     scope: command.scope,
@@ -147,6 +213,19 @@ async function main(): Promise<void> {
   } finally {
     await connection.client.end();
   }
+}
+
+function otherProvidersDisabled(
+  configuration: ReturnType<typeof loadProviderConfiguration>,
+): boolean {
+  return (
+    !configuration.spotify.enabled &&
+    !configuration.spotify.playlistWritesEnabled &&
+    !configuration.itunes.enabled &&
+    !configuration.musicbrainz.enabled &&
+    !configuration.reddit.enabled &&
+    !configuration.soundcloudManualLinksEnabled
+  );
 }
 
 function createStore(db: RadarDatabase): AppleMusicRecentStore {

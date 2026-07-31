@@ -1,5 +1,24 @@
 # Apple Music Pilot Handoff
 
+## Current state
+
+The 13-artist mapping-only bootstrap is implemented and credential-free verification is in
+progress. The independent unused-resolver finding was confirmed. The shared catalog-evidence
+resolver previously had only test callers. The mapping bootstrap was plan-only, and the normal
+recent cold-start path stopped at multiple exact-name ambiguity. Both paths now use the same
+resolver through a Top Songs evidence adapter, while recurring confirmed mappings remain immutable.
+
+The exact live gate is `APPLE_RECENT_MAPPING_BOOTSTRAP_13`. The command is restricted to the
+self-hashed 13-artist artifact, five seed identity lookups, and two fixed Top Songs first pages for
+each of eight unseeded artists. The forecast is 21 starts under a 25-start and 60-second hard gate,
+with concurrency one, at least 1,100 milliseconds between starts, no search, no discovery, no
+pagination, and no retry. It has not yet run. Historical Apple HTTP starts remain 181, safe mapping
+remains 12 of 25, and `APPLE_MUSIC_ENABLED=false`.
+
+Unresolved output is sanitized to artist name, candidate counts, evidence scores, overlap and
+conflict counts, score gap, classification, and manual-review reason. Numeric catalog IDs remain
+outside committed reports. Production integration and merge remain unauthorized.
+
 Date: 2026-07-31
 
 ## Current checkpoint

@@ -1,4 +1,10 @@
-import { decideAppleMusicArtistMapping, type AppleMusicMappingDecision } from "@radar/core";
+import {
+  decideAppleMusicArtistMapping,
+  selectAppleMusicCatalogEvidenceCandidates,
+  type AppleMusicArtistCandidate,
+  type AppleMusicMappingDecision,
+  type resolveAppleMusicArtistFromCatalogEvidence,
+} from "@radar/core";
 import {
   AppleMusicClientError,
   type AppleMusicAlbum,
@@ -10,6 +16,7 @@ import {
   type AppleMusicSong,
 } from "@radar/providers";
 import type { AppleMusicPilotStoredEvidence } from "./apple-music-pilot-runner";
+import { resolveAppleMusicMappingFromTopSongs } from "./apple-music-catalog-evidence";
 import { validateAppleMusicPilotSnapshot } from "./apple-music-pilot-definition";
 import type { AppleMusicPilotPlanArtist } from "./apple-music-pilot-definition";
 import {
@@ -305,7 +312,11 @@ export async function runAppleMusicRecentAfterValidation(
         input.store,
         snapshotId,
         source,
+        input.snapshot.groundTruthReleases.filter(
+          (release) => release.canonicalArtistId === source.canonicalArtistId,
+        ),
         entry.knownAppleArtistId,
+        identityScope,
       );
       await input.store.saveMapping({
         canonicalArtistId: source.canonicalArtistId,
@@ -524,7 +535,17 @@ export async function runAppleMusicRecentOptimizationAfterValidation(
       const source = snapshotArtist(input.snapshot, entry.canonicalArtistId);
       const artistId = mappings.get(entry.canonicalArtistId);
       const decision = options.validation
-        ? await resolveMapping(client, input.store, snapshotId, source)
+        ? await resolveMapping(
+            client,
+            input.store,
+            snapshotId,
+            source,
+            input.snapshot.groundTruthReleases.filter(
+              (release) => release.canonicalArtistId === source.canonicalArtistId,
+            ),
+            undefined,
+            identityScope,
+          )
         : confirmedMappingDecision(
             source,
             artistId ??
@@ -696,7 +717,9 @@ async function resolveMapping(
   store: AppleMusicRecentStore,
   snapshotId: string,
   artist: ItunesPilotSnapshotArtist,
+  groundTruth: ItunesPilotGroundTruthRelease[],
   knownId?: string,
+  identityScope = "recent-cold-start",
 ): Promise<AppleMusicMappingDecision> {
   const existing = await store.findConfirmedMapping({
     canonicalArtistId: artist.canonicalArtistId,
@@ -729,11 +752,71 @@ async function resolveMapping(
       if (decision.selected) return decision;
     }
   }
-  return decideAppleMusicArtistMapping({
+  const searchCandidates = await client.searchArtists(artist.canonicalName);
+  return resolveColdStartAppleMusicMapping({
     aliases: artist.aliases,
     canonicalName: artist.canonicalName,
-    searchCandidates: await client.searchArtists(artist.canonicalName),
+    client,
+    groundTruth,
+    identityScope,
+    searchCandidates,
   });
+}
+
+export async function resolveColdStartAppleMusicMapping(input: {
+  aliases: string[];
+  canonicalName: string;
+  client: Pick<AppleMusicRecentClient, "getArtistTopSongsFirstPage">;
+  groundTruth: ItunesPilotGroundTruthRelease[];
+  identityScope: string;
+  resolver?: typeof resolveAppleMusicArtistFromCatalogEvidence;
+  searchCandidates: AppleMusicArtistCandidate[];
+}): Promise<AppleMusicMappingDecision> {
+  const initial = decideAppleMusicArtistMapping({
+    aliases: input.aliases,
+    canonicalName: input.canonicalName,
+    searchCandidates: input.searchCandidates,
+  });
+  if (initial.status !== "ambiguous") return initial;
+  const eligible = selectAppleMusicCatalogEvidenceCandidates({
+    aliases: input.aliases,
+    candidates: input.searchCandidates,
+    canonicalName: input.canonicalName,
+    maximumCandidates: input.searchCandidates.length,
+  });
+  if (eligible.length !== 2) return initial;
+  const candidateEvidence = [];
+  let complete = true;
+  for (const candidate of eligible) {
+    try {
+      const page = await input.client.getArtistTopSongsFirstPage(
+        candidate.artistId,
+        input.identityScope,
+      );
+      candidateEvidence.push({ artist: candidate, songs: page.items });
+    } catch (error) {
+      if (!isNonterminalIdentityEvidenceError(error)) throw error;
+      complete = false;
+      candidateEvidence.push({ artist: candidate, songs: [] });
+    }
+  }
+  if (!complete) return initial;
+  return resolveAppleMusicMappingFromTopSongs(
+    {
+      aliases: input.aliases,
+      candidateEvidence,
+      canonicalName: input.canonicalName,
+      groundTruth: input.groundTruth,
+    },
+    input.resolver,
+  );
+}
+
+function isNonterminalIdentityEvidenceError(error: unknown): boolean {
+  return (
+    error instanceof AppleMusicClientError &&
+    (error.status === 400 || error.status === 404 || (error.status ?? 0) >= 500)
+  );
 }
 
 async function collectOptimizedArtist(

@@ -1,7 +1,25 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { normalizeText } from "@radar/core";
 import type { ItunesPilotSnapshot } from "./itunes-pilot-snapshot";
+
+export const appleMusicIdentityBootstrapConfirmation = "APPLE_RECENT_MAPPING_BOOTSTRAP_13";
+export const appleMusicIdentityBootstrapArtists = [
+  "ZHU",
+  "Alok",
+  "Don Diablo",
+  "SISTO",
+  "William Black",
+  "YUSSI",
+  "Babsy.",
+  "GRiZ",
+  "Anto",
+  "Rueben",
+  "1991",
+  "12th Planet",
+  "4B",
+] as const;
 
 export interface AppleMusicIdentityBootstrapArtifact {
   artifactHash: string;
@@ -17,6 +35,7 @@ export interface AppleMusicIdentityBootstrapArtist {
   candidateEvidenceSource?: string;
   canonicalArtistName: string;
   evidenceSource?: string;
+  evidenceSourceHash?: string;
   frozenReleaseCount: number;
   plausibleExactNameCandidates: number;
 }
@@ -63,6 +82,14 @@ export function validateAppleMusicIdentityBootstrapArtifact(
   if (computeAppleMusicIdentityBootstrapHash(artifact) !== artifact.artifactHash) {
     throw new Error("Apple identity bootstrap artifact hash does not match.");
   }
+  if (
+    artifact.artists.length !== appleMusicIdentityBootstrapArtists.length ||
+    artifact.artists.some(
+      (artist, index) => artist.canonicalArtistName !== appleMusicIdentityBootstrapArtists[index],
+    )
+  ) {
+    throw new Error("Apple identity bootstrap requires the exact ordered 13-artist scope.");
+  }
   const snapshotArtists = new Map(
     snapshot.artists.map((artist) => [normalizeText(artist.canonicalName), artist]),
   );
@@ -94,8 +121,18 @@ export function validateAppleMusicIdentityBootstrapArtifact(
     if (artist.candidateArtistId && !/^\d+$/.test(artist.candidateArtistId)) {
       throw new Error("Apple identity seed candidate IDs must be public numeric catalog IDs.");
     }
-    if (Boolean(artist.candidateArtistId) !== Boolean(artist.evidenceSource)) {
+    if (
+      Boolean(artist.candidateArtistId) !==
+      Boolean(artist.evidenceSource && artist.evidenceSourceHash)
+    ) {
       throw new Error("Apple identity seed candidates require an evidence source.");
+    }
+    if (
+      artist.evidenceSource &&
+      (artist.evidenceSource !== "docs/itunes-pilot-identity-provenance.csv" ||
+        !/^[a-f0-9]{64}$/.test(artist.evidenceSourceHash ?? ""))
+    ) {
+      throw new Error("Apple identity seed evidence source is not approved.");
     }
     if (
       Boolean(artist.candidateEvidenceArtistIds) !== Boolean(artist.candidateEvidenceSource) ||
@@ -115,6 +152,29 @@ export function validateAppleMusicIdentityBootstrapArtifact(
     }
   }
   return artifact;
+}
+
+export async function validateAppleMusicIdentityBootstrapSources(
+  artifact: AppleMusicIdentityBootstrapArtifact,
+  repositoryRoot = process.cwd(),
+  readSource: (path: string) => Promise<Buffer> = (path) => readFile(path),
+): Promise<void> {
+  const sources = new Map<string, string>();
+  for (const artist of artifact.artists) {
+    if (!artist.evidenceSource || !artist.evidenceSourceHash) continue;
+    const existing = sources.get(artist.evidenceSource);
+    if (existing && existing !== artist.evidenceSourceHash) {
+      throw new Error("Apple identity seed evidence source hashes conflict.");
+    }
+    sources.set(artist.evidenceSource, artist.evidenceSourceHash);
+  }
+  for (const [path, expectedHash] of sources) {
+    const value = await readSource(resolve(repositoryRoot, path));
+    const actualHash = createHash("sha256").update(value).digest("hex");
+    if (actualHash !== expectedHash) {
+      throw new Error("Apple identity seed evidence source hash does not match.");
+    }
+  }
 }
 
 export function computeAppleMusicIdentityBootstrapHash(

@@ -4,6 +4,30 @@ Updated: 2026-07-31
 
 ## Repository state
 
+The mapping-only 13-artist bootstrap is implemented but has not yet made a live request. The
+existing catalog-evidence resolver is now called by both the fixed-candidate bootstrap and the
+normal recent cold-start path when exactly two exact-name or alias candidates remain. Existing
+durable mappings return before search or evidence work. The scorer is unchanged: release-title
+overlap is weighted three, track overlap contributes up to two, date conflicts block confirmation,
+and a safe winner needs a score of at least three and a margin of at least two.
+
+The bootstrap validates the exact ordered self-hashed artifact and the content hash of the approved
+seed source. Five seeds each require one matching Apple artist lookup. Eight unseeded artists each
+use exactly two fixed Top Songs first pages and the shared resolver. No bootstrap search, release
+discovery, pagination, or retry is possible. The exact confirmation is
+`APPLE_RECENT_MAPPING_BOOTSTRAP_13`; the plan is 21 starts under a 25-start, 60-second,
+concurrency-one gate with 1,100 millisecond pacing. Historical starts remain 181 and safe mappings
+remain 12 of 25 until the authorized live run occurs.
+
+The pre-live gate passed formatting, zero-warning lint, strict TypeScript, 500 credential-free
+unit tests, 63 focused mapping and bootstrap tests, 99 aggregate PostgreSQL integration tests, 15
+focused Apple and migration-upgrade integration tests, the production build, 23 mock-only
+Playwright tests, clean migration setup, no-drift schema generation, and doctor `READY` with 21
+migrations. The plan confirmed zero requests and writes, five seed lookups, sixteen candidate
+evidence pages, and 21 forecast starts. Immediately before checkpointing, the isolated database
+still recorded 181 historical starts, no active run, lease, cooldown, or queue, and none of the
+exact 13 artists had an existing durable mapping.
+
 The isolated `pnpm apple:recent` MVP and its `optimized_four_source` profile are implemented.
 Feature-credit and terminal EP normalization are corrected credential-free. The ten-artist
 evidence replays at 10 of 10 exact, and the 25-artist evidence replays at 9 of 21 full-cohort and

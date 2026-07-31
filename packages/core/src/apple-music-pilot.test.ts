@@ -6,6 +6,7 @@ import {
   compareAppleViewCompleteness,
   decideAppleMusicArtistMapping,
   resolveAppleMusicArtistFromCatalogEvidence,
+  selectAppleMusicCatalogEvidenceCandidates,
   type AppleMusicAlbumCandidate,
   type AppleMusicArtistCandidate,
   type AppleMusicSongCandidate,
@@ -176,6 +177,56 @@ describe("Apple Music artist mapping", () => {
       groundTruth,
     });
     expect(conflicted).toMatchObject({ status: "ambiguous" });
+  });
+
+  it("selects only exact canonical or alias candidates within the requested bound", () => {
+    expect(
+      selectAppleMusicCatalogEvidenceCandidates({
+        aliases: ["Known Alias"],
+        candidates: [
+          artist("1", "Artist"),
+          artist("2", "Known Alias"),
+          artist("3", "Partial Artist"),
+        ],
+        canonicalName: "Artist",
+        maximumCandidates: 2,
+      }),
+    ).toEqual([artist("1", "Artist"), artist("2", "Known Alias")]);
+  });
+
+  it("keeps weak and tied catalog evidence ambiguous", () => {
+    const weak = resolveAppleMusicArtistFromCatalogEvidence({
+      aliases: [],
+      candidateCatalogs: [
+        {
+          albums: [],
+          artist: artist("weak", "Artist"),
+          songs: [song("weak-song")],
+        },
+      ],
+      canonicalName: "Artist",
+      groundTruth,
+    });
+    expect(weak).toMatchObject({ status: "ambiguous" });
+
+    const tied = resolveAppleMusicArtistFromCatalogEvidence({
+      aliases: [],
+      candidateCatalogs: [
+        {
+          albums: [album("one")],
+          artist: artist("one", "Artist"),
+          songs: [],
+        },
+        {
+          albums: [album("two")],
+          artist: artist("two", "Artist"),
+          songs: [],
+        },
+      ],
+      canonicalName: "Artist",
+      groundTruth,
+    });
+    expect(tied).toMatchObject({ status: "ambiguous" });
   });
 });
 

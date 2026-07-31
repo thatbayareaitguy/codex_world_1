@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { normalizeText } from "@radar/core";
+import { normalizeText, type resolveAppleMusicArtistFromCatalogEvidence } from "@radar/core";
 import { AppleMusicClientError, type AppleMusicAlbum, type AppleMusicSong } from "@radar/providers";
 import {
+  appleMusicIdentityBootstrapArtists,
+  appleMusicIdentityBootstrapConfirmation,
   computeAppleMusicIdentityBootstrapHash,
   createAppleMusicIdentityBootstrapPlan,
   validateAppleMusicIdentityBootstrapArtifact,
+  validateAppleMusicIdentityBootstrapSources,
   type AppleMusicIdentityBootstrapArtifact,
 } from "./apple-music-identity-bootstrap";
 import {
@@ -23,6 +26,7 @@ import {
 } from "./apple-music-recent-command";
 import {
   authorizeAppleMusicRecent,
+  resolveColdStartAppleMusicMapping,
   runAppleMusicRecentAfterValidation,
   runAppleMusicRecentOptimizationAfterValidation,
   type AppleMusicRecentClient,
@@ -184,6 +188,23 @@ describe("Apple recent command gate", () => {
       mode: "mapping_bootstrap_plan",
       snapshotPath: "snapshot.json",
     });
+    expect(
+      parseAppleMusicRecentCommand([
+        "--execute-live",
+        "--mapping-bootstrap",
+        "--snapshot",
+        "snapshot.json",
+        "--identity-seeds",
+        "seeds.json",
+        "--confirm-live",
+        appleMusicIdentityBootstrapConfirmation,
+      ]),
+    ).toEqual({
+      confirmation: appleMusicIdentityBootstrapConfirmation,
+      identitySeedsPath: "seeds.json",
+      mode: "mapping_bootstrap_live",
+      snapshotPath: "snapshot.json",
+    });
     expect(() =>
       parseAppleMusicRecentCommand([
         "--execute-live",
@@ -193,7 +214,7 @@ describe("Apple recent command gate", () => {
         "--identity-seeds",
         "seeds.json",
       ]),
-    ).toThrow("requires --plan");
+    ).toThrow(appleMusicIdentityBootstrapConfirmation);
   });
 });
 
@@ -203,11 +224,13 @@ describe("Apple identity bootstrap", () => {
     const valid = validateAppleMusicIdentityBootstrapArtifact(value.artifact, value.snapshot);
     const plan = createAppleMusicIdentityBootstrapPlan(valid, value.snapshot);
     expect(plan).toMatchObject({
-      artistsRequiringIdConfirmation: ["NURKO"],
+      artistsRequiringIdConfirmation: ["ZHU", "Don Diablo", "SISTO", "William Black", "YUSSI"],
       artistsRequiringZeroRequests: [],
-      confirmationRequests: 1,
+      catalogEvidenceRequests: 16,
+      confirmationRequests: 5,
       mode: "mapping_bootstrap_plan",
       networkRequestsStarted: 0,
+      requestForecast: 21,
       seedIsConfirmation: false,
       writes: 0,
     });
@@ -230,14 +253,133 @@ describe("Apple identity bootstrap", () => {
       "seeds.json",
       readSnapshot,
       readArtifact,
+      () => Promise.resolve(),
     );
     expect(plan).toMatchObject({
       networkRequestsStarted: 0,
-      requestForecast: 1,
+      requestForecast: 21,
       writes: 0,
     });
     expect(readSnapshot).toHaveBeenCalledOnce();
     expect(readArtifact).toHaveBeenCalledOnce();
+  });
+
+  it("validates the approved evidence source by content hash", async () => {
+    const value = identityBootstrapFixture();
+    const readSource = vi.fn(() => Promise.resolve(Buffer.from("approved source")));
+    await validateAppleMusicIdentityBootstrapSources(value.artifact, "C:\\synthetic", readSource);
+    expect(readSource).toHaveBeenCalledOnce();
+    await expect(
+      validateAppleMusicIdentityBootstrapSources(value.artifact, "C:\\synthetic", () =>
+        Promise.resolve(Buffer.from("changed source")),
+      ),
+    ).rejects.toThrow("source hash");
+  });
+});
+
+describe("Apple recent cold-start identity resolution", () => {
+  it("uses Top Songs evidence for exactly two exact-name candidates", async () => {
+    const client = recentClient();
+    client.getArtistTopSongsFirstPage
+      .mockResolvedValueOnce({
+        items: [
+          song({
+            albumId: "correct-album",
+            albumName: "Signal",
+            artistIds: ["candidate-1"],
+            artistName: "NURKO",
+            title: "Signal",
+          }),
+        ],
+        nextPresent: true,
+      })
+      .mockResolvedValueOnce({
+        items: [
+          song({
+            albumId: "other-album",
+            albumName: "Unrelated",
+            artistIds: ["candidate-2"],
+            artistName: "NURKO",
+            title: "Unrelated",
+          }),
+        ],
+        nextPresent: true,
+      });
+    const resolver = vi.fn<typeof resolveAppleMusicArtistFromCatalogEvidence>((input) => ({
+      candidates: input.candidateCatalogs.map((candidate) => candidate.artist),
+      confidence: 1,
+      evidence: [],
+      reason: "Synthetic evidence resolution.",
+      selected: input.candidateCatalogs[0]!.artist,
+      status: "evidence_confirmed" as const,
+    }));
+    const decision = await resolveColdStartAppleMusicMapping({
+      aliases: [],
+      canonicalName: "NURKO",
+      client,
+      groundTruth: [release("Signal", "2026-07-10", "single")],
+      identityScope: "synthetic-scope",
+      resolver,
+      searchCandidates: [
+        { artistId: "candidate-1", name: "NURKO" },
+        { artistId: "candidate-2", name: "NURKO" },
+      ],
+    });
+    expect(decision.status).toBe("evidence_confirmed");
+    expect(client.getArtistTopSongsFirstPage).toHaveBeenCalledTimes(2);
+    expect(resolver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidateCatalogs: [
+          expect.objectContaining({
+            albums: [expect.objectContaining({ title: "Signal" })],
+            songs: [expect.objectContaining({ title: "Signal" })],
+          }),
+          expect.objectContaining({
+            albums: [expect.objectContaining({ title: "Unrelated" })],
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("does not resolve from a truncated pool containing more than two exact candidates", async () => {
+    const client = recentClient();
+    const resolver = vi.fn();
+    const decision = await resolveColdStartAppleMusicMapping({
+      aliases: [],
+      canonicalName: "NURKO",
+      client,
+      groundTruth: [],
+      identityScope: "synthetic-scope",
+      resolver,
+      searchCandidates: ["1", "2", "3"].map((artistId) => ({ artistId, name: "NURKO" })),
+    });
+    expect(decision.status).toBe("ambiguous");
+    expect(client.getArtistTopSongsFirstPage).not.toHaveBeenCalled();
+    expect(resolver).not.toHaveBeenCalled();
+  });
+
+  it("preserves ambiguity when candidate evidence is unavailable", async () => {
+    const client = recentClient();
+    client.getArtistTopSongsFirstPage
+      .mockRejectedValueOnce(new AppleMusicClientError("missing", "not_found", 404))
+      .mockResolvedValueOnce({ items: [], nextPresent: false });
+    const resolver = vi.fn();
+    const decision = await resolveColdStartAppleMusicMapping({
+      aliases: [],
+      canonicalName: "NURKO",
+      client,
+      groundTruth: [],
+      identityScope: "synthetic-scope",
+      resolver,
+      searchCandidates: [
+        { artistId: "1", name: "NURKO" },
+        { artistId: "2", name: "NURKO" },
+      ],
+    });
+    expect(decision.status).toBe("ambiguous");
+    expect(client.getArtistTopSongsFirstPage).toHaveBeenCalledTimes(2);
+    expect(resolver).not.toHaveBeenCalled();
   });
 });
 
@@ -1009,18 +1151,38 @@ function identityBootstrapFixture(): {
   artifact: AppleMusicIdentityBootstrapArtifact;
   snapshot: ItunesPilotSnapshot;
 } {
-  const artist = snapshotArtist();
-  const value = snapshot(artist, []);
+  const artists = appleMusicIdentityBootstrapArtists.map((canonicalName, index) => ({
+    ...snapshotArtist(),
+    canonicalArtistId: `20000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    canonicalName,
+    normalizedName: normalizeText(canonicalName),
+    spotifyArtistId: `spotify-${index + 1}`,
+  }));
+  const value: ItunesPilotSnapshot = {
+    ...snapshot(artists[0]!, []),
+    artists,
+  };
+  const sourceHash = "01d927478e2a048dc357754e810696f101ee21aa242cdae231ca23d060c38e54";
+  const seeded = new Set(["ZHU", "Don Diablo", "SISTO", "William Black", "YUSSI"]);
   const payload = {
-    artists: [
-      {
-        candidateArtistId: "123",
-        canonicalArtistName: artist.canonicalName,
-        evidenceSource: "synthetic-offline-artifact",
-        frozenReleaseCount: 0,
-        plausibleExactNameCandidates: 2,
-      },
-    ],
+    artists: appleMusicIdentityBootstrapArtists.map((canonicalArtistName, index) =>
+      seeded.has(canonicalArtistName)
+        ? {
+            candidateArtistId: String(1000 + index),
+            canonicalArtistName,
+            evidenceSource: "docs/itunes-pilot-identity-provenance.csv",
+            evidenceSourceHash: sourceHash,
+            frozenReleaseCount: 0,
+            plausibleExactNameCandidates: 2,
+          }
+        : {
+            candidateEvidenceArtistIds: [String(2000 + index * 2), String(2001 + index * 2)],
+            candidateEvidenceSource: "sanitized-apple-response-cache",
+            canonicalArtistName,
+            frozenReleaseCount: 0,
+            plausibleExactNameCandidates: 2,
+          },
+    ),
     evidenceAsOf: "2026-07-31",
     snapshotHash: value.snapshotHash,
     version: 1 as const,

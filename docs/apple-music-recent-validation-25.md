@@ -4,15 +4,29 @@ Date: 2026-07-31
 
 ## Decision
 
+The 13-artist mapping-only bootstrap is implemented and remains credential-free at this pre-live
+checkpoint. The independent call-graph finding was confirmed: the existing
+`resolveAppleMusicArtistFromCatalogEvidence` scorer previously had no production caller, and
+neither the recent cold-start path nor the prior plan-only bootstrap invoked it. Both authorized
+identity paths now adapt first-page Top Songs into the existing resolver. No score, conflict, or
+margin threshold changed.
+
+The live command is separately gated by confirmation
+`APPLE_RECENT_MAPPING_BOOTSTRAP_13`. It accepts only the exact ordered 13-artist self-hashed
+artifact and frozen snapshot. It plans five public artist-ID lookups plus sixteen first-page Top
+Songs requests, for 21 starts under a hard ceiling of 25 and 60 seconds. It permits no Apple artist
+search, release discovery, pagination, or retry. This command has not yet been executed at this
+pre-live checkpoint, so the safe mapping count remains 12 of 25 and the historical Apple
+HTTP-start total remains 181.
+
 The credential-free normalization correction is complete. Replaying only stored Apple evidence
 raises full-cohort exact recall from 7 of 21 to 9 of 21, or 42.9%, and mapped-artist exact recall
 from 7 of 12 to 9 of 12, or 75.0%. The two deterministic matcher misses are now exact, matcher
 misses are zero, and the three remaining mapped-release misses are catalog misses. Mapping remains
 12 of 25 because 13 artists still have ambiguous identities.
 
-The next live milestone, if separately authorized, should be mapping-only. It should validate five
-approved public-ID seeds and inspect at most two cached exact-name candidates for each of eight
-unseeded artists. It must not run release discovery. Production integration and merge remain
+This milestone separately authorizes that mapping-only run after the source, test, and
+documentation checkpoint is committed and pushed. Production integration and merge remain
 unauthorized.
 
 ## Scope and gates
@@ -173,11 +187,11 @@ pnpm apple:recent -- --plan --mapping-bootstrap --snapshot <external-snapshot-pa
 ```
 
 The verified plan has zero requests, writes, credential access, token generation, or database
-access. A separately authorized live implementation would make five
+access. The separately gated live implementation makes five
 `/v1/catalog/us/artists/<seed_id>` confirmation requests and 16
 `/v1/catalog/us/artists/<candidate_id>/view/top-songs` first-page evidence requests, one for each
-of two fixed candidates across eight artists. It would use the US storefront, no optional query,
-no pagination, no search, no retry, concurrency one, and the existing 1,100 ms request-start
+of two fixed candidates across eight artists. It uses the US storefront, no optional query, no
+pagination, no search, no retry, concurrency one, and the existing 1,100 ms request-start
 interval. It would stop on authentication failure, throttling, unsafe response navigation, budget
 or runtime exhaustion, and retain manual review for non-unique evidence. The conservative maximum
 is 21 starts and the proposed ceiling is 25 starts with a 60-second runtime ceiling. The minimum

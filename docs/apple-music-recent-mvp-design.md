@@ -4,6 +4,31 @@ Date: 2026-07-31
 
 ## Authorization and boundary
 
+The mapping-only bootstrap execution path is now implemented but has not yet run. It reuses the
+existing catalog-evidence resolver for the exact two-candidate ambiguity case and adds the same
+resolver to the one-time `apple:recent` cold-start path. Recurring scans return an existing durable
+confirmed mapping before any search or evidence lookup.
+
+Mapping precedence is: durable confirmed mapping, future manually confirmed evidence, approved
+public-ID seed validated by an Apple artist lookup, unique exact normalized-name search result,
+multiple exact-name candidates resolved by catalog evidence, then manual review. Seed values are
+not confirmation. A seed must resolve to the same public ID and an exact canonical name or stored
+alias. Ambiguous, weak, unavailable, and conflicting evidence cannot replace a durable confirmed
+mapping.
+
+The bootstrap live form is:
+
+```powershell
+pnpm apple:recent -- --execute-live --confirm-live APPLE_RECENT_MAPPING_BOOTSTRAP_13 --mapping-bootstrap --snapshot <external-snapshot-path> --identity-seeds apps/scanner/src/apple-music-identity-bootstrap.json
+```
+
+It is limited to the exact 13 artifact artists, five seed lookups, sixteen fixed-candidate Top
+Songs first pages, 21 planned starts, a 25-start hard ceiling, 60 seconds, concurrency one, and a
+1,100 millisecond pacing floor. Search, release discovery, pagination, retries, and other providers
+are unreachable from the bootstrap client interface. Unresolved results retain only sanitized
+candidate counts, scores, score gaps, overlap counts, conflict counts, classifications, and
+manual-review reasons in reports.
+
 This branch implements a separate, disabled-by-default Apple public-catalog experiment named
 `apple:recent`. It does not change `apple:pilot`, the production scanner, scheduler, feed,
 playlists, or provider enablement. Persistent `APPLE_MUSIC_ENABLED=false` is required.
@@ -24,6 +49,22 @@ safely, 13 remained ambiguous, and the live run made 71 network starts. Correcte
 exact recall is 9 of 21 and mapped-artist exact recall is 9 of 12. Matcher misses are zero.
 Mapping and recall do not support production integration. The result and mapping-only follow-up
 are recorded in `docs/apple-music-recent-validation-25.md`.
+
+## Catalog-evidence resolver call graph
+
+`resolveAppleMusicArtistFromCatalogEvidence` accepts a canonical name and aliases, frozen release
+and track evidence, and candidate artist catalogs containing normalized album and song evidence.
+It returns the existing mapping decision and classifications. Exact release-title overlap scores
+three points, exact track-title overlap contributes up to two points, and a same-title release-date
+conflict beyond 30 days blocks confirmation. Confirmation requires a score of at least three, no
+conflict, and a lead of at least two points over the runner-up.
+
+Before this checkpoint, direct callers existed only in credential-free core tests. The original
+exhaustive pilot and recent runner did not call it, and the bootstrap was plan-only. The shared
+Top Songs adapter now derives parent-album evidence from each song while retaining track evidence,
+then calls this resolver. The normal recent cold-start path does so only when exactly two exact
+canonical-name or alias candidates remain. The bootstrap does so only for the two fixed artifact
+candidates. No parallel scoring implementation was added.
 
 ## Window
 

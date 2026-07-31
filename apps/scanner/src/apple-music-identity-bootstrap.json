@@ -8,7 +8,8 @@
       "plausibleExactNameCandidates": 2,
       "frozenReleaseCount": 1,
       "candidateArtistId": "261545033",
-      "evidenceSource": "docs/itunes-pilot-identity-provenance.csv"
+      "evidenceSource": "docs/itunes-pilot-identity-provenance.csv",
+      "evidenceSourceHash": "21a9cda2a60b9b27639dcf9183b82b9afda9ec987dd2bad3a6deb96d8fc31525"
     },
     {
       "canonicalArtistName": "Alok",
@@ -22,28 +23,32 @@
       "plausibleExactNameCandidates": 2,
       "frozenReleaseCount": 3,
       "candidateArtistId": "76849154",
-      "evidenceSource": "docs/itunes-pilot-identity-provenance.csv"
+      "evidenceSource": "docs/itunes-pilot-identity-provenance.csv",
+      "evidenceSourceHash": "21a9cda2a60b9b27639dcf9183b82b9afda9ec987dd2bad3a6deb96d8fc31525"
     },
     {
       "canonicalArtistName": "SISTO",
       "plausibleExactNameCandidates": 3,
       "frozenReleaseCount": 4,
       "candidateArtistId": "1526157202",
-      "evidenceSource": "docs/itunes-pilot-identity-provenance.csv"
+      "evidenceSource": "docs/itunes-pilot-identity-provenance.csv",
+      "evidenceSourceHash": "21a9cda2a60b9b27639dcf9183b82b9afda9ec987dd2bad3a6deb96d8fc31525"
     },
     {
       "canonicalArtistName": "William Black",
       "plausibleExactNameCandidates": 2,
       "frozenReleaseCount": 3,
       "candidateArtistId": "1297084102",
-      "evidenceSource": "docs/itunes-pilot-identity-provenance.csv"
+      "evidenceSource": "docs/itunes-pilot-identity-provenance.csv",
+      "evidenceSourceHash": "21a9cda2a60b9b27639dcf9183b82b9afda9ec987dd2bad3a6deb96d8fc31525"
     },
     {
       "canonicalArtistName": "YUSSI",
       "plausibleExactNameCandidates": 2,
       "frozenReleaseCount": 4,
       "candidateArtistId": "1614562965",
-      "evidenceSource": "docs/itunes-pilot-identity-provenance.csv"
+      "evidenceSource": "docs/itunes-pilot-identity-provenance.csv",
+      "evidenceSourceHash": "21a9cda2a60b9b27639dcf9183b82b9afda9ec987dd2bad3a6deb96d8fc31525"
     },
     {
       "canonicalArtistName": "Babsy.",
@@ -95,5 +100,5 @@
       "candidateEvidenceSource": "isolated-apple-search-cache"
     }
   ],
-  "artifactHash": "a07a90fafa78cc099a864117e58f1ce1e0da745e0c36904d935dc3197249ca67"
+  "artifactHash": "53af600c36b7adbb85561787fde90b4cd96a435e99aab6ef6b366ae9bb310b51"
 }
