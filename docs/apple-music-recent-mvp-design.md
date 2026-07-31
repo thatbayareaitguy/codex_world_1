@@ -19,6 +19,11 @@ concurrency one, and the same pacing floor. Its conservative forecast is 100 fre
 starts, up to 25 mapping starts, 10 targeted-detail starts, 25 bounded-retry starts, and 15 starts
 of safety headroom. Plan mode performs no writes, credential access, token generation, or HTTP.
 
+That validation is now complete. Twelve artists mapped safely, 13 remained ambiguous, and the run
+made 71 network starts. Full-cohort recall was 7 of 21 and mapped-artist recall was 7 of 12.
+Mapping and recall do not support production integration. The result and focused matcher follow-up
+are recorded in `docs/apple-music-recent-validation-25.md`.
+
 ## Window
 
 The first successful scan uses a maximum 30-day lookback. A later scan begins at the later of the

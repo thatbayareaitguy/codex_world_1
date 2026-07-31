@@ -2,7 +2,7 @@
 
 Date: 2026-07-30
 
-## Current optimization result
+## Current validation result
 
 The song-level comparison defect is corrected credential-free. A Top Songs candidate now compares
 with its song title while retaining its parent album title as context. Replaying the persisted
@@ -11,9 +11,17 @@ sanitized ten-artist evidence produces 7 of 7 primary releases, 3 of 3 remixes, 
 unconfirmed Apple-only candidates. This replay made no HTTP request and did not rewrite historical
 telemetry.
 
-The next authorized validation is not yet executed. Its tracked manifest contains 10 positive, 10
-negative, and 5 identity/catalog-stress artists selected from the remaining 40 by the fixed seed.
-The credential-free plan is 160 of 175 starts with 15 starts of headroom and a 20-minute ceiling.
+The tracked 25-artist validation is complete. Its manifest contains 10 positive, 10 negative, and
+5 identity/catalog-stress artists selected from the remaining 40 by the fixed seed. The run
+completed with 71 new starts, 12 search-confirmed mappings, 13 ambiguous mappings, 7 of 21
+full-cohort recall, and 7 of 12 mapped-artist recall. It encountered two nonterminal full-albums
+HTTP 404 responses, no retry, no pagination, and no HTTP 429.
+
+Apple does not pass the milestone thresholds. Two punctuation-equivalent remix candidates and one
+EP album representation expose focused deterministic normalization work. The complete sanitized
+evaluation is in `docs/apple-music-recent-validation-25.md`.
+
+## Prior optimization result
 
 The `optimized_four_source` implementation and credential-free verification were committed and
 pushed at `5089359cf5a3205af18b41d7366eb7037b326db9` before live execution. The bounded

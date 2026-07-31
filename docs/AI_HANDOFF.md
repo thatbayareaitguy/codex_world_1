@@ -4,26 +4,29 @@ Updated: 2026-07-30
 
 ## Repository state
 
-The isolated `pnpm apple:recent` MVP and its `optimized_four_source` supplement are implemented
-and live-tested on the original ten-artist sample. Song-level comparison is corrected
-credential-free, and a deterministic 25-artist validation gate is prepared but not yet
-live-executed. The exhaustive `apple:pilot`, existing default recent profile, and all production
-behavior remain unchanged.
+The isolated `pnpm apple:recent` MVP and its `optimized_four_source` profile are implemented.
+Song-level comparison is corrected, the prior ten-artist evidence replays at 10 of 10 exact, and
+the deterministic 25-artist validation is complete. The exhaustive `apple:pilot`, existing
+default recent profile, and all production behavior remain unchanged.
 
 - Worktree: `C:\Users\taysh\Documents\Codex\codex_world_1_apple`
 - Branch: `codex/apple-music-discovery`
 - Optimization milestone starting checkpoint: `121c948459f3d166472f1aa44f67ba9596192a4b`
 - Pre-live source checkpoint: `5089359cf5a3205af18b41d7366eb7037b326db9`
 - Upstream: `origin/codex/apple-music-discovery`
-- Latest live run: `completed/recent_optimized_sample_completed`
-- Current historical Apple HTTP-start total: 110
+- Latest live run: `completed/recent_optimized_validation_25_completed`
+- Current historical Apple HTTP-start total: 181
 - Provider state: disabled, no active run, lease, cooldown, or queue
 
-The credential-free replay of the prior sanitized evidence produces 7 of 7 primary releases, 3 of
-3 remixes, 10 of 10 combined and automated exact matches, zero matcher misses, zero invalid
-directional matches, and four unconfirmed Apple-only candidates. The validation manifest contains
-10 positive, 10 negative, and 5 identity/catalog-stress artists. Its no-pagination plan forecasts
-160 of 175 starts with 15 starts of headroom and a 20-minute ceiling.
+The 25-artist validation completed with 12 search-confirmed and 13 ambiguous mappings. It reached
+7 of 21 full-cohort recall, 7 of 12 mapped-artist recall, 5 of 13 primary recall, and 2 of 8 remix
+recall. It made 71 starts in 80,292 ms with concurrency one, a 1,103 ms minimum interval, no retry,
+no pagination, 69 HTTP 200 responses, and two nonterminal HTTP 404 responses. The current total is
+181 real Apple starts.
+
+Apple fails the primary-provider thresholds on this cohort. The next milestone should correct
+punctuation-equivalent feature credits and EP suffix normalization credential-free, then replay
+stored evidence. Do not start another live run, production integration, or merge.
 
 The exact sample remained NURKO, G-Space, BUNT., SampliFire, Vibe Chemistry, BARELY ALIVE,
 Habstrakt, MUST DIE!, 1788-L, and 3LAU. All ten confirmed mappings were required before the

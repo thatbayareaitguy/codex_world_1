@@ -4,24 +4,27 @@ Date: 2026-07-30
 
 ## Current checkpoint
 
-The isolated recent-release MVP and its `optimized_four_source` supplement are implemented and
-live-tested on the original ten-artist sample. The song-level comparison correction and a
-deterministic 25-artist validation gate are now credential-free verified but not yet live-executed.
-The exhaustive `apple:pilot`, production scanner, scheduler, feed, and default recent profile
-remain unchanged.
+The isolated recent-release MVP and `optimized_four_source` profile are implemented. Song-level
+comparison is corrected, the prior ten-artist evidence replays at 10 of 10 exact, and the
+deterministic 25-artist validation is complete. The exhaustive `apple:pilot`, production scanner,
+scheduler, feed, and default recent profile remain unchanged.
 
 - Branch: `codex/apple-music-discovery`
 - Optimization milestone starting checkpoint: `121c948459f3d166472f1aa44f67ba9596192a4b`
 - Pre-live source checkpoint: `5089359cf5a3205af18b41d7366eb7037b326db9`
-- Current Apple HTTP-start total: 110
-- Latest run: `completed/recent_optimized_sample_completed`, 20 new starts, 21,678 ms
+- Current Apple HTTP-start total: 181
+- Latest run: `completed/recent_optimized_validation_25_completed`, 71 new starts, 80,292 ms
 - Runtime state: provider disabled, no active run, lease, cooldown, or queue
 - Production integration and merge: not authorized
 
-The credential-free ten-artist replay now yields 10 of 10 automated exact matches, zero matcher
-misses, zero invalid directional matches, and four unconfirmed Apple-only candidates. The
-25-artist manifest contains 10 positive, 10 negative, and 5 identity/catalog-stress artists. Its
-conservative plan uses 160 of the 175-start ceiling and does not paginate.
+The 25-artist run produced 12 search-confirmed and 13 ambiguous mappings. Recall was 7 of 21 for
+the full cohort and 7 of 12 among mapped artists. Primary recall was 5 of 13 and remix recall was 2
+of 8. The run made 71 starts, used no pagination or retry, and received 69 HTTP 200 and two
+nonterminal HTTP 404 responses. The result does not meet the primary-provider thresholds.
+
+The immediate follow-up is credential-free only: normalize punctuation-equivalent feature credits
+and the EP release suffix, then replay stored evidence. Do not authorize a broader live run,
+production integration, or merge from this result.
 
 The prior generic remix search omitted `limit`, which invoked Apple's documented default of five
 results per requested type. Sanitized evidence proved the remaining MUST DIE! remix was absent
