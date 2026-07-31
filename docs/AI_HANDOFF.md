@@ -4,7 +4,7 @@ Updated: 2026-07-31
 
 ## Repository state
 
-The mapping-only 13-artist bootstrap is implemented but has not yet made a live request. The
+The mapping-only 13-artist bootstrap is implemented and its authorized live run completed. The
 existing catalog-evidence resolver is now called by both the fixed-candidate bootstrap and the
 normal recent cold-start path when exactly two exact-name or alias candidates remain. Existing
 durable mappings return before search or evidence work. The scorer is unchanged: release-title
@@ -16,8 +16,15 @@ seed source. Five seeds each require one matching Apple artist lookup. Eight uns
 use exactly two fixed Top Songs first pages and the shared resolver. No bootstrap search, release
 discovery, pagination, or retry is possible. The exact confirmation is
 `APPLE_RECENT_MAPPING_BOOTSTRAP_13`; the plan is 21 starts under a 25-start, 60-second,
-concurrency-one gate with 1,100 millisecond pacing. Historical starts remain 181 and safe mappings
-remain 12 of 25 until the authorized live run occurs.
+concurrency-one gate with 1,100 millisecond pacing.
+
+The live run made exactly 21 starts, all HTTP 200, in 24,383 milliseconds. It recorded five artist
+lookups and sixteen artist-view starts, zero retries, zero pagination, zero cache hits, and a 1,103
+millisecond minimum interval. All five seeds became `existing_id_confirmed`. All eight candidate
+pairs remained ambiguous: six pairs scored 0/0, GRiZ scored 0/1, and Rueben scored 2/0. There were
+no release-title overlaps or conflicts. Safe mapping increased from 12 to 17 of 25, or 68.0%.
+Eight identities require manual review. Historical Apple starts are 202. The lease is released,
+the queue is empty, no cooldown exists, and the provider remains disabled.
 
 The pre-live gate passed formatting, zero-warning lint, strict TypeScript, 500 credential-free
 unit tests, 63 focused mapping and bootstrap tests, 99 aggregate PostgreSQL integration tests, 15
@@ -27,6 +34,12 @@ migrations. The plan confirmed zero requests and writes, five seed lookups, sixt
 evidence pages, and 21 forecast starts. Immediately before checkpointing, the isolated database
 still recorded 181 historical starts, no active run, lease, cooldown, or queue, and none of the
 exact 13 artists had an existing durable mapping.
+
+The next separate milestone should request a sanitized full-watchlist public-ID candidate artifact
+from the free-iTunes branch. Five of five approved seeds validated, while the two-candidate Top
+Songs evidence confirmed zero of eight. The Apple branch must treat future IDs as immutable
+candidates and independently validate them. Production integration, release discovery rerun, and
+merge remain unauthorized.
 
 The isolated `pnpm apple:recent` MVP and its `optimized_four_source` profile are implemented.
 Feature-credit and terminal EP normalization are corrected credential-free. The ten-artist
@@ -38,8 +51,8 @@ evidence replays at 10 of 10 exact, and the 25-artist evidence replays at 9 of 2
 - Branch: `codex/apple-music-discovery`
 - Normalization milestone starting checkpoint: `74f6e840d3477fd5eb904d0ff55faf9e3f4b761c`
 - Upstream: `origin/codex/apple-music-discovery`
-- Latest live run: `completed/recent_optimized_validation_25_completed`
-- Current historical Apple HTTP-start total: 181
+- Latest live run: `completed/mapping_bootstrap_completed`
+- Current historical Apple HTTP-start total: 202
 - Provider state: disabled, no active run, lease, cooldown, or queue
 
 The 25-artist validation completed with 12 search-confirmed and 13 ambiguous mappings. The
@@ -53,8 +66,8 @@ The 13 ambiguous identities resulted from a cold-start name-search stress test. 
 manifest omitted public IDs and the runner had no prior confirmed mapping for them. The
 existing-ID path was not defective. A tracked self-hashed identity artifact contains five
 approved offline public-ID seeds and two-candidate cached-search shortlists for the other eight.
-Seeds remain unconfirmed. The plan forecasts 21 future starts under a proposed 25-start,
-60-second ceiling, with no retry or release discovery.
+Five seeds are now confirmed. The eight fixed candidate pairs remain ambiguous. The run used 21
+starts under the 25-start, 60-second ceiling, with no retry or release discovery.
 
 The exact sample remained NURKO, G-Space, BUNT., SampliFire, Vibe Chemistry, BARELY ALIVE,
 Habstrakt, MUST DIE!, 1788-L, and 3LAU. All ten confirmed mappings were required before the

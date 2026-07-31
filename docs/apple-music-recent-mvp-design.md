@@ -4,10 +4,10 @@ Date: 2026-07-31
 
 ## Authorization and boundary
 
-The mapping-only bootstrap execution path is now implemented but has not yet run. It reuses the
-existing catalog-evidence resolver for the exact two-candidate ambiguity case and adds the same
-resolver to the one-time `apple:recent` cold-start path. Recurring scans return an existing durable
-confirmed mapping before any search or evidence lookup.
+The mapping-only bootstrap execution path is implemented and its authorized 13-artist run is
+complete. It reuses the existing catalog-evidence resolver for the exact two-candidate ambiguity
+case and adds the same resolver to the one-time `apple:recent` cold-start path. Recurring scans
+return an existing durable confirmed mapping before any search or evidence lookup.
 
 Mapping precedence is: durable confirmed mapping, future manually confirmed evidence, approved
 public-ID seed validated by an Apple artist lookup, unique exact normalized-name search result,
@@ -28,6 +28,13 @@ Songs first pages, 21 planned starts, a 25-start hard ceiling, 60 seconds, concu
 are unreachable from the bootstrap client interface. Unresolved results retain only sanitized
 candidate counts, scores, score gaps, overlap counts, conflict counts, classifications, and
 manual-review reasons in reports.
+
+The live run made exactly 21 starts, all HTTP 200, in 24,383 milliseconds. Five seeded IDs were
+confirmed. No two-candidate case met the unchanged evidence threshold, leaving eight manual
+reviews. There was no artist search, release discovery, pagination, retry, catalog persistence,
+comparison persistence, or other-provider request. The lease was released and the provider
+remains disabled. This raises safe mapping for the frozen 25-artist validation cohort from 12 to
+17, which is not production-ready evidence.
 
 This branch implements a separate, disabled-by-default Apple public-catalog experiment named
 `apple:recent`. It does not change `apple:pilot`, the production scanner, scheduler, feed,

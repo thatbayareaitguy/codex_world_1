@@ -4,8 +4,8 @@ Date: 2026-07-31
 
 ## Decision
 
-The 13-artist mapping-only bootstrap is implemented and remains credential-free at this pre-live
-checkpoint. The independent call-graph finding was confirmed: the existing
+The 13-artist mapping-only bootstrap completed. The independent call-graph finding was confirmed:
+the existing
 `resolveAppleMusicArtistFromCatalogEvidence` scorer previously had no production caller, and
 neither the recent cold-start path nor the prior plan-only bootstrap invoked it. Both authorized
 identity paths now adapt first-page Top Songs into the existing resolver. No score, conflict, or
@@ -15,9 +15,11 @@ The live command is separately gated by confirmation
 `APPLE_RECENT_MAPPING_BOOTSTRAP_13`. It accepts only the exact ordered 13-artist self-hashed
 artifact and frozen snapshot. It plans five public artist-ID lookups plus sixteen first-page Top
 Songs requests, for 21 starts under a hard ceiling of 25 and 60 seconds. It permits no Apple artist
-search, release discovery, pagination, or retry. This command has not yet been executed at this
-pre-live checkpoint, so the safe mapping count remains 12 of 25 and the historical Apple
-HTTP-start total remains 181.
+search, release discovery, pagination, or retry. The completed run made exactly those 21 starts,
+all HTTP 200. All five seeds were confirmed by exact public-ID and canonical-name compatibility.
+The eight two-candidate artists remained ambiguous under the unchanged resolver thresholds. Safe
+mapping therefore increased from 12 to 17 of 25, or 68.0%, and the historical Apple HTTP-start
+total increased from 181 to 202.
 
 The credential-free normalization correction is complete. Replaying only stored Apple evidence
 raises full-cohort exact recall from 7 of 21 to 9 of 21, or 42.9%, and mapped-artist exact recall
@@ -25,9 +27,11 @@ from 7 of 12 to 9 of 12, or 75.0%. The two deterministic matcher misses are now 
 misses are zero, and the three remaining mapped-release misses are catalog misses. Mapping remains
 12 of 25 because 13 artists still have ambiguous identities.
 
-This milestone separately authorizes that mapping-only run after the source, test, and
-documentation checkpoint is committed and pushed. Production integration and merge remain
-unauthorized.
+The result is below the 20-artist lower evaluation indicator. The candidate-evidence strategy
+needs another focused correction or manual evidence, while the five-of-five seed validation
+supports requesting a separate sanitized full-watchlist public-ID candidate export from the
+free-iTunes branch. Apple must independently validate every future seed. Production integration
+and merge remain unauthorized.
 
 ## Scope and gates
 
@@ -197,6 +201,39 @@ or runtime exhaustion, and retain manual review for non-unique evidence. The con
 is 21 starts and the proposed ceiling is 25 starts with a 60-second runtime ceiling. The minimum
 start-to-start time is 22 seconds. No artist requires zero additional requests, and the
 four-source release discovery profile must not execute.
+
+## Mapping-only bootstrap result
+
+The run completed in 24,383 milliseconds. Minimum measured request-start spacing was 1,103
+milliseconds and maximum concurrency was one. It made five `artist` and sixteen `artist_view`
+starts. All 21 returned HTTP 200. There were zero retries, pagination requests, cache hits,
+release-discovery operations, searches, catalog-row writes, comparison writes, or recent-candidate
+writes. The lease was released, the queue is empty, no cooldown exists, and
+`APPLE_MUSIC_ENABLED=false`.
+
+Candidate A and B identify artifact order only. Numeric catalog IDs are intentionally excluded.
+
+| Artist        | Path               | Requests | Existing-ID result | Candidates | Scores | Release overlaps | Track overlaps | Conflicts | Gap | Final classification  | Durable | Manual review |
+| ------------- | ------------------ | -------: | ------------------ | ---------: | ------ | ---------------- | -------------- | --------- | --: | --------------------- | ------- | ------------- |
+| ZHU           | seeded ID          |        1 | confirmed          |          1 | NA     | NA               | NA             | NA        |  NA | existing_id_confirmed | yes     | no            |
+| Alok          | candidate evidence |        2 | not applicable     |          2 | 0 / 0  | 0 / 0            | 0 / 0          | 0 / 0     |   0 | ambiguous             | no      | yes           |
+| Don Diablo    | seeded ID          |        1 | confirmed          |          1 | NA     | NA               | NA             | NA        |  NA | existing_id_confirmed | yes     | no            |
+| SISTO         | seeded ID          |        1 | confirmed          |          1 | NA     | NA               | NA             | NA        |  NA | existing_id_confirmed | yes     | no            |
+| William Black | seeded ID          |        1 | confirmed          |          1 | NA     | NA               | NA             | NA        |  NA | existing_id_confirmed | yes     | no            |
+| YUSSI         | seeded ID          |        1 | confirmed          |          1 | NA     | NA               | NA             | NA        |  NA | existing_id_confirmed | yes     | no            |
+| Babsy.        | candidate evidence |        2 | not applicable     |          2 | 0 / 0  | 0 / 0            | 0 / 0          | 0 / 0     |   0 | ambiguous             | no      | yes           |
+| GRiZ          | candidate evidence |        2 | not applicable     |          2 | 0 / 1  | 0 / 0            | 0 / 1          | 0 / 0     |   1 | ambiguous             | no      | yes           |
+| Anto          | candidate evidence |        2 | not applicable     |          2 | 0 / 0  | 0 / 0            | 0 / 0          | 0 / 0     |   0 | ambiguous             | no      | yes           |
+| Rueben        | candidate evidence |        2 | not applicable     |          2 | 2 / 0  | 0 / 0            | 5 / 0          | 0 / 0     |   2 | ambiguous             | no      | yes           |
+| 1991          | candidate evidence |        2 | not applicable     |          2 | 0 / 0  | 0 / 0            | 0 / 0          | 0 / 0     |   0 | ambiguous             | no      | yes           |
+| 12th Planet   | candidate evidence |        2 | not applicable     |          2 | 0 / 0  | 0 / 0            | 0 / 0          | 0 / 0     |   0 | ambiguous             | no      | yes           |
+| 4B            | candidate evidence |        2 | not applicable     |          2 | 0 / 0  | 0 / 0            | 0 / 0          | 0 / 0     |   0 | ambiguous             | no      | yes           |
+
+The aggregate result is five seeded confirmations, zero seeded ambiguity or rejection, zero
+catalog-evidence confirmations, eight ambiguous identities, and eight manual reviews. Rueben's
+five exact track-title overlaps score two because track evidence is intentionally capped at two;
+the total remains below the required score of three. GRiZ scores one. Every other candidate scores
+zero. No candidate has a release-title overlap or conflict.
 
 ## Negative cohort
 

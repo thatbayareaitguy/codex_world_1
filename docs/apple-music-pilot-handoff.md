@@ -2,8 +2,8 @@
 
 ## Current state
 
-The 13-artist mapping-only bootstrap is implemented and credential-free verification is in
-progress. The independent unused-resolver finding was confirmed. The shared catalog-evidence
+The 13-artist mapping-only bootstrap is implemented and the authorized live run is complete. The
+independent unused-resolver finding was confirmed. The shared catalog-evidence
 resolver previously had only test callers. The mapping bootstrap was plan-only, and the normal
 recent cold-start path stopped at multiple exact-name ambiguity. Both paths now use the same
 resolver through a Top Songs evidence adapter, while recurring confirmed mappings remain immutable.
@@ -12,12 +12,19 @@ The exact live gate is `APPLE_RECENT_MAPPING_BOOTSTRAP_13`. The command is restr
 self-hashed 13-artist artifact, five seed identity lookups, and two fixed Top Songs first pages for
 each of eight unseeded artists. The forecast is 21 starts under a 25-start and 60-second hard gate,
 with concurrency one, at least 1,100 milliseconds between starts, no search, no discovery, no
-pagination, and no retry. It has not yet run. Historical Apple HTTP starts remain 181, safe mapping
-remains 12 of 25, and `APPLE_MUSIC_ENABLED=false`.
+pagination, and no retry. The run made exactly 21 starts, all HTTP 200, in 24,383 milliseconds. All
+five seeds were confirmed and all eight two-candidate cases remained ambiguous. Historical Apple
+HTTP starts are 202, safe mapping is 17 of 25, and `APPLE_MUSIC_ENABLED=false`.
 
 Unresolved output is sanitized to artist name, candidate counts, evidence scores, overlap and
 conflict counts, score gap, classification, and manual-review reason. Numeric catalog IDs remain
 outside committed reports. Production integration and merge remain unauthorized.
+
+The result is below the 20-artist lower evaluation indicator. The next separate milestone should
+request a sanitized full-watchlist public-ID candidate export from the free-iTunes branch because
+all five approved seeds validated, while the first-page Top Songs candidate strategy confirmed
+none. The export must remain immutable candidate evidence and every ID must be independently
+validated on this Apple branch. No iTunes request or artifact creation occurred here.
 
 Date: 2026-07-31
 
@@ -31,8 +38,8 @@ production scanner, scheduler, feed, and default recent profile remain unchanged
 
 - Branch: `codex/apple-music-discovery`
 - Normalization milestone starting checkpoint: `74f6e840d3477fd5eb904d0ff55faf9e3f4b761c`
-- Current Apple HTTP-start total: 181
-- Latest run: `completed/recent_optimized_validation_25_completed`, 71 new starts, 80,292 ms
+- Current Apple HTTP-start total: 202
+- Latest run: `completed/mapping_bootstrap_completed`, 21 new starts, 24,383 ms
 - Runtime state: provider disabled, no active run, lease, cooldown, or queue
 - Production integration and merge: not authorized
 
@@ -46,12 +53,11 @@ public IDs, its runner constructed all entries as search-required, and none of t
 a prior confirmed mapping for the frozen snapshot. The existing-ID path was intact but had no seed
 to validate.
 
-A tracked identity-bootstrap artifact now freezes all 13 ambiguity records. Five artists have
-approved offline public-ID seeds that still require one Apple identity confirmation each. Eight
-artists have deterministic two-candidate shortlists from retained Apple search evidence. The
-credential-free plan forecasts 21 starts, proposes a 25-start and 60-second future ceiling, and
-performs zero requests, writes, database access, credential access, or token generation. A future
-live mapping-only run is not authorized by this handoff.
+A tracked identity-bootstrap artifact freezes all 13 ambiguity records. Five approved offline
+public-ID seeds were independently confirmed by one Apple artist lookup each. Eight artists used
+deterministic two-candidate shortlists from retained Apple search evidence and remained ambiguous.
+The live bootstrap made its exact 21 planned starts under the 25-start and 60-second ceiling, with
+no search, release discovery, pagination, or retry.
 
 The prior generic remix search omitted `limit`, which invoked Apple's documented default of five
 results per requested type. Sanitized evidence proved the remaining MUST DIE! remix was absent
