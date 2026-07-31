@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-07-29 17:13 PDT (UTC-07:00)
+Updated: 2026-07-30 19:45 PDT (UTC-07:00)
 
 This is the canonical implementation and operational snapshot. It excludes credentials, personal
 account data, authorization material, and raw provider payloads.
@@ -11,8 +11,8 @@ account data, authorization material, and raw provider payloads.
 - Latest implementation commit: `2f41192` (`fix: resume expired Spotify campaigns safely`).
 - The branch was synchronized with upstream at `0/0`, with a clean worktree, before this handoff
   update.
-- Current milestone: the existing 292-artist Spotify campaign is continuing after its authoritative
-  cooldown expired.
+- Current milestone: the existing 292-artist Spotify campaign is completing its final 91 pending
+  members after a second authoritative quota cooldown and bounded continuation.
 
 ## Architecture And Database
 
@@ -32,15 +32,20 @@ account data, authorization material, and raw provider payloads.
 ## Active Spotify Campaign
 
 - Campaign: `a68a793c-477a-4918-aab1-876fe6b5316a`.
-- Snapshot at 2026-07-29 17:13 PDT: the database row is `running`; 102 of 292 qualifying artist
-  successes, 190 pending, zero active reservations, and no campaign lease.
-- Progress: 34.9% complete by qualifying artists.
-- Work: 109 release-detail items completed and no campaign-attributed detail or track backlog.
-- Continuation telemetry: six Spotify requests, minimum request-start gap 10.016 seconds, zero HTTP
-  429 responses, and no new cooldown.
+- Snapshot at 2026-07-30 19:45 PDT: the database row is `running`; 201 of 292 qualifying artist
+  successes, 91 pending, zero active reservations, and no campaign lease.
+- Progress: 68.8% complete by qualifying artists.
+- The first continuation created 174 Spotify requests: 101 artist-album, 67 album-detail, and six
+  OAuth requests. It added 100 qualifying successes before Spotify returned one confirmed
+  `QUOTA_EXCEEDED` response on the 101st artist-album request.
+- Spotify supplied Retry-After `68398`, producing a cooldown from 2026-07-29 22:08 PDT through
+  2026-07-30 17:08 PDT. The prior continuation deadline expired two minutes before that cooldown.
+- The current continuation began with a successful custom-format PostgreSQL backup. Malixe resumed
+  from the quota-limited attempt and succeeded using two requests started 10.008 seconds apart,
+  with no new 429 or cooldown.
 - The latest base-artist request received HTTP 429 with confirmed `quota_exceeded`. Spotify supplied
   Retry-After `68432`; the durable cooldown remains active until 2026-07-29 10:04 PDT.
-- The replacement task `TS New Music Radar Final Spotify Continuation` runs the campaign CLI
+- The temporary task `TS New Music Radar Final Spotify Continuation` runs the campaign CLI
   headlessly through `conhost.exe --headless` and `node.exe --import tsx`. It repeats approximately
   once per minute, ignores overlapping invocations, wakes the computer where supported, and has a
   three-minute per-invocation limit.
@@ -48,8 +53,8 @@ account data, authorization material, and raw provider payloads.
   claim from processing the expired deadline, so the row remained stale `running`. The campaign was
   safely changed to `paused` through the existing control path without altering members or work.
 - Same-campaign deadline extension and resume are implemented with baseline, success-count,
-  reservation, lease, and work-preservation guards. The same campaign resumed with a new deadline
-  of 2026-07-30 17:06 PDT after a successful custom-format PostgreSQL backup.
+  reservation, lease, and work-preservation guards. The current deadline is
+  2026-07-31 19:43 PDT.
 
 ## Confirmed Capabilities
 
@@ -81,8 +86,8 @@ account data, authorization material, and raw provider payloads.
 - Spotify Development Mode limits are unpublished. A valid Retry-After remains authoritative.
 - Fixed 145.7-second artist spacing does not cap total request volume because release follow-ups
   run between base artists.
-- The campaign has 190 pending baseline artists and must finish or stop safely before its
-  2026-07-30 17:06 PDT continuation deadline.
+- The campaign has 91 pending baseline artists and must finish or stop safely before its
+  2026-07-31 19:43 PDT continuation deadline.
 - Do not change pacing or campaign architecture while this validation campaign is active.
 
 ## Required Post-Campaign Architecture Review
