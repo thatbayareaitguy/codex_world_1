@@ -4,11 +4,10 @@ Updated: 2026-07-30
 
 ## Adaptive identity-resolution milestone
 
-The bounded live experiment executor is now under implementation. Its frozen scope is unchanged:
-50 artists, 98 operations, 19 cache hits, 79 new requests, 73 album lookups, and 25 targeted album
-searches. The dedicated command, gates, decision rules, canary, and external artifacts are described
-in `docs/itunes-adaptive-identity-experiment.md`. No live experiment request is permitted until the
-implementation passes full credential-free verification and its checkpoint is pushed and clean.
+The bounded live experiment is complete. Its frozen scope remained 50 artists, 98 operations, 19
+cache hits, 79 new requests, 73 album lookups, and 25 targeted album searches. The command, gates,
+decision rules, execution, and external artifacts are described in
+`docs/itunes-adaptive-identity-experiment.md`.
 
 The adaptive full-watchlist identity strategy is implemented and documented in
 `docs/itunes-adaptive-identity-resolution.md`.
@@ -27,19 +26,50 @@ The adaptive full-watchlist identity strategy is implemented and documented in
 - Brute-force baseline: 3,184 new requests.
 - Album-first estimate: 2,595 requests.
 - Hybrid bounds: 373 best case, 2,067 expected under explicit assumptions, and 2,946 worst case.
-- Future dry-run manifest:
+- Frozen experiment manifest:
   `C:\Users\taysh\AppData\Local\TSNewMusicRadar\pilot-snapshots\itunes-adaptive-identity-experiment-plan-2026-07-30T02-10-30Z.json`
 - Manifest hashes: file
   `b24b51bfbeba03c75e74ed2a59d5d7c7bff0dcadce5e12147af9c2c6413211e0`, canonical
   `271012f7cb5b8c2d95e6a59b76a51dbc67f4b76452b2dcbff342530c3869683d`.
-- Future cohort: 50 artists, 98 planned operations, 19 cache hits, and 79 new requests.
-- Authorized next bounded test: hybrid targeted search plus adaptive lookup through the frozen
-  experiment manifest only.
+- Completed cohort: 50 artists, 98 operations, 19 cache hits, and 79 new requests.
+- Decision: stop adaptive iTunes identity work.
 
-The replacement main-database export ran exactly once under `REPEATABLE READ READ ONLY`. No
-further main-database access or provider request occurred. `ITUNES_DISCOVERY_ENABLED=false`.
-No migration was added, and `docs/AI_HANDOFF.md` was not modified. The planned experiment remains
-unauthorized.
+The historical replacement main-database export ran exactly once under `REPEATABLE READ READ
+ONLY`. This milestone did not access the main database. `ITUNES_DISCOVERY_ENABLED=false`. No
+migration was added, and `docs/AI_HANDOFF.md` was not modified.
+
+## Completed bounded adaptive experiment
+
+- Pre-live execution commit:
+  `8b86f0800f3c0e22f8c3e7be56f01e5daf75aab8`
+- Run:
+  `be113619-a0c1-42e7-899e-784e47a0ce87`
+- Terminal state: completed.
+- Operations: 98 of 98 across 50 artists.
+- Cache hits: 19.
+- New requests: 79.
+- Endpoints: 73 individual artist album lookups and 25 targeted album searches.
+- Minimum pacing: 3,204 ms.
+- Errors, retries, 429s, Retry-After values, overlaps, and other-provider events: zero.
+- Labeled controls: 1 correct, 0 incorrect, and 12 unresolved.
+- Paired controls: targeted 0 correct, album-first 1 correct, hybrid 1 correct, with zero incorrect
+  resolution by every method.
+- Cohort: 3 resolved and 47 ambiguous/manual review.
+- Outside original top 10: 6 searches returned 29 unique outside IDs; none was corroborated.
+- Cohort brute-force baseline: 362 new requests.
+- Actual reduction: 283 requests, or 78.18%.
+- Decision: stop adaptive iTunes identity work because 1 of 13 reproduced controls is below the
+  predeclared stop threshold of 9.
+
+The raw result artifact's `candidateSetReduction` field measures the bounded examined subset and
+must not be interpreted as eliminated candidates. The conservative decision-grade reduction is
+limited to the three confirmed identities. Details and artifact hashes are in
+`docs/itunes-adaptive-identity-experiment.md`.
+
+Final isolated totals after the run are 1,051 request events, 880 normalized cache rows, seven run
+rows, no active run, and no active request lease. `ITUNES_DISCOVERY_ENABLED=false`; the ignored
+runtime request cap was restored to 150. No main-database, feed, playlist, release-candidate,
+Spotify, or MusicBrainz state was changed.
 
 ## Repository state
 

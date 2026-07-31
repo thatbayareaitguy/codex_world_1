@@ -254,9 +254,9 @@ The manifest's canonical SHA-256 excludes only `canonicalContentSha256` and uses
 sorted compact JSON. The file SHA-256 covers the final indented, newline-terminated manifest.
 Request identities are unique and ordered deterministically.
 
-The experiment is authorized only through the dedicated command documented in
-`docs/itunes-adaptive-identity-experiment.md`. Live execution remains blocked until the
-credential-free verification checkpoint is committed, pushed, synchronized, and clean.
+The experiment completed through the dedicated command documented in
+`docs/itunes-adaptive-identity-experiment.md`. Runtime enablement was restored to false after the
+frozen operations completed.
 
 ## Interpretation limits
 
@@ -268,3 +268,23 @@ credential-free verification checkpoint is committed, pushed, synchronized, and 
 - Strategy C has no live control performance yet.
 - The hybrid expected bound depends on stated assumptions.
 - No production provider decision is authorized.
+
+## Experiment outcome
+
+The bounded experiment completed on execution commit
+`8b86f0800f3c0e22f8c3e7be56f01e5daf75aab8`. Operationally it passed all isolation, pacing, cache,
+and request-integrity checks. It reproduced only 1 of 13 labeled mappings, with zero incorrect
+labeled confirmations and 12 unresolved. Targeted search reproduced none of the 11 paired labels.
+
+The predeclared outcome is **stop adaptive iTunes identity work**. The 79 new requests were 78.18%
+below the cohort's 362-request brute-force baseline, but request savings do not compensate for
+identity reproduction below the stop threshold.
+
+No unresolved candidate was treated as eliminated merely because the bounded manifest did not
+look it up. The external result artifact's raw `candidateSetReduction` field measures examined
+subset size and is not an evidence-based reduction metric. The decision-grade conservative result
+is 3 resolved artists, 47 ambiguous artists, and justified candidate reduction only for the 3
+resolved artists.
+
+Detailed operational and evaluation evidence is in
+`docs/itunes-adaptive-identity-experiment.md`.
