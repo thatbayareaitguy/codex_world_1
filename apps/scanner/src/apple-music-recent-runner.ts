@@ -7,6 +7,7 @@ import {
   AppleMusicClientError,
   type AppleMusicAlbum,
   type AppleMusicArtist,
+  type AppleMusicArtistSongViewPage,
   type AppleMusicArtistView,
   type AppleMusicArtistViewPage,
   type AppleMusicRecentSearchPage,
@@ -54,9 +55,17 @@ export interface AppleMusicRecentClient {
     signal?: AbortSignal,
     identityScope?: string,
   ): Promise<AppleMusicArtistViewPage>;
+  getArtistTopSongsFirstPage(
+    artistId: string,
+    identityScope: string,
+    signal?: AbortSignal,
+  ): Promise<AppleMusicArtistSongViewPage>;
   searchArtists(term: string): Promise<AppleMusicArtist[]>;
   searchRecentRemixes(term: string, identityScope: string): Promise<AppleMusicRecentSearchPage>;
 }
+
+type AppleMusicRecentAvailability =
+  "available_with_results" | "available_empty" | "unavailable_404" | "failed";
 
 export interface AppleMusicRecentStore {
   claimLease(runId: string): Promise<string>;
@@ -124,6 +133,43 @@ export interface AppleMusicRecentRunSummary {
   evaluationAsOf: string;
   mode: "recent_mvp";
   requestBudget: 100;
+  runId: string;
+  status: "completed" | "controlled_partial" | "failed";
+  stopReason: string;
+  window: { effectiveEnd: string; effectiveStart: string };
+}
+
+export interface AppleMusicRecentOptimizationSummary {
+  artists: Array<{
+    artist: string;
+    candidates: Array<{
+      classification: AppleMusicRecentCandidate["classification"];
+      comparisonStatus: string;
+      eligible: boolean;
+      releaseDate?: string;
+      sources: AppleMusicRecentSource[];
+      title: string;
+    }>;
+    groundTruth: Array<{ date: string; title: string; type: string }>;
+    mapping: "evidence_confirmed";
+    search: {
+      albumsNextPresent: boolean;
+      candidates: number;
+      requests: number;
+      songsNextPresent: boolean;
+      status: AppleMusicRecentAvailability;
+    };
+    topSongs: {
+      candidates: number;
+      nextPresent: boolean;
+      requests: number;
+      status: AppleMusicRecentAvailability;
+    };
+  }>;
+  evidence: AppleMusicPilotStoredEvidence;
+  evaluationAsOf: string;
+  mode: "recent_optimized_four_source";
+  requestBudget: 25;
   runId: string;
   status: "completed" | "controlled_partial" | "failed";
   stopReason: string;
@@ -334,6 +380,197 @@ export async function runAppleMusicRecentAfterValidation(
   return summary;
 }
 
+export async function runAppleMusicRecentOptimization(input: {
+  authorization: AppleMusicRecentAuthorization;
+  createClient(runId: string, leaseToken: string): AppleMusicRecentClient;
+  implementationCommit: string;
+  snapshot: ItunesPilotSnapshot;
+  store: AppleMusicRecentStore;
+}): Promise<AppleMusicRecentOptimizationSummary> {
+  assertAuthorization(input.authorization);
+  const cohort = validateAppleMusicPilotSnapshot(input.snapshot);
+  const entries = appleMusicRecentSample.map((name) => {
+    const entry = cohort.find((candidate) => candidate.name === name);
+    if (!entry) throw new Error(`Recent sample artist ${name} is missing.`);
+    return entry;
+  });
+  return runAppleMusicRecentOptimizationAfterValidation(input, entries, {
+    freshSupplementOnly: true,
+  });
+}
+
+export async function runAppleMusicRecentOptimizationAfterValidation(
+  input: {
+    authorization: AppleMusicRecentAuthorization;
+    createClient(runId: string, leaseToken: string): AppleMusicRecentClient;
+    implementationCommit: string;
+    snapshot: ItunesPilotSnapshot;
+    store: AppleMusicRecentStore;
+  },
+  entries: AppleMusicPilotPlanArtist[],
+  options: { freshSupplementOnly: boolean },
+): Promise<AppleMusicRecentOptimizationSummary> {
+  assertAuthorization(input.authorization);
+  assertExactRecentSample(entries);
+  const operational = await input.store.operationalStatus();
+  if (operational.cooldownActive) throw new Error("Apple Music has an active cooldown.");
+  if (operational.leaseActive) throw new Error("Apple Music has an active lease.");
+  const evaluationEnd = new Date(input.authorization.evaluationAsOf);
+  const window = appleMusicRecentWindow(evaluationEnd);
+  const snapshotId = await input.store.importSnapshot(input.snapshot);
+  const mappings = new Map<string, string>();
+  for (const entry of entries) {
+    const mapping = await input.store.findConfirmedMapping({
+      canonicalArtistId: entry.canonicalArtistId,
+      snapshotId,
+    });
+    if (!mapping) {
+      throw new Error(`A confirmed Apple mapping is required for ${entry.name}.`);
+    }
+    mappings.set(entry.canonicalArtistId, mapping.appleArtistId);
+  }
+  const run = await input.store.createRun({
+    implementationCommit: input.implementationCommit,
+    maximumRuntimeMs: 300_000,
+    minRequestIntervalMs: 1_100,
+    requestBudget: 25,
+    snapshotId,
+  });
+  let leaseToken: string | undefined;
+  let status: AppleMusicRecentOptimizationSummary["status"] = "failed";
+  let stopReason = "unexpected_failure";
+  const artists: AppleMusicRecentOptimizationSummary["artists"] = [];
+  const systematicBadRequests = new Map<string, number>();
+  let summary: AppleMusicRecentOptimizationSummary | undefined;
+  try {
+    leaseToken = await input.store.claimLease(run.id);
+    const client = input.createClient(run.id, leaseToken);
+    const identityScope = `recent-optimized:${run.id}`;
+    for (const entry of entries) {
+      const source = snapshotArtist(input.snapshot, entry.canonicalArtistId);
+      const artistId = mappings.get(entry.canonicalArtistId);
+      if (!artistId) throw new Error("A prevalidated Apple mapping was lost.");
+      const decision = confirmedMappingDecision(source, artistId);
+      await input.store.saveMapping({
+        canonicalArtistId: source.canonicalArtistId,
+        decision,
+        runId: run.id,
+      });
+      const groundTruth = scopedAppleMusicRecentGroundTruth(input.snapshot, source, evaluationEnd);
+      const collected = await collectOptimizedArtist(
+        client,
+        artistId,
+        source,
+        window,
+        identityScope,
+        systematicBadRequests,
+        options.freshSupplementOnly,
+      );
+      const withComparison = collected.all.map((candidate) => ({
+        ...candidate,
+        comparisonStatus: candidateComparison(candidate, groundTruth),
+      }));
+      await input.store.saveCatalog({
+        albums: collected.albums,
+        canonicalArtistId: source.canonicalArtistId,
+        runId: run.id,
+        songs: collected.songs,
+      });
+      await input.store.saveCandidates({
+        candidates: withComparison,
+        canonicalArtistId: source.canonicalArtistId,
+        runId: run.id,
+      });
+      artists.push({
+        artist: source.canonicalName,
+        candidates: withComparison.map((candidate) => ({
+          classification: candidate.classification,
+          comparisonStatus: candidate.comparisonStatus,
+          eligible: candidate.eligible,
+          ...(candidate.releaseDate ? { releaseDate: candidate.releaseDate } : {}),
+          sources: candidate.sources,
+          title: candidate.albumTitle,
+        })),
+        groundTruth: publicGroundTruth(groundTruth),
+        mapping: "evidence_confirmed",
+        search: {
+          albumsNextPresent: collected.search.page.albumsNextPresent,
+          candidates: collected.searchCandidates,
+          requests: collected.search.requested,
+          songsNextPresent: collected.search.page.songsNextPresent,
+          status: collected.search.status,
+        },
+        topSongs: {
+          candidates: collected.topSongCandidates,
+          nextPresent: collected.topSongs.page.nextPresent,
+          requests: collected.topSongs.requested,
+          status: collected.topSongs.status,
+        },
+      });
+    }
+    status = "completed";
+    stopReason = "recent_optimized_sample_completed";
+  } catch (error) {
+    const classified = classifyTerminal(error);
+    status = classified.status;
+    stopReason = classified.reason;
+  } finally {
+    try {
+      const evidence = await input.store.readEvidence(run.id);
+      summary = {
+        artists,
+        evidence,
+        evaluationAsOf: input.authorization.evaluationAsOf,
+        mode: "recent_optimized_four_source",
+        requestBudget: 25,
+        runId: run.id,
+        status,
+        stopReason,
+        window: {
+          effectiveEnd: window.effectiveEnd.toISOString(),
+          effectiveStart: window.effectiveStart.toISOString(),
+        },
+      };
+      await input.store.finishRun(run.id, {
+        metrics: summary as unknown as Record<string, unknown>,
+        status,
+        stopReason,
+      });
+    } finally {
+      if (leaseToken) await input.store.releaseLease(leaseToken);
+    }
+  }
+  if (!summary) throw new Error("Apple recent optimization summary was not created.");
+  return summary;
+}
+
+function assertExactRecentSample(entries: AppleMusicPilotPlanArtist[]): void {
+  if (
+    entries.length !== appleMusicRecentSample.length ||
+    entries.some((entry, index) => entry.name !== appleMusicRecentSample[index])
+  ) {
+    throw new Error("The Apple recent runner requires the exact ordered 10-artist sample.");
+  }
+}
+
+function confirmedMappingDecision(
+  artist: ItunesPilotSnapshotArtist,
+  artistId: string,
+): AppleMusicMappingDecision {
+  return {
+    candidates: [],
+    confidence: 1,
+    evidence: [],
+    reason: "A safely confirmed Apple mapping was reused.",
+    selected: {
+      artistId,
+      genreNames: [],
+      name: artist.canonicalName,
+    },
+    status: "evidence_confirmed",
+  };
+}
+
 async function resolveMapping(
   client: AppleMusicRecentClient,
   store: AppleMusicRecentStore,
@@ -377,6 +614,83 @@ async function resolveMapping(
     canonicalName: artist.canonicalName,
     searchCandidates: await client.searchArtists(artist.canonicalName),
   });
+}
+
+async function collectOptimizedArtist(
+  client: AppleMusicRecentClient,
+  artistId: string,
+  artist: ItunesPilotSnapshotArtist,
+  window: ReturnType<typeof appleMusicRecentWindow>,
+  identityScope: string,
+  badRequests: Map<string, number>,
+  freshSupplementOnly: boolean,
+) {
+  const singles = freshSupplementOnly
+    ? emptyAlbumPage()
+    : await safePage(
+        "singles",
+        () => client.getArtistViewFirstPage(artistId, "singles", undefined, identityScope),
+        badRequests,
+      );
+  const fullAlbums = freshSupplementOnly
+    ? emptyAlbumPage()
+    : await safePage(
+        "full-albums",
+        () => client.getArtistViewFirstPage(artistId, "full-albums", undefined, identityScope),
+        badRequests,
+      );
+  const topSongs = await safeSongPage(
+    "top-songs",
+    () => client.getArtistTopSongsFirstPage(artistId, identityScope),
+    badRequests,
+  );
+  const search = await safeSearch(
+    () => client.searchRecentRemixes(`${artist.canonicalName} Remix`, identityScope),
+    badRequests,
+  );
+  const inputs: Array<
+    | { album: AppleMusicAlbum; confirmed: boolean; source: AppleMusicRecentSource }
+    | { song: AppleMusicSong; confirmed: boolean; source: AppleMusicRecentSource }
+  > = [
+    ...tagAlbums(singles.page.items, "singles", true),
+    ...tagAlbums(fullAlbums.page.items, "full-albums", true),
+    ...topSongs.page.items.map((song) => ({
+      confirmed: true,
+      song,
+      source: "top-songs" as const,
+    })),
+    ...tagAlbums(search.page.albums, "catalog-search-album", false),
+    ...search.page.songs.map((song) => ({
+      confirmed: false,
+      song,
+      source: "catalog-search-song" as const,
+    })),
+  ];
+  const all = mergeAppleMusicRecentCandidates(
+    inputs.map((value) =>
+      classifyAppleMusicRecentCandidate({
+        aliases: artist.aliases,
+        ...("album" in value ? { album: value.album } : { song: value.song }),
+        confirmedArtistAssociation: value.confirmed,
+        source: value.source,
+        watchedArtist: artist.canonicalName,
+        window,
+      }),
+    ),
+  );
+  return {
+    albums: dedupeAlbums([...singles.page.items, ...fullAlbums.page.items, ...search.page.albums]),
+    all,
+    search,
+    searchCandidates: all.filter(
+      (candidate) =>
+        candidate.sources.includes("catalog-search-album") ||
+        candidate.sources.includes("catalog-search-song"),
+    ).length,
+    songs: dedupeSongs([...topSongs.page.items, ...search.page.songs]),
+    topSongCandidates: all.filter((candidate) => candidate.sources.includes("top-songs")).length,
+    topSongs,
+  };
 }
 
 async function collectArtist(
@@ -462,25 +776,86 @@ async function collectArtist(
   };
 }
 
+function emptyAlbumPage(): {
+  page: AppleMusicArtistViewPage;
+  requested: 0;
+  status: AppleMusicRecentAvailability;
+} {
+  return {
+    page: { items: [], nextPresent: false },
+    requested: 0,
+    status: "available_empty",
+  };
+}
+
 async function safePage(
   shape: string,
   request: () => Promise<AppleMusicArtistViewPage>,
   badRequests: Map<string, number>,
-): Promise<{ page: AppleMusicArtistViewPage; requested: number }> {
+): Promise<{
+  page: AppleMusicArtistViewPage;
+  requested: number;
+  status: AppleMusicRecentAvailability;
+}> {
   try {
-    return { page: await request(), requested: 1 };
+    const page = await request();
+    return {
+      page,
+      requested: 1,
+      status: page.items.length > 0 ? "available_with_results" : "available_empty",
+    };
   } catch (error) {
     handleNonterminal(error, shape, badRequests);
-    return { page: { items: [], nextPresent: false }, requested: 1 };
+    return {
+      page: { items: [], nextPresent: false },
+      requested: 1,
+      status: errorStatus(error),
+    };
+  }
+}
+
+async function safeSongPage(
+  shape: string,
+  request: () => Promise<AppleMusicArtistSongViewPage>,
+  badRequests: Map<string, number>,
+): Promise<{
+  page: AppleMusicArtistSongViewPage;
+  requested: number;
+  status: AppleMusicRecentAvailability;
+}> {
+  try {
+    const page = await request();
+    return {
+      page,
+      requested: 1,
+      status: page.items.length > 0 ? "available_with_results" : "available_empty",
+    };
+  } catch (error) {
+    handleNonterminal(error, shape, badRequests);
+    return {
+      page: { items: [], nextPresent: false },
+      requested: 1,
+      status: errorStatus(error),
+    };
   }
 }
 
 async function safeSearch(
   request: () => Promise<AppleMusicRecentSearchPage>,
   badRequests: Map<string, number>,
-): Promise<{ page: AppleMusicRecentSearchPage; requested: number }> {
+): Promise<{
+  page: AppleMusicRecentSearchPage;
+  requested: number;
+  status: AppleMusicRecentAvailability;
+}> {
   try {
-    return { page: await request(), requested: 1 };
+    const page = await request();
+    return {
+      page,
+      requested: 1,
+      status:
+        page.albums.length + page.songs.length > 0 ? "available_with_results" : "available_empty",
+    };
   } catch (error) {
     handleNonterminal(error, "catalog-remix-search", badRequests);
     return {
@@ -491,8 +866,15 @@ async function safeSearch(
         songsNextPresent: false,
       },
       requested: 1,
+      status: errorStatus(error),
     };
   }
+}
+
+function errorStatus(error: unknown): AppleMusicRecentAvailability {
+  return error instanceof AppleMusicClientError && error.status === 404
+    ? "unavailable_404"
+    : "failed";
 }
 
 function handleNonterminal(error: unknown, shape: string, badRequests: Map<string, number>): void {

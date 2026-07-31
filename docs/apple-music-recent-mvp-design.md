@@ -39,10 +39,44 @@ Apple documents the direct artist view, generic artist relationship, and catalog
 operations used here:
 
 - [Catalog artist relationship view](https://developer.apple.com/documentation/applemusicapi/fetch-a-view-on-this-resource-by-name-4kow5)
+- [Artists Top Songs view](https://developer.apple.com/documentation/applemusicapi/artists/views/artiststopsongsview?changes=la_6_5)
+- [Relationship-view response](https://developer.apple.com/documentation/applemusicapi/relationshipviewresponse?changes=_2_4)
 - [Catalog artist relationship](https://developer.apple.com/documentation/applemusicapi/fetch-a-relationship-on-this-resource-by-name-5akdm)
-- [Apple Music catalog search](https://developer.apple.com/documentation/applemusicapi/search)
+- [Apple Music catalog search](https://developer.apple.com/documentation/applemusicapi/search?changes=_3)
 
 The `appears-on-albums` view is supplemental, not proof of complete history.
+
+### Experimental optimized profile
+
+The optional `optimized_four_source` profile leaves the existing Arm A, Arm B, and Arm C
+implementation unchanged. Its recurring discovery shape is exactly four first-page operations
+per confirmed artist:
+
+1. `singles`
+2. `full-albums`
+3. `top-songs`
+4. one catalog search for the canonical artist name plus `Remix`, requesting albums and songs
+   together
+
+It never calls `latest-release`, the generic artist albums relationship, or
+`appears-on-albums`, and it never follows pagination. `top-songs` uses the minimal direct-view
+route with no query parameters. A returned top-level `next` is reduced to a boolean observation
+and is not followed. HTTP 200 empty and HTTP 404 unavailable remain distinct.
+
+The bounded optimization experiment does not refetch the already measured `singles` or
+`full-albums` pages. It verifies all ten persisted mappings before creating the run or HTTP
+client, then makes one fresh run-scoped `top-songs` request and one fresh widened search for each
+artist. The ceiling is 25 HTTP starts, five minutes, concurrency one, and at least 1,100
+milliseconds between starts. The fixed comparison window remains 30 days ending
+`2026-07-29T23:59:59Z`.
+
+Apple documents `top-songs` as a supported direct artist view whose response contains song
+resources ordered by popularity for the storefront. Apple documents a maximum catalog-search
+limit of 25 results for each requested type. The earlier search request omitted `limit`, so it
+used the documented default of five per type. The optimized request sets `limit=25` while
+remaining one request per artist. Album and song search results remain separate collections.
+Existing sanitized evidence shows the MUST DIE! target was absent from the prior returned
+collections, rather than returned and rejected or incorrectly deduplicated.
 
 ## Candidate scope
 
@@ -82,9 +116,15 @@ or arm. Two HTTP 400 responses for the same endpoint shape stop the sample.
 ```powershell
 pnpm apple:recent -- --plan --snapshot <external-snapshot-path> --sample
 pnpm apple:recent -- --execute-live --confirm-live APPLE_RECENT_MVP_SAMPLE --snapshot <external-snapshot-path> --sample --evaluation-as-of 2026-07-29T23:59:59Z
+pnpm apple:recent -- --plan --snapshot <external-snapshot-path> --sample --profile optimized_four_source
+pnpm apple:recent -- --execute-live --confirm-live APPLE_RECENT_MVP_SAMPLE --snapshot <external-snapshot-path> --sample --evaluation-as-of 2026-07-29T23:59:59Z --profile optimized_four_source
 ```
 
 Plan mode validates the pinned snapshot and exact sample without credentials, private-key access,
 token generation, HTTP initialization, database initialization, or writes. The current
 conservative plan is 93 of 100 requests: 60 shallow discovery starts, up to 13 mapping starts, 10
 targeted-detail starts, and 10 retry starts.
+
+The optimized plan reports the 20 fresh requests authorized for this experiment, a five-request
+temporary-5xx reserve, no mapping or detail requests, and the 25-request ceiling. A later normal
+recurring run of all four sources would use 40 starts for ten confirmed artists before retries.

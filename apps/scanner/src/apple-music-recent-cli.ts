@@ -29,6 +29,7 @@ import {
 import {
   authorizeAppleMusicRecent,
   runAppleMusicRecent,
+  runAppleMusicRecentOptimization,
   type AppleMusicRecentStore,
 } from "./apple-music-recent-runner";
 import type { AppleMusicPilotStoredEvidence } from "./apple-music-pilot-runner";
@@ -40,7 +41,11 @@ async function main(): Promise<void> {
   const command = parseAppleMusicRecentCommand(process.argv.slice(2));
   if (command.mode === "plan") {
     process.stdout.write(
-      `${JSON.stringify(await createAppleMusicRecentPlan(command.snapshotPath), null, 2)}\n`,
+      `${JSON.stringify(
+        await createAppleMusicRecentPlan(command.snapshotPath, command.profile),
+        null,
+        2,
+      )}\n`,
     );
     return;
   }
@@ -71,7 +76,13 @@ async function main(): Promise<void> {
   const connection = createDatabase(configuration.databaseUrl);
   let tokenManager: AppleDeveloperTokenManager | undefined;
   try {
-    const summary = await runAppleMusicRecent({
+    const requestBudget = command.profile === "optimized_four_source" ? 25 : 100;
+    const maximumRuntimeMs = command.profile === "optimized_four_source" ? 300_000 : 900_000;
+    const run =
+      command.profile === "optimized_four_source"
+        ? runAppleMusicRecentOptimization
+        : runAppleMusicRecent;
+    const summary = await run({
       authorization,
       createClient: (runId, leaseToken) => {
         tokenManager ??= new AppleDeveloperTokenManager({
@@ -82,9 +93,9 @@ async function main(): Promise<void> {
         });
         return new AppleMusicClient({
           enabled: true,
-          maxRequestsPerRun: 100,
+          maxRequestsPerRun: requestBudget,
           maxResponseBytes: configuration.appleMusic.maxResponseBytes,
-          maximumRuntimeMs: 900_000,
+          maximumRuntimeMs,
           maxRetries: 2,
           minRequestIntervalMs: 1_100,
           persistence: createAppleMusicRequestPersistence(connection.db, {

@@ -15,6 +15,7 @@ const DEFAULT_MAX_REQUESTS = 200;
 const DEFAULT_MAX_RUNTIME_MS = 30 * 60_000;
 const MAX_BATCH_ARTISTS = 25;
 const MAX_BATCH_SONGS = 25;
+const MAX_CATALOG_SEARCH_RESULTS_PER_TYPE = 25;
 
 export const appleMusicArtistViews = [
   "latest-release",
@@ -26,6 +27,11 @@ export const appleMusicArtistViews = [
 ] as const;
 
 export type AppleMusicArtistView = (typeof appleMusicArtistViews)[number];
+
+export const appleMusicArtistSongViews = ["top-songs"] as const;
+
+export type AppleMusicArtistSongView = (typeof appleMusicArtistSongViews)[number];
+type AppleMusicDirectArtistView = AppleMusicArtistView | AppleMusicArtistSongView;
 
 const resourceReferenceSchema = z.object({
   href: z.string().optional(),
@@ -137,6 +143,11 @@ const artistViewFirstPageResponseSchema = z.object({
   next: z.union([z.string(), z.boolean()]).optional(),
 });
 
+const artistSongViewFirstPageResponseSchema = z.object({
+  data: z.array(songResourceSchema),
+  next: z.union([z.string(), z.boolean()]).optional(),
+});
+
 const searchResponseSchema = z.object({
   results: z.object({
     albums: z
@@ -216,6 +227,11 @@ export interface AppleMusicBatchResult<T> {
 
 export interface AppleMusicArtistViewPage {
   items: AppleMusicAlbum[];
+  nextPresent: boolean;
+}
+
+export interface AppleMusicArtistSongViewPage {
+  items: AppleMusicSong[];
   nextPresent: boolean;
 }
 
@@ -426,7 +442,7 @@ export interface AppleMusicErrorDiagnostic {
     | "rate_limited"
     | "server_error"
     | "unauthorized";
-  view?: AppleMusicArtistView;
+  view?: AppleMusicDirectArtistView;
 }
 
 export class AppleMusicClientError extends Error {
@@ -529,6 +545,7 @@ export class AppleMusicClient {
       };
     }
     const url = this.catalogUrl("search");
+    url.searchParams.set("limit", String(MAX_CATALOG_SEARCH_RESULTS_PER_TYPE));
     url.searchParams.set("term", term.trim());
     url.searchParams.set("types", "albums,songs");
     const requestPath = url.pathname + url.search;
@@ -612,6 +629,29 @@ export class AppleMusicClient {
     return {
       items: response.data.map((resource) =>
         normalizeAlbum(resource, this.storefront, view, 1, initialPath),
+      ),
+      nextPresent: response.next === true,
+    };
+  }
+
+  async getArtistTopSongsFirstPage(
+    artistId: string,
+    identityScope: string,
+    signal?: AbortSignal,
+  ): Promise<AppleMusicArtistSongViewPage> {
+    const view: AppleMusicArtistSongView = "top-songs";
+    const initialPath = artistViewPath(this.storefront, artistId, view);
+    const response = await this.request(
+      new URL(initialPath, APPLE_MUSIC_ORIGIN),
+      "artist_view",
+      artistSongViewFirstPageResponseSchema,
+      (value) => sanitizeArtistSongViewFirstPage(value, this.storefront, initialPath),
+      signal,
+      identityScope,
+    );
+    return {
+      items: response.data.map((resource) =>
+        normalizeSong(resource, this.storefront, 1, initialPath),
       ),
       nextPresent: response.next === true,
     };
@@ -1124,7 +1164,7 @@ export function assertAllowedAppleMusicPath(
 interface AppleMusicRouteMatch {
   classification: AppleMusicRouteClassification;
   resourceIdentity?: string;
-  view?: AppleMusicArtistView;
+  view?: AppleMusicDirectArtistView;
 }
 
 function classifyAppleMusicRoute(pathname: string, storefront: string): AppleMusicRouteMatch {
@@ -1142,13 +1182,16 @@ function classifyAppleMusicRoute(pathname: string, storefront: string): AppleMus
     return { classification: "artist_albums", resourceIdentity: artistAlbums[1]! };
   }
   const artistView = new RegExp(
-    `^/v1/catalog/${escapedStorefront}/artists/([^/]+)/view/(${appleMusicArtistViews.join("|")})$`,
+    `^/v1/catalog/${escapedStorefront}/artists/([^/]+)/view/(${[
+      ...appleMusicArtistViews,
+      ...appleMusicArtistSongViews,
+    ].join("|")})$`,
   ).exec(pathname);
   if (artistView) {
     return {
       classification: "artist_view",
       resourceIdentity: artistView[1]!,
-      view: artistView[2] as AppleMusicArtistView,
+      view: artistView[2] as AppleMusicDirectArtistView,
     };
   }
   const album = new RegExp(`^/v1/catalog/${escapedStorefront}/albums/([^/]+)$`).exec(pathname);
@@ -1357,6 +1400,19 @@ function sanitizeArtistViewFirstPage(
   return {
     data: response.data.map((resource) =>
       sanitizeAlbumResource(resource, storefront, view, 1, paginationPath),
+    ),
+    ...(response.next === undefined ? {} : { next: true }),
+  };
+}
+
+function sanitizeArtistSongViewFirstPage(
+  response: z.infer<typeof artistSongViewFirstPageResponseSchema>,
+  storefront: string,
+  paginationPath: string,
+): z.infer<typeof artistSongViewFirstPageResponseSchema> {
+  return {
+    data: response.data.map((resource) =>
+      sanitizeSongResource(resource, storefront, 1, paginationPath),
     ),
     ...(response.next === undefined ? {} : { next: true }),
   };
@@ -1889,18 +1945,22 @@ function encodeIdentifier(value: string): string {
   return encodeURIComponent(value);
 }
 
-function artistViewPath(storefront: string, artistId: string, view: AppleMusicArtistView): string {
+function artistViewPath(
+  storefront: string,
+  artistId: string,
+  view: AppleMusicDirectArtistView,
+): string {
   return `/v1/catalog/${storefront}/artists/${encodeIdentifier(artistId)}/view/${view}`;
 }
 
-export function appleMusicArtistViewRequestShape(view: AppleMusicArtistView): {
+export function appleMusicArtistViewRequestShape(view: AppleMusicDirectArtistView): {
   headerNames: ["accept", "authorization"];
   host: "allowed_api";
   method: "GET";
   pathTemplate: string;
   queryKeys: [];
   storefront: "us";
-  view: AppleMusicArtistView;
+  view: AppleMusicDirectArtistView;
 } {
   return {
     headerNames: ["accept", "authorization"],

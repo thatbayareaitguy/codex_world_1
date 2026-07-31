@@ -41,6 +41,7 @@ export type AppleMusicRecentSource =
   | "singles"
   | "full-albums"
   | "appears-on-albums"
+  | "top-songs"
   | "catalog-search-album"
   | "catalog-search-song";
 
@@ -161,7 +162,17 @@ export function classifyAppleMusicRecentCandidate(input: {
     };
   }
   if (!watchedAssociated) return rejected(base, "feature_only");
-  if (input.song && !input.album) return rejected(base, "unsupported");
+  if (input.song && !input.album) {
+    if (input.source !== "top-songs") return rejected(base, "unsupported");
+    const classification = classifySongRelease(input.song);
+    if (!classification) return rejected(base, "unsupported");
+    return {
+      ...base,
+      classification,
+      eligible: true,
+      evidenceStrength: "relationship_confirmed",
+    };
+  }
 
   const classification = classifyOrdinaryRelease(input.album);
   if (!classification) return rejected(base, "unsupported");
@@ -171,6 +182,13 @@ export function classifyAppleMusicRecentCandidate(input: {
     eligible: true,
     evidenceStrength: "relationship_confirmed",
   };
+}
+
+function classifySongRelease(song: AppleMusicSong): "primary_single" | "primary_ep" | undefined {
+  const albumName = song.albumName?.normalize("NFKC") ?? "";
+  if (/(?:^|\s|[-([])single(?:$|\s|[\])])/iu.test(albumName)) return "primary_single";
+  if (/(?:^|\s|[-([])ep(?:$|\s|[\])])/iu.test(albumName)) return "primary_ep";
+  return undefined;
 }
 
 export function mergeAppleMusicRecentCandidates(

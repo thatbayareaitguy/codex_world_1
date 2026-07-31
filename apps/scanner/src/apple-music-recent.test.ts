@@ -8,10 +8,14 @@ import {
   mergeAppleMusicRecentCandidates,
   scopedAppleMusicRecentGroundTruth,
 } from "./apple-music-recent";
-import { parseAppleMusicRecentCommand } from "./apple-music-recent-command";
+import {
+  createAppleMusicRecentPlan,
+  parseAppleMusicRecentCommand,
+} from "./apple-music-recent-command";
 import {
   authorizeAppleMusicRecent,
   runAppleMusicRecentAfterValidation,
+  runAppleMusicRecentOptimizationAfterValidation,
   type AppleMusicRecentClient,
   type AppleMusicRecentStore,
 } from "./apple-music-recent-runner";
@@ -45,7 +49,7 @@ describe("Apple recent command gate", () => {
   it("parses plan mode without accepting live-only options", () => {
     expect(
       parseAppleMusicRecentCommand(["--plan", "--sample", "--snapshot", "snapshot.json"]),
-    ).toEqual({ mode: "plan", snapshotPath: "snapshot.json" });
+    ).toEqual({ mode: "plan", profile: "current", snapshotPath: "snapshot.json" });
     expect(() =>
       parseAppleMusicRecentCommand([
         "--plan",
@@ -73,6 +77,50 @@ describe("Apple recent command gate", () => {
         "2026-07-29T23:59:59Z",
       ]),
     ).toMatchObject({ mode: "execute_live" });
+  });
+
+  it("plans the optimized profile with four recurring sources and a 25-request live ceiling", async () => {
+    const value = recentSnapshot(recentEntries());
+    expect(
+      parseAppleMusicRecentCommand([
+        "--plan",
+        "--sample",
+        "--snapshot",
+        "snapshot.json",
+        "--profile",
+        "optimized_four_source",
+      ]),
+    ).toMatchObject({ mode: "plan", profile: "optimized_four_source" });
+    const plan = await createAppleMusicRecentPlan(
+      "snapshot.json",
+      "optimized_four_source",
+      () => Promise.resolve(value),
+      () => recentEntries(),
+    );
+    expect(plan).toMatchObject({
+      forecast: {
+        armBRequests: 0,
+        armCRequests: 20,
+        freshSearchRequests: 10,
+        freshTopSongsRequests: 10,
+        mappingRequests: 0,
+        recurringProfileRequests: 40,
+        requestBudget: 25,
+        reusedHistoricalRequests: 20,
+        retryReserve: 5,
+        totalRequests: 20,
+      },
+      limits: {
+        concurrency: 1,
+        maximumRuntimeMs: 300_000,
+        minRequestIntervalMs: 1_100,
+        requestBudget: 25,
+      },
+      networkRequestsStarted: 0,
+      noPagination: true,
+      profile: "optimized_four_source",
+      writes: 0,
+    });
   });
 });
 
@@ -155,6 +203,51 @@ describe("Apple recent candidate classification", () => {
     expect(classifySong(song({ title: "Signal" })).classification).toBe("feature_only");
   });
 
+  it("applies ordinary and bidirectional remix rules to recent top songs", () => {
+    expect(
+      classifyTopSong(song({ albumName: "Signal - Single", artistName: "NURKO" })),
+    ).toMatchObject({
+      classification: "primary_single",
+      eligible: true,
+    });
+    expect(
+      classifyTopSong(
+        song({
+          albumName: "LOL OK (Axel Boy Remix) - Single",
+          artistName: "MUST DIE!",
+          title: "LOL OK (Axel Boy Remix)",
+        }),
+        "MUST DIE!",
+      ),
+    ).toMatchObject({
+      classification: "remix_of_watched_artist_by_other",
+      eligible: true,
+      namedRemixer: "Axel Boy",
+    });
+    expect(
+      classifyTopSong(
+        song({
+          albumName: "Signal (NURKO Remix) - Single",
+          artistName: "Other",
+          title: "Signal (NURKO Remix)",
+        }),
+      ),
+    ).toMatchObject({
+      classification: "remix_by_watched_artist",
+      eligible: true,
+    });
+    expect(classifyTopSong(song({ artistName: "NURKO", title: "Popular Remix" }))).toMatchObject({
+      classification: "remix_direction_uncertain",
+      eligible: false,
+    });
+    expect(classifyTopSong(song({ artistName: "NURKO", releaseDate: "2026-01-01" }))).toMatchObject(
+      {
+        classification: "date_out_of_scope",
+        eligible: false,
+      },
+    );
+  });
+
   it("deduplicates album and song discovery while preserving source evidence", () => {
     const first = classify(album({ albumId: "same" }), true);
     const second = {
@@ -234,6 +327,103 @@ describe("Apple recent bounded runner", () => {
     expect(store.saveCandidates).toHaveBeenCalledTimes(10);
   });
 
+  it("runs exactly four first-page optimized sources without legacy or pagination calls", async () => {
+    const entries = recentEntries();
+    const client = recentClient();
+    const store = recentStore();
+    const summary = await runAppleMusicRecentOptimizationAfterValidation(
+      {
+        authorization: recentAuthorization(),
+        createClient: () => client,
+        implementationCommit: "a".repeat(40),
+        snapshot: recentSnapshot(entries),
+        store,
+      },
+      entries,
+      { freshSupplementOnly: false },
+    );
+    expect(summary.status).toBe("completed");
+    expect(client.getArtistViewFirstPage).toHaveBeenCalledTimes(20);
+    expect(client.getArtistViewFirstPage.mock.calls.map((call) => call[1])).toEqual(
+      Array.from({ length: 10 }, () => ["singles", "full-albums"]).flat(),
+    );
+    expect(client.getArtistTopSongsFirstPage).toHaveBeenCalledTimes(10);
+    expect(client.searchRecentRemixes).toHaveBeenCalledTimes(10);
+    expect(client.getArtistAlbumsFirstPage).not.toHaveBeenCalled();
+    expect(client.getArtist).not.toHaveBeenCalled();
+    expect(client.searchArtists).not.toHaveBeenCalled();
+  });
+
+  it("runs only the two fresh supplement requests in the authorized live experiment", async () => {
+    const entries = recentEntries();
+    const client = recentClient();
+    const store = recentStore();
+    const summary = await runAppleMusicRecentOptimizationAfterValidation(
+      {
+        authorization: recentAuthorization(),
+        createClient: () => client,
+        implementationCommit: "a".repeat(40),
+        snapshot: recentSnapshot(entries),
+        store,
+      },
+      entries,
+      { freshSupplementOnly: true },
+    );
+    expect(summary).toMatchObject({
+      mode: "recent_optimized_four_source",
+      requestBudget: 25,
+      status: "completed",
+    });
+    expect(client.getArtistViewFirstPage).not.toHaveBeenCalled();
+    expect(client.getArtistTopSongsFirstPage).toHaveBeenCalledTimes(10);
+    expect(client.searchRecentRemixes).toHaveBeenCalledTimes(10);
+    expect(store.releaseLease).toHaveBeenCalledTimes(1);
+  });
+
+  it("distinguishes top-songs HTTP 404 from an available empty page", async () => {
+    const entries = recentEntries();
+    const client = recentClient();
+    client.getArtistTopSongsFirstPage
+      .mockRejectedValueOnce(new AppleMusicClientError("missing", "not_found", 404))
+      .mockResolvedValue({ items: [], nextPresent: false });
+    const summary = await runAppleMusicRecentOptimizationAfterValidation(
+      {
+        authorization: recentAuthorization(),
+        createClient: () => client,
+        implementationCommit: "a".repeat(40),
+        snapshot: recentSnapshot(entries),
+        store: recentStore(),
+      },
+      entries,
+      { freshSupplementOnly: true },
+    );
+    expect(summary.artists[0]?.topSongs.status).toBe("unavailable_404");
+    expect(summary.artists[1]?.topSongs.status).toBe("available_empty");
+    expect(summary.artists).toHaveLength(10);
+  });
+
+  it("requires all confirmed mappings before creating a run or client", async () => {
+    const entries = recentEntries();
+    const store = recentStore();
+    store.findConfirmedMapping.mockResolvedValueOnce(undefined);
+    const createClient = vi.fn(() => recentClient());
+    await expect(
+      runAppleMusicRecentOptimizationAfterValidation(
+        {
+          authorization: recentAuthorization(),
+          createClient,
+          implementationCommit: "a".repeat(40),
+          snapshot: recentSnapshot(entries),
+          store,
+        },
+        entries,
+        { freshSupplementOnly: true },
+      ),
+    ).rejects.toThrow("confirmed Apple mapping");
+    expect(store.createRun).not.toHaveBeenCalled();
+    expect(createClient).not.toHaveBeenCalled();
+  });
+
   it("stops after the same endpoint shape returns HTTP 400 for two artists", async () => {
     const entries = recentEntries();
     const value = recentSnapshot(entries);
@@ -295,6 +485,17 @@ function classifySong(value: AppleMusicSong) {
     song: value,
     source: "catalog-search-song",
     watchedArtist: "NURKO",
+    window,
+  });
+}
+
+function classifyTopSong(value: AppleMusicSong, watchedArtist = "NURKO") {
+  return classifyAppleMusicRecentCandidate({
+    aliases: [],
+    confirmedArtistAssociation: true,
+    song: value,
+    source: "top-songs",
+    watchedArtist,
     window,
   });
 }
@@ -443,6 +644,9 @@ function recentClient() {
   return {
     getArtist: vi.fn<AppleMusicRecentClient["getArtist"]>(),
     getArtistAlbumsFirstPage: vi.fn<AppleMusicRecentClient["getArtistAlbumsFirstPage"]>(() =>
+      Promise.resolve({ items: [], nextPresent: true }),
+    ),
+    getArtistTopSongsFirstPage: vi.fn<AppleMusicRecentClient["getArtistTopSongsFirstPage"]>(() =>
       Promise.resolve({ items: [], nextPresent: true }),
     ),
     getArtistViewFirstPage: vi.fn<AppleMusicRecentClient["getArtistViewFirstPage"]>(() =>

@@ -229,6 +229,7 @@ describe("Apple recent-release first-page operations", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const url = requestUrl(fetchImpl.mock.calls[0]![0]);
     expect(url.pathname).toBe("/v1/catalog/us/search");
+    expect(url.searchParams.get("limit")).toBe("25");
     expect(url.searchParams.get("types")).toBe("albums,songs");
     expect(url.searchParams.get("term")).toBe("Artist Remix");
     expect(page).toMatchObject({
@@ -249,6 +250,65 @@ describe("Apple recent-release first-page operations", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(persistence.cacheHits).toHaveLength(1);
     expect(persistence.permits[0]!.identity).not.toBe(persistence.permits[1]!.identity);
+  });
+
+  it("fetches a minimal top-songs first page and records next without following it", async () => {
+    const persistence = new MemoryPersistence();
+    const fetchImpl = vi.fn<typeof fetch>(() =>
+      Promise.resolve(
+        jsonResponse({
+          data: [
+            song("song-remix", 1, 1, {
+              albumName: "Signal - Single",
+              contentRating: "explicit",
+              name: "Signal (Other Remix)",
+            }),
+          ],
+          next: "/v1/catalog/us/artists/42/view/top-songs?offset=25",
+        }),
+      ),
+    );
+    const page = await createClient(persistence, fetchImpl).getArtistTopSongsFirstPage(
+      "42",
+      "recent-optimized:run-1",
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const url = requestUrl(fetchImpl.mock.calls[0]![0]);
+    expect(url.pathname).toBe("/v1/catalog/us/artists/42/view/top-songs");
+    expect([...url.searchParams]).toEqual([]);
+    expect(page).toMatchObject({
+      items: [
+        expect.objectContaining({
+          albumName: "Signal - Single",
+          contentRating: "explicit",
+          songId: "song-remix",
+          title: "Signal (Other Remix)",
+        }),
+      ],
+      nextPresent: true,
+    });
+    expect(JSON.stringify([...persistence.cache.values()])).not.toMatch(
+      /artwork|preview|music\.apple\.com|offset=25/u,
+    );
+  });
+
+  it("refreshes top-songs across runs, reuses it within a run, and does not cache 404", async () => {
+    const persistence = new MemoryPersistence();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ data: [] }))
+      .mockResolvedValueOnce(jsonResponse({ data: [] }))
+      .mockResolvedValueOnce(jsonResponse({ errors: [{ status: "404" }] }, 404));
+    const client = createClient(persistence, fetchImpl);
+    await client.getArtistTopSongsFirstPage("42", "recent-optimized:run-1");
+    await client.getArtistTopSongsFirstPage("42", "recent-optimized:run-1");
+    await client.getArtistTopSongsFirstPage("42", "recent-optimized:run-2");
+    await expect(
+      client.getArtistTopSongsFirstPage("43", "recent-optimized:run-3"),
+    ).rejects.toMatchObject({ classification: "not_found", status: 404 });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(persistence.cacheHits).toHaveLength(1);
+    expect(persistence.completions.at(-1)?.cacheValue).toBeUndefined();
   });
 });
 
