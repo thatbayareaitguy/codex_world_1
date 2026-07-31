@@ -9,11 +9,13 @@ import {
   createAppleMusicRequestPersistence,
   finishAppleMusicComparisonRun,
   getConfirmedAppleMusicArtistMapping,
+  getLastSuccessfulAppleMusicRecentScan,
   getAppleMusicOperationalStatus,
   releaseAppleMusicPilotLease,
   saveAppleMusicArtistMapping,
   saveAppleMusicCatalog,
   saveAppleMusicComparisons,
+  saveAppleMusicRecentCandidates,
 } from "./apple-music";
 import {
   appleMusicAlbums,
@@ -22,6 +24,7 @@ import {
   appleMusicComparisons,
   appleMusicMappingCandidates,
   appleMusicProviderState,
+  appleMusicRecentCandidates,
   appleMusicRequestEvents,
   appleMusicResponseCache,
   appleMusicSongs,
@@ -768,6 +771,47 @@ describe.sequential("Apple Music isolated persistence and global request gate", 
     });
     const after = await connection.db.select({ count: sql<number>`count(*)::int` }).from(feedItems);
     expect(after).toEqual(before);
+  });
+
+  it("persists idempotent recent candidates and advances only completed recent runs", async () => {
+    const canonicalArtistId = randomUUID();
+    const runId = await createRunningRun(10);
+    const candidate = {
+      albumId: "synthetic-album",
+      albumTitle: "Signal (Synthetic Remix)",
+      appleArtistName: "Original Artist",
+      classification: "remix_by_watched_artist",
+      comparisonStatus: "exact_match",
+      eligible: true,
+      evidenceStrength: "explicit",
+      namedRemixer: "Synthetic",
+      releaseDate: "2026-07-10",
+      sources: ["catalog-search-album"],
+    };
+    await saveAppleMusicRecentCandidates(connection.db, {
+      candidates: [candidate],
+      canonicalArtistId,
+      runId,
+    });
+    await saveAppleMusicRecentCandidates(connection.db, {
+      candidates: [{ ...candidate, sources: ["appears-on-albums", "catalog-search-album"] }],
+      canonicalArtistId,
+      runId,
+    });
+    expect(await connection.db.select().from(appleMusicRecentCandidates)).toMatchObject([
+      {
+        candidateStatus: "eligible",
+        classification: "remix_by_watched_artist",
+        sourceArms: ["appears-on-albums", "catalog-search-album"],
+      },
+    ]);
+    expect(await getLastSuccessfulAppleMusicRecentScan(connection.db)).toBeUndefined();
+    await finishAppleMusicComparisonRun(connection.db, runId, {
+      metrics: { mode: "recent_mvp" },
+      status: "completed",
+      stopReason: "recent_sample_completed",
+    });
+    expect(await getLastSuccessfulAppleMusicRecentScan(connection.db)).toBeInstanceOf(Date);
   });
 
   async function createRunningRun(requestBudget: number): Promise<string> {

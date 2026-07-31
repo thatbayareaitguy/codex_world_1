@@ -24,11 +24,12 @@ subscription. The narrow branch-only exception in `AGENTS.md` permits Apple Deve
 access for the isolated catalog experiment on `codex/apple-music-discovery`. It does not change
 policy on any other branch or authorize another paid provider.
 
-## Apple Music API catalog verification (2026-07-29)
+## Apple Music API catalog verification (2026-07-30)
 
 - Scope: public catalog reads from exactly `https://api.music.apple.com`. The experimental client
   supports catalog artist search, one or up to 25 artists by ID, six documented artist views,
-  albums, album-track relationships, and songs by ID.
+  albums, the artist albums relationship, album-track relationships, songs by ID, and bounded
+  catalog search for album and song results.
 - Authentication: server-generated developer tokens use ES256 with a configured Team ID, Key ID,
   and external P-256 private key. Tokens are cached only in process memory and regenerated before
   expiration. Music User Tokens are not implemented.
@@ -39,12 +40,17 @@ policy on any other branch or authorize another paid provider.
   numeric rate allowance.
 - Pagination: only relative allowlisted catalog paths may be followed. Every `next` path is checked,
   repeated pages are rejected, and release sorting is local.
+- Recent experiment: the separate recent scanner fetches fresh first pages for two shallow
+  primary-release arms and a bidirectional-remix arm. It never follows pagination. Catalog search
+  requests albums and songs together and search rank alone never confirms a candidate.
 - Exclusions: no user library, playback, playlists, Apple Music Feed, artwork or preview download,
   production scanner integration, or live request is part of this implementation checkpoint.
 - Official documentation:
   [Generating Developer Tokens](https://developer.apple.com/documentation/applemusicapi/generating-developer-tokens),
   [Get Multiple Catalog Artists](https://developer.apple.com/documentation/applemusicapi/get-multiple-catalog-artists),
   [Fetch an Artist View](https://developer.apple.com/documentation/applemusicapi/fetch-a-view-on-this-resource-by-name-4kow5),
+  [Fetch an Artist Relationship](https://developer.apple.com/documentation/applemusicapi/fetch-a-relationship-on-this-resource-by-name-5akdm),
+  [Search](https://developer.apple.com/documentation/applemusicapi/search),
   [Fetching Resources by Page](https://developer.apple.com/documentation/applemusicapi/fetching_resources_by_page),
   [Get a Catalog Album](https://developer.apple.com/documentation/applemusicapi/get-a-catalog-album),
   [Get Multiple Catalog Songs](https://developer.apple.com/documentation/applemusicapi/get-multiple-catalog-songs-by-id),

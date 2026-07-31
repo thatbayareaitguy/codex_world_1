@@ -1980,6 +1980,44 @@ export const appleMusicComparisons = pgTable(
   (table) => [uniqueIndex("apple_music_comparison_unique").on(table.runId, table.identityKey)],
 );
 
+export const appleMusicRecentCandidates = pgTable(
+  "apple_music_recent_candidates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    canonicalArtistId: uuid("canonical_artist_id").notNull(),
+    identityKey: text("identity_key").notNull(),
+    lastRunId: uuid("last_run_id")
+      .notNull()
+      .references(() => appleMusicComparisonRuns.id, { onDelete: "cascade" }),
+    appleAlbumId: text("apple_album_id"),
+    appleSongId: text("apple_song_id"),
+    albumTitle: text("album_title").notNull(),
+    songTitle: text("song_title"),
+    appleArtistName: text("apple_artist_name").notNull(),
+    namedRemixer: text("named_remixer"),
+    releaseDate: text("release_date"),
+    upc: text("upc"),
+    classification: text("classification").notNull(),
+    evidenceStrength: text("evidence_strength").notNull(),
+    sourceArms: jsonb("source_arms")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    candidateStatus: text("candidate_status").notNull(),
+    comparisonStatus: text("comparison_status").notNull(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("apple_music_recent_candidate_identity_unique").on(
+      table.canonicalArtistId,
+      table.identityKey,
+    ),
+    index("apple_music_recent_candidate_run_idx").on(table.lastRunId),
+  ],
+);
+
 export const playlistTargets = pgTable(
   "playlist_targets",
   {

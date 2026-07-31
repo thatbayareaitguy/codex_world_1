@@ -139,9 +139,23 @@ const artistViewFirstPageResponseSchema = z.object({
 
 const searchResponseSchema = z.object({
   results: z.object({
+    albums: z
+      .object({
+        data: z.array(albumResourceSchema),
+        href: z.string().optional(),
+        next: z.string().optional(),
+      })
+      .optional(),
     artists: z
       .object({
         data: z.array(artistResourceSchema),
+        href: z.string().optional(),
+        next: z.string().optional(),
+      })
+      .optional(),
+    songs: z
+      .object({
+        data: z.array(songResourceSchema),
         href: z.string().optional(),
         next: z.string().optional(),
       })
@@ -178,6 +192,7 @@ export interface AppleMusicAlbum {
 
 export interface AppleMusicSong {
   albumId?: string;
+  albumName?: string;
   artistIds: string[];
   artistName: string;
   contentRating?: "clean" | "explicit";
@@ -204,10 +219,18 @@ export interface AppleMusicArtistViewPage {
   nextPresent: boolean;
 }
 
+export interface AppleMusicRecentSearchPage {
+  albums: AppleMusicAlbum[];
+  albumsNextPresent: boolean;
+  songs: AppleMusicSong[];
+  songsNextPresent: boolean;
+}
+
 export type AppleMusicEndpointCategory =
   | "artist_search"
   | "artist"
   | "artists_batch"
+  | "artist_albums"
   | "artist_view"
   | "album"
   | "album_tracks"
@@ -492,6 +515,45 @@ export class AppleMusicClient {
     );
   }
 
+  async searchRecentRemixes(
+    term: string,
+    identityScope: string,
+    signal?: AbortSignal,
+  ): Promise<AppleMusicRecentSearchPage> {
+    if (!term.trim()) {
+      return {
+        albums: [],
+        albumsNextPresent: false,
+        songs: [],
+        songsNextPresent: false,
+      };
+    }
+    const url = this.catalogUrl("search");
+    url.searchParams.set("term", term.trim());
+    url.searchParams.set("types", "albums,songs");
+    const requestPath = url.pathname + url.search;
+    const response = await this.request(
+      url,
+      "artist_search",
+      searchResponseSchema,
+      (value) => sanitizeSearchResponse(value, this.storefront, requestPath),
+      signal,
+      identityScope,
+    );
+    return {
+      albums:
+        response.results.albums?.data.map((album) =>
+          normalizeAlbum(album, this.storefront, "album", 1, requestPath),
+        ) ?? [],
+      albumsNextPresent: response.results.albums?.next === "present",
+      songs:
+        response.results.songs?.data.map((song) =>
+          normalizeSong(song, this.storefront, 1, requestPath),
+        ) ?? [],
+      songsNextPresent: response.results.songs?.next === "present",
+    };
+  }
+
   async getArtist(id: string, signal?: AbortSignal): Promise<AppleMusicArtist | undefined> {
     const response = await this.request(
       this.catalogUrl(`artists/${encodeIdentifier(id)}`),
@@ -536,6 +598,7 @@ export class AppleMusicClient {
     artistId: string,
     view: AppleMusicArtistView,
     signal?: AbortSignal,
+    identityScope = "view_probe",
   ): Promise<AppleMusicArtistViewPage> {
     const initialPath = artistViewPath(this.storefront, artistId, view);
     const response = await this.request(
@@ -544,11 +607,33 @@ export class AppleMusicClient {
       artistViewFirstPageResponseSchema,
       (value) => sanitizeArtistViewFirstPage(value, this.storefront, view, initialPath),
       signal,
-      "view_probe",
+      identityScope,
     );
     return {
       items: response.data.map((resource) =>
         normalizeAlbum(resource, this.storefront, view, 1, initialPath),
+      ),
+      nextPresent: response.next === true,
+    };
+  }
+
+  async getArtistAlbumsFirstPage(
+    artistId: string,
+    identityScope: string,
+    signal?: AbortSignal,
+  ): Promise<AppleMusicArtistViewPage> {
+    const initialPath = `/v1/catalog/${this.storefront}/artists/${encodeIdentifier(artistId)}/albums`;
+    const response = await this.request(
+      new URL(initialPath, APPLE_MUSIC_ORIGIN),
+      "artist_albums",
+      artistViewFirstPageResponseSchema,
+      (value) => sanitizeAlbumRelationshipFirstPage(value, this.storefront, initialPath),
+      signal,
+      identityScope,
+    );
+    return {
+      items: response.data.map((resource) =>
+        normalizeAlbum(resource, this.storefront, "album", 1, initialPath),
       ),
       nextPresent: response.next === true,
     };
@@ -1050,6 +1135,12 @@ function classifyAppleMusicRoute(pathname: string, storefront: string): AppleMus
   if (pathname === `${prefix}/songs`) return { classification: "songs_batch" };
   const artist = new RegExp(`^/v1/catalog/${escapedStorefront}/artists/([^/]+)$`).exec(pathname);
   if (artist) return { classification: "artist", resourceIdentity: artist[1]! };
+  const artistAlbums = new RegExp(`^/v1/catalog/${escapedStorefront}/artists/([^/]+)/albums$`).exec(
+    pathname,
+  );
+  if (artistAlbums) {
+    return { classification: "artist_albums", resourceIdentity: artistAlbums[1]! };
+  }
   const artistView = new RegExp(
     `^/v1/catalog/${escapedStorefront}/artists/([^/]+)/view/(${appleMusicArtistViews.join("|")})$`,
   ).exec(pathname);
@@ -1079,13 +1170,15 @@ function hasUnsupportedQuery(url: URL, operation: AppleMusicRouteClassification)
         ? ["ids"]
         : operation === "artist_view"
           ? ["extend", "include", "l", "limit", "offset", "with"]
-          : operation === "album"
-            ? ["include"]
-            : operation === "album_tracks"
-              ? ["cursor", "limit", "offset"]
-              : operation === "songs_batch"
-                ? ["ids", "include"]
-                : [],
+          : operation === "artist_albums"
+            ? ["extend", "include", "l", "limit", "offset"]
+            : operation === "album"
+              ? ["include"]
+              : operation === "album_tracks"
+                ? ["cursor", "limit", "offset"]
+                : operation === "songs_batch"
+                  ? ["ids", "include"]
+                  : [],
   );
   const keys = [...url.searchParams.keys()];
   return (
@@ -1184,14 +1277,40 @@ function sanitizeDiagnosticFieldPath(value: string): string {
 function sanitizeSearchResponse(
   response: z.infer<typeof searchResponseSchema>,
   storefront: string,
+  paginationPath = `/v1/catalog/${storefront}/search`,
 ): z.infer<typeof searchResponseSchema> {
+  const albums = response.results.albums;
   const artists = response.results.artists;
-  if (!artists) return { results: {} };
+  const songs = response.results.songs;
   return {
     results: {
-      artists: {
-        data: artists.data.map((resource) => sanitizeArtistResource(resource, storefront)),
-      },
+      ...(albums
+        ? {
+            albums: {
+              data: albums.data.map((resource) =>
+                sanitizeAlbumResource(resource, storefront, "album", 1, paginationPath),
+              ),
+              ...(albums.next ? { next: "present" } : {}),
+            },
+          }
+        : {}),
+      ...(artists
+        ? {
+            artists: {
+              data: artists.data.map((resource) => sanitizeArtistResource(resource, storefront)),
+            },
+          }
+        : {}),
+      ...(songs
+        ? {
+            songs: {
+              data: songs.data.map((resource) =>
+                sanitizeSongResource(resource, storefront, 1, paginationPath),
+              ),
+              ...(songs.next ? { next: "present" } : {}),
+            },
+          }
+        : {}),
     },
   };
 }
@@ -1238,6 +1357,19 @@ function sanitizeArtistViewFirstPage(
   return {
     data: response.data.map((resource) =>
       sanitizeAlbumResource(resource, storefront, view, 1, paginationPath),
+    ),
+    ...(response.next === undefined ? {} : { next: true }),
+  };
+}
+
+function sanitizeAlbumRelationshipFirstPage(
+  response: z.infer<typeof artistViewFirstPageResponseSchema>,
+  storefront: string,
+  paginationPath: string,
+): z.infer<typeof artistViewFirstPageResponseSchema> {
+  return {
+    data: response.data.map((resource) =>
+      sanitizeAlbumResource(resource, storefront, "album", 1, paginationPath),
     ),
     ...(response.next === undefined ? {} : { next: true }),
   };
@@ -1317,6 +1449,7 @@ function sanitizeSongResource(
   const song = normalizeSong(resource, storefront, pageNumber, paginationPath, fallbackAlbumId);
   return {
     attributes: {
+      ...(song.albumName ? { albumName: song.albumName } : {}),
       artistName: song.artistName,
       ...(song.contentRating ? { contentRating: song.contentRating } : {}),
       ...(song.discNumber === undefined ? {} : { discNumber: song.discNumber }),
@@ -1425,6 +1558,7 @@ function normalizeSong(
   discardDescriptiveUrl(resource.attributes.url);
   return {
     ...(albumId ? { albumId } : {}),
+    ...(resource.attributes.albumName ? { albumName: resource.attributes.albumName } : {}),
     artistIds: resource.relationships?.artists?.data.map((artist) => artist.id) ?? [],
     artistName: resource.attributes.artistName,
     ...(resource.attributes.contentRating

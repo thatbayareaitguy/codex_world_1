@@ -175,6 +175,83 @@ function decodePart(token: string, index: number): Record<string, unknown> {
   >;
 }
 
+function requestUrl(input: Parameters<typeof fetch>[0]): URL {
+  if (input instanceof URL) return input;
+  if (typeof input === "string") return new URL(input);
+  return new URL(input.url);
+}
+
+describe("Apple recent-release first-page operations", () => {
+  it("fetches the minimal artist albums relationship without following next", async () => {
+    const persistence = new MemoryPersistence();
+    const fetchImpl = vi.fn<typeof fetch>(() =>
+      Promise.resolve(
+        jsonResponse({
+          data: [album()],
+          next: "/v1/catalog/us/artists/42/albums?offset=25",
+        }),
+      ),
+    );
+    const page = await createClient(persistence, fetchImpl).getArtistAlbumsFirstPage(
+      "42",
+      "recent:run-1",
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const url = requestUrl(fetchImpl.mock.calls[0]![0]);
+    expect(url.pathname).toBe("/v1/catalog/us/artists/42/albums");
+    expect([...url.searchParams]).toEqual([]);
+    expect(page).toMatchObject({ nextPresent: true });
+    expect(page.items).toHaveLength(1);
+  });
+
+  it("searches albums and songs together and never follows result pagination", async () => {
+    const persistence = new MemoryPersistence();
+    const fetchImpl = vi.fn<typeof fetch>(() =>
+      Promise.resolve(
+        jsonResponse({
+          results: {
+            albums: {
+              data: [album("album-remix", { name: "Signal (Artist Remix)" })],
+              next: "/v1/catalog/us/search?offset=5&term=Artist+Remix&types=albums,songs",
+            },
+            songs: {
+              data: [song("song-remix", 1, 1, { name: "Signal (Artist Remix)" })],
+              next: "/v1/catalog/us/search?offset=5&term=Artist+Remix&types=albums,songs",
+            },
+          },
+        }),
+      ),
+    );
+    const page = await createClient(persistence, fetchImpl).searchRecentRemixes(
+      "Artist Remix",
+      "recent:run-1",
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const url = requestUrl(fetchImpl.mock.calls[0]![0]);
+    expect(url.pathname).toBe("/v1/catalog/us/search");
+    expect(url.searchParams.get("types")).toBe("albums,songs");
+    expect(url.searchParams.get("term")).toBe("Artist Remix");
+    expect(page).toMatchObject({
+      albumsNextPresent: true,
+      songsNextPresent: true,
+    });
+    expect(page.albums).toHaveLength(1);
+    expect(page.songs).toHaveLength(1);
+  });
+
+  it("refreshes discovery across runs and reuses it only within one run", async () => {
+    const persistence = new MemoryPersistence();
+    const fetchImpl = vi.fn<typeof fetch>(() => Promise.resolve(jsonResponse({ data: [] })));
+    const client = createClient(persistence, fetchImpl);
+    await client.getArtistViewFirstPage("42", "singles", undefined, "recent:run-1");
+    await client.getArtistViewFirstPage("42", "singles", undefined, "recent:run-1");
+    await client.getArtistViewFirstPage("42", "singles", undefined, "recent:run-2");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(persistence.cacheHits).toHaveLength(1);
+    expect(persistence.permits[0]!.identity).not.toBe(persistence.permits[1]!.identity);
+  });
+});
+
 describe("Apple developer-token authentication", () => {
   it("generates and caches a valid ES256 token with bounded claims", () => {
     const now = new Date("2026-07-29T00:00:00Z");

@@ -1,6 +1,18 @@
 # Apple Music Catalog Provider Design
 
-Date: 2026-07-29
+Date: 2026-07-30
+
+## Recent-release MVP checkpoint
+
+The isolated branch now also contains a separate `pnpm apple:recent` experimental command. It
+does not alter the exhaustive `apple:pilot` workflow. The new command compares two shallow
+primary-release arms and a bidirectional remix supplement on an exact 10-artist sample. Every
+discovery first page is fresh per run, no pagination is followed, and persistent
+`APPLE_MUSIC_ENABLED=false` remains mandatory.
+
+See [apple-music-recent-mvp-design.md](apple-music-recent-mvp-design.md) for the window,
+classification, cache, persistence, request-budget, and command contract. Production integration
+and live access outside the separately bounded sample remain unauthorized.
 
 ## Scope and boundary
 

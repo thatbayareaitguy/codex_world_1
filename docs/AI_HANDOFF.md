@@ -4,6 +4,17 @@ Updated: 2026-07-30
 
 ## Repository state
 
+Current source adds the isolated `pnpm apple:recent` MVP while leaving `apple:pilot` unchanged.
+The recent command uses fresh, run-scoped first pages and never follows pagination. Arm A compares
+`latest-release` plus the artist albums relationship, Arm B reuses `latest-release` plus
+`singles` and `full-albums`, and Arm C uses `appears-on-albums` plus one album-and-song catalog
+search for explicit remixes in both directions.
+
+The exact 10-artist credential-free plan is 93 of 100 requests, 15 minutes, concurrency one, and
+at least 1,100 milliseconds between starts. Persistent `APPLE_MUSIC_ENABLED=false` remains
+required. The sample must not run until the source, migration, tests, and pre-live documentation
+are committed, pushed, synchronized, and clean.
+
 - Worktree: `C:\Users\taysh\Documents\Codex\codex_world_1_apple`
 - Branch: `codex/apple-music-discovery`
 - Milestone starting checkpoint: `887599dc0768eb13c8ffa3dcd5e7192f78f0ad4b`

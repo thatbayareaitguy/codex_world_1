@@ -4,6 +4,16 @@ Date: 2026-07-30
 
 ## Current checkpoint
 
+The current pre-live checkpoint implements a separate recent-release MVP without changing the
+exhaustive pilot. It uses a maximum 30-day window with a 48-hour overlap after the last successful
+run, fresh first pages, no pagination, two primary-release comparison arms, and a third
+bidirectional-remix arm. The exact 10-artist plan forecasts 93 of 100 starts. Credential-free
+verification must be committed and pushed before the one authorized sample can begin.
+
+Both `remix_by_watched_artist` and `remix_of_watched_artist_by_other` are in scope when explicit
+directional evidence and a full in-window date are present. The fixed NURKO ground truth is two
+such releases. The implementation does not seed their catalog IDs.
+
 - Branch: `codex/apple-music-discovery`
 - Milestone starting checkpoint: `887599dc0768eb13c8ffa3dcd5e7192f78f0ad4b`
 - Unavailable-view correction checkpoint: `74321f97ea04fa427b31c6200fdfa8bc725c3224`

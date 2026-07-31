@@ -12,6 +12,18 @@ playlist flows. Live Apple requests, production scheduling, production integrati
 Tokens, personal-library access, playback, playlists, and Apple Music Feed remain prohibited until
 a separately authorized milestone.
 
+The branch also provides a separate recent-release experiment:
+
+```powershell
+pnpm apple:recent -- --plan --snapshot <external-snapshot-path> --sample
+pnpm apple:recent -- --execute-live --confirm-live APPLE_RECENT_MVP_SAMPLE --snapshot <external-snapshot-path> --sample --evaluation-as-of 2026-07-29T23:59:59Z
+```
+
+Its live form is limited to the pinned 10-artist sample, 100 HTTP starts, 15 minutes, concurrency
+one, a minimum 1,100 millisecond start interval, fresh first pages, and no pagination. It requires
+the exact command confirmation and persistent `APPLE_MUSIC_ENABLED=false`. Plan mode does not
+load credentials, create a token or HTTP transport, connect to a database, or write state.
+
 ## Credential Isolation
 
 Local credentials belong only in the ignored `.app-runtime/apple-music.env` file. The `.p8`

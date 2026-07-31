@@ -18,6 +18,7 @@ import {
   appleMusicArtistMappings,
   appleMusicMappingCandidates,
   appleMusicProviderState,
+  appleMusicRecentCandidates,
   appleMusicRequestEvents,
   appleMusicResponseCache,
   appleMusicSongs,
@@ -489,6 +490,107 @@ export async function getConfirmedAppleMusicArtistMapping(
     .orderBy(desc(appleMusicArtistMappings.createdAt))
     .limit(1);
   return mapping?.appleArtistId ? { appleArtistId: mapping.appleArtistId } : undefined;
+}
+
+export async function getLastSuccessfulAppleMusicRecentScan(
+  db: RadarDatabase,
+): Promise<Date | undefined> {
+  const [run] = await db
+    .select({ completedAt: appleMusicComparisonRuns.completedAt })
+    .from(appleMusicComparisonRuns)
+    .where(
+      and(
+        eq(appleMusicComparisonRuns.status, "completed"),
+        sql`${appleMusicComparisonRuns.metrics}->>'mode' = 'recent_mvp'`,
+      ),
+    )
+    .orderBy(desc(appleMusicComparisonRuns.completedAt))
+    .limit(1);
+  return run?.completedAt ?? undefined;
+}
+
+export async function saveAppleMusicRecentCandidates(
+  db: RadarDatabase,
+  input: {
+    candidates: Array<{
+      albumId?: string;
+      albumTitle: string;
+      appleArtistName: string;
+      classification: string;
+      comparisonStatus: string;
+      eligible: boolean;
+      evidenceStrength: string;
+      namedRemixer?: string;
+      releaseDate?: string;
+      songId?: string;
+      songTitle?: string;
+      sources: string[];
+      upc?: string;
+    }>;
+    canonicalArtistId: string;
+    runId: string;
+  },
+): Promise<void> {
+  const now = new Date();
+  for (const candidate of input.candidates) {
+    const identityKey = createHash("sha256")
+      .update(
+        candidate.albumId
+          ? `album:${candidate.albumId}`
+          : candidate.songId
+            ? `song:${candidate.songId}`
+            : [
+                normalizeText(candidate.appleArtistName),
+                normalizeText(candidate.albumTitle),
+                candidate.releaseDate ?? "",
+              ].join(":"),
+      )
+      .digest("hex");
+    await db
+      .insert(appleMusicRecentCandidates)
+      .values({
+        ...(candidate.albumId ? { appleAlbumId: candidate.albumId } : {}),
+        ...(candidate.songId ? { appleSongId: candidate.songId } : {}),
+        albumTitle: candidate.albumTitle,
+        appleArtistName: candidate.appleArtistName,
+        candidateStatus: candidate.eligible ? "eligible" : "excluded",
+        canonicalArtistId: input.canonicalArtistId,
+        classification: candidate.classification,
+        comparisonStatus: candidate.comparisonStatus,
+        evidenceStrength: candidate.evidenceStrength,
+        identityKey,
+        lastRunId: input.runId,
+        ...(candidate.namedRemixer ? { namedRemixer: candidate.namedRemixer } : {}),
+        ...(candidate.releaseDate ? { releaseDate: candidate.releaseDate } : {}),
+        ...(candidate.songTitle ? { songTitle: candidate.songTitle } : {}),
+        sourceArms: candidate.sources,
+        ...(candidate.upc ? { upc: candidate.upc } : {}),
+      })
+      .onConflictDoUpdate({
+        target: [
+          appleMusicRecentCandidates.canonicalArtistId,
+          appleMusicRecentCandidates.identityKey,
+        ],
+        set: {
+          appleAlbumId: candidate.albumId ?? null,
+          appleArtistName: candidate.appleArtistName,
+          appleSongId: candidate.songId ?? null,
+          albumTitle: candidate.albumTitle,
+          candidateStatus: candidate.eligible ? "eligible" : "excluded",
+          classification: candidate.classification,
+          comparisonStatus: candidate.comparisonStatus,
+          evidenceStrength: candidate.evidenceStrength,
+          lastRunId: input.runId,
+          lastSeenAt: now,
+          namedRemixer: candidate.namedRemixer ?? null,
+          releaseDate: candidate.releaseDate ?? null,
+          songTitle: candidate.songTitle ?? null,
+          sourceArms: candidate.sources,
+          upc: candidate.upc ?? null,
+          updatedAt: now,
+        },
+      });
+  }
 }
 
 export async function resetAppleMusicStateForTest(db: RadarDatabase): Promise<void> {
