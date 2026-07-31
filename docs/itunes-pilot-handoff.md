@@ -1,6 +1,38 @@
 # iTunes Pilot Handoff
 
-Updated: 2026-07-29
+Updated: 2026-07-30
+
+## Adaptive identity-resolution milestone
+
+The adaptive full-watchlist identity strategy is implemented and documented in
+`docs/itunes-adaptive-identity-resolution.md`.
+
+- Repair checkpoint:
+  `194e18fefee8e1ced25cd89051f1aa65ecfca7b7`
+- Historical snapshot:
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\pilot-snapshots\itunes-historical-spotify-identity-evidence-2026-07-30T02-10-30Z.json`
+- Historical snapshot file SHA-256:
+  `fd35a9caab3b7ebdc52a999ecabc8e507d72e29c359323d62908de20a4a0bf33`
+- Historical snapshot canonical SHA-256:
+  `57966b58d5d5ce16ec8ab38a09327052c78b091ad6c3f6db27ebd2cd61b4b49d`
+- Evidence counts: 593 artists, 3,935 releases, and 623 tracks.
+- Strict usable anchors: 164 artists; no usable anchor: 429.
+- Ambiguous artist anchors: 198 zero, 51 one, and 36 two or more.
+- Brute-force baseline: 3,184 new requests.
+- Album-first estimate: 2,595 requests.
+- Hybrid bounds: 373 best case, 2,067 expected under explicit assumptions, and 2,946 worst case.
+- Future dry-run manifest:
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\pilot-snapshots\itunes-adaptive-identity-experiment-plan-2026-07-30T02-10-30Z.json`
+- Manifest hashes: file
+  `b24b51bfbeba03c75e74ed2a59d5d7c7bff0dcadce5e12147af9c2c6413211e0`, canonical
+  `271012f7cb5b8c2d95e6a59b76a51dbc67f4b76452b2dcbff342530c3869683d`.
+- Future cohort: 50 artists, 98 planned operations, 19 cache hits, and 79 new requests.
+- Recommended next separately authorized test: hybrid targeted search plus adaptive lookup.
+
+The replacement main-database export ran exactly once under `REPEATABLE READ READ ONLY`. No
+further main-database access or provider request occurred. `ITUNES_DISCOVERY_ENABLED=false`.
+No migration was added, and `docs/AI_HANDOFF.md` was not modified. The planned experiment remains
+unauthorized.
 
 ## Repository state
 

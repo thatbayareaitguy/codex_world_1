@@ -1,14 +1,58 @@
+import { createDatabase, itunesPilotResponseCache } from "@radar/db";
 import { loadProviderConfiguration } from "@radar/providers";
+import {
+  buildAdaptivePlan,
+  readAdaptivePlanningInputs,
+  writeAdaptiveArtifacts,
+} from "./itunes-adaptive-identity-planner";
 import { exportHistoricalIdentityEvidence } from "./itunes-historical-identity-evidence";
 import { loadLocalEnvironment } from "./local-env";
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2).filter((value) => value !== "--");
   const command = args[0];
-  if (command !== "export-history") throw new Error(usage());
+  if (!["export-history", "plan"].includes(command ?? "")) throw new Error(usage());
   loadLocalEnvironment();
   const configuration = loadProviderConfiguration();
   assertOfflineRuntime(configuration);
+  if (command === "plan") {
+    if (!configuration.databaseUrl) throw new Error("DATABASE_URL is required.");
+    assertIsolatedDatabase(configuration.databaseUrl);
+    const connection = createDatabase(configuration.databaseUrl);
+    try {
+      const inputs = await readAdaptivePlanningInputs({
+        censusPath: requiredOption(args, "--census"),
+        historicalEvidencePath: requiredOption(args, "--historical-evidence"),
+        pilotEvaluationPath: requiredOption(args, "--pilot-evaluation"),
+        pilotSnapshotPath: requiredOption(args, "--pilot-snapshot"),
+      });
+      const cache = await connection.db
+        .select({ requestIdentity: itunesPilotResponseCache.requestIdentity })
+        .from(itunesPilotResponseCache);
+      const plan = buildAdaptivePlan({
+        ...inputs,
+        legacyCacheIdentities: cache.map((row) => row.requestIdentity),
+      });
+      const artifacts = await writeAdaptiveArtifacts({
+        inventoryPath: requiredOption(args, "--inventory-output"),
+        manifestPath: requiredOption(args, "--manifest-output"),
+        plan,
+      });
+      output({
+        albumFirst: plan.albumFirst,
+        ambiguousEvidence: plan.ambiguousEvidence,
+        artifacts,
+        baseline: plan.baseline,
+        cohort: plan.cohort,
+        evidence: plan.evidence,
+        hybrid: plan.hybrid,
+        recommendation: plan.recommendation,
+      });
+    } finally {
+      await connection.client.end();
+    }
+    return;
+  }
   const result = await exportHistoricalIdentityEvidence({
     identitySnapshotPath: requiredOption(args, "--identity-snapshot"),
     outputPath: requiredOption(args, "--output"),
@@ -34,6 +78,18 @@ async function main(): Promise<void> {
     usableReleaseCount: result.snapshot.summary.usableReleaseCount,
     usableTrackCount: result.snapshot.summary.usableTrackCount,
   });
+}
+
+function assertIsolatedDatabase(databaseUrl: string): void {
+  const database = new URL(databaseUrl);
+  if (
+    database.protocol !== "postgres:" ||
+    database.hostname !== "127.0.0.1" ||
+    database.port !== "55433" ||
+    database.pathname !== "/radar_itunes"
+  ) {
+    throw new Error("Refusing to use a database other than isolated radar_itunes.");
+  }
 }
 
 function assertOfflineRuntime(configuration: ReturnType<typeof loadProviderConfiguration>): void {
@@ -64,11 +120,16 @@ function output(value: unknown): void {
 
 function usage(): string {
   return [
-    "Usage: itunes:shadow:adaptive export-history",
+    "Usage: itunes:shadow:adaptive <export-history|plan>",
+    "Export history:",
     "  --identity-snapshot <path>",
     "  --source-env <path>",
     "  --source-repository <path>",
     "  --output <path>",
+    "Plan:",
+    "  --census <path> --historical-evidence <path>",
+    "  --pilot-snapshot <path> --pilot-evaluation <path>",
+    "  --inventory-output <path> --manifest-output <path>",
   ].join("\n");
 }
 

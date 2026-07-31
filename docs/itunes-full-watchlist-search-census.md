@@ -15,6 +15,26 @@ This result justifies preparing a separately authorized candidate-catalog eviden
 not authorize that phase, provider production integration, Spotify suppression, or classification
 of iTunes as primary, supplemental, rejected, or production-ready.
 
+## Adaptive identity-resolution follow-up
+
+The credential-free adaptive planning milestone is complete. Its detailed record is
+`docs/itunes-adaptive-identity-resolution.md`.
+
+- A cutoff-safe historical identity snapshot contains 593 artists, 3,935 historical releases,
+  and 623 tracks.
+- The strict anchor scorer found 164 artists with usable identity anchors and 429 without them.
+- Among the 285 ambiguous artists, 198 have zero usable anchors, 51 have one, and 36 have two or
+  more.
+- Of the 188 ambiguous artists that reached the 10-result limit, 159 lack strong anchor evidence.
+- Album-first retrospective planning estimates 2,595 requests, 589 fewer than the 3,184 baseline.
+- The hybrid planning bounds are 373 best case, 2,067 expected under explicit assumptions, and
+  2,946 worst case.
+- The recommended next bounded test is hybrid targeted search plus adaptive lookup.
+
+The recommendation does not authorize live requests. The correct Apple identity can be outside
+the first 10 results, so absence from the census candidate set is never treated as identity
+absence.
+
 ## Frozen inputs and execution checkpoint
 
 - Branch: `codex/itunes-discovery`

@@ -1,0 +1,594 @@
+canonical_artist_id,canonical_name,search_stage_mapping_state,plausible_apple_candidate_count,result_limit_reached,historical_release_count,complete_historical_release_count,historical_track_count,usable_identity_anchor_count,anchor_score,anchor_quality,earliest_usable_evidence_date,latest_usable_evidence_date,exact_historical_release_titles,distinctive_track_titles,album_or_ep_evidence,single_only_evidence,remix_only_evidence,feature_only_evidence,no_usable_historical_evidence
+45604801-1dca-40c8-a318-5ef2684dc6b4,12th Planet,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+ab5e8bf9-4077-440d-90cd-cfe7b3a5bb45,13,competing_exact_or_alias,7,true,10,0,1,0,0,unusable,,,false,false,false,false,false,false,true
+8878622c-c0c8-4cba-bd90-9599b5eb6853,1788-L,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a31194e7-edbf-4ab4-80ce-799b4fb7454b,1991,competing_exact_or_alias,5,true,10,0,1,0,0,unusable,,,false,false,false,false,false,true,true
+64d048a3-0b51-4d7e-a3d9-63c2188d489a,2TD,unique_exact_canonical,1,true,10,2,5,2,18,strong,2026-06-03,2026-06-30,true,true,false,true,false,false,false
+23103412-0216-4cbe-bebe-e499eeaa0f9e,3LAU,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+27487ba3-6de5-448b-9aa2-cf57cae505b3,4B,competing_exact_or_alias,9,true,10,1,1,1,12,moderate,2026-06-10,2026-06-10,true,false,false,true,false,false,false
+39e72b5f-d9ad-4969-98cb-522ade84c6cc,A.M.C,competing_exact_or_alias,10,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+eb62bb5d-e8cc-4ef7-ab27-e77c5c858ae0,A.way,competing_exact_or_alias,8,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+cde37407-331f-47a3-ace8-a8347148bdbc,Abelation,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+cf7a5ed8-fce6-4a96-9a62-cdbd6cedcdd6,Ace Aura,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+8f3ba7d1-7f8a-4fda-9f1b-31402365e6a2,Adventure Club,competing_exact_or_alias,3,true,10,1,6,1,14,strong,2026-05-29,2026-05-29,true,true,false,true,false,false,false
+c5c8ff74-a6ce-4779-879a-682c57dba270,Afinity,competing_exact_or_alias,2,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+b72d6651-1bc7-431f-9900-9a15f8a19d24,AFROJACK,unique_exact_canonical,1,false,10,3,3,3,16,strong,2026-06-12,2026-07-17,true,false,false,true,false,false,false
+79be158b-f1a8-4a42-9251-cddb662dd5b6,AHEE,competing_exact_or_alias,3,true,10,2,7,2,18,strong,2026-07-24,2026-07-24,true,true,false,true,false,false,false
+8ad649dc-3ffd-4414-b330-dc0eab7b7242,Akeos,unique_exact_canonical,1,false,10,0,1,0,0,unusable,,,false,false,false,false,false,true,true
+ccf4c772-303c-4823-9e01-bc1c196eafbb,Alexis B,competing_exact_or_alias,2,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+54d2713d-4baa-4ef1-9910-2819e8faeae8,Alison Wonderland,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+4a278ffc-0d0e-4474-a624-9f8b5ddfdd83,Alok,competing_exact_or_alias,8,true,10,3,10,3,18,strong,2026-06-26,2026-07-17,true,true,false,true,false,false,false
+cfc6d21c-2f89-49b9-91a9-d2597f021c88,ALOTT,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+351301d9-284b-4792-98e4-01299dcab7a7,ALRT,unique_exact_canonical,1,false,10,2,2,2,16,strong,2026-05-29,2026-07-03,true,false,false,true,false,false,false
+7d69be20-fc21-40d0-af93-321acf58ecaa,Amplify,competing_exact_or_alias,6,true,10,1,1,1,12,moderate,2026-07-23,2026-07-23,true,false,false,true,false,false,false
+16a32eb4-fdea-4b09-ae56-75506ac37a31,Andromedik,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+7f7b83b8-8a2d-4ad5-a061-e55bae1d7122,Anki,competing_exact_or_alias,9,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+3f08f318-8b70-418f-ab39-8486f1e241fd,Annix,unique_exact_canonical,1,false,10,2,8,2,16,strong,2026-06-12,2026-06-26,true,true,false,true,true,false,false
+fe9acc40-b85a-4008-977b-52e609282329,Antiserum,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+147c2ae8-2ae3-4f7c-b363-58e93d1d131d,Anto,competing_exact_or_alias,8,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+1e6a7d3d-bbdd-4284-a6e0-133e10d333e6,Apashe,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+6d228286-ed9a-49e9-8116-d34651c9097b,Arcando,unique_exact_canonical,1,false,10,1,1,1,12,moderate,2026-06-19,2026-06-19,true,false,false,true,false,false,false
+020585e4-e177-42b8-9db9-e83ac8685bf5,ARMNHMR,unique_exact_canonical,1,false,10,0,1,0,0,unusable,,,false,false,false,false,false,false,true
+43808243-cf26-4774-a0c6-283cc15f5c74,ARTY,competing_exact_or_alias,8,true,10,1,2,1,14,strong,2026-06-26,2026-06-26,true,true,false,true,false,false,false
+79b710ac-7c39-48da-a629-0c07de3a38cf,Arya,competing_exact_or_alias,9,true,10,1,1,1,12,moderate,2026-06-12,2026-06-12,true,false,false,true,false,false,false
+c73893d0-bd7e-4e52-af92-3f2e49778155,Astro Luce,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+78f3a01b-86f7-4e1f-8199-7b6cf53add5d,ATLiens,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+81c4125b-0836-4e9c-8f1b-f135a9a10966,ATTLAS,competing_exact_or_alias,5,false,10,3,3,3,16,strong,2026-06-12,2026-07-24,true,false,false,true,false,false,false
+83e761cd-f593-4f57-af25-94b62c70c893,Au5,unique_exact_canonical,1,true,20,0,4,0,0,unusable,,,false,false,false,false,false,false,true
+2a3ff2fd-83a8-4ecb-b4da-f463027f739c,Autograf,unique_exact_canonical,1,false,10,1,1,1,7,moderate,2026-05-29,2026-05-29,false,false,false,true,false,false,false
+39f1c88d-b726-4aab-8ff8-4ce519bbcef1,Automhate,unique_exact_canonical,1,false,10,2,2,2,14,strong,2026-06-05,2026-07-03,true,false,false,true,false,false,false
+8ecc85d2-e472-43f9-86be-ea1bd3d0992e,Avance,competing_exact_or_alias,4,true,10,1,1,1,12,moderate,2026-06-05,2026-06-05,true,false,false,true,false,false,false
+df47fafe-a6ca-4cec-9d07-c1869bc849cd,Awakend,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+2be42016-f34f-40b3-bbc1-eab5290e481e,Axel Boy,competing_exact_or_alias,2,false,10,1,2,1,12,moderate,2026-06-05,2026-06-05,true,false,false,true,false,false,false
+9ec1fcde-81e1-4c59-a568-3cb65292f379,Babsy.,competing_exact_or_alias,5,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a6bdfd49-e667-4678-93b4-220fe5fd9ad6,Bad Chicken!,unique_exact_canonical,1,false,7,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+55364e5f-0688-4e3b-93e6-e8419ae58582,Bad Computer,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+c9a793ff-ca1a-463c-9cb4-25162452df16,Badklaat,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+8d2189a1-b673-4eb9-a1fd-6cd8a72fb29a,BAGG,competing_exact_or_alias,7,true,10,1,1,1,12,moderate,2026-07-10,2026-07-10,true,false,false,true,false,false,false
+af3aaf37-96fc-4bae-855c-5e844eee7d94,Bainbridge,unique_exact_canonical,1,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+7c93c8a1-63ee-4395-848a-ab6f307ed396,Bali Bandits,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+6deebd1b-3f2f-421a-b612-de08d3fe1e07,Bandlez,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+85260ec4-b122-475d-8568-4353dcf3bafe,Barclay Crenshaw,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a4bd576a-67a0-4c3e-86e9-b8ac99dcd6d1,BARELY ALIVE,unique_exact_canonical,1,false,98,0,11,0,0,unusable,,,false,false,false,false,false,false,true
+4eada92a-0989-489b-8aa6-fff39b37e6e3,barking continues,unique_exact_canonical,1,false,10,2,6,2,16,strong,2026-07-03,2026-07-24,true,true,false,true,true,false,false
+40819f81-2ea0-410b-98f4-a710fc72b5ab,Barocka,unique_exact_canonical,1,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a02ad1af-2332-4ac2-bca7-65d54babb61d,Basstrick,competing_exact_or_alias,3,false,10,1,1,1,12,moderate,2026-06-26,2026-06-26,true,false,false,true,false,false,false
+2841c6cd-75ad-4f73-a53e-086784da857f,Basstripper,unique_exact_canonical,1,false,10,0,1,0,0,unusable,,,false,false,false,false,false,false,true
+41dcd95e-a2ec-4ab1-bcaa-d4b32f7ea8e3,bd hbt,unique_exact_canonical,1,false,10,1,1,1,12,moderate,2026-07-02,2026-07-02,true,false,false,true,false,false,false
+c79cef22-b5d6-490b-b6c2-6f722f8594d0,Bear Grillz,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+6df23e59-b479-4433-887d-16823a1a1477,Beatcore,unique_exact_canonical,1,false,10,1,5,1,14,strong,2026-05-28,2026-05-28,true,true,false,true,false,false,false
+f94c6ce7-be70-4473-9ab5-a2695884b532,Becky Hill,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+3f2a6642-9d07-4c34-b61a-711c133628d5,Bellorum,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+4f8dfed5-f52b-4abf-bda2-b7fdbe3e372e,Bensley,competing_exact_or_alias,2,true,20,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+5b8b95ad-b9f0-4f2d-bfbc-9541ea075fda,BeutNoise,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+c1766992-7d35-4ac6-b34c-e369ba5630d9,Big Florida,unique_exact_canonical,1,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+3209cd92-aa8a-4914-894d-41e9fc0dedef,Big Gigantic,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+3bfd7408-48b8-47da-a15c-243151c825d9,BIJOU,competing_exact_or_alias,8,true,10,3,3,3,16,strong,2026-06-05,2026-07-17,true,false,false,true,false,false,false
+f90f0677-8c59-4814-aa61-1a7f9df5f132,Biometrix,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+40202ccd-f624-45a4-a9c9-8ef0e6290f20,Black Tiger Sex Machine,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+99b5e499-3263-4b2f-ad42-24c3aff09233,blackbear,competing_exact_or_alias,5,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+fb30dfd6-a822-4094-9e0d-f4a07ad46caf,Blaize,competing_exact_or_alias,9,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+cae24721-f81d-4d1e-a063-6d1f976dcf17,Blanke,competing_exact_or_alias,3,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+e524a4c6-6158-4e06-a524-23390ee81e93,Blosso,unique_exact_canonical,1,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a85374b0-c027-4ea6-bfb4-24e5a3ac8de1,Blossom,competing_exact_or_alias,9,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+1da3ecfd-d1bb-4d37-a1e6-33c565dc0a2b,Blunts & Blondes,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+f20ef6e0-1be4-4b36-b1b9-b40ee60d0c80,BLUPRNT,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+3995b8bc-710a-474d-81c4-7ac026949957,Blurrd Vzn,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+c8fe7b58-b661-48fd-bc09-5effb614c089,BLVD.,competing_exact_or_alias,9,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+9b10f16c-5198-43b5-9700-04e217a6308f,BLVK JVCK,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+1364425f-96f5-4884-9608-b8f6ab0657ac,Bok Nero,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+bbda32e9-6ae9-48b3-90ed-766600b07944,BONNIE X CLYDE,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+3b535f34-1aff-45b5-9435-a853a67ae656,Boogie T,unique_exact_canonical,1,true,10,0,1,0,0,unusable,,,false,false,false,false,false,false,true
+06b9d4cf-bdb2-4aca-aa1d-aea03f281b24,Boombox Cartel,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+4489dfbf-5abf-4546-aee9-55b20b83f49a,[BORDERS],competing_exact_or_alias,4,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+7e6c2f1a-352a-4f33-8e16-1694ea4893cb,Borgeous,unique_exact_canonical,1,true,10,1,1,1,12,moderate,2026-07-10,2026-07-10,true,false,false,true,false,false,false
+c5072660-db97-45dc-862f-124f853f995e,Borgore,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+e1019728-5a38-4a7e-9278-2c89e991ad1e,borne,competing_exact_or_alias,7,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+5cb999da-2ad8-4095-9ba0-d3d4c69346d1,Bossfight,competing_exact_or_alias,6,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+bb562385-1910-4e15-b7a5-c81453739579,Brainrack,unique_exact_canonical,1,false,10,1,1,1,7,moderate,2026-07-29,2026-07-29,false,false,false,true,false,false,false
+75b60b8b-30fc-446d-92fe-72d5be78691e,BRAINWAVEZ,competing_exact_or_alias,2,false,10,1,1,1,12,moderate,2026-06-26,2026-06-26,true,false,false,true,false,false,false
+efaa4e0c-8dad-4730-b805-5bbbdd692674,BRANDON,competing_exact_or_alias,7,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+38e1010f-eeb9-420d-ab31-eddea56b264e,Bro Safari,unique_exact_canonical,1,false,10,1,1,1,10,moderate,2026-06-08,2026-06-08,true,false,false,true,true,false,false
+232dab1c-2cef-496d-a5fc-dddba40f0b9e,BROHUG,competing_exact_or_alias,2,false,10,3,3,3,16,strong,2026-06-05,2026-07-17,true,false,false,true,false,false,false
+bd12df89-4b1b-484e-8df7-d3b02638ec70,Brondo,competing_exact_or_alias,4,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+3dc1cff9-bffb-45de-8b9a-e7537b3bd12d,BRONSON,competing_exact_or_alias,9,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+0d3e6079-0de3-45a2-9c14-969b4258fa35,Brooks,competing_exact_or_alias,6,true,10,0,1,0,0,unusable,,,false,false,false,false,false,false,true
+bebb2944-2551-4e88-b444-ff6e60c70375,Buku,competing_exact_or_alias,5,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+990775db-2906-4699-a380-45106a202b0b,BUNT.,competing_exact_or_alias,4,true,10,5,5,5,16,strong,2026-05-29,2026-07-24,true,false,false,true,false,false,false
+de64233b-34d1-4ba1-9b5a-68dc0237d3be,BVRNOUT,competing_exact_or_alias,3,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+d70b6087-7288-4309-9d76-d99a26757487,CADMIUM,competing_exact_or_alias,5,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+9591cd81-c395-4a2a-9f25-d024b31bb084,Cahaba Ruins,unique_exact_canonical,1,false,8,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+bfece175-df0d-429f-beb9-f3a077cf94d4,Calcium,competing_exact_or_alias,2,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+df3ee541-350c-4080-930d-24df33bd829d,Camo & Krooked,unique_exact_canonical,1,false,10,1,1,1,12,moderate,2026-07-21,2026-07-21,true,false,false,true,false,false,false
+ef833d45-7785-4fec-899d-5f6b621ab880,canary yellow,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+10feab1b-2743-4640-b302-7a7087a51033,Caster,competing_exact_or_alias,8,true,10,0,4,0,0,unusable,,,false,false,false,false,false,false,true
+aefc24ce-64f2-46e7-b2e9-ef13c84a3852,Cesqeaux,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+2e4bb2de-d1c8-4f42-9f65-6b96833737a9,CHACKK,unique_exact_canonical,1,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+392da3aa-84a5-49a0-b47a-fc5eff1aa01f,Champagne Drip,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+34ba379e-e86f-4a25-95e3-a83c4d620e7e,CharlestheFirst,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+ee0c7ea0-cadc-4c5b-a965-3a3edcb8f533,Charlie Zane,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+76da21f6-8845-402a-b6e2-b158647b4d48,Chee,competing_exact_or_alias,8,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+de34bad9-0604-4373-b910-fc2da41e5806,Chibs,competing_exact_or_alias,5,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+6e38764a-5884-4f4b-b769-0eb00fc8c586,Chime,competing_exact_or_alias,5,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+28db953b-42d6-47cb-bb8b-e18ae4d7de24,Circadian,competing_exact_or_alias,5,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+e974fc03-507e-44c7-b710-98da51abdd22,Circumference,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+cb9e1d3a-34b4-4bd8-a912-98fad707eefc,CLEMS,competing_exact_or_alias,3,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+e9c30243-aeca-43ad-a5db-a126793e1369,CloZee,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+36e4a768-f1fe-45fe-9fd1-ca5dbc493328,Code: Pandorum,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+acb795ea-905c-4592-820d-a400c47fc153,CODENAME:NIOCELL,unique_exact_canonical,1,false,9,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+b16f8701-dbb9-435a-b8f2-a96dbfcee165,Computa,competing_exact_or_alias,2,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+2c62bd37-9907-4ac4-9134-4ce06c4253ed,Conro,competing_exact_or_alias,2,false,10,1,2,1,14,strong,2026-06-03,2026-06-03,true,true,false,true,false,false,false
+73dff477-3ba0-4f0f-aa71-b7d79df20c51,Control Freak,competing_exact_or_alias,6,true,10,0,1,0,0,unusable,,,false,false,false,false,false,true,true
+b1479748-c7ff-48d2-9e76-e0d766d54a55,Convex,competing_exact_or_alias,4,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+04f166b8-3c3f-425f-85bc-21c53940fc3c,Cozway,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+aef60229-d889-4cb4-b4b2-1dc0b366feeb,Crankdat,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+59ec1ca0-512c-447d-81c7-188a9bf29a4a,CRaymak,unique_exact_canonical,1,false,10,1,1,1,7,moderate,2026-07-21,2026-07-21,false,false,false,true,false,false,false
+a9506386-b95f-494a-a233-e48a104f8838,Crystal Skies,unique_exact_canonical,1,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+41161328-9d3d-489b-a2b3-84978d6f9c8c,Culture Shock,competing_exact_or_alias,10,true,10,0,1,0,0,unusable,,,false,false,false,false,false,false,true
+86641b0c-dbbe-4398-9f2b-edb85ea22d3f,Cyclops,competing_exact_or_alias,9,true,10,1,3,1,12,strong,2026-06-12,2026-06-12,true,true,false,true,true,false,false
+588377a3-2106-4438-9829-0c7ea79f43e9,Cymek,unique_exact_canonical,1,false,10,2,2,2,16,strong,2026-05-29,2026-07-24,true,false,false,true,false,false,false
+8ad58bea-02d6-43a3-aaab-7543c3202de1,Dabin,competing_exact_or_alias,4,true,10,1,1,1,12,moderate,2026-07-24,2026-07-24,true,false,false,true,false,false,false
+c9844a60-a76c-45be-9992-2ce35353398a,Daily Bread,competing_exact_or_alias,3,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+2eeff996-02aa-42cd-9d81-a41b5bed8cfa,Dank Frank,unique_exact_canonical,1,false,10,1,1,1,10,moderate,2026-06-26,2026-06-26,true,false,false,true,true,false,false
+23387faa-ef51-4e76-af17-648ac9bfed91,Danny Olson,competing_exact_or_alias,4,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+0ec704f9-3311-42f7-8c45-d4e7d8a16ee9,Daryl Di-Kar,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+75fa5f65-29cd-4d6f-a18c-dd4cbc7a0453,Deathpact,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+84da5a16-4201-4774-bb9c-64c046e1cc0a,Defunk,unique_exact_canonical,1,false,10,1,1,1,12,moderate,2026-06-19,2026-06-19,true,false,false,true,false,false,false
+693ba020-9342-4e89-8180-aaa4e468b603,Delta Heavy,unique_exact_canonical,1,true,10,0,2,0,0,unusable,,,false,false,false,false,false,true,true
+29890dc0-77c4-4f2a-9ea1-559971544d56,Deorro,unique_exact_canonical,1,false,10,3,3,3,16,strong,2026-06-03,2026-06-26,true,false,false,true,false,false,false
+54b46474-c302-4f76-9ce9-b6f9ec72ca2d,Detrace,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+7a8ab4b5-0fae-4d10-aa6b-5282e5dc222e,Diagnostix,unique_exact_canonical,1,false,10,2,2,2,16,strong,2026-07-08,2026-07-24,true,false,false,true,false,false,false
+c69d924e-1fcc-4d64-b8ab-fd1573cc985e,Dillon Francis,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+39c80095-0fec-4621-ab42-dd305b2c1913,Dion Timmer,unique_exact_canonical,1,false,10,1,1,1,12,moderate,2026-07-15,2026-07-15,true,false,false,true,false,false,false
+4cec261e-2a08-4fd2-8f85-a40cb9978c97,Dirtyphonics,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+b93b0e71-6dc3-44ca-bbe4-4869109eec18,DirtySnatcha,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+641c8cb9-0c6a-40e5-9df2-7a189e223543,Disciple,competing_exact_or_alias,6,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+fac08ee2-c527-44c6-a85b-a02ae5cbd8c1,Disciple Round Table,unique_exact_canonical,1,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+3212f71f-2e63-485a-8cf8-01b071a52885,Disclosure,competing_exact_or_alias,5,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+8f304749-5411-4472-8709-6324cc4f72ca,DJ Snake,competing_exact_or_alias,3,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+0c5e2b5d-4f9a-40bd-af70-e9cf9a00c37c,DMVU,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+25053dea-f547-4125-b3e6-3d1978028627,Doctor P,competing_exact_or_alias,7,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+82429164-a9d0-4896-aabd-a9796e6c68ef,Document One,unique_exact_canonical,1,false,10,2,3,2,16,strong,2026-06-17,2026-07-24,true,true,false,true,false,false,false
+80fd5825-e9fa-4de2-be77-d2c2dae517a4,Dodge & Fuski,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+258b51c9-167e-48ba-997b-e5abcec2bf56,Dogma,competing_exact_or_alias,9,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+02cd7ec2-c2b1-4074-a8bc-55bd985d9bb5,Dom Dolla,competing_exact_or_alias,3,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+839210be-bc98-4d4b-98f5-de33f08a885e,Don Diablo,competing_exact_or_alias,2,false,10,3,3,3,16,strong,2026-06-26,2026-07-22,true,false,false,true,false,false,false
+1cc3a642-be85-40c6-8de6-76fa3981d710,Dr. Fresch,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+8e72ff55-ce7e-471f-9ca1-59bd3d3e3718,Dr. Ozi,unique_exact_canonical,1,false,10,2,3,2,16,strong,2026-06-05,2026-07-17,true,false,false,true,false,false,false
+7e8aaa86-2916-4be5-b778-823bda4fe89f,Draeden,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+4dd0c04c-7551-4d52-bdaa-f8a9ea4c990d,DROELOE,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+f9ebc60d-5a75-434b-943b-a6c6feb760a4,Dropgun,competing_exact_or_alias,3,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+dded494e-025c-4618-a874-a2e1ea9c119a,Dubdogz,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+ab16af70-ace7-49b3-a381-141485d140e7,Duskus,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+e3957534-8ddc-4295-a72d-ddae773f183a,Dylan & Harry,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+c329ce1b-150d-424a-bff5-60f51f972241,Dyro,competing_exact_or_alias,3,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+d096b3aa-eb2f-429b-b80e-37e1394cfea4,EAZYBAKED,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+7282a8c9-1953-423f-b983-91823c4acc0d,Ecraze,unique_exact_canonical,1,false,10,1,1,1,12,moderate,2026-06-05,2026-06-05,true,false,false,true,false,false,false
+59ca7a09-d701-43ad-b845-cff17b7e03bc,Edison Cole,competing_exact_or_alias,2,false,10,0,1,0,0,unusable,,,false,false,false,false,false,true,true
+a7ec5684-ee77-4132-9625-64fca87b0694,Effin,unique_exact_canonical,1,true,10,1,2,1,12,moderate,2026-07-03,2026-07-03,true,false,false,true,false,false,false
+41b658c6-8ba6-43c9-8f0c-9d32f543585b,Ekali,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+f7a6436a-a959-4bc9-a3cf-c8af33893f6d,Ekko & Sidetrack,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+c89cea55-00b1-4709-b6f6-7cff0201242b,Elderbass,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+5cbc4ba5-9b6d-4604-9f2b-005e58893b08,Eleganto,competing_exact_or_alias,3,false,10,1,1,1,7,moderate,2026-06-26,2026-06-26,false,false,false,true,false,false,false
+b20e696f-95b8-44f6-9f3d-cb2608811772,Eli & Fur,unique_exact_canonical,1,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+5586e99d-28b6-49e0-ae8e-57dd8b9cb3a8,Eliminate,competing_exact_or_alias,3,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a9958e87-6d64-4228-b160-3242983fed55,Elipsa,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+7f30ca68-28e2-496c-b696-72be32a7143c,ellis,competing_exact_or_alias,10,true,10,1,1,1,12,moderate,2026-07-24,2026-07-24,true,false,false,true,false,false,false
+562a863e-1ee2-4080-b3c4-92ccea29d09e,Ephwurd,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+8084301f-662c-4adb-996a-3f2863f82a87,Eptic,competing_exact_or_alias,4,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+cdff325e-4616-4753-8b02-5e6a8cc7a34c,ERBES,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+1896f6ea-5024-4bbb-aa4e-56d82b91edac,eric404,unique_exact_canonical,1,false,1,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+c1d1f32c-cb19-4f80-bbb8-bdd00f54fab0,eugene,competing_exact_or_alias,9,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+bf8ce9ee-10a8-4bac-9952-09bbc1bb085b,Everen Maxwell,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+243d983c-fab5-4399-ab39-01358719b2eb,Everything Must Go,competing_exact_or_alias,3,false,9,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+33416650-d7c1-4f61-adbe-0e211fc2c12c,Evilnoiz,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+89cb8230-15a8-442e-bac7-a7132123c686,Excision,competing_exact_or_alias,2,false,13,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+e8840399-2866-4d95-b759-f12bcc93bf00,Fabian Mazur,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+29a6658c-c83b-4716-8bea-18e6738d10aa,Fairlane,competing_exact_or_alias,4,true,10,1,1,1,12,moderate,2026-07-08,2026-07-08,true,false,false,true,false,false,false
+eb53467e-cf0a-4730-943c-c7eb25e48284,Famous Spear,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+6d9a99cd-786f-4b9e-930a-63f52fb1c142,Far Out,competing_exact_or_alias,9,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+933fdb45-a87c-4e1d-9ebe-2f4c3dbec06d,Farrah,competing_exact_or_alias,8,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+35d33040-af7c-49b5-abba-b87a47b3e03f,Faytal,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+2f4c8086-1ce5-4550-ac64-ea5124bb2a5d,Feed Me,unique_exact_canonical,1,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+ba5de9ce-5782-4d05-a95b-b585a4cf6e5e,FETISH,competing_exact_or_alias,10,true,10,2,2,2,16,strong,2026-06-26,2026-07-24,true,false,false,true,false,false,false
+1aac6cb8-07ca-441c-9d9e-37e4ad6318f3,Fitch,competing_exact_or_alias,6,true,10,1,1,1,12,moderate,2026-06-19,2026-06-19,true,false,false,true,false,false,false
+fe0e88ad-f467-432f-b51f-594e3766209d,Flux Pavilion,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+830525f6-6b92-4eec-890d-ce5b1ddfbd80,Fox Stevenson,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+688f5cfc-87a1-4834-9114-6e9b03d81042,Franky Nuts,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+77552b48-64c4-42ec-a43a-8b091e73ca1d,Fransis Derelle,unique_exact_canonical,1,false,10,1,1,1,12,moderate,2026-07-01,2026-07-01,true,false,false,true,false,false,false
+15d6a35b-2746-405a-869a-48bb1fbc60e0,FREAKY,competing_exact_or_alias,9,true,10,2,5,2,18,strong,2026-06-26,2026-06-26,true,true,false,true,false,false,false
+a8da2c3d-88bf-4297-9ddc-c718335bc06c,Friction,competing_exact_or_alias,10,true,10,0,3,0,0,unusable,,,false,false,false,false,false,true,true
+7520cde6-f7b0-46c1-8e4f-8dfe77680e11,FuntCase,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+1c0e5dc2-7820-40f1-a84a-d9be526f2c0c,G Jones,competing_exact_or_alias,4,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+8abf5622-1099-4c49-be0c-60c3747f812d,G-Space,competing_exact_or_alias,3,true,10,4,4,4,16,strong,2026-06-05,2026-07-15,true,false,false,true,false,false,false
+2ceb04b0-bbbf-4e08-a7cc-0079f7d3b8e9,Gabriel Rutledge,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+3aed1fdc-6f4a-4818-b986-15b7e1278d13,Gammer,unique_exact_canonical,1,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+6f057af0-dbfe-42f1-bcbe-de85ec589e93,Ganja White Night,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+c74dea8d-5fc4-4e4d-aa41-65899af976e7,Gareth Emery,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+8da462e5-9aa2-4a79-b555-7f023d39709e,GAWM,unique_exact_canonical,1,false,10,1,2,1,12,moderate,2026-07-23,2026-07-23,true,false,false,true,false,false,false
+94df50fb-863b-43bb-835e-c3de754323d2,Gent & Jawns,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+9178a9cf-6d43-4586-8f84-56c1de1e3591,Getter,competing_exact_or_alias,3,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+91b810c9-a3c8-4018-8b4f-df82743c56db,GG Magree,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+1a806a99-45b2-49a0-a015-b88436c33290,Ghastly,competing_exact_or_alias,5,true,10,1,1,1,12,moderate,2026-06-19,2026-06-19,true,false,false,true,false,false,false
+de136d7b-dc3a-4708-8657-c6950f2b69de,God's Warrior,competing_exact_or_alias,7,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+fac431ef-a2fc-410e-8c89-52f22fe51914,goddard.,competing_exact_or_alias,4,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+d1d8fcce-4200-4323-9f81-c67803136f10,Godlands,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+db2c082e-85cb-421e-965b-f3628622c7c3,GorillaT,unique_exact_canonical,1,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+46a8206a-d2fd-40d9-a92c-f6843c1115bf,Gorillowz,competing_exact_or_alias,2,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+d1c86e06-3d0b-4ad9-884e-1207c1310ef0,Grafix,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+6deb5c6b-6b2e-430d-a9c3-73149f6ecca3,Graphyt,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+60fb3718-d972-45a9-8f0e-0460278c4abb,GRAVEDGR,unique_exact_canonical,1,false,10,2,2,2,16,strong,2026-05-29,2026-07-03,true,false,false,true,false,false,false
+52fad7e3-00e5-4ccb-859f-643ab2b9a3f5,graves,competing_exact_or_alias,6,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+344d1628-633a-471a-b8cc-1a5ce63add1c,Grey,competing_exact_or_alias,4,true,10,1,3,1,12,strong,2026-06-26,2026-06-26,true,true,false,true,true,false,false
+3941cfed-949c-4558-9f63-e790f8a6b1c2,GRiZ,competing_exact_or_alias,5,true,10,1,10,1,16,strong,2026-06-05,2026-06-05,true,true,true,false,false,false,false
+fb5912ff-13ec-430b-8a81-eb6050e1d089,Gryffin,competing_exact_or_alias,5,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+af7d495f-7131-4372-ba27-7bb44494651c,H3RØ,unique_exact_canonical,1,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+9e9b848c-3585-477f-8b81-2218c05feb59,HABITAAT,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+5576ba99-f301-472e-b0f1-eed123bd9bcd,Habstrakt,unique_exact_canonical,1,false,10,4,5,4,16,strong,2026-06-05,2026-07-22,true,true,false,true,false,false,false
+68cd4162-10c5-4983-88d8-620ec7d06306,Hailure,unique_exact_canonical,1,true,8,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+2b9835cc-c460-4a14-adb4-b4305a0c7115,Hairitage,unique_exact_canonical,1,false,10,2,2,2,16,strong,2026-05-29,2026-06-19,true,false,false,true,false,false,false
+b91eee42-982c-4f20-8e5a-e43bb12562b6,HATO,competing_exact_or_alias,8,true,3,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+acdd27e9-d9d4-425c-9c4d-0475f9e96c53,hayve,competing_exact_or_alias,3,false,10,1,1,1,12,moderate,2026-07-24,2026-07-24,true,false,false,true,false,false,false
+c1f8d04c-ab66-4185-bad5-2b009c7ec1c8,Haywyre,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+ca340ca7-8b30-40dd-8865-776d7c15e08c,Hekler,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+d6342ba4-9ae2-4d72-9bb6-29ae96b67b5f,Herculez,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+8d9c1b6d-332f-48b9-bef9-07da16b3f858,Hermitude,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+7be0bea8-e1a1-478a-84e6-4ec07d504390,Herobust,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+40bbcac1-d3d2-4849-8e70-5e8849baf3b4,Hex Cougar,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+60898cb1-ae82-41e4-a7d1-e4409e4e4ddc,Heyz,competing_exact_or_alias,5,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+09df04b8-2c43-446d-aa19-05a84da56d63,Hi I'm Ghost,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+8fc08f7e-e429-4f92-b5e4-c229d602b769,High Zombie,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+5d6020c3-0b45-4c2c-a206-6bbcb098ba79,Honey & Badger,competing_exact_or_alias,2,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+19e21e76-062e-4d39-a206-a0dde31b8516,Hostage Situation,unique_exact_canonical,1,false,10,2,5,2,16,strong,2026-06-02,2026-07-22,true,true,false,true,false,false,false
+ca1ef69d-2f9f-4c2a-9971-a19b7608b064,Hubstcy,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a8af5b3c-6c67-44af-9d47-60809739a1c5,Hukae,competing_exact_or_alias,2,false,10,1,5,0,0,unusable,,,false,false,false,false,false,false,true
+5cc4dd48-eb78-4e56-aede-b188de19ff90,Hybrid Minds,competing_exact_or_alias,3,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+91513cff-ec96-4c9c-8298-2610c6ab4a8a,Hydraulix,unique_exact_canonical,1,true,10,1,1,1,7,moderate,2026-06-05,2026-06-05,false,false,false,true,false,false,false
+b9d65f2a-5e19-4e4b-93bb-1fd70936180b,iFeature,unique_exact_canonical,1,false,10,1,1,1,7,moderate,2026-06-26,2026-06-26,false,false,false,true,false,false,false
+bafb7a11-7d84-4555-82e3-2e99219d8388,Ilan Bluestone,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+919f2492-8a53-4728-962b-b8f46ab2cc1b,ILLENIUM,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+877464ca-ceec-45b7-bfa6-c3e0fccef161,IMANU,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a59cfb63-3b8d-4ddc-9958-f16f423f4626,INF1N1TE,competing_exact_or_alias,2,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+8e5e6189-acc1-4be3-9829-5dc1969f7d32,INFEKT,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+08083a83-0193-4cd7-a1d7-69d36591c6bf,INSIDIUS,competing_exact_or_alias,4,true,10,0,1,0,0,unusable,,,false,false,false,false,false,false,true
+d1966f5f-9d1c-4073-b596-4d9bb6106229,INVOLVER,competing_exact_or_alias,3,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+5e38c789-301e-4418-8e5e-2be34907315f,INZO,competing_exact_or_alias,7,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+67a97093-da1b-483b-bc53-6f8bf657649f,Ironheart,competing_exact_or_alias,3,false,10,2,2,2,16,strong,2026-05-29,2026-07-17,true,false,false,true,false,false,false
+0f00f499-44d7-4ea5-b754-3ee0cfea52af,it's murph,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+58c13881-8402-413a-b176-b6bd293b3194,IVORY,competing_exact_or_alias,7,true,10,1,1,1,12,moderate,2026-06-05,2026-06-05,true,false,false,true,false,false,false
+3779d155-d92e-4116-aabc-ea81b04e2d8e,Izzy Vadim,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+b4cf5bc9-4394-4105-ba4d-68a5a10c29ec,Jalaya,competing_exact_or_alias,2,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+04d43629-3bc9-41bf-acdc-5148dcc7c2d3,Jaron Steele,unique_exact_canonical,1,false,10,0,1,0,0,unusable,,,false,false,false,false,false,false,true
+37742f7c-1e4c-4043-aebe-cc1b564d10af,Jason Ross,competing_exact_or_alias,6,true,10,4,14,4,20,strong,2026-05-29,2026-07-17,true,true,true,false,false,false,false
+1cb887aa-e8ac-47fc-a1b8-d943257b11cd,Jasted,unique_exact_canonical,1,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+6015ea9f-b8b3-4c52-9b1b-18283046e7a3,Jauz,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+ee0a34fe-aed1-4f2c-bb24-5732c3aefd2a,Jay Eskar,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+ef462796-af2b-4a5a-86be-d2820e111023,JayKode,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+e08cff65-4322-4621-99a2-3c5da8f2647e,Jessica Audiffred,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+442dcdce-cbb0-4a0b-b22b-5fd343723652,Jinco,competing_exact_or_alias,2,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+eef9c54b-e629-49c3-acd4-ce016787909d,Jiqui,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+e927cec9-6446-41cb-97bd-fcd8ad08d425,Jkyl & Hyde,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+d8107a24-fe44-4d78-bac0-15c3e8818415,Jon Casey,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+b50d07f0-48cf-4354-a96c-bf18a7f88323,JOYRYDE,competing_exact_or_alias,2,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+d2b3045f-ae48-42a4-a33d-ae346da6f1ad,Julian Calor,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+e8cb81f6-37a5-4d49-9a34-0d4dd16668df,Just A Gent,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a5f5a755-e1e3-472c-a738-55b6aea2a645,Justin Hawkes,unique_exact_canonical,1,false,10,2,2,2,16,strong,2026-06-05,2026-07-03,true,false,false,true,false,false,false
+d41011a4-939d-4cbf-88cf-2b23f8e19dc5,k?d,competing_exact_or_alias,8,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+493dd325-9ce9-4043-af13-2d533883ad33,K!LLAHURTS,unique_exact_canonical,1,false,7,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a5e2d4d4-bbb2-4576-bfae-ffffdaf6bf51,K Motionz,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+de453908-499b-40e4-9e5f-c49c6939ac3a,K-NINE,competing_exact_or_alias,9,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+5ec03496-7897-4d33-8670-609266f15359,Kai Wachi,unique_exact_canonical,1,false,10,1,1,1,7,moderate,2026-06-26,2026-06-26,false,false,false,true,false,false,false
+1c81c736-95de-441b-8c43-23958064b3fa,Kaivon,competing_exact_or_alias,3,false,10,1,1,1,12,moderate,2026-05-27,2026-05-27,true,false,false,true,false,false,false
+ba9a8f57-78d9-4abb-b5bb-06402c7f4657,Kanine,competing_exact_or_alias,10,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+82f412cb-d9fe-43cc-842a-87a92973aa67,KANJI,competing_exact_or_alias,7,true,5,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+fecb11f6-4cf4-43d1-b6fa-f0be254bbc8b,Kaskade,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+c03072f5-9f60-4581-9c1d-a86fa9819009,Kayzo,competing_exact_or_alias,6,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+ac9dc50d-eb17-40e9-9149-26009d422829,Khamsin,competing_exact_or_alias,3,false,4,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+3ee7d0b7-8b07-44de-b9dc-75704204083a,KILL FEED,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+af7f36db-a568-484d-9caf-7749c1eb4241,Kill The Noise,unique_exact_canonical,1,false,10,0,1,0,0,unusable,,,false,false,false,false,false,false,true
+0e286fde-4f7f-4ba1-ab75-ce9b2ac0c9b7,KJ Sawka,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+bff550f9-e256-4ff5-98ad-f6d32f41e4dc,KLOUD,competing_exact_or_alias,9,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+310c0858-147d-433e-bc91-b1d7a4eb2f0b,Klutch,competing_exact_or_alias,9,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+71cb3b84-af5d-4155-8596-64303f3d8dce,Kngpn,competing_exact_or_alias,2,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+0c3afce3-cbcd-4e9f-971f-2059c967884a,Know Good,competing_exact_or_alias,3,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+c1a29cd8-807e-49a4-a20b-f28fd615db1b,Koastle,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+47ed2eb6-fb78-4f0c-a0fb-582624f2cd81,Kompany,competing_exact_or_alias,6,true,10,2,3,2,16,strong,2026-05-28,2026-06-05,true,true,false,true,false,false,false
+e18a7e42-d6e3-4943-8f4f-824a346fba3e,Kotori,competing_exact_or_alias,6,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+39fe5252-fbfd-40f4-bfda-dd246501b070,KRANE,competing_exact_or_alias,7,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+f1a30ba1-0d6a-4635-8f6e-3be5b7a6a5bc,KRAYT,competing_exact_or_alias,3,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+41e3adb0-5e79-4495-b1d0-5095f61d0185,Krewella,competing_exact_or_alias,2,false,10,1,1,1,12,moderate,2026-06-05,2026-06-05,true,false,false,true,false,false,false
+a8c80555-62aa-4227-a0be-eea9c9f83af4,Krimer,competing_exact_or_alias,2,false,10,1,1,1,10,moderate,2026-07-03,2026-07-03,true,false,false,true,true,false,false
+1a89f22e-c07d-469b-bb04-f25b8ca6b7a9,KRITIKAL,competing_exact_or_alias,7,true,10,1,1,1,12,moderate,2026-06-29,2026-06-29,true,false,false,true,false,false,false
+e71df15d-633f-4cbd-8f9a-e9c37eefc3ea,KSHMR,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+0de5667c-7f97-4d49-8598-cbcb843dbc34,KTRL,competing_exact_or_alias,3,true,10,0,1,0,0,unusable,,,false,false,false,false,false,false,true
+d8d2929d-f267-466d-9325-9cd58b901346,KULTIVATE,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+d1948d0b-3122-4e15-aa9f-e848cbad0e46,Kumarion,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+eb6bc10f-2d3b-45d2-a7d4-2ec57576b0bd,KUURO,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+4299debb-610f-461b-aad9-e679c6bae504,Kx5,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+171a6e5a-0817-4221-b621-a6e88d22bb7a,Kyle Watson,competing_exact_or_alias,2,false,10,1,1,1,12,moderate,2026-07-10,2026-07-10,true,false,false,true,false,false,false
+677d2683-a3ca-47c9-a0b6-2ae8bdef471e,Kyral X Banko,competing_exact_or_alias,2,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+e942f16a-f433-4689-afcb-87059c5a8374,lama,competing_exact_or_alias,8,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+35d4f26f-defe-4d2d-a022-d06348ecb98d,Last Heroes,unique_exact_canonical,1,true,10,2,4,2,16,strong,2026-06-12,2026-06-26,true,true,false,true,true,false,false
+d43fca2d-921a-4324-bde1-d1a628a005b4,LAXX,competing_exact_or_alias,2,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a71e7fe9-8736-426d-994a-a993a9886dfe,Lektrique,unique_exact_canonical,1,false,10,2,2,2,16,strong,2026-06-05,2026-07-03,true,false,false,true,false,false,false
+53ae7e22-5783-44aa-93f6-dafb4e348c75,Leotrix,unique_exact_canonical,1,false,10,2,6,2,18,strong,2026-07-03,2026-07-24,true,true,false,true,false,false,false
+da155ae0-20a4-4bf2-a897-878e95e7245b,Levity,competing_exact_or_alias,7,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+2fede2bf-60be-4a60-8845-9d37c6e3f27f,LICK,competing_exact_or_alias,10,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+7e815f59-3aa1-4208-939f-154a32699c6d,Liquid Stranger,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+91e0e210-1267-4089-a30c-2ff317acbecc,Lit Lords,unique_exact_canonical,1,false,10,6,6,6,16,strong,2026-06-19,2026-07-24,true,false,false,true,false,false,false
+732386d3-13eb-4978-98c6-e6519c3aa2fd,LIU KANG,competing_exact_or_alias,3,true,10,1,1,1,12,moderate,2026-06-26,2026-06-26,true,false,false,true,false,false,false
+dd2ec0fc-53a8-4c78-91b5-042d0321a863,Lizdek,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+67d30ceb-2942-4827-b597-9c9f4267f519,Lokal,competing_exact_or_alias,10,true,10,2,2,2,16,strong,2026-06-26,2026-07-01,true,false,false,true,false,false,false
+bda10275-9ae7-469d-8f2f-f75c075a5b2d,Lookas,competing_exact_or_alias,6,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+bde14bbf-36fe-4c41-bf3c-1119d3a04e01,Loompaskettee,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+03a92bd3-cdd8-49a1-88f1-4e1a3f588770,Lost Frequencies,unique_exact_canonical,1,false,10,0,2,0,0,unusable,,,false,false,false,false,false,true,true
+f26010c6-cdac-4d5b-9db4-9d3d79fefc68,LOUDPVCK,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+6d38776a-e472-4098-97c4-4ecf08cd9d35,LOUIEJAYXX,unique_exact_canonical,1,false,10,0,1,0,0,unusable,,,false,false,false,false,false,false,true
+2e698e62-310f-4b85-b3a0-4766cdaaaa54,LSDREAM,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+5755bd6a-ae0f-4668-8001-e21ae18d74af,LYNY,competing_exact_or_alias,2,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+bf57b1b4-2e32-4d1c-a8df-78a9a13d695a,MACHAKI,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+73b17016-7453-4f1e-a5c6-101b31db3d50,Majoras Drep,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a3476ea8-c424-44c6-98ff-2363aa6aa735,Mako,competing_exact_or_alias,7,true,10,1,1,1,12,moderate,2026-06-12,2026-06-12,true,false,false,true,false,false,false
+b9f26f4b-b168-4f32-a294-4e1c854f1f57,Malaa,competing_exact_or_alias,5,true,10,1,1,1,7,moderate,2026-06-11,2026-06-11,false,false,false,true,false,false,false
+d69013c9-fa4f-469c-94d1-517d4761ce17,Malixe,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a9529442-2b6d-4276-8f8f-9148585a54e9,Man Cub,competing_exact_or_alias,2,true,10,1,1,1,7,moderate,2026-06-11,2026-06-11,false,false,false,true,false,false,false
+7eb1fb01-a886-47d1-b813-e29de6595fb8,Mandidextrous,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+14b42dbe-4661-4733-ba9d-f2b397cad026,MARAUDA,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+c3b2501b-a0b0-48d7-afe3-2b398e260138,Mark The Beast,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+8c1d6b0b-e59e-41b2-8257-8b53937d3b02,Marshmello,unique_exact_canonical,1,false,10,2,2,2,16,strong,2026-06-24,2026-06-26,true,false,false,true,false,false,false
+91d07c31-7827-418f-a67c-9f6d6a4cb040,Martin Garrix,unique_exact_canonical,1,false,10,3,5,3,18,strong,2026-06-26,2026-07-24,true,true,false,true,false,false,false
+ff420927-f16d-4f18-97e8-cd02ae2a13c8,Mary Droppinz,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a1d87c1a-f956-4cd6-b162-a2cb5965655a,MashBit,competing_exact_or_alias,2,false,10,3,4,3,16,strong,2026-06-05,2026-07-17,true,false,false,true,false,false,false
+b8c1c40c-46d0-4d70-89d3-f951413b03cc,Master Error,unique_exact_canonical,1,false,10,0,6,0,0,unusable,,,false,false,false,false,false,false,true
+23eddb09-88df-4a09-b879-002e43f419b6,Mat Zo,unique_exact_canonical,1,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+dceb76a5-9461-4d8f-b89e-9ac24081b7c9,Matroda,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+b0aa24f7-077d-491b-8d07-e0091d18cf2a,MATT DOE,competing_exact_or_alias,2,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+cd77cfa9-0dc5-4f52-9bd1-d017777ced93,Maysev,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+489cc048-8ea7-495c-be17-e573d66435ee,Maze,competing_exact_or_alias,9,true,10,1,1,1,12,moderate,2026-07-10,2026-07-10,true,false,false,true,false,false,false
+66bcdf8b-554b-4a3d-a793-c0895b09a5fc,MEDZ,competing_exact_or_alias,6,true,10,1,1,1,12,moderate,2026-07-24,2026-07-24,true,false,false,true,false,false,false
+fced437b-1bd6-431f-bfbf-6eba878dda43,Mefjus,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+1d71d187-146d-455b-a024-6c4afc14a42d,Megalodon,competing_exact_or_alias,7,true,10,1,1,1,10,moderate,2026-07-03,2026-07-03,true,false,false,true,true,false,false
+a5b00ce0-28d1-4048-a122-76dc611fb81f,Meisym,unique_exact_canonical,1,false,5,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+4f8cfc42-5881-4027-8709-14ca0b6afa2f,MEMBA,competing_exact_or_alias,3,true,10,0,1,0,0,unusable,,,false,false,false,false,false,false,true
+69a2beba-394d-4879-b8fd-e75aeca3a6da,Mersiv,unique_exact_canonical,1,false,10,1,1,1,10,moderate,2026-06-05,2026-06-05,true,false,false,true,true,false,false
+750f6b8d-5917-4be6-bbcd-822c7c43e84d,Michael Sparks,competing_exact_or_alias,5,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+2115401f-953c-477c-a291-096308b1eb60,Middle Milk,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+ae157e18-87c9-4ff4-97fa-0d65041e4b3d,Millennial Trash,unique_exact_canonical,1,false,10,1,2,1,12,strong,2026-06-12,2026-06-12,true,true,false,true,true,false,false
+ba98b40c-abdf-4e40-b872-0143bc8cc087,Minnesota,competing_exact_or_alias,4,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+482d2bfd-71a2-4477-b362-25bf4a4606dd,MitiS,competing_exact_or_alias,3,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+f08ac8bb-0b64-4d2e-a1af-5a18ed045b2d,Moceans,competing_exact_or_alias,2,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+7573d07d-e8d1-48d9-8698-6ba291381e6b,Modestep,unique_exact_canonical,1,false,10,1,4,1,14,strong,2026-07-23,2026-07-23,true,true,false,true,false,false,false
+a6ae084c-d068-4b30-bddf-927f1c61548f,Monxx,unique_exact_canonical,1,false,10,3,3,3,16,strong,2026-06-12,2026-07-10,true,false,false,true,false,false,false
+847df5d9-ade8-4cf2-b6a1-e2ec74952813,Moody Good,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a91d2447-fe96-4e88-afec-dc3ff526f335,Moore Kismet,unique_exact_canonical,1,false,10,1,1,1,12,moderate,2026-07-17,2026-07-17,true,false,false,true,false,false,false
+e58fcaf1-efff-463d-b27c-4b72cc258275,Morgan Page,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+bcd8c5e5-75b5-42c9-bf8c-0009208a0824,MPH,competing_exact_or_alias,7,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+c7173f71-af8a-48ad-a35d-7b07f153c879,Mport,competing_exact_or_alias,4,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+dafdffc4-c949-4ae6-86b9-bfa8f2ef8d3c,msft,competing_exact_or_alias,7,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+6de0c785-d9fd-444c-8814-be42ae03a1d6,MUERTE,competing_exact_or_alias,7,true,10,1,2,1,10,moderate,2026-07-03,2026-07-03,true,false,false,true,true,false,false
+90a6a017-761f-4615-8238-1d47ebd9992f,MUST DIE!,unique_exact_canonical,1,true,20,0,13,0,0,unusable,,,false,false,false,false,false,false,true
+f673c0c8-5907-4668-9fa9-0ba7ec8ca40b,MUZZ,competing_exact_or_alias,9,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a79162cb-d6bc-4e22-8223-75c439cc352a,MVRDA,competing_exact_or_alias,2,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+dfd4331d-2590-4eb8-aee9-7335730fc1f6,MYRIAS,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+057afe07-1e02-4dee-a44c-0a465af0f77c,MYRID,unique_exact_canonical,1,true,10,0,1,0,0,unusable,,,false,false,false,false,false,false,true
+552ef0ae-4e61-4b43-b2cc-0bb368038c31,Myro,competing_exact_or_alias,6,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+5bf1fb45-d988-4fbe-8b7d-620394d6c496,Nasko,competing_exact_or_alias,9,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+1d9773eb-8878-41c6-82c6-f6149dd1cd5d,NAZAAR,unique_exact_canonical,1,false,10,1,1,1,12,moderate,2026-07-22,2026-07-22,true,false,false,true,false,false,false
+292084cb-6625-4cb8-8ab4-7e8495d37919,Neoux,unique_exact_canonical,1,true,5,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+c58226ab-76b4-4326-a87f-9c3414deae19,NERVO,competing_exact_or_alias,9,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+1bd5d449-4098-4d0e-b1f6-7b24699ce192,Netsky,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+41be5981-6d48-4921-b0b0-0940923e5ca6,NGHTMRE,unique_exact_canonical,1,false,10,2,2,2,16,strong,2026-06-26,2026-07-10,true,false,false,true,false,false,false
+8121dc82-c179-4f00-8ef0-d08e67b2b8df,Nico Falla,competing_exact_or_alias,2,false,10,2,2,2,16,strong,2026-06-12,2026-07-17,true,false,false,true,false,false,false
+518dcfdd-5db9-4425-b8f5-5aab3151d45f,"Nikita, the Wicked",unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+ffcddfee-f2ea-497d-b93f-50d74b0aabf4,nimino,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+43d9d392-6e26-40cf-960f-13a480f98f65,Nitepunk,unique_exact_canonical,1,false,10,1,2,1,7,moderate,2026-07-10,2026-07-10,false,false,false,true,false,false,false
+ccbdeb40-6f03-44a3-b153-1efb9649ccae,NITTI,competing_exact_or_alias,5,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+11a4fac9-d742-4f36-8005-1a909c8369df,NO SIGNE,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+ae30b0a9-e045-4bb3-b64e-79fc5bb71f61,Noisia,competing_exact_or_alias,2,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+48e804a3-1f1b-4955-a091-d0fd17e69081,NURKO,unique_exact_canonical,1,false,10,4,10,4,18,strong,2026-06-05,2026-07-17,true,true,false,true,false,false,false
+6a24eb83-92b7-4c1b-8b3e-154b57056fbe,NVADRZ,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+4c56b768-b45f-42e0-99e5-cd19da35bac0,NVADRZ & ALIAS,competing_exact_or_alias,2,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a4d340a6-6a11-4822-a653-237f17f52329,NXSTY,competing_exact_or_alias,4,true,10,3,3,3,16,strong,2026-06-19,2026-07-24,true,false,false,true,false,false,false
+cd5b8e0e-b6ba-4bc3-9ba7-72b7bb174fea,nøll,unique_exact_canonical,1,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+c893a5d2-c1e5-473b-9955-140623360ab6,OCTANE,competing_exact_or_alias,8,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+8515320d-1fc3-4079-a893-730eadd6af87,Oddprophet,unique_exact_canonical,1,false,10,2,2,2,16,strong,2026-06-05,2026-07-03,true,false,false,true,false,false,false
+8d63a201-a907-4a82-afae-615ec36b934c,ODESZA,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+ce4ea87b-795a-4409-bbae-02c67bca924e,Of The Trees,competing_exact_or_alias,2,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+f29ea441-e510-424b-8313-5964e7337e37,Oliverse,competing_exact_or_alias,3,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+bbd08958-b408-49a4-a93d-483ad128322e,Oppidan,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+4e3b52c7-bd75-4a98-b7bc-1a2780dc7512,Original Sin,competing_exact_or_alias,4,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+1cf7972c-ae6d-4c59-9541-f74f312d97b2,oskar med k,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+fe805204-8385-4bd7-8c66-3eaeb5515f82,Oski,competing_exact_or_alias,10,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+3fcf9e8b-d5b6-40e0-ab5a-c937e239a009,OUTRAGE,competing_exact_or_alias,10,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a80b221e-08ab-472d-8380-b497f6960586,Panda Eyes,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+ad2a80cc-203e-40f9-afb2-5b3ae5e999da,Paper Skies,competing_exact_or_alias,4,true,10,1,1,1,12,moderate,2026-07-24,2026-07-24,true,false,false,true,false,false,false
+ff9ebf18-0ce1-4345-aa33-9b85b23e3f45,Paris Blohm,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+77b955f3-94ac-4526-9d69-e6eab7257033,Party Favor,competing_exact_or_alias,3,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+b40cef53-69f7-4b7b-bf11-f2690d9ebb3d,PEEKABOO,competing_exact_or_alias,7,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+545d4b46-8440-42b6-b40b-6766333ad712,Pegboard Nerds,unique_exact_canonical,1,false,10,1,1,1,12,moderate,2026-07-01,2026-07-01,true,false,false,true,false,false,false
+7f805188-cc5a-4ccc-b89d-70f4fa764b23,PhaseOne,competing_exact_or_alias,4,true,10,2,2,2,16,strong,2026-06-19,2026-07-17,true,false,false,true,false,false,false
+ee428b44-54f2-468d-ad5a-725489f23caf,PIERCE,competing_exact_or_alias,8,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+0a2a2578-bceb-4224-b38f-6e7d63bbc0e4,Pirapus,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+409a1580-65e6-4a7a-8a88-7671daea9123,Pixel Terror,competing_exact_or_alias,2,false,10,7,17,7,18,strong,2026-05-25,2026-06-25,true,true,false,true,false,false,false
+ffd29b4b-c97f-4db0-974a-9236125c735f,PLS&TY,unique_exact_canonical,1,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+83e6c2f7-0dfe-4a20-9790-384c0f93bcb9,Pola & Bryson,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+4c3a1e2d-7a64-4072-8df6-12a5082b7f48,Porter Robinson,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+06f744cb-5098-4d57-9422-a5ceabe67614,Primate,competing_exact_or_alias,9,true,10,0,3,0,0,unusable,,,false,false,false,false,false,true,true
+e4aa695c-05b7-4d6b-8b85-4ed66b15077b,Prismo,competing_exact_or_alias,6,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+006f7533-48b3-49a7-86bb-89e8f7a1cc00,Protohype,unique_exact_canonical,1,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+49a4c87a-b1b0-4516-88dc-e0c8f07ecee1,PsoGnar,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+d50c79fd-dde3-41f7-890f-ac981d9b5a85,PURGE,competing_exact_or_alias,10,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+f2d1cc7b-8e6f-442f-a939-c91a29bb6d19,Pythius,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+3e7df9c3-b645-4677-a56e-39a4c082a80a,Qoiet,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+36ffcfe6-d999-49ba-b7f9-5349a3797a81,Quackson,unique_exact_canonical,1,false,10,2,3,2,16,strong,2026-06-12,2026-07-01,true,true,false,true,false,false,false
+6fd71e98-e580-4511-ba93-86040ea92a34,QUIX,competing_exact_or_alias,3,true,10,1,1,1,7,moderate,2026-07-03,2026-07-03,false,false,false,true,false,false,false
+211df3fb-e0bd-4b72-ab11-3507d14f2843,R!PT!DE,competing_exact_or_alias,2,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+57e76c6e-eecf-4989-aa33-ae4f296f4ddc,RageMode,competing_exact_or_alias,2,false,10,1,4,1,12,strong,2026-06-26,2026-06-26,true,true,false,true,true,false,false
+da929cdf-0c25-4026-a38c-62c06957abed,RANKZ,competing_exact_or_alias,5,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+b2fec422-24f0-49b6-a679-77868e90707e,Ray Volpe,unique_exact_canonical,1,false,10,1,6,1,12,strong,2026-06-05,2026-06-05,true,true,false,true,true,false,false
+a51e35b2-d2e5-4e11-bd73-903a8bca79b0,REAPER,competing_exact_or_alias,10,true,10,2,4,2,16,strong,2026-06-05,2026-06-26,true,true,false,true,false,false,false
+23a987c6-865c-41d7-abb1-49ab9295dc60,Rebel Scum,competing_exact_or_alias,2,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+2adc73fb-75d0-474e-9d16-53e2cb7012ab,Reinelex Records,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+ffecdffe-ee2a-496d-a924-1776b1a194bf,Rendah,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+4ad8af1f-ce24-482d-837b-6976c2cb3d3e,Result,competing_exact_or_alias,2,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+f00f2b48-796c-4651-8abf-8243eaeb17e4,RetroVision,competing_exact_or_alias,3,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+7afac323-37e8-439a-958b-ae30d6022abc,Rezz,competing_exact_or_alias,8,true,10,1,1,1,12,moderate,2026-06-05,2026-06-05,true,false,false,true,false,false,false
+f1ace0be-3536-4837-9404-482becff9e3f,Rickyxsan,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+bc5e5c22-6890-4bcb-9a7f-126b87ca9e1e,RIOT,competing_exact_or_alias,9,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+d8ae2ca6-ccf7-4720-93de-4375f562a524,Riot Ten,unique_exact_canonical,1,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+b9145421-f4d2-4203-9e4c-8cb4c6ce13b0,Riptyde,competing_exact_or_alias,5,true,2,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a455adf7-ca94-4a2c-af75-641ae284518e,Rival,competing_exact_or_alias,9,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+adcafe80-1858-4f2c-b0fd-dd5b0057f729,RL Grime,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+41c125a0-9959-4a7a-886f-e5b2c60dcfcc,Rova,competing_exact_or_alias,9,true,10,1,6,1,14,strong,2026-06-12,2026-06-12,true,true,false,true,false,false,false
+1c8f3dd7-de60-4e61-83f6-854329211f0a,rSUN,competing_exact_or_alias,2,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+3c8ea8ec-53a8-47ed-9dcd-aa20475a24f3,Rueben,competing_exact_or_alias,2,true,10,3,6,3,18,strong,2026-06-01,2026-06-19,true,true,false,true,false,false,false
+1a3bbebb-76dc-4f36-b937-84f1ec42f578,Runnit,competing_exact_or_alias,5,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+8a4869e3-f25d-4e14-96c9-934593d8b7c6,Ryan Browne,unique_exact_canonical,1,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+3c869f31-1ed2-47a4-98d7-83be0d010d29,RZRKT,unique_exact_canonical,1,false,10,2,2,2,11,strong,2026-07-10,2026-07-22,false,false,false,true,false,false,false
+7b38e816-fb6f-4bdf-8578-b61261dbf5b3,Said The Sky,unique_exact_canonical,1,true,10,1,4,1,12,strong,2026-06-12,2026-06-12,true,true,false,true,true,false,false
+6c76e5e0-86ae-4c2d-ac42-3ad800cba7de,Saint Miller,competing_exact_or_alias,4,false,10,1,1,1,12,moderate,2026-07-20,2026-07-20,true,false,false,true,false,false,false
+f863dc57-4c5a-4a79-a51f-29bd1c6caf16,Sam Lamar,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+0a2080e1-8e0f-434e-a546-94e9c6199d04,Sam Norris,competing_exact_or_alias,4,false,6,0,1,0,0,unusable,,,false,false,false,false,false,true,true
+9f7b8411-c53e-4ecf-8a17-c0828801db92,Sammy Virji,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+87b3e1cf-ae66-424c-8473-a94b20398849,SampliFire,competing_exact_or_alias,2,false,10,4,4,4,16,strong,2026-06-05,2026-07-24,true,false,false,true,false,false,false
+df208d00-ad2f-42e5-a585-6386c163fe88,Saturna,competing_exact_or_alias,5,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+65734b30-20c9-48c4-96e8-41e984edcc77,SAYMYNAME,competing_exact_or_alias,2,true,10,1,2,1,14,strong,2026-07-10,2026-07-10,true,true,false,true,false,false,false
+fa15f912-668b-403f-8848-87c50458d871,Sentient,competing_exact_or_alias,10,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+e4760505-c028-46db-a87d-f7e6f0f1f82c,Seven Lions,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+21557d0b-0414-430f-b5ae-1999b29f599c,Shadient,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+1f77da90-516c-4a87-a94c-e672fcfcbbdb,Sharks,competing_exact_or_alias,10,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+6412817a-b383-493d-acb1-d3e342d9def1,SHARPS,competing_exact_or_alias,2,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+22d7cfcf-597d-4642-a785-594081ea5b02,Ship Wrek,competing_exact_or_alias,2,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+4d1f4e4e-1ac6-44ab-a665-635513008fe2,SHY FX,unique_exact_canonical,1,false,10,0,2,0,0,unusable,,,false,false,false,false,false,true,true
+d72d746e-2b4b-4158-a3b7-1576ba69204a,Shyloom,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+9cd7d1fa-e014-4945-a6f1-62e233d6d5c5,Shöckface,competing_exact_or_alias,2,false,10,1,1,1,12,moderate,2026-06-26,2026-06-26,true,false,false,true,false,false,false
+c902c802-7566-42ae-b6cb-6c6ce23f09e1,SIDEPIECE,competing_exact_or_alias,4,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+89a8e93d-0d2a-46ae-af88-8abb4f4f573e,Simula,competing_exact_or_alias,2,false,10,2,5,2,18,strong,2026-06-19,2026-07-02,true,true,false,true,false,false,false
+a87a1b57-ddc8-4077-a1a9-1cbebc3a7251,SISTO,competing_exact_or_alias,4,true,10,3,4,3,16,strong,2026-06-26,2026-07-22,true,false,false,true,false,false,false
+dcfd728e-5b89-4de1-b253-20b17e79273b,skantia,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+b51f7ee7-3b6a-4da3-aaf6-9b246337d0c7,Skepsis,competing_exact_or_alias,10,true,10,1,1,1,12,moderate,2026-07-10,2026-07-10,true,false,false,true,false,false,false
+73fcee37-1745-4aed-bb40-2260ba36c859,Skism,competing_exact_or_alias,2,false,10,2,3,2,16,strong,2026-06-03,2026-07-03,true,false,false,true,false,false,false
+2e78deba-852b-45bf-bdc3-815c41a04eb1,Skrillex,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+faa95a29-932b-494a-a9de-f02a485c94af,Skrybe,unique_exact_canonical,1,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+05ec26aa-b67b-41ae-925d-6a786ac699f0,SKVNK,competing_exact_or_alias,5,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+aeada74d-d9ed-4b1b-b0fb-6e8abde94cab,Skybreak,unique_exact_canonical,1,false,10,1,2,1,12,moderate,2026-07-27,2026-07-27,true,false,false,true,false,false,false
+3c995b7a-a13c-4ee4-9a6b-2719edb3fd4a,SLANDER,competing_exact_or_alias,7,true,10,2,6,2,18,strong,2026-06-12,2026-07-17,true,true,false,true,false,false,false
+81c46723-730a-44df-9523-627f719fa49a,Slippy,competing_exact_or_alias,6,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+1c325601-838d-41b3-8b43-a332f9b50b59,SLUMBERJACK,competing_exact_or_alias,3,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+ca84aefe-0933-4d50-848d-39c41d751c90,Slushii,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+ed49ad90-2338-4ea0-8f67-0eae089f67c8,SMG,competing_exact_or_alias,5,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+39f6b095-9ca0-433b-9357-2f1be82da5b8,smle,competing_exact_or_alias,5,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+1842585e-47f0-4284-8020-9eab1aa13fe6,smol,competing_exact_or_alias,6,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+93e0bc75-d4be-404a-be0f-e7c2510d391d,SNAILS,competing_exact_or_alias,6,true,10,1,5,1,12,strong,2026-06-12,2026-06-12,true,true,false,true,true,false,false
+133b8971-f7c9-4ea2-a34f-5ac49340e6e4,Snareskin,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+bc816cd7-9a4d-4edd-a6c4-f9a7a6d12988,Snavs,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+56387301-72e7-4f27-8cb4-bdcf89fdf03a,So Dope,competing_exact_or_alias,5,true,10,1,1,1,12,moderate,2026-06-26,2026-06-26,true,false,false,true,false,false,false
+a901f26d-007c-4dbb-8f85-2fc93044f07d,SoDown,unique_exact_canonical,1,false,10,1,6,1,14,strong,2026-06-26,2026-06-26,true,true,false,true,false,false,false
+5bf072ad-aae1-4d09-a964-349e647a423a,SOFI TUKKER,unique_exact_canonical,1,false,10,2,2,2,16,strong,2026-06-10,2026-07-17,true,false,false,true,false,false,false
+4f51e6a4-5680-4d47-b68f-850fe567809b,Soltan,competing_exact_or_alias,7,true,10,2,2,2,16,strong,2026-06-05,2026-07-17,true,false,false,true,false,false,false
+dfe4f610-9521-4dfd-b74d-0146183fc2cd,SOTA,competing_exact_or_alias,9,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+0c2cd30d-d267-42d4-a34c-185e01e3c3bd,Sound Remedy,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+63b366c4-8e8b-4e97-9d80-f5b552690db2,Space Jesus,competing_exact_or_alias,3,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+81654083-ae9b-4100-9aed-1cdf24d7eab8,Space Laces,unique_exact_canonical,1,false,10,1,1,1,12,moderate,2026-06-05,2026-06-05,true,false,false,true,false,false,false
+e3235526-9bac-4bf6-9043-0dea5944e654,SPAG,competing_exact_or_alias,6,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+aa2eb67a-eb53-4372-aeb3-b674bc468862,Spock,competing_exact_or_alias,8,true,10,1,1,1,12,moderate,2026-07-17,2026-07-17,true,false,false,true,false,false,false
+aac51c56-2428-4bf2-a2f4-e4bb579fc5d8,STAR SEED,competing_exact_or_alias,4,true,10,3,6,3,16,strong,2026-06-05,2026-07-11,true,true,false,true,false,false,false
+fa7abb2e-274a-46e3-a060-1df8367eb83b,Staysick,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+7545bf9c-1c42-4862-9e6d-328f49760c7f,Stonebank,unique_exact_canonical,1,false,10,1,1,1,12,moderate,2026-06-26,2026-06-26,true,false,false,true,false,false,false
+fc2ee9b4-56f4-43fa-9733-86370a8d72d1,Stoned Level,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+93e2dce2-30d8-4428-933e-b8154e46c5e7,Storyboard,competing_exact_or_alias,4,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+c46bbc25-b8ad-466d-9333-79e7880f5405,Stratus,competing_exact_or_alias,8,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+b3264fb1-8fc9-4cf5-b9e5-3a2d1f15876a,Stryer,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+4d64a52d-4982-4a0a-8145-1088ff8e92de,STUCA,unique_exact_canonical,1,false,10,2,2,2,16,strong,2026-06-18,2026-07-23,true,false,false,true,false,false,false
+9c517610-5003-4fea-84c9-93527b98a315,Sub Focus,competing_exact_or_alias,2,false,10,0,4,0,0,unusable,,,false,false,false,false,false,false,true
+8e6c0e1c-2387-48d2-afb4-6b329e071ce3,Sub Zero,competing_exact_or_alias,8,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+b02335e9-5d0d-4fd7-ac97-79ffaa396c58,SubDocta,competing_exact_or_alias,2,false,10,1,1,1,10,moderate,2026-07-17,2026-07-17,true,false,false,true,true,false,false
+0ce0c10e-04e3-4ef1-9618-c483fe4caf8b,Subsonic,competing_exact_or_alias,8,true,10,0,1,0,0,unusable,,,false,false,false,false,false,false,true
+5e1b507b-98cd-4ddd-87b3-b8c1e6fe08ca,Subtronics,unique_exact_canonical,1,false,10,2,13,2,16,strong,2026-06-01,2026-07-03,true,true,false,true,false,false,false
+5004e0e1-6938-4ed0-a539-c99b01b58302,Sullivan King,unique_exact_canonical,1,false,10,1,1,1,12,moderate,2026-06-19,2026-06-19,true,false,false,true,false,false,false
+1d0ed979-32cb-4b0e-ae83-a3f16cbfe3b1,Sully,competing_exact_or_alias,9,true,10,3,8,3,18,strong,2026-05-29,2026-05-29,true,true,false,true,false,false,false
+e5716ff5-f9b8-456b-969a-8ef31b30b309,sumthin sumthin,unique_exact_canonical,1,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+737a0e0b-d80b-435b-8e33-20a7f0819080,SVDDEN DEATH,unique_exact_canonical,1,false,10,3,4,3,16,strong,2026-06-05,2026-07-24,true,false,false,true,false,false,false
+266dcafa-c811-4d5a-a491-cf23e43b36d8,SVVEATS,unique_exact_canonical,1,false,10,1,1,1,12,moderate,2026-06-12,2026-06-12,true,false,false,true,false,false,false
+313a2194-08ce-4081-b8f1-b4af9e5daef1,SWARM,competing_exact_or_alias,9,true,10,1,1,1,12,moderate,2026-05-28,2026-05-28,true,false,false,true,false,false,false
+ed472f8a-b227-4fbf-a9e8-40adcfd7eb72,Swedish House Mafia,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+f5b6f95f-7d50-40bc-af49-8c942f5dcf50,SweetYetNuclear,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+617fe22d-7374-4c0c-bf35-a4a5f63606df,Synymata,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+06c43a78-2c1f-406e-83f5-dcea246d3b45,Taiki Nulight,unique_exact_canonical,1,false,10,0,1,0,0,unusable,,,false,false,false,false,false,false,true
+bd9250dd-645b-4bce-a9bf-9df781db9e06,Tails,competing_exact_or_alias,6,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+07f097b8-c907-4d33-81d8-ad2df5942199,TALONS,competing_exact_or_alias,8,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+32ad5dac-1b84-404b-943d-ed8e7b6709ea,TANTRON,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+e62afb4e-96c9-42ce-ad37-d4a58b810ce6,Taska Black,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+e9148212-d8f2-457e-b3f7-f9612a15b44a,Taylor Sherman,no_exact_or_alias_candidate,0,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+7e196dbf-878c-4303-959a-4deedc4ce368,Tchami,unique_exact_canonical,1,false,10,0,1,0,0,unusable,,,false,false,false,false,false,true,true
+5c8a6612-b5db-4a52-b112-9ef1b5cf6009,Teddy Killerz,competing_exact_or_alias,3,false,10,2,2,2,16,strong,2026-06-22,2026-07-17,true,false,false,true,false,false,false
+a62d96b2-12f5-4391-b4de-3bc9ac099a83,Teminite,unique_exact_canonical,1,false,10,1,7,1,12,moderate,2026-07-24,2026-07-24,true,false,false,true,false,false,false
+3cb5741b-1cbf-4ce8-b620-6751e84c404b,Terravita,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+13d311f6-c1e4-4944-be32-8d010544c896,Terrence & Phillip,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+e684ef0a-2adc-43cd-b626-f65a0cd68488,The Arc,competing_exact_or_alias,6,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+06c4cf1e-d4db-4f59-8aa7-498a4370c7e1,The Brig,unique_exact_canonical,1,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+468c1f4e-15f9-4b92-8f25-4a1753d568c4,The Caracal Project,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+bf953f18-aeb6-443b-b8fe-fe530f72394b,The Chainsmokers,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+b7471687-11f9-4c99-b6e3-dd49e34b2d40,The Floozies,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+5881a1a6-290c-4979-b11f-32747747c385,The Glitch Mob,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+144a71d1-a7d1-4f9d-be31-e861f38a47a4,The Sponges,competing_exact_or_alias,2,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+7736941d-b46d-4536-8baf-f6604301c83f,THIEVES,competing_exact_or_alias,7,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+f9851b0f-7300-4ab9-888f-49bcbb27758d,Throttle,competing_exact_or_alias,5,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+389c2599-dbd5-41e1-bdca-d819545cc387,Tidez,competing_exact_or_alias,5,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+78cf026f-5746-4565-a2e1-be7acdc83d8f,TIGER DROOL,unique_exact_canonical,1,false,5,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+28d9f39a-4003-4eb2-ad95-26d4abe29fc8,Tisoki,unique_exact_canonical,1,false,10,1,1,1,12,moderate,2026-06-19,2026-06-19,true,false,false,true,false,false,false
+fc8017f1-e2c5-4ea8-ad67-e0c1b1fb5cd3,Tiësto,unique_exact_canonical,1,true,20,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+d9caac71-3000-4c66-9392-b211d2080217,Tokyo Machine,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+5c3e298e-60d3-4170-8980-3ae17530c934,Trampa,competing_exact_or_alias,9,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+8ac28692-f62b-47ed-8041-2a7686003909,Trinist,unique_exact_canonical,1,false,10,1,3,1,12,strong,2026-07-17,2026-07-17,true,true,false,true,true,false,false
+e83b3fdb-6771-4809-9064-4d0dfdc941f5,TRIPLESICKZ,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+47f71fe8-821b-4c0b-9f70-c5884e0bb96d,TRISEKT,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+3ab64b07-b815-4137-9539-90ea1b1743a8,Tritonal,competing_exact_or_alias,3,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+8328cfd0-66b8-49a3-9e31-325cb7da512a,Trivecta,unique_exact_canonical,1,false,10,0,7,0,0,unusable,,,false,false,false,false,false,true,true
+bc42a86a-159e-445e-80eb-92e2585b0b5c,TroyBoi,competing_exact_or_alias,2,false,10,2,2,2,16,strong,2026-06-05,2026-06-26,true,false,false,true,false,false,false
+bdde174a-86ba-40a9-8e6d-dc0266aab786,Truth x Lies,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+3f6350c0-957e-4f7f-b8c3-790f6564bfd6,Tryple,competing_exact_or_alias,2,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+d4fc8d56-27a1-42c1-9665-a346611b3c19,Tsimba,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+e5dfedf8-d9b3-4542-af4a-952c68816add,TV Noise,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+e8408189-74b8-46f0-a9e6-601b810bf2be,TVBOO,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+4461fa81-ca4a-47b3-b807-56db61c2efe7,Twin Diplomacy,unique_exact_canonical,1,false,10,1,1,1,12,moderate,2026-06-12,2026-06-12,true,false,false,true,false,false,false
+a8bc3ee7-a24e-4653-8e55-d346597e9d14,TYNAN,competing_exact_or_alias,5,true,10,1,2,1,10,moderate,2026-07-16,2026-07-16,true,false,false,true,true,false,false
+b810763f-84d9-43ae-a37c-a9b4deb58b90,Tyraz,competing_exact_or_alias,3,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+f7875a11-d38e-4e8d-8552-151face40e12,UBUR,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+39ff238a-551f-43c9-bb08-9acf9b056cb5,UHNK,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+b5e763f1-2a43-4578-8447-44da4e6a89b5,Ummet Ozcan,unique_exact_canonical,1,false,10,1,1,1,12,moderate,2026-07-24,2026-07-24,true,false,false,true,false,false,false
+1f1f9370-be64-45b6-b84a-ff66bb3556e8,Unknown Brain,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+6c3ab7e4-1dca-412d-8834-41f55c9d3722,Valentino Khan,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+ce0c1baa-6f1b-47a2-9eac-2706d44e51d5,Vastive,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+f4144aae-0677-48e7-9528-69aafc65c8fb,Venjent,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+9b519b04-2baf-4ab3-90e9-20dcfc7ae387,Vibe Chemistry,unique_exact_canonical,1,false,10,4,13,4,20,strong,2026-06-19,2026-07-24,true,true,true,false,false,false,false
+71fd1d4e-35e5-4c6f-8919-983d30fc7df1,Vincent,competing_exact_or_alias,7,true,10,2,3,2,16,strong,2026-06-05,2026-07-03,true,true,false,true,false,false,false
+2bf2ac01-5c3f-4a18-8a49-5d5b981a3a12,Viperactive,unique_exact_canonical,1,false,10,2,2,2,16,strong,2026-06-05,2026-07-10,true,false,false,true,false,false,false
+5214e19d-dcb0-4bf2-8263-078371b2979d,Virtual Riot,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+681d1714-e442-4fb0-85f9-4a919106bc9f,Virus Syndicate,unique_exact_canonical,1,false,10,4,4,4,16,strong,2026-06-10,2026-07-10,true,false,false,true,false,false,false
+9582d445-dc5d-4040-8eb2-f36a32b69c48,Vulgatron,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+f5e8ed94-88f7-4491-9b2c-51c67d84d9c0,Wavedash,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+2c285c02-c99e-4595-856e-e52ebdb547d9,Wax Motif,unique_exact_canonical,1,false,10,2,2,2,16,strong,2026-05-29,2026-06-26,true,false,false,true,false,false,false
+e9e6ad6f-af34-48e2-8e3d-edac845b3aea,WE ARE FURY,unique_exact_canonical,1,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+98a8ed34-73e9-4c48-b808-f24917ced569,Whales,competing_exact_or_alias,5,true,10,1,1,1,12,moderate,2026-06-15,2026-06-15,true,false,false,true,false,false,false
+55725584-2365-44e6-ace6-34bedb74efc5,What So Not,unique_exact_canonical,1,false,10,3,3,3,16,strong,2026-05-29,2026-07-17,true,false,false,true,false,false,false
+db26ca9d-5631-4c7e-960e-6464e7a8f4a3,Wiguez,competing_exact_or_alias,2,false,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+990da18b-ee36-46d2-bb27-2ee6371623e4,Wilkinson,competing_exact_or_alias,3,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+9d8ff6d2-2a9b-4603-9a30-baeab3c4319f,William Black,competing_exact_or_alias,2,false,10,2,17,2,18,strong,2026-06-26,2026-06-26,true,true,true,false,true,false,false
+1375f772-b9f8-41d7-b106-1722ff4c66a5,WINK,competing_exact_or_alias,8,true,10,0,1,0,0,unusable,,,false,false,false,false,false,false,true
+06595553-532e-4180-b3bd-3f2b045a8663,Wodd,unique_exact_canonical,1,false,10,0,1,0,0,unusable,,,false,false,false,false,false,false,true
+b08bce1e-8c20-42d4-877f-5cc7583a62d9,Wolfgang Gartner,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+31ea1a81-61c3-4a36-882a-4d50fa912e25,Wooli,competing_exact_or_alias,2,false,10,3,7,3,18,strong,2026-07-16,2026-07-17,true,true,false,true,false,false,false
+9d0c9a34-e9a7-452b-8fe6-3dbdceec334d,Xilent,unique_exact_canonical,1,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+6bd81712-755e-42a5-ba6f-9798fa0e4a62,xo sad,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+d78d3626-25cf-4452-a493-30e87e05444f,YDG,competing_exact_or_alias,7,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+a39ce153-d459-4032-8b97-151d14ab5eef,yetep,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+bc4e2477-0c09-429a-bd7c-d8406dc59862,YOOKiE,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+34767578-f621-4e1d-a5ef-ddb5c3090dad,YULA,competing_exact_or_alias,6,true,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+f5632848-fcfc-43d6-a407-4f9c4022af17,YUSSI,competing_exact_or_alias,6,true,10,0,15,0,0,unusable,,,false,false,false,false,false,false,true
+26293aba-0e5d-48d8-8154-80bae8991088,Yvng Jalapeño,unique_exact_canonical,1,false,10,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+3809e523-5249-46ba-98a0-248d0f416543,Zedd,competing_exact_or_alias,5,true,10,2,5,2,19,strong,2026-06-01,2026-07-14,true,true,false,true,true,false,false
+851b76a5-2fcb-4da3-ac0d-b4a78017bf57,Zeds Dead,unique_exact_canonical,1,false,10,1,14,1,16,strong,2026-06-30,2026-06-30,true,true,true,false,false,false,false
+02858778-9352-4717-af4a-f4d906f2392a,ZHU,competing_exact_or_alias,2,true,10,0,18,0,0,unusable,,,false,false,false,false,false,false,true
+c29abb8a-5191-48bd-bf2e-2296d7c0729e,Zingara,competing_exact_or_alias,4,true,0,0,0,0,0,unusable,,,false,false,false,false,false,false,true
+4df0784e-80e6-463c-8427-7f78725560aa,Zomboy,competing_exact_or_alias,2,false,10,3,3,3,16,strong,2026-06-05,2026-07-03,true,false,false,true,false,false,false

@@ -2,6 +2,29 @@
 
 Prepared: 2026-07-29
 
+## Adaptive identity-resolution extension
+
+The completed search census is followed by a credential-free adaptive design documented in
+`docs/itunes-adaptive-identity-resolution.md`.
+
+The extension keeps the search census frozen. It does not refresh legacy cache rows or execute
+candidate catalogs. It adds a schema-free versioned identity design for future targeted
+collection-title searches and preserves exact legacy identities for unchanged cached album
+lookups. Targeted results never confirm identity by search rank alone.
+
+The planned resolver order is:
+
+1. Retain unique exact search-stage mappings.
+2. Use at most a small deterministic set of distinctive historical-title searches for ambiguous
+   artists with strong or moderate anchors.
+3. Require corroboration and the minimum album confirmation for a targeted success.
+4. Fall back to album-first candidate examination.
+5. Use song lookup only when album evidence is insufficient.
+6. Preserve ambiguity and top-10 truncation risk when evidence remains insufficient.
+
+The future dry-run cohort has 50 artists and 79 new requests after 19 cache hits, below the
+150-request and 15-minute limits. It is a plan only and is not authorized for execution.
+
 ## Status and authorization boundary
 
 This document predeclares a prospective full-watchlist shadow evaluation. The identity-only
