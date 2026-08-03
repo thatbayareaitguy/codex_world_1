@@ -1,8 +1,26 @@
 # AI Handoff
 
-Updated: 2026-07-31
+Updated: 2026-08-03
 
 ## Repository state
+
+The branch is at the pre-live checkpoint for exact five-artist discovery after the mapping-only
+bootstrap. A tracked manifest freezes ZHU, Don Diablo, SISTO, William Black, and YUSSI, with eight
+frozen in-scope releases. The new `seed_discovery_5` scope requires confirmation
+`APPLE_RECENT_SEED_DISCOVERY_5`, the fixed evaluation time, and `optimized_four_source`.
+
+All five durable `existing_id_confirmed` mappings were verified from isolated Apple state. The
+runner requires them before creating its run or HTTP client, performs no mapping write, and calls
+only first-page `singles`, `full-albums`, `top-songs`, and one bounded remix search per artist. A
+separate run identity forces fresh discovery. The credential-free plan forecasts 20 starts under
+a 25-start, five-minute, concurrency-one gate with 1,100 millisecond minimum pacing, zero
+pagination, and zero detail requests. Plan mode made zero requests and writes.
+
+Historical Apple HTTP starts remain 202 because this live step has not begun. The provider is
+disabled, and isolated state has no active run, lease, cooldown, or queue. The full credential-free
+verification and pre-live commit must complete before the live command. After the first live
+request, only the four authorized handoff and evaluation documents may change. Production
+integration and merge remain unauthorized.
 
 The mapping-only 13-artist bootstrap is implemented and its authorized live run completed. The
 existing catalog-evidence resolver is now called by both the fixed-candidate bootstrap and the

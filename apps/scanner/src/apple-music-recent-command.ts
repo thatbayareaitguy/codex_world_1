@@ -17,6 +17,11 @@ import {
   readAppleMusicRecentValidationManifest,
   validateAppleMusicRecentValidationManifest,
 } from "./apple-music-recent-validation";
+import {
+  appleMusicRecentSeedDiscoveryConfirmation,
+  readAppleMusicRecentSeedDiscoveryManifest,
+  validateAppleMusicRecentSeedDiscoveryManifest,
+} from "./apple-music-recent-seed-discovery";
 import { readItunesPilotSnapshot, type ItunesPilotSnapshot } from "./itunes-pilot-snapshot";
 
 export const appleMusicRecentProfiles = ["current", "optimized_four_source"] as const;
@@ -49,7 +54,7 @@ export interface AppleMusicRecentPlan {
   networkRequestsStarted: 0;
   noPagination: true;
   profile: AppleMusicRecentProfile;
-  scope: "sample" | "validation_25";
+  scope: "sample" | "seed_discovery_5" | "validation_25";
   snapshotHash: string;
   storefront: "us";
   writes: 0;
@@ -71,17 +76,21 @@ export type AppleMusicRecentCommand =
       cohortManifestPath?: string;
       mode: "plan";
       profile: AppleMusicRecentProfile;
-      scope: "sample" | "validation_25";
+      scope: "sample" | "seed_discovery_5" | "validation_25";
+      seedDiscoveryManifestPath?: string;
       snapshotPath: string;
     }
   | {
       cohortManifestPath?: string;
       confirmation:
-        typeof appleMusicRecentConfirmation | typeof appleMusicRecentValidationConfirmation;
+        | typeof appleMusicRecentConfirmation
+        | typeof appleMusicRecentSeedDiscoveryConfirmation
+        | typeof appleMusicRecentValidationConfirmation;
       evaluationAsOf: typeof appleMusicRecentEvaluationTime;
       mode: "execute_live";
       profile: AppleMusicRecentProfile;
-      scope: "sample" | "validation_25";
+      scope: "sample" | "seed_discovery_5" | "validation_25";
+      seedDiscoveryManifestPath?: string;
       snapshotPath: string;
     };
 
@@ -92,10 +101,11 @@ export function parseAppleMusicRecentCommand(args: string[]): AppleMusicRecentCo
   if (plan === live) throw new Error("Choose exactly one of --plan or --execute-live.");
   const sample = values.includes("--sample");
   const cohortManifestPath = optionalOption(values, "--cohort-manifest");
+  const seedDiscoveryManifestPath = optionalOption(values, "--seed-discovery-manifest");
   const mappingBootstrap = values.includes("--mapping-bootstrap");
   const identitySeedsPath = optionalOption(values, "--identity-seeds");
   if (mappingBootstrap) {
-    if (sample || cohortManifestPath) {
+    if (sample || cohortManifestPath || seedDiscoveryManifestPath) {
       throw new Error("Mapping bootstrap does not accept a release-discovery cohort.");
     }
     if (!identitySeedsPath || identitySeedsPath.startsWith("--")) {
@@ -142,10 +152,19 @@ export function parseAppleMusicRecentCommand(args: string[]): AppleMusicRecentCo
   if (identitySeedsPath) {
     throw new Error("--identity-seeds requires --mapping-bootstrap.");
   }
-  if (sample === Boolean(cohortManifestPath)) {
-    throw new Error("Choose exactly one of --sample or --cohort-manifest.");
+  if (
+    [sample, Boolean(cohortManifestPath), Boolean(seedDiscoveryManifestPath)].filter(Boolean)
+      .length !== 1
+  ) {
+    throw new Error(
+      "Choose exactly one of --sample, --cohort-manifest, or --seed-discovery-manifest.",
+    );
   }
-  const scope = sample ? ("sample" as const) : ("validation_25" as const);
+  const scope = sample
+    ? ("sample" as const)
+    : seedDiscoveryManifestPath
+      ? ("seed_discovery_5" as const)
+      : ("validation_25" as const);
   const snapshotPath = requiredOption(values, "--snapshot");
   const confirmation = optionalOption(values, "--confirm-live");
   const evaluationAsOf = optionalOption(values, "--evaluation-as-of");
@@ -155,6 +174,7 @@ export function parseAppleMusicRecentCommand(args: string[]): AppleMusicRecentCo
     "--execute-live",
     "--sample",
     "--cohort-manifest",
+    "--seed-discovery-manifest",
     "--snapshot",
     "--confirm-live",
     "--evaluation-as-of",
@@ -163,9 +183,14 @@ export function parseAppleMusicRecentCommand(args: string[]): AppleMusicRecentCo
     "--identity-seeds",
   ]);
   const optionValues = new Set(
-    [snapshotPath, cohortManifestPath, confirmation, evaluationAsOf, profile].filter(
-      (value): value is string => Boolean(value),
-    ),
+    [
+      snapshotPath,
+      cohortManifestPath,
+      seedDiscoveryManifestPath,
+      confirmation,
+      evaluationAsOf,
+      profile,
+    ].filter((value): value is string => Boolean(value)),
   );
   const unexpected = values.find((value) => !optionNames.has(value) && !optionValues.has(value));
   if (unexpected) throw new Error(`Unexpected Apple recent argument: ${unexpected}`);
@@ -173,34 +198,37 @@ export function parseAppleMusicRecentCommand(args: string[]): AppleMusicRecentCo
     if (confirmation || (scope === "sample" && evaluationAsOf)) {
       throw new Error("Plan mode does not accept live confirmation or sample evaluation time.");
     }
-    if (scope === "validation_25" && evaluationAsOf !== appleMusicRecentEvaluationTime) {
+    if (scope !== "sample" && evaluationAsOf !== appleMusicRecentEvaluationTime) {
       throw new Error(
-        `Validation plan requires --evaluation-as-of ${appleMusicRecentEvaluationTime}.`,
+        `Manifest plan requires --evaluation-as-of ${appleMusicRecentEvaluationTime}.`,
       );
     }
-    if (scope === "validation_25" && profile !== "optimized_four_source") {
-      throw new Error("The 25-artist validation requires optimized_four_source.");
+    if (scope !== "sample" && profile !== "optimized_four_source") {
+      throw new Error("Manifest discovery requires optimized_four_source.");
     }
     return {
       ...(cohortManifestPath ? { cohortManifestPath } : {}),
       mode: "plan",
       profile,
       scope,
+      ...(seedDiscoveryManifestPath ? { seedDiscoveryManifestPath } : {}),
       snapshotPath,
     };
   }
   const requiredConfirmation =
     scope === "validation_25"
       ? appleMusicRecentValidationConfirmation
-      : appleMusicRecentConfirmation;
+      : scope === "seed_discovery_5"
+        ? appleMusicRecentSeedDiscoveryConfirmation
+        : appleMusicRecentConfirmation;
   if (confirmation !== requiredConfirmation) {
     throw new Error(`Live execution requires --confirm-live ${requiredConfirmation}.`);
   }
   if (evaluationAsOf !== appleMusicRecentEvaluationTime) {
     throw new Error(`Live sample requires --evaluation-as-of ${appleMusicRecentEvaluationTime}.`);
   }
-  if (scope === "validation_25" && profile !== "optimized_four_source") {
-    throw new Error("The 25-artist validation requires optimized_four_source.");
+  if (scope !== "sample" && profile !== "optimized_four_source") {
+    throw new Error("Manifest discovery requires optimized_four_source.");
   }
   return {
     ...(cohortManifestPath ? { cohortManifestPath } : {}),
@@ -209,6 +237,7 @@ export function parseAppleMusicRecentCommand(args: string[]): AppleMusicRecentCo
     mode: "execute_live",
     profile,
     scope,
+    ...(seedDiscoveryManifestPath ? { seedDiscoveryManifestPath } : {}),
     snapshotPath,
   };
 }
@@ -235,22 +264,37 @@ export async function createAppleMusicRecentPlan(
   readSnapshot: (path: string) => Promise<ItunesPilotSnapshot> = readItunesPilotSnapshot,
   validateSnapshot: typeof validateAppleMusicPilotSnapshot = validateAppleMusicPilotSnapshot,
   cohortManifestPath?: string,
+  seedDiscoveryManifestPath?: string,
+  readValidationManifest = readAppleMusicRecentValidationManifest,
+  readSeedDiscoveryManifest = readAppleMusicRecentSeedDiscoveryManifest,
 ): Promise<AppleMusicRecentPlan> {
   const snapshot = await readSnapshot(snapshotPath);
   const cohort = validateSnapshot(snapshot);
   const validationManifest = cohortManifestPath
     ? validateAppleMusicRecentValidationManifest(
-        await readAppleMusicRecentValidationManifest(cohortManifestPath),
+        await readValidationManifest(cohortManifestPath),
         snapshot,
       )
     : undefined;
+  const seedDiscoveryManifest = seedDiscoveryManifestPath
+    ? validateAppleMusicRecentSeedDiscoveryManifest(
+        await readSeedDiscoveryManifest(seedDiscoveryManifestPath),
+        snapshot,
+        validateSnapshot,
+      )
+    : undefined;
+  if (validationManifest && seedDiscoveryManifest) {
+    throw new Error("Only one Apple recent manifest may be supplied.");
+  }
   const artists = validationManifest
     ? validationManifest.artists.map((artist) => artist.name)
-    : [...appleMusicRecentSample];
+    : seedDiscoveryManifest
+      ? seedDiscoveryManifest.artists.map((artist) => artist.name)
+      : [...appleMusicRecentSample];
   for (const name of artists) {
     if (!cohort.some((artist) => artist.name === name)) {
       const snapshotArtist = snapshot.artists.some((artist) => artist.canonicalName === name);
-      if (!validationManifest || !snapshotArtist) {
+      if ((!validationManifest && !seedDiscoveryManifest) || !snapshotArtist) {
         throw new Error(`Recent artist ${name} is absent from the frozen snapshot.`);
       }
     }
@@ -270,43 +314,58 @@ export async function createAppleMusicRecentPlan(
         targetedDetailRequests: 10,
         totalRequests: 160,
       }
-    : profile === "optimized_four_source"
+    : seedDiscoveryManifest
       ? {
           armARequests: 0,
-          armBRequests: 0,
-          armCRequests: 20,
-          freshSearchRequests: 10,
-          freshTopSongsRequests: 10,
+          armBRequests: 10,
+          armCRequests: 10,
+          freshSearchRequests: 5,
+          freshTopSongsRequests: 5,
           mappingRequests: 0,
-          recurringProfileRequests: 40,
+          recurringProfileRequests: 20,
           requestBudget: 25 as const,
-          reusedHistoricalRequests: 20,
+          reusedHistoricalRequests: 0,
           retryReserve: 5,
           targetedDetailRequests: 0,
           totalRequests: 20,
         }
-      : {
-          armARequests: 20,
-          armBRequests: 20,
-          armCRequests: 20,
-          freshSearchRequests: 10,
-          freshTopSongsRequests: 0,
-          mappingRequests: 13,
-          recurringProfileRequests: 60,
-          requestBudget: 100 as const,
-          reusedHistoricalRequests: 0,
-          retryReserve: 10,
-          targetedDetailRequests: 10,
-          totalRequests: 93,
-        };
+      : profile === "optimized_four_source"
+        ? {
+            armARequests: 0,
+            armBRequests: 0,
+            armCRequests: 20,
+            freshSearchRequests: 10,
+            freshTopSongsRequests: 10,
+            mappingRequests: 0,
+            recurringProfileRequests: 40,
+            requestBudget: 25 as const,
+            reusedHistoricalRequests: 20,
+            retryReserve: 5,
+            targetedDetailRequests: 0,
+            totalRequests: 20,
+          }
+        : {
+            armARequests: 20,
+            armBRequests: 20,
+            armCRequests: 20,
+            freshSearchRequests: 10,
+            freshTopSongsRequests: 0,
+            mappingRequests: 13,
+            recurringProfileRequests: 60,
+            requestBudget: 100 as const,
+            reusedHistoricalRequests: 0,
+            retryReserve: 10,
+            targetedDetailRequests: 10,
+            totalRequests: 93,
+          };
   const requestBudget = validationManifest
     ? (175 as const)
-    : profile === "optimized_four_source"
+    : profile === "optimized_four_source" || seedDiscoveryManifest
       ? (25 as const)
       : (100 as const);
   const maximumRuntimeMs = validationManifest
     ? (1_200_000 as const)
-    : profile === "optimized_four_source"
+    : profile === "optimized_four_source" || seedDiscoveryManifest
       ? (300_000 as const)
       : (900_000 as const);
   return {
@@ -323,7 +382,11 @@ export async function createAppleMusicRecentPlan(
     networkRequestsStarted: 0,
     noPagination: true,
     profile,
-    scope: validationManifest ? "validation_25" : "sample",
+    scope: validationManifest
+      ? "validation_25"
+      : seedDiscoveryManifest
+        ? "seed_discovery_5"
+        : "sample",
     snapshotHash: snapshot.snapshotHash,
     storefront: "us",
     writes: 0,

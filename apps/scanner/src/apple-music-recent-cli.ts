@@ -40,10 +40,12 @@ import {
   authorizeAppleMusicRecent,
   runAppleMusicRecent,
   runAppleMusicRecentOptimization,
+  runAppleMusicRecentSeedDiscovery,
   runAppleMusicRecentValidation,
   type AppleMusicRecentStore,
 } from "./apple-music-recent-runner";
 import { readAppleMusicRecentValidationManifest } from "./apple-music-recent-validation";
+import { readAppleMusicRecentSeedDiscoveryManifest } from "./apple-music-recent-seed-discovery";
 import type { AppleMusicPilotStoredEvidence } from "./apple-music-pilot-runner";
 import { importItunesSnapshot } from "./itunes-pilot-repository";
 import { readItunesPilotSnapshot } from "./itunes-pilot-snapshot";
@@ -73,6 +75,7 @@ async function main(): Promise<void> {
           readItunesPilotSnapshot,
           undefined,
           command.cohortManifestPath,
+          command.seedDiscoveryManifestPath,
         ),
         null,
         2,
@@ -166,6 +169,7 @@ async function main(): Promise<void> {
   let tokenManager: AppleDeveloperTokenManager | undefined;
   try {
     const validation = command.scope === "validation_25";
+    const seedDiscovery = command.scope === "seed_discovery_5";
     const requestBudget = validation ? 175 : command.profile === "optimized_four_source" ? 25 : 100;
     const maximumRuntimeMs = validation
       ? 1_200_000
@@ -186,7 +190,7 @@ async function main(): Promise<void> {
           maxRequestsPerRun: requestBudget,
           maxResponseBytes: configuration.appleMusic.maxResponseBytes,
           maximumRuntimeMs,
-          maxRetries: validation ? 1 : 2,
+          maxRetries: validation || seedDiscovery ? 1 : 2,
           minRequestIntervalMs: 1_100,
           persistence: createAppleMusicRequestPersistence(connection.db, {
             runLeaseToken: leaseToken,
@@ -206,9 +210,16 @@ async function main(): Promise<void> {
           ...common,
           manifest: await readAppleMusicRecentValidationManifest(command.cohortManifestPath!),
         })
-      : command.profile === "optimized_four_source"
-        ? await runAppleMusicRecentOptimization(common)
-        : await runAppleMusicRecent(common);
+      : seedDiscovery
+        ? await runAppleMusicRecentSeedDiscovery({
+            ...common,
+            manifest: await readAppleMusicRecentSeedDiscoveryManifest(
+              command.seedDiscoveryManifestPath!,
+            ),
+          })
+        : command.profile === "optimized_four_source"
+          ? await runAppleMusicRecentOptimization(common)
+          : await runAppleMusicRecent(common);
     process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
   } finally {
     await connection.client.end();

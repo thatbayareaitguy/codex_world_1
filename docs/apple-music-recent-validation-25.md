@@ -1,8 +1,28 @@
 # Apple Music Recent Validation, 25 Artists
 
-Date: 2026-07-31
+Date: 2026-08-03
 
 ## Decision
+
+The pre-live checkpoint for the five newly confirmed public-ID seed artists is implemented and
+credential-free verified. A tracked manifest freezes ZHU, Don Diablo, SISTO, William Black, and
+YUSSI against the existing snapshot and eight in-scope releases. The new
+`seed_discovery_5` scope requires confirmation `APPLE_RECENT_SEED_DISCOVERY_5`, the existing
+`optimized_four_source` profile, existing durable confirmed mappings, and the fixed evaluation
+time. It plans exactly 20 fresh discovery starts under a 25-start, five-minute gate with
+concurrency one and at least 1,100 milliseconds between starts.
+
+This scope cannot map or remap an artist. It fails before HTTP initialization if any of the five
+mappings is unavailable, never saves a mapping, and uses a separate run-scoped request identity
+so historical discovery cache rows cannot satisfy freshness. The only permitted operations per
+artist are first-page `singles`, first-page `full-albums`, first-page `top-songs`, and one bounded
+album-and-song remix search. Pagination, detail requests, and every other artist and provider are
+excluded. The credential-free plan reported zero requests and writes. Live execution has not yet
+started at this checkpoint, so the historical Apple HTTP-start total remains 202.
+
+The prior 13-artist mapping-only bootstrap remains the source of the five durable
+`existing_id_confirmed` mappings. It raised safe mapping from 12 to 17 of 25. The eight remaining
+ambiguous identities and all earlier discovery evidence remain unchanged.
 
 The 13-artist mapping-only bootstrap completed. The independent call-graph finding was confirmed:
 the existing

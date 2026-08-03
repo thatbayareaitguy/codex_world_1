@@ -2,6 +2,23 @@
 
 ## Current state
 
+The pre-live checkpoint for discovery on the five newly confirmed seed artists is implemented.
+The exact scope is ZHU, Don Diablo, SISTO, William Black, and YUSSI, representing eight frozen
+in-scope releases. A tracked manifest and exact confirmation gate authorize only the existing
+`optimized_four_source` profile for these artists. The credential-free plan is 20 fresh starts
+under a 25-start and five-minute ceiling, with concurrency one and at least 1,100 milliseconds
+between starts.
+
+All five durable `existing_id_confirmed` mappings were verified from isolated Apple state. The
+new runner fails before HTTP initialization if a mapping is missing, performs no mapping write,
+and cannot invoke artist lookup, artist search, identity evidence, pagination, or detail methods.
+It uses a separate run-scoped cache identity and allows only `singles`, `full-albums`, Top Songs,
+and the existing bounded remix search. The plan made zero requests and writes. The live run has
+not started, historical Apple starts remain 202, and `APPLE_MUSIC_ENABLED=false`.
+
+The five-artist results and recomputed 25-artist validation are pending the separately gated live
+step. Production integration and merge remain unauthorized.
+
 The 13-artist mapping-only bootstrap is implemented and the authorized live run is complete. The
 independent unused-resolver finding was confirmed. The shared catalog-evidence
 resolver previously had only test callers. The mapping bootstrap was plan-only, and the normal

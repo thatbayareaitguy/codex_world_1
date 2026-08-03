@@ -1,8 +1,27 @@
 # Apple Music Recent-Release MVP
 
-Date: 2026-07-31
+Date: 2026-08-03
 
 ## Authorization and boundary
+
+The branch now has a narrow pre-live discovery scope for the five newly confirmed seed artists.
+It accepts only the tracked `apple-music-recent-seed-discovery-manifest.json`, fixed evaluation
+time, `optimized_four_source`, and confirmation `APPLE_RECENT_SEED_DISCOVERY_5`. The manifest
+contains names, frozen release counts, selection reason, snapshot hash, and evaluation time. It
+contains no Apple catalog identifier.
+
+The scope prevalidates all five durable mappings before creating the run or HTTP client and does
+not persist a mapping. It then reuses the existing optimized runner unchanged for first-page
+`singles`, `full-albums`, `top-songs`, and one bounded remix search per artist. A new run identity
+forces all 20 first pages to refresh. There is no pagination or detail request. The hard limits
+are 25 starts, five minutes, concurrency one, and a 1,100 millisecond pacing floor. Historical
+starts remain 202 because the live command has not run at this checkpoint.
+
+The planned live form is:
+
+```powershell
+pnpm apple:recent -- --execute-live --confirm-live APPLE_RECENT_SEED_DISCOVERY_5 --seed-discovery-manifest apps/scanner/src/apple-music-recent-seed-discovery-manifest.json --snapshot <external-snapshot-path> --profile optimized_four_source --evaluation-as-of 2026-07-29T23:59:59Z
+```
 
 The mapping-only bootstrap execution path is implemented and its authorized 13-artist run is
 complete. It reuses the existing catalog-evidence resolver for the exact two-candidate ambiguity

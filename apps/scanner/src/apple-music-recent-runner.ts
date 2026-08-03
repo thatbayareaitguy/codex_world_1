@@ -41,17 +41,25 @@ import {
   type AppleMusicRecentValidationManifest,
   validateAppleMusicRecentValidationManifest,
 } from "./apple-music-recent-validation";
+import {
+  appleMusicRecentSeedDiscoveryArtists,
+  appleMusicRecentSeedDiscoveryConfirmation,
+  type AppleMusicRecentSeedDiscoveryManifest,
+  validateAppleMusicRecentSeedDiscoveryManifest,
+} from "./apple-music-recent-seed-discovery";
 
 const authorizationMarker = Symbol("apple-music-recent-authorization");
 
 export interface AppleMusicRecentAuthorization {
   readonly [authorizationMarker]: true;
   readonly confirmation:
-    typeof appleMusicRecentConfirmation | typeof appleMusicRecentValidationConfirmation;
+    | typeof appleMusicRecentConfirmation
+    | typeof appleMusicRecentSeedDiscoveryConfirmation
+    | typeof appleMusicRecentValidationConfirmation;
   readonly evaluationAsOf: typeof appleMusicRecentEvaluationTime;
   readonly persistentProviderEnabled: false;
   readonly storefront: "us";
-  readonly scope: "sample" | "validation_25";
+  readonly scope: "sample" | "seed_discovery_5" | "validation_25";
 }
 
 export interface AppleMusicRecentClient {
@@ -199,7 +207,10 @@ export interface AppleMusicRecentOptimizationSummary {
   }>;
   evidence: AppleMusicPilotStoredEvidence;
   evaluationAsOf: string;
-  mode: "recent_optimized_four_source" | "recent_optimized_validation_25";
+  mode:
+    | "recent_optimized_four_source"
+    | "recent_optimized_seed_discovery_5"
+    | "recent_optimized_validation_25";
   requestBudget: 25 | 175;
   runId: string;
   status: "completed" | "controlled_partial" | "failed";
@@ -214,14 +225,16 @@ export function authorizeAppleMusicRecent(input: {
   otherProvidersDisabled: boolean;
   persistentAppleMusicEnabled: string | undefined;
   storefront: string;
-  scope?: "sample" | "validation_25";
+  scope?: "sample" | "seed_discovery_5" | "validation_25";
 }): AppleMusicRecentAuthorization {
   if (!input.executeLive) throw new Error("Live Apple recent execution requires --execute-live.");
   const scope = input.scope ?? "sample";
   const requiredConfirmation =
     scope === "validation_25"
       ? appleMusicRecentValidationConfirmation
-      : appleMusicRecentConfirmation;
+      : scope === "seed_discovery_5"
+        ? appleMusicRecentSeedDiscoveryConfirmation
+        : appleMusicRecentConfirmation;
   if (input.confirmation !== requiredConfirmation) {
     throw new Error(`Live execution requires --confirm-live ${requiredConfirmation}.`);
   }
@@ -476,6 +489,42 @@ export async function runAppleMusicRecentValidation(input: {
   });
 }
 
+export async function runAppleMusicRecentSeedDiscovery(input: {
+  authorization: AppleMusicRecentAuthorization;
+  createClient(runId: string, leaseToken: string): AppleMusicRecentClient;
+  implementationCommit: string;
+  manifest: AppleMusicRecentSeedDiscoveryManifest;
+  snapshot: ItunesPilotSnapshot;
+  store: AppleMusicRecentStore;
+  validateSnapshot?: typeof validateAppleMusicPilotSnapshot;
+}): Promise<AppleMusicRecentOptimizationSummary> {
+  assertAuthorization(input.authorization);
+  if (input.authorization.scope !== "seed_discovery_5") {
+    throw new Error("The seed-discovery runner requires seed_discovery_5 authorization.");
+  }
+  const manifest = validateAppleMusicRecentSeedDiscoveryManifest(
+    input.manifest,
+    input.snapshot,
+    input.validateSnapshot,
+  );
+  const entries = manifest.artists.map((manifestArtist) => {
+    const artist = input.snapshot.artists.find(
+      (candidate) => candidate.canonicalName === manifestArtist.name,
+    );
+    if (!artist) throw new Error(`Seed-discovery artist ${manifestArtist.name} is missing.`);
+    return {
+      canonicalArtistId: artist.canonicalArtistId,
+      category: "positive_release" as const,
+      name: artist.canonicalName,
+      requiresSearch: false,
+    };
+  });
+  return runAppleMusicRecentOptimizationAfterValidation(input, entries, {
+    confirmedSubset: true,
+    freshSupplementOnly: false,
+  });
+}
+
 export async function runAppleMusicRecentOptimizationAfterValidation(
   input: {
     authorization: AppleMusicRecentAuthorization;
@@ -485,11 +534,19 @@ export async function runAppleMusicRecentOptimizationAfterValidation(
     store: AppleMusicRecentStore;
   },
   entries: AppleMusicPilotPlanArtist[],
-  options: { freshSupplementOnly: boolean; validation?: boolean },
+  options: { confirmedSubset?: boolean; freshSupplementOnly: boolean; validation?: boolean },
 ): Promise<AppleMusicRecentOptimizationSummary> {
   assertAuthorization(input.authorization);
   if (options.validation) {
     if (entries.length !== 25) throw new Error("Validation requires exactly 25 artists.");
+  } else if (options.confirmedSubset) {
+    if (
+      entries.length !== appleMusicRecentSeedDiscoveryArtists.length ||
+      entries.some((entry, index) => entry.name !== appleMusicRecentSeedDiscoveryArtists[index]) ||
+      input.authorization.scope !== "seed_discovery_5"
+    ) {
+      throw new Error("Seed discovery requires the exact ordered five-artist scope.");
+    }
   } else {
     assertExactRecentSample(entries);
   }
@@ -553,11 +610,13 @@ export async function runAppleMusicRecentOptimizationAfterValidation(
                 throw new Error("A prevalidated Apple mapping was lost.");
               })(),
           );
-      await input.store.saveMapping({
-        canonicalArtistId: source.canonicalArtistId,
-        decision,
-        runId: run.id,
-      });
+      if (!options.confirmedSubset) {
+        await input.store.saveMapping({
+          canonicalArtistId: source.canonicalArtistId,
+          decision,
+          runId: run.id,
+        });
+      }
       const groundTruth = scopedAppleMusicRecentGroundTruth(input.snapshot, source, evaluationEnd);
       if (!decision.selected) {
         artists.push({
@@ -648,7 +707,9 @@ export async function runAppleMusicRecentOptimizationAfterValidation(
     status = "completed";
     stopReason = options.validation
       ? "recent_optimized_validation_25_completed"
-      : "recent_optimized_sample_completed";
+      : options.confirmedSubset
+        ? "recent_optimized_seed_discovery_5_completed"
+        : "recent_optimized_sample_completed";
   } catch (error) {
     const classified = classifyTerminal(error);
     status = classified.status;
@@ -662,7 +723,9 @@ export async function runAppleMusicRecentOptimizationAfterValidation(
         evaluationAsOf: input.authorization.evaluationAsOf,
         mode: options.validation
           ? "recent_optimized_validation_25"
-          : "recent_optimized_four_source",
+          : options.confirmedSubset
+            ? "recent_optimized_seed_discovery_5"
+            : "recent_optimized_four_source",
         requestBudget,
         runId: run.id,
         status,
@@ -1162,7 +1225,9 @@ function assertAuthorization(value: AppleMusicRecentAuthorization): void {
   const requiredConfirmation =
     value.scope === "validation_25"
       ? appleMusicRecentValidationConfirmation
-      : appleMusicRecentConfirmation;
+      : value.scope === "seed_discovery_5"
+        ? appleMusicRecentSeedDiscoveryConfirmation
+        : appleMusicRecentConfirmation;
   if (
     value[authorizationMarker] !== true ||
     value.confirmation !== requiredConfirmation ||

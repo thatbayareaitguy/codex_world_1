@@ -1,0 +1,33 @@
+{
+  "artists": [
+    {
+      "frozenReleaseCount": 1,
+      "name": "ZHU",
+      "selectionReason": "newly_confirmed_public_id_seed"
+    },
+    {
+      "frozenReleaseCount": 2,
+      "name": "Don Diablo",
+      "selectionReason": "newly_confirmed_public_id_seed"
+    },
+    {
+      "frozenReleaseCount": 3,
+      "name": "SISTO",
+      "selectionReason": "newly_confirmed_public_id_seed"
+    },
+    {
+      "frozenReleaseCount": 1,
+      "name": "William Black",
+      "selectionReason": "newly_confirmed_public_id_seed"
+    },
+    {
+      "frozenReleaseCount": 1,
+      "name": "YUSSI",
+      "selectionReason": "newly_confirmed_public_id_seed"
+    }
+  ],
+  "evaluationAsOf": "2026-07-29T23:59:59Z",
+  "seed": "apple-recent-seed-discovery-5-v1",
+  "snapshotHash": "48259f7e2016aa8bbbabf4baa7e3baf8d4f9e9b53b413dab56f9d4fc70e1278a",
+  "version": 1
+}

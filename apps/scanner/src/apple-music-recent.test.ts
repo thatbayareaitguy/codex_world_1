@@ -29,6 +29,7 @@ import {
   resolveColdStartAppleMusicMapping,
   runAppleMusicRecentAfterValidation,
   runAppleMusicRecentOptimizationAfterValidation,
+  runAppleMusicRecentSeedDiscovery,
   type AppleMusicRecentClient,
   type AppleMusicRecentStore,
 } from "./apple-music-recent-runner";
@@ -38,6 +39,12 @@ import type {
   ItunesPilotSnapshot,
   ItunesPilotSnapshotArtist,
 } from "./itunes-pilot-snapshot";
+import {
+  appleMusicRecentSeedDiscoveryArtists,
+  appleMusicRecentSeedDiscoveryConfirmation,
+  deriveAppleMusicRecentSeedDiscoveryManifest,
+  validateAppleMusicRecentSeedDiscoveryManifest,
+} from "./apple-music-recent-seed-discovery";
 
 const end = new Date("2026-07-29T23:59:59Z");
 const window = appleMusicRecentWindow(end);
@@ -171,6 +178,75 @@ describe("Apple recent command gate", () => {
         "snapshot.json",
       ]),
     ).toThrow("exactly one");
+  });
+
+  it("requires the exact five-artist seed-discovery manifest and confirmation", async () => {
+    const base = [
+      "--execute-live",
+      "--snapshot",
+      "snapshot.json",
+      "--seed-discovery-manifest",
+      "seed-discovery.json",
+      "--profile",
+      "optimized_four_source",
+      "--evaluation-as-of",
+      "2026-07-29T23:59:59Z",
+    ];
+    expect(() => parseAppleMusicRecentCommand(base)).toThrow(
+      appleMusicRecentSeedDiscoveryConfirmation,
+    );
+    expect(
+      parseAppleMusicRecentCommand([
+        ...base,
+        "--confirm-live",
+        appleMusicRecentSeedDiscoveryConfirmation,
+      ]),
+    ).toMatchObject({
+      mode: "execute_live",
+      scope: "seed_discovery_5",
+      seedDiscoveryManifestPath: "seed-discovery.json",
+    });
+
+    const value = seedDiscoveryFixture();
+    expect(
+      validateAppleMusicRecentSeedDiscoveryManifest(
+        value.manifest,
+        value.snapshot,
+        () => value.entries,
+      ),
+    ).toEqual(value.manifest);
+    const readSnapshot = vi.fn(() => Promise.resolve(value.snapshot));
+    const readManifest = vi.fn(() => Promise.resolve(value.manifest));
+    const plan = await createAppleMusicRecentPlan(
+      "snapshot.json",
+      "optimized_four_source",
+      readSnapshot,
+      () => value.entries,
+      undefined,
+      "seed-discovery.json",
+      vi.fn(),
+      readManifest,
+    );
+    expect(plan).toMatchObject({
+      artists: appleMusicRecentSeedDiscoveryArtists,
+      forecast: {
+        freshSearchRequests: 5,
+        freshTopSongsRequests: 5,
+        mappingRequests: 0,
+        requestBudget: 25,
+        reusedHistoricalRequests: 0,
+        totalRequests: 20,
+      },
+      limits: {
+        maximumRuntimeMs: 300_000,
+        requestBudget: 25,
+      },
+      networkRequestsStarted: 0,
+      scope: "seed_discovery_5",
+      writes: 0,
+    });
+    expect(readSnapshot).toHaveBeenCalledOnce();
+    expect(readManifest).toHaveBeenCalledOnce();
   });
 
   it("parses mapping-bootstrap plan mode without a discovery cohort", () => {
@@ -812,6 +888,89 @@ describe("Apple recent bounded runner", () => {
     expect(client.searchArtists).not.toHaveBeenCalled();
   });
 
+  it("runs four fresh discovery operations for only the five confirmed seed artists", async () => {
+    const value = seedDiscoveryFixture();
+    const client = recentClient();
+    const store = recentStore();
+    const summary = await runAppleMusicRecentSeedDiscovery({
+      authorization: recentSeedDiscoveryAuthorization(),
+      createClient: () => client,
+      implementationCommit: "a".repeat(40),
+      manifest: value.manifest,
+      snapshot: value.snapshot,
+      store,
+      validateSnapshot: () => value.entries,
+    });
+    expect(summary).toMatchObject({
+      mode: "recent_optimized_seed_discovery_5",
+      requestBudget: 25,
+      status: "completed",
+      stopReason: "recent_optimized_seed_discovery_5_completed",
+    });
+    expect(summary.artists.map((artist) => artist.artist)).toEqual(
+      appleMusicRecentSeedDiscoveryArtists,
+    );
+    expect(client.getArtistViewFirstPage).toHaveBeenCalledTimes(10);
+    expect(client.getArtistViewFirstPage.mock.calls.map((call) => call[1])).toEqual(
+      Array.from({ length: 5 }, () => ["singles", "full-albums"]).flat(),
+    );
+    expect(client.getArtistTopSongsFirstPage).toHaveBeenCalledTimes(5);
+    expect(client.searchRecentRemixes).toHaveBeenCalledTimes(5);
+    expect(client.getArtist).not.toHaveBeenCalled();
+    expect(client.searchArtists).not.toHaveBeenCalled();
+    expect(client.getArtistAlbumsFirstPage).not.toHaveBeenCalled();
+    expect(store.findConfirmedMapping).toHaveBeenCalledTimes(5);
+    expect(store.saveMapping).not.toHaveBeenCalled();
+    expect(store.releaseLease).toHaveBeenCalledOnce();
+  });
+
+  it("fails seed discovery before run or HTTP initialization when a mapping is missing", async () => {
+    const value = seedDiscoveryFixture();
+    const store = recentStore();
+    store.findConfirmedMapping.mockResolvedValueOnce(undefined);
+    const createClient = vi.fn(() => recentClient());
+    await expect(
+      runAppleMusicRecentSeedDiscovery({
+        authorization: recentSeedDiscoveryAuthorization(),
+        createClient,
+        implementationCommit: "a".repeat(40),
+        manifest: value.manifest,
+        snapshot: value.snapshot,
+        store,
+        validateSnapshot: () => value.entries,
+      }),
+    ).rejects.toThrow("confirmed Apple mapping");
+    expect(store.createRun).not.toHaveBeenCalled();
+    expect(createClient).not.toHaveBeenCalled();
+    expect(store.saveMapping).not.toHaveBeenCalled();
+  });
+
+  it("releases the seed-discovery lease on a terminal provider failure", async () => {
+    const value = seedDiscoveryFixture();
+    const client = recentClient();
+    client.getArtistViewFirstPage.mockRejectedValueOnce(
+      new AppleMusicClientError("unauthorized", "unauthorized", 401),
+    );
+    const store = recentStore();
+    const summary = await runAppleMusicRecentSeedDiscovery({
+      authorization: recentSeedDiscoveryAuthorization(),
+      createClient: () => client,
+      implementationCommit: "a".repeat(40),
+      manifest: value.manifest,
+      snapshot: value.snapshot,
+      store,
+      validateSnapshot: () => value.entries,
+    });
+    expect(summary).toMatchObject({
+      status: "controlled_partial",
+      stopReason: "authentication_http_401",
+    });
+    expect(client.getArtistViewFirstPage).toHaveBeenCalledOnce();
+    expect(client.getArtistTopSongsFirstPage).not.toHaveBeenCalled();
+    expect(client.searchRecentRemixes).not.toHaveBeenCalled();
+    expect(store.releaseLease).toHaveBeenCalledOnce();
+  });
+
   it("runs only the two fresh supplement requests in the authorized live experiment", async () => {
     const entries = recentEntries();
     const client = recentClient();
@@ -1093,6 +1252,18 @@ function recentValidationAuthorization() {
   });
 }
 
+function recentSeedDiscoveryAuthorization() {
+  return authorizeAppleMusicRecent({
+    confirmation: appleMusicRecentSeedDiscoveryConfirmation,
+    evaluationAsOf: "2026-07-29T23:59:59Z",
+    executeLive: true,
+    otherProvidersDisabled: true,
+    persistentAppleMusicEnabled: "false",
+    scope: "seed_discovery_5",
+    storefront: "us",
+  });
+}
+
 function recentEntries(): AppleMusicPilotPlanArtist[] {
   const names = [
     "NURKO",
@@ -1121,6 +1292,45 @@ function validationEntries(): AppleMusicPilotPlanArtist[] {
     name: `Validation Artist ${index + 1}`,
     requiresSearch: true,
   }));
+}
+
+function seedDiscoveryFixture() {
+  const releaseCounts = new Map<string, number>([
+    ["ZHU", 1],
+    ["Don Diablo", 2],
+    ["SISTO", 3],
+    ["William Black", 1],
+    ["YUSSI", 1],
+  ]);
+  const entries: AppleMusicPilotPlanArtist[] = appleMusicRecentSeedDiscoveryArtists.map(
+    (name, index) => ({
+      canonicalArtistId: `40000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      category: "positive_release",
+      name,
+      requiresSearch: false,
+    }),
+  );
+  const snapshot = recentSnapshot(entries);
+  snapshot.groundTruthReleases = entries.flatMap((entry) =>
+    Array.from({ length: releaseCounts.get(entry.name) ?? 0 }, (_, index) => ({
+      canonicalArtistId: entry.canonicalArtistId,
+      canonicalReleaseId: `release-${entry.name}-${index + 1}`,
+      creditedArtists: [],
+      feedEligible: true,
+      normalizedTitle: normalizeText(`Release ${entry.name} ${index + 1}`),
+      releaseDate: `2026-07-${String(index + 1).padStart(2, "0")}`,
+      releaseDatePrecision: "day",
+      releaseType: "single",
+      spotifyReleaseId: `spotify-release-${entry.name}-${index + 1}`,
+      title: `Release ${entry.name} ${index + 1}`,
+      tracks: [],
+    })),
+  );
+  return {
+    entries,
+    manifest: deriveAppleMusicRecentSeedDiscoveryManifest(snapshot),
+    snapshot,
+  };
 }
 
 function recentSnapshot(entries: AppleMusicPilotPlanArtist[]): ItunesPilotSnapshot {
