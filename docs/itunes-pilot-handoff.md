@@ -1,6 +1,34 @@
 # iTunes Pilot Handoff
 
-Updated: 2026-07-30
+Updated: 2026-08-03
+
+## Full-watchlist Apple identity seed export
+
+The isolated branch now contains a deterministic schema-version-1 public iTunes artist-ID
+candidate export for all 593 active watched artists. The machine artifact is
+`artifacts/apple-music-identity-seeds-v1.json`; the manual-review report is
+`docs/apple-music-identity-seed-export.md`; and the implementation contract is
+`docs/apple-music-identity-seed-export-design.md`.
+
+The export reused terminal cached artist-search evidence for all 593 artists and 13 previously
+corrected catalog-evidence mappings. It made zero new iTunes requests and no database writes.
+Historical network-request count remained 880, with no active run, lease, or cooldown after
+execution.
+
+Classification is 307 high-confidence seeds, 13 evidence-supported seeds, 272 ambiguous seeds,
+zero no-candidate rows, and one manual-review-required row. The combined Apple-side or human
+review queue is 273. No ID was forced. These are candidate public identities, not Apple-confirmed
+mappings.
+
+Input watchlist hash:
+`6006f18385e161c1acee5340dcb23ac46688f21b14e3b0e1de85e87e4ed586b0`.
+Artifact self-hash:
+`0243f3d28d6cb51ec0474da7486f8d73c66fd13398d17601d021c876ee0f8660`.
+Exact parsing, hash, count, numeric-ID, alternate-bound, and sanitization validation passed.
+
+No Apple, Spotify, MusicBrainz, SoundCloud, Reddit, YouTube, or other provider was contacted.
+Apple validation, production integration, scheduling, feed changes, playlist behavior, merging,
+and provider classification remain unauthorized.
 
 ## Adaptive identity-resolution milestone
 
