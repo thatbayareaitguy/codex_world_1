@@ -4,23 +4,29 @@ Updated: 2026-08-03
 
 ## Repository state
 
-The branch is at the pre-live checkpoint for exact five-artist discovery after the mapping-only
-bootstrap. A tracked manifest freezes ZHU, Don Diablo, SISTO, William Black, and YUSSI, with eight
-frozen in-scope releases. The new `seed_discovery_5` scope requires confirmation
-`APPLE_RECENT_SEED_DISCOVERY_5`, the fixed evaluation time, and `optimized_four_source`.
+The exact five-artist discovery run after the mapping-only bootstrap is complete. Its tracked
+manifest froze ZHU, Don Diablo, SISTO, William Black, and YUSSI with eight in-scope releases. The
+`seed_discovery_5` scope required confirmation `APPLE_RECENT_SEED_DISCOVERY_5`, the fixed
+evaluation time, existing durable mappings, and `optimized_four_source`.
 
-All five durable `existing_id_confirmed` mappings were verified from isolated Apple state. The
-runner requires them before creating its run or HTTP client, performs no mapping write, and calls
-only first-page `singles`, `full-albums`, `top-songs`, and one bounded remix search per artist. A
-separate run identity forces fresh discovery. The credential-free plan forecasts 20 starts under
-a 25-start, five-minute, concurrency-one gate with 1,100 millisecond minimum pacing, zero
-pagination, and zero detail requests. Plan mode made zero requests and writes.
+All five durable `existing_id_confirmed` mappings were reused. The run called only first-page
+`singles`, `full-albums`, `top-songs`, and one bounded remix search per artist. It made 20 fresh
+starts in 21,528 milliseconds, with 19 HTTP 200 responses and one nonterminal SISTO
+`full-albums` HTTP 404. Minimum start spacing was 1,104 milliseconds and concurrency was one.
+There were zero retries, cache hits, mapping requests, identity searches, pagination requests,
+detail requests, or other-provider requests.
 
-Historical Apple HTTP starts remain 202 because this live step has not begun. The provider is
-disabled, and isolated state has no active run, lease, cooldown, or queue. The full credential-free
-verification and pre-live commit must complete before the live command. After the first live
-request, only the four authorized handoff and evaluation documents may change. Production
-integration and merge remain unauthorized.
+All eight newly evaluable releases matched exactly. Combined 25-artist evidence is 17 of 21
+full-cohort exact recall, 17 of 20 mapped-artist exact recall, 12 of 13 primary recall, and 3 of 8
+remix recall. Mapping is 17 of 25. One Alok release remains mapping-unevaluable, the three prior
+catalog misses remain, and matcher misses and invalid accepted candidates are zero. Historical
+Apple starts are 222. The provider is disabled with no active run, lease, cooldown, or queue.
+
+The bounded thresholds were met. The next separate milestone should request a sanitized
+full-watchlist public Apple/iTunes artist-ID candidate artifact from the free-iTunes workstream.
+Production integration and merge remain unauthorized.
+
+## Mapping bootstrap history
 
 The mapping-only 13-artist bootstrap is implemented and its authorized live run completed. The
 existing catalog-evidence resolver is now called by both the fixed-candidate bootstrap and the
@@ -53,11 +59,10 @@ evidence pages, and 21 forecast starts. Immediately before checkpointing, the is
 still recorded 181 historical starts, no active run, lease, cooldown, or queue, and none of the
 exact 13 artists had an existing durable mapping.
 
-The next separate milestone should request a sanitized full-watchlist public-ID candidate artifact
-from the free-iTunes branch. Five of five approved seeds validated, while the two-candidate Top
-Songs evidence confirmed zero of eight. The Apple branch must treat future IDs as immutable
-candidates and independently validate them. Production integration, release discovery rerun, and
-merge remain unauthorized.
+That bootstrap established the five durable mappings used by the completed discovery run. The
+Apple branch must treat future IDs as immutable candidates and independently validate them.
+
+## Previous validation history
 
 The isolated `pnpm apple:recent` MVP and its `optimized_four_source` profile are implemented.
 Feature-credit and terminal EP normalization are corrected credential-free. The ten-artist
@@ -67,10 +72,10 @@ evidence replays at 10 of 10 exact, and the 25-artist evidence replays at 9 of 2
 
 - Worktree: `C:\Users\taysh\Documents\Codex\codex_world_1_apple`
 - Branch: `codex/apple-music-discovery`
-- Normalization milestone starting checkpoint: `74f6e840d3477fd5eb904d0ff55faf9e3f4b761c`
+- Five-artist milestone starting checkpoint: `92de802140ff7a9c7c8aca675492f09a6629d045`
 - Upstream: `origin/codex/apple-music-discovery`
-- Latest live run: `completed/mapping_bootstrap_completed`
-- Current historical Apple HTTP-start total: 202
+- Latest live run: `completed/recent_optimized_seed_discovery_5_completed`
+- Current historical Apple HTTP-start total: 222
 - Provider state: disabled, no active run, lease, cooldown, or queue
 
 The 25-artist validation completed with 12 search-confirmed and 13 ambiguous mappings. The

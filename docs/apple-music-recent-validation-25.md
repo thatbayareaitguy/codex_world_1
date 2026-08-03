@@ -4,25 +4,28 @@ Date: 2026-08-03
 
 ## Decision
 
-The pre-live checkpoint for the five newly confirmed public-ID seed artists is implemented and
-credential-free verified. A tracked manifest freezes ZHU, Don Diablo, SISTO, William Black, and
-YUSSI against the existing snapshot and eight in-scope releases. The new
-`seed_discovery_5` scope requires confirmation `APPLE_RECENT_SEED_DISCOVERY_5`, the existing
-`optimized_four_source` profile, existing durable confirmed mappings, and the fixed evaluation
-time. It plans exactly 20 fresh discovery starts under a 25-start, five-minute gate with
-concurrency one and at least 1,100 milliseconds between starts.
+The bounded discovery run for ZHU, Don Diablo, SISTO, William Black, and YUSSI is complete. It
+reused the five durable `existing_id_confirmed` mappings and found all eight newly evaluable frozen
+releases as exact matches. Corrected full-cohort exact recall is now 17 of 21, or 81.0%, and
+mapped-artist exact recall is 17 of 20, or 85.0%. Combined primary recall is 12 of 13, or 92.3%.
+Combined remix recall is 3 of 8, or 37.5%. Matcher misses and invalid accepted candidates remain
+zero.
 
-This scope cannot map or remap an artist. It fails before HTTP initialization if any of the five
-mappings is unavailable, never saves a mapping, and uses a separate run-scoped request identity
-so historical discovery cache rows cannot satisfy freshness. The only permitted operations per
-artist are first-page `singles`, first-page `full-albums`, first-page `top-songs`, and one bounded
-album-and-song remix search. Pagination, detail requests, and every other artist and provider are
-excluded. The credential-free plan reported zero requests and writes. Live execution has not yet
-started at this checkpoint, so the historical Apple HTTP-start total remains 202.
+The live run made exactly 20 fresh starts under the 25-start and five-minute gates: five each for
+`singles`, `full-albums`, `top-songs`, and the bounded album-and-song remix search. Nineteen
+responses were HTTP 200. SISTO `full-albums` returned the existing nonterminal
+`unavailable_404` classification, after which the run continued. Runtime was 21,528 milliseconds,
+minimum start spacing was 1,104 milliseconds, concurrency was one, and there were zero retries,
+cache hits, pagination requests, detail requests, mapping requests, or other-provider requests.
+The historical Apple HTTP-start total is now 222.
 
-The prior 13-artist mapping-only bootstrap remains the source of the five durable
-`existing_id_confirmed` mappings. It raised safe mapping from 12 to 17 of 25. The eight remaining
-ambiguous identities and all earlier discovery evidence remain unchanged.
+The thresholds for this bounded validation were met. One Alok release remains mapping-unevaluable,
+and the three prior mapped catalog misses remain. The next separate milestone should occur in the
+free-iTunes workstream to produce a sanitized full-watchlist public Apple/iTunes artist-ID
+candidate artifact. Apple must independently validate every future candidate. Production
+integration and merge remain unauthorized.
+
+### Earlier mapping and normalization checkpoints
 
 The 13-artist mapping-only bootstrap completed. The independent call-graph finding was confirmed:
 the existing
@@ -79,14 +82,14 @@ was not attempted because mapping remained ambiguous.
 | Artist          | Stratum                 | Mapping          | Truth | Requests | Endpoints | Accepted or review result                                   |
 | --------------- | ----------------------- | ---------------- | ----: | -------: | --------- | ----------------------------------------------------------- |
 | SVDDEN DEATH    | positive                | search-confirmed |     3 |        4 | R/R/R/R   | `Dissent`, exact; two catalog misses                        |
-| ZHU             | positive                | ambiguous        |     1 |        0 | NA        | one mapping-unevaluable album                               |
+| ZHU             | positive                | existing-ID      |     1 |        4 | R/R/R/R   | `BLACK MIDAS DLXZZZ`, exact                                 |
 | Alok            | positive                | ambiguous        |     1 |        0 | NA        | one mapping-unevaluable EP                                  |
-| Don Diablo      | positive                | ambiguous        |     2 |        0 | NA        | two mapping-unevaluable releases                            |
-| SISTO           | positive                | ambiguous        |     3 |        0 | NA        | three mapping-unevaluable singles                           |
+| Don Diablo      | positive                | existing-ID      |     2 |        4 | R/R/R/R   | `EPA (Don Diablo Remix)` and `Gangsta Lean`, exact          |
+| SISTO           | positive                | existing-ID      |     3 |        4 | R/404/R/R | `FLESH PIT`, `CHOKEPOINT`, and `DEATHTOUCH`, exact          |
 | Virus Syndicate | positive                | search-confirmed |     2 |        4 | R/R/R/R   | two exact after corrected feature-marker normalization      |
 | Dr. Ozi         | positive                | search-confirmed |     2 |        4 | R/R/R/R   | two exact after corrected feature-marker normalization      |
-| William Black   | positive                | ambiguous        |     1 |        0 | NA        | one mapping-unevaluable single                              |
-| YUSSI           | positive                | ambiguous        |     1 |        0 | NA        | one mapping-unevaluable single                              |
+| William Black   | positive                | existing-ID      |     1 |        4 | R/R/R/R   | `Flutters`, exact                                           |
+| YUSSI           | positive                | existing-ID      |     1 |        4 | R/R/R/R   | `Hold On`, exact                                            |
 | Leotrix         | positive                | search-confirmed |     3 |        4 | R/R/R/R   | two exact; EP representation deduplicated; one catalog miss |
 | Babsy.          | negative                | ambiguous        |     0 |        0 | NA        | no candidate                                                |
 | Bad Chicken!    | negative                | search-confirmed |     0 |        4 | R/404/R/R | no accepted candidate                                       |
@@ -104,44 +107,45 @@ was not attempted because mapping remained ambiguous.
 | 12th Planet     | identity/catalog stress | ambiguous        |     0 |        0 | NA        | no candidate                                                |
 | 4B              | identity/catalog stress | ambiguous        |     0 |        0 | NA        | no candidate                                                |
 
-All 12 mapped artists used four fresh discovery starts. The other 13 artists stopped after a safe
-ambiguous mapping outcome. No no-match or rejected mapping occurred.
+The original 12 mapped artists retain their stored four-source evidence. The five newly confirmed
+artists each used four fresh discovery starts. The remaining eight artists retain safe ambiguous
+mapping outcomes. No no-match or rejected mapping occurred.
 
 ## Recall and error classification
 
 ### Mapping
 
-- Existing-ID confirmed: 0
+- Existing-ID confirmed: 5
 - Search-confirmed: 12
 - Evidence-confirmed: 0
-- Ambiguous: 13
+- Ambiguous: 8
 - No-match: 0
 - Rejected: 0
-- Overall mapping rate: 12 of 25, or 48.0%
+- Overall mapping rate: 17 of 25, or 68.0%
 
 ### Primary releases
 
-- Singles: 3 of 9, or 33.3% full-cohort; 3 of 3 among mapped artists
+- Singles: 9 of 9 full-cohort and among mapped artists
 - EPs: 2 of 3, or 66.7% full-cohort; 2 of 2 among mapped artists
-- Albums: 0 of 1 full-cohort; no album artist mapped
-- Combined primary: 5 of 13, or 38.5% full-cohort; 5 of 5 among mapped artists
+- Albums: 1 of 1 full-cohort and among mapped artists
+- Combined primary: 12 of 13, or 92.3% full-cohort; 12 of 12 among mapped artists
 
 ### Remixes
 
-- By the watched artist: 1 of 2 full-cohort; 1 of 1 among mapped artists
+- By the watched artist: 2 of 2 full-cohort and among mapped artists
 - Of the watched artist by another named remixer: 1 of 6 full-cohort and mapped
-- Combined remix: 2 of 8, or 25.0% full-cohort; 2 of 7, or 28.6% among mapped artists
+- Combined remix: 3 of 8, or 37.5% full-cohort and among mapped artists
 - Directionally uncertain accepted remixes: 0
 - False directional matches: 0
 
 ### Combined, corrected credential-free replay
 
-- Full-cohort recall: 9 of 21, or 42.9%
-- Mapped-artist recall: 9 of 12, or 75.0%
-- Exact matched releases: 9
+- Full-cohort recall: 17 of 21, or 81.0%
+- Mapped-artist recall: 17 of 20, or 85.0%
+- Exact matched releases: 17
 - Strong probable: 0
 - Ambiguous: 0
-- Mapping-caused unevaluable releases: 9
+- Mapping-caused unevaluable releases: 1
 - Matcher-caused misses: 0
 - Catalog misses after successful mapping: 3
 - Raw Apple-only candidate rows after corrected comparison: 2
@@ -155,38 +159,30 @@ candidate or frozen evidence is typed as an EP. The Leotrix album and song repre
 deduplicate without losing source evidence. The three catalog misses are mapped remix releases
 for which no compatible first-page candidate was retrieved.
 
-## Ambiguous identity audit
+## Remaining ambiguous identity audit
 
-All 13 outcomes remain `ambiguous` from existing evidence. No isolated Apple album or song rows
-exist for these candidates because the live validation correctly stopped before discovery.
-Approved free-iTunes artifacts provide catalog-title evidence and a public-ID seed for five
-artists, but a seed is not an Apple confirmation. Candidate counts below are exact normalized-name
-matches in the retained Apple search evidence. No artist is confirmed by rank, genre, popularity,
-or partial similarity.
+Eight outcomes remain `ambiguous` from existing evidence. No isolated Apple release discovery rows
+exist for these artists because each authorized path correctly stopped before discovery. Candidate
+counts below are exact normalized-name matches in retained Apple search evidence. No artist is
+confirmed by rank, genre, popularity, or partial similarity.
 
-| Artist        | Exact-name candidates | Public-ID seed | Frozen releases | Existing catalog-title evidence                        | Conflict or ambiguity                                                      | Additional evidence needed                   |
-| ------------- | --------------------: | -------------- | --------------: | ------------------------------------------------------ | -------------------------------------------------------------------------- | -------------------------------------------- |
-| ZHU           |                     2 | yes            |               1 | approved offline exact album evidence                  | two same-name Apple identities                                             | one seeded artist lookup                     |
-| Alok          |                    15 | no             |               3 | none                                                   | many same-name identities                                                  | first-page evidence for two fixed candidates |
-| Don Diablo    |                     2 | yes            |               3 | approved offline target-window evidence                | two same-name identities; offline evidence is not Apple confirmation       | one seeded artist lookup                     |
-| SISTO         |                     3 | yes            |               4 | approved offline release and track evidence            | three same-name identities and one credit incompatibility in prior review  | one seeded artist lookup                     |
-| William Black |                     2 | yes            |               3 | approved offline historical release and track evidence | two same-name identities and one prior collection-credit incompatibility   | one seeded artist lookup                     |
-| YUSSI         |                     2 | yes            |               4 | approved offline historical release and track evidence | two same-name identities and several competing IDs in the offline artifact | one seeded artist lookup                     |
-| Babsy.        |                     7 | no             |               0 | none                                                   | no frozen title evidence                                                   | two candidate pages, then manual review      |
-| GRiZ          |                     2 | no             |               1 | none                                                   | two same-name identities                                                   | first-page evidence for two fixed candidates |
-| Anto          |                    16 | no             |               0 | none                                                   | many same-name identities and no frozen title evidence                     | two candidate pages, then manual review      |
-| Rueben        |                     2 | no             |               3 | none                                                   | two same-name identities                                                   | first-page evidence for two fixed candidates |
-| 1991          |                    12 | no             |               1 | none                                                   | many same-name identities                                                  | first-page evidence for two fixed candidates |
-| 12th Planet   |                     2 | no             |               0 | none                                                   | two same-name identities and no frozen title evidence                      | two candidate pages, then manual review      |
-| 4B            |                    13 | no             |               1 | none                                                   | many same-name identities                                                  | first-page evidence for two fixed candidates |
+| Artist      | Exact-name candidates | Frozen releases | Conflict or ambiguity                                  | Additional evidence needed                   |
+| ----------- | --------------------: | --------------: | ------------------------------------------------------ | -------------------------------------------- |
+| Alok        |                    15 |               3 | many same-name identities                              | first-page evidence for two fixed candidates |
+| Babsy.      |                     7 |               0 | no frozen title evidence                               | two candidate pages, then manual review      |
+| GRiZ        |                     2 |               1 | two same-name identities                               | first-page evidence for two fixed candidates |
+| Anto        |                    16 |               0 | many same-name identities and no frozen title evidence | two candidate pages, then manual review      |
+| Rueben      |                     2 |               3 | two same-name identities                               | first-page evidence for two fixed candidates |
+| 1991        |                    12 |               1 | many same-name identities                              | first-page evidence for two fixed candidates |
+| 12th Planet |                     2 |               0 | two same-name identities and no frozen title evidence  | two candidate pages, then manual review      |
+| 4B          |                    13 |               1 | many same-name identities                              | first-page evidence for two fixed candidates |
 
-The five seeded artists can become `existing_id_confirmed` only if a future public catalog lookup
-returns the seeded ID with an exact canonical name or stored alias. The eight unseeded artists need
-catalog overlap evidence and remain ambiguous if the two-candidate limit does not produce a unique
-strong result. Babsy., Anto, and 12th Planet are especially likely to remain manual review because
-the frozen window contains no release evidence.
+The five seeded artists are now durable `existing_id_confirmed` mappings after their prior bounded
+Apple validation. The eight unseeded artists still need stronger identity evidence. Babsy., Anto,
+and 12th Planet are especially likely to remain manual review because the frozen window contains
+no release evidence.
 
-## Why existing-ID confirmation was zero
+## Why the original validation had zero existing-ID confirmations
 
 The deterministic validation manifest intentionally contains artist names and strata, not public
 catalog IDs. The validation runner constructs every entry with `requiresSearch: true` and does not
@@ -194,8 +190,9 @@ import the corrected free-iTunes identity artifact. Its confirmed-mapping lookup
 to the same frozen snapshot and found no prior durable mapping for these 13 artists. The existing-ID
 code path therefore received no `knownId` and was not defective or accidentally bypassed.
 
-The 48% result is a cold-start name-search stress test. It is not the intended recurring onboarding
-workflow, where approved candidate seeds are validated once and confirmed mappings are reused.
+The original 48% result was a cold-start name-search stress test. It is not the intended recurring
+onboarding workflow, where approved candidate seeds are validated once and confirmed mappings are
+reused.
 
 ## Mapping-only bootstrap plan
 

@@ -4,24 +4,29 @@ Date: 2026-08-03
 
 ## Authorization and boundary
 
-The branch now has a narrow pre-live discovery scope for the five newly confirmed seed artists.
-It accepts only the tracked `apple-music-recent-seed-discovery-manifest.json`, fixed evaluation
-time, `optimized_four_source`, and confirmation `APPLE_RECENT_SEED_DISCOVERY_5`. The manifest
-contains names, frozen release counts, selection reason, snapshot hash, and evaluation time. It
-contains no Apple catalog identifier.
+The narrow discovery scope for the five newly confirmed seed artists is complete. It accepted
+only the tracked `apple-music-recent-seed-discovery-manifest.json`, fixed evaluation time,
+`optimized_four_source`, and confirmation `APPLE_RECENT_SEED_DISCOVERY_5`. The manifest contains
+names, frozen release counts, selection reason, snapshot hash, and evaluation time. It contains no
+Apple catalog identifier.
 
-The scope prevalidates all five durable mappings before creating the run or HTTP client and does
-not persist a mapping. It then reuses the existing optimized runner unchanged for first-page
-`singles`, `full-albums`, `top-songs`, and one bounded remix search per artist. A new run identity
-forces all 20 first pages to refresh. There is no pagination or detail request. The hard limits
-are 25 starts, five minutes, concurrency one, and a 1,100 millisecond pacing floor. Historical
-starts remain 202 because the live command has not run at this checkpoint.
+The scope prevalidated all five durable mappings before creating the run or HTTP client and
+persisted no mapping. It reused the existing optimized collection path for first-page `singles`,
+`full-albums`, `top-songs`, and one bounded remix search per artist. A new run identity forced all
+20 operations to refresh. There was no pagination or detail request. The run completed in 21,528
+milliseconds with 19 HTTP 200 responses and one nonterminal SISTO `full-albums` HTTP 404. It had
+zero retries, cache hits, mapping requests, or other-provider requests. Historical starts are now 222.
 
-The planned live form is:
+All eight frozen releases for these artists matched exactly. Combined 25-artist evidence is now
+17 of 21 full-cohort exact recall and 17 of 20 mapped-artist exact recall. Primary recall is 12 of 13. The selected thresholds were met, but production integration and merge remain unauthorized.
+
+The completed live form was:
 
 ```powershell
 pnpm apple:recent -- --execute-live --confirm-live APPLE_RECENT_SEED_DISCOVERY_5 --seed-discovery-manifest apps/scanner/src/apple-music-recent-seed-discovery-manifest.json --snapshot <external-snapshot-path> --profile optimized_four_source --evaluation-as-of 2026-07-29T23:59:59Z
 ```
+
+### Mapping bootstrap history
 
 The mapping-only bootstrap execution path is implemented and its authorized 13-artist run is
 complete. It reuses the existing catalog-evidence resolver for the exact two-candidate ambiguity
