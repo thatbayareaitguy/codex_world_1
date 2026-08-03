@@ -34,6 +34,7 @@
     "itunes:pilot": "tsx apps/scanner/src/itunes-pilot-cli.ts",
     "itunes:pilot:offline": "tsx apps/scanner/src/itunes-pilot-offline-cli.ts",
     "itunes:adaptive-identity:run": "tsx apps/scanner/src/itunes-adaptive-identity-experiment-cli.ts",
+    "itunes:identity-export": "tsx apps/scanner/src/itunes-identity-export-cli.ts",
     "itunes:shadow:plan": "tsx apps/scanner/src/itunes-shadow-planning-cli.ts",
     "itunes:shadow:adaptive": "tsx apps/scanner/src/itunes-adaptive-identity-cli.ts",
     "itunes:shadow:search-census": "tsx apps/scanner/src/itunes-search-census-cli.ts",
