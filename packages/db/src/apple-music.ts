@@ -16,12 +16,16 @@ import {
   appleMusicComparisons,
   appleMusicAlbums,
   appleMusicArtistMappings,
+  appleMusicDurableArtistMappings,
+  appleMusicIdentityCampaignEntries,
+  appleMusicIdentityCampaigns,
   appleMusicMappingCandidates,
   appleMusicProviderState,
   appleMusicRecentCandidates,
   appleMusicRequestEvents,
   appleMusicResponseCache,
   appleMusicSongs,
+  itunesPilotSnapshots,
 } from "./schema";
 
 const stateId = "global";
@@ -490,6 +494,303 @@ export async function getConfirmedAppleMusicArtistMapping(
     .orderBy(desc(appleMusicArtistMappings.createdAt))
     .limit(1);
   return mapping?.appleArtistId ? { appleArtistId: mapping.appleArtistId } : undefined;
+}
+
+export type AppleMusicDurableConfirmationMethod =
+  | "legacy_validated"
+  | "manual_confirmation"
+  | "high_confidence_seed"
+  | "evidence_supported_seed"
+  | "catalog_evidence";
+
+export interface AppleMusicDurableArtistMapping {
+  appleArtistId: string;
+  artistName: string;
+  canonicalArtistId: string;
+  confirmationMethod: AppleMusicDurableConfirmationMethod;
+  sourceClassification: string;
+}
+
+export async function getDurableAppleMusicArtistMapping(
+  db: RadarDatabase,
+  canonicalArtistId: string,
+): Promise<AppleMusicDurableArtistMapping | undefined> {
+  const [mapping] = await db
+    .select({
+      appleArtistId: appleMusicDurableArtistMappings.appleArtistId,
+      artistName: appleMusicDurableArtistMappings.artistName,
+      canonicalArtistId: appleMusicDurableArtistMappings.canonicalArtistId,
+      confirmationMethod: appleMusicDurableArtistMappings.confirmationMethod,
+      sourceClassification: appleMusicDurableArtistMappings.sourceClassification,
+    })
+    .from(appleMusicDurableArtistMappings)
+    .where(eq(appleMusicDurableArtistMappings.canonicalArtistId, canonicalArtistId))
+    .limit(1);
+  return mapping as AppleMusicDurableArtistMapping | undefined;
+}
+
+export async function listDurableAppleMusicArtistMappings(
+  db: RadarDatabase,
+  canonicalArtistIds: string[],
+): Promise<AppleMusicDurableArtistMapping[]> {
+  if (canonicalArtistIds.length === 0) return [];
+  const mappings = await db
+    .select({
+      appleArtistId: appleMusicDurableArtistMappings.appleArtistId,
+      artistName: appleMusicDurableArtistMappings.artistName,
+      canonicalArtistId: appleMusicDurableArtistMappings.canonicalArtistId,
+      confirmationMethod: appleMusicDurableArtistMappings.confirmationMethod,
+      sourceClassification: appleMusicDurableArtistMappings.sourceClassification,
+    })
+    .from(appleMusicDurableArtistMappings)
+    .where(inArray(appleMusicDurableArtistMappings.canonicalArtistId, canonicalArtistIds));
+  return mappings as AppleMusicDurableArtistMapping[];
+}
+
+export async function saveDurableAppleMusicArtistMapping(
+  db: RadarDatabase,
+  input: {
+    appleArtistId: string;
+    artifactHash?: string;
+    artistName: string;
+    canonicalArtistId: string;
+    confirmationMethod: AppleMusicDurableConfirmationMethod;
+    confirmedRunId: string;
+    sourceClassification: string;
+  },
+): Promise<AppleMusicDurableArtistMapping> {
+  await db
+    .insert(appleMusicDurableArtistMappings)
+    .values({
+      appleArtistId: input.appleArtistId,
+      ...(input.artifactHash ? { artifactHash: input.artifactHash } : {}),
+      artistName: input.artistName,
+      canonicalArtistId: input.canonicalArtistId,
+      confirmationMethod: input.confirmationMethod,
+      confirmedRunId: input.confirmedRunId,
+      sourceClassification: input.sourceClassification,
+    })
+    .onConflictDoNothing();
+  const existing = await getDurableAppleMusicArtistMapping(db, input.canonicalArtistId);
+  if (!existing) throw new Error("Durable Apple Music mapping persistence failed.");
+  if (existing.appleArtistId !== input.appleArtistId) {
+    throw new Error("A durable Apple Music mapping cannot be replaced automatically.");
+  }
+  return existing;
+}
+
+export async function getLatestAppleMusicOperationalSnapshotId(
+  db: RadarDatabase,
+): Promise<string | undefined> {
+  const [snapshot] = await db
+    .select({ id: itunesPilotSnapshots.id })
+    .from(itunesPilotSnapshots)
+    .orderBy(desc(itunesPilotSnapshots.createdAt))
+    .limit(1);
+  return snapshot?.id;
+}
+
+export type AppleMusicIdentityCampaignStatus =
+  "planned" | "running" | "completed" | "controlled_partial" | "failed";
+
+export type AppleMusicIdentityCampaignEntryStatus =
+  "pending" | "reused" | "confirmed" | "ambiguous" | "rejected" | "missing" | "manual_review";
+
+export interface AppleMusicIdentityCampaignRecord {
+  artifactHash: string;
+  id: string;
+  nextBatchIndex: number;
+  stage: "strong_seeds" | "ambiguous_automation";
+  status: AppleMusicIdentityCampaignStatus;
+  watchlistHash: string;
+}
+
+export async function getAppleMusicIdentityCampaign(
+  db: RadarDatabase,
+  artifactHash: string,
+  stage: "strong_seeds" | "ambiguous_automation",
+): Promise<AppleMusicIdentityCampaignRecord | undefined> {
+  const campaign = await db.query.appleMusicIdentityCampaigns.findFirst({
+    where: and(
+      eq(appleMusicIdentityCampaigns.artifactHash, artifactHash),
+      eq(appleMusicIdentityCampaigns.stage, stage),
+    ),
+  });
+  return campaign
+    ? {
+        artifactHash: campaign.artifactHash,
+        id: campaign.id,
+        nextBatchIndex: campaign.nextBatchIndex,
+        stage: campaign.stage as AppleMusicIdentityCampaignRecord["stage"],
+        status: campaign.status as AppleMusicIdentityCampaignStatus,
+        watchlistHash: campaign.watchlistHash,
+      }
+    : undefined;
+}
+
+export async function startAppleMusicIdentityCampaign(
+  db: RadarDatabase,
+  input: {
+    artifactHash: string;
+    implementationCommit: string;
+    runId: string;
+    schemaVersion: number;
+    stage: "strong_seeds" | "ambiguous_automation";
+    watchlistHash: string;
+  },
+): Promise<AppleMusicIdentityCampaignRecord> {
+  const now = new Date();
+  const [inserted] = await db
+    .insert(appleMusicIdentityCampaigns)
+    .values({
+      artifactHash: input.artifactHash,
+      currentRunId: input.runId,
+      implementationCommit: input.implementationCommit,
+      schemaVersion: input.schemaVersion,
+      stage: input.stage,
+      startedAt: now,
+      status: "running",
+      watchlistHash: input.watchlistHash,
+    })
+    .onConflictDoNothing()
+    .returning();
+  const existing =
+    inserted ??
+    (await db.query.appleMusicIdentityCampaigns.findFirst({
+      where: and(
+        eq(appleMusicIdentityCampaigns.artifactHash, input.artifactHash),
+        eq(appleMusicIdentityCampaigns.stage, input.stage),
+      ),
+    }));
+  if (!existing) throw new Error("Apple Music identity campaign could not be created.");
+  if (
+    existing.watchlistHash !== input.watchlistHash ||
+    existing.schemaVersion !== input.schemaVersion
+  ) {
+    throw new Error("Apple Music identity campaign artifact metadata changed.");
+  }
+  if (!inserted && existing.status !== "completed") {
+    await db
+      .update(appleMusicIdentityCampaigns)
+      .set({
+        currentRunId: input.runId,
+        implementationCommit: input.implementationCommit,
+        startedAt: existing.startedAt ?? now,
+        status: "running",
+        stopReason: null,
+        updatedAt: now,
+      })
+      .where(eq(appleMusicIdentityCampaigns.id, existing.id));
+  }
+  return {
+    artifactHash: existing.artifactHash,
+    id: existing.id,
+    nextBatchIndex: existing.nextBatchIndex,
+    stage: existing.stage as AppleMusicIdentityCampaignRecord["stage"],
+    status: inserted ? "running" : (existing.status as AppleMusicIdentityCampaignStatus),
+    watchlistHash: existing.watchlistHash,
+  };
+}
+
+export async function seedAppleMusicIdentityCampaignEntries(
+  db: RadarDatabase,
+  campaignId: string,
+  entries: Array<{
+    artifactClassification: string;
+    candidateCount: number;
+    canonicalArtistId: string;
+    manualReviewReason?: string;
+    status: AppleMusicIdentityCampaignEntryStatus;
+    validationPath: string;
+  }>,
+): Promise<void> {
+  if (entries.length === 0) return;
+  await db
+    .insert(appleMusicIdentityCampaignEntries)
+    .values(
+      entries.map((entry) => ({
+        artifactClassification: entry.artifactClassification,
+        campaignId,
+        candidateCount: entry.candidateCount,
+        canonicalArtistId: entry.canonicalArtistId,
+        ...(entry.manualReviewReason ? { manualReviewReason: entry.manualReviewReason } : {}),
+        status: entry.status,
+        validationPath: entry.validationPath,
+      })),
+    )
+    .onConflictDoNothing();
+}
+
+export async function listAppleMusicIdentityCampaignEntries(db: RadarDatabase, campaignId: string) {
+  return db
+    .select()
+    .from(appleMusicIdentityCampaignEntries)
+    .where(eq(appleMusicIdentityCampaignEntries.campaignId, campaignId));
+}
+
+export async function updateAppleMusicIdentityCampaignEntry(
+  db: RadarDatabase,
+  input: {
+    batchIndex?: number;
+    campaignId: string;
+    canonicalArtistId: string;
+    evidence: Record<string, unknown>;
+    manualReviewReason?: string;
+    selectedAppleArtistId?: string;
+    selectedArtistName?: string;
+    status: AppleMusicIdentityCampaignEntryStatus;
+  },
+): Promise<void> {
+  await db
+    .update(appleMusicIdentityCampaignEntries)
+    .set({
+      attempts: sql`${appleMusicIdentityCampaignEntries.attempts} + 1`,
+      ...(input.batchIndex === undefined ? {} : { batchIndex: input.batchIndex }),
+      evidence: input.evidence,
+      manualReviewReason: input.manualReviewReason ?? null,
+      selectedAppleArtistId: input.selectedAppleArtistId ?? null,
+      selectedArtistName: input.selectedArtistName ?? null,
+      status: input.status,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(appleMusicIdentityCampaignEntries.campaignId, input.campaignId),
+        eq(appleMusicIdentityCampaignEntries.canonicalArtistId, input.canonicalArtistId),
+      ),
+    );
+}
+
+export async function advanceAppleMusicIdentityCampaign(
+  db: RadarDatabase,
+  campaignId: string,
+  nextBatchIndex: number,
+): Promise<void> {
+  await db
+    .update(appleMusicIdentityCampaigns)
+    .set({ nextBatchIndex, updatedAt: new Date() })
+    .where(eq(appleMusicIdentityCampaigns.id, campaignId));
+}
+
+export async function finishAppleMusicIdentityCampaign(
+  db: RadarDatabase,
+  campaignId: string,
+  input: {
+    metrics: Record<string, unknown>;
+    status: AppleMusicIdentityCampaignStatus;
+    stopReason: string;
+  },
+): Promise<void> {
+  await db
+    .update(appleMusicIdentityCampaigns)
+    .set({
+      completedAt: new Date(),
+      metrics: input.metrics,
+      status: input.status,
+      stopReason: input.stopReason.slice(0, 500),
+      updatedAt: new Date(),
+    })
+    .where(eq(appleMusicIdentityCampaigns.id, campaignId));
 }
 
 export async function getLastSuccessfulAppleMusicRecentScan(

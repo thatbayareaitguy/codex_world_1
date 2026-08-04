@@ -8,6 +8,7 @@ import {
   createDatabase,
   finishAppleMusicComparisonRun,
   getConfirmedAppleMusicArtistMapping,
+  getDurableAppleMusicArtistMapping,
   getAppleMusicOperationalStatus,
   releaseAppleMusicPilotLease,
   saveAppleMusicArtistMapping,
@@ -206,7 +207,12 @@ function createViewProbeStore(db: RadarDatabase): AppleMusicViewProbeStore {
   return {
     claimLease: (runId) => claimAppleMusicPilotLease(db, runId),
     createRun: (input) => createAppleMusicComparisonRun(db, input),
-    findConfirmedMapping: (input) => getConfirmedAppleMusicArtistMapping(db, input),
+    findConfirmedMapping: async (input) => {
+      const durable = await getDurableAppleMusicArtistMapping(db, input.canonicalArtistId);
+      return durable
+        ? { appleArtistId: durable.appleArtistId }
+        : getConfirmedAppleMusicArtistMapping(db, input);
+    },
     finishRun: (runId, input) => finishAppleMusicComparisonRun(db, runId, input),
     importSnapshot: (snapshot) => importItunesSnapshot(db, snapshot),
     operationalStatus: () => getAppleMusicOperationalStatus(db),

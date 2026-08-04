@@ -1883,6 +1883,107 @@ export const appleMusicMappingCandidates = pgTable(
   ],
 );
 
+export const appleMusicDurableArtistMappings = pgTable(
+  "apple_music_durable_artist_mappings",
+  {
+    canonicalArtistId: uuid("canonical_artist_id").primaryKey(),
+    appleArtistId: text("apple_artist_id").notNull(),
+    artistName: text("artist_name").notNull(),
+    confirmationMethod: text("confirmation_method").notNull(),
+    sourceClassification: text("source_classification").notNull(),
+    artifactHash: text("artifact_hash"),
+    confirmedRunId: uuid("confirmed_run_id")
+      .notNull()
+      .references(() => appleMusicComparisonRuns.id, { onDelete: "restrict" }),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    index("apple_music_durable_artist_id_idx").on(table.appleArtistId),
+    check(
+      "apple_music_durable_confirmation_method_check",
+      sql`${table.confirmationMethod} in ('legacy_validated', 'manual_confirmation', 'high_confidence_seed', 'evidence_supported_seed', 'catalog_evidence')`,
+    ),
+  ],
+);
+
+export const appleMusicIdentityCampaigns = pgTable(
+  "apple_music_identity_campaigns",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    artifactHash: text("artifact_hash").notNull(),
+    watchlistHash: text("watchlist_hash").notNull(),
+    schemaVersion: integer("schema_version").notNull(),
+    stage: text("stage").notNull(),
+    status: text("status").notNull().default("planned"),
+    currentRunId: uuid("current_run_id").references(() => appleMusicComparisonRuns.id, {
+      onDelete: "set null",
+    }),
+    implementationCommit: text("implementation_commit").notNull(),
+    nextBatchIndex: integer("next_batch_index").notNull().default(0),
+    metrics: jsonb("metrics")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    stopReason: text("stop_reason"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("apple_music_identity_campaign_artifact_stage_unique").on(
+      table.artifactHash,
+      table.stage,
+    ),
+    check(
+      "apple_music_identity_campaign_stage_check",
+      sql`${table.stage} in ('strong_seeds', 'ambiguous_automation')`,
+    ),
+    check(
+      "apple_music_identity_campaign_status_check",
+      sql`${table.status} in ('planned', 'running', 'completed', 'controlled_partial', 'failed')`,
+    ),
+    check("apple_music_identity_campaign_batch_check", sql`${table.nextBatchIndex} >= 0`),
+  ],
+);
+
+export const appleMusicIdentityCampaignEntries = pgTable(
+  "apple_music_identity_campaign_entries",
+  {
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => appleMusicIdentityCampaigns.id, { onDelete: "cascade" }),
+    canonicalArtistId: uuid("canonical_artist_id").notNull(),
+    artifactClassification: text("artifact_classification").notNull(),
+    status: text("status").notNull().default("pending"),
+    validationPath: text("validation_path").notNull(),
+    batchIndex: integer("batch_index"),
+    attempts: integer("attempts").notNull().default(0),
+    candidateCount: integer("candidate_count").notNull().default(0),
+    selectedAppleArtistId: text("selected_apple_artist_id"),
+    selectedArtistName: text("selected_artist_name"),
+    evidence: jsonb("evidence")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    manualReviewReason: text("manual_review_reason"),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    primaryKey({ columns: [table.campaignId, table.canonicalArtistId] }),
+    index("apple_music_identity_campaign_entry_status_idx").on(table.campaignId, table.status),
+    check(
+      "apple_music_identity_campaign_entry_status_check",
+      sql`${table.status} in ('pending', 'reused', 'confirmed', 'ambiguous', 'rejected', 'missing', 'manual_review')`,
+    ),
+    check(
+      "apple_music_identity_campaign_entry_attempts_check",
+      sql`${table.attempts} >= 0 and ${table.candidateCount} >= 0`,
+    ),
+  ],
+);
+
 export const appleMusicAlbums = pgTable(
   "apple_music_albums",
   {

@@ -4,6 +4,32 @@ Updated: 2026-08-03
 
 ## Repository state
 
+The Apple branch now implements the full 593-artist identity onboarding checkpoint. One narrow
+migration creates an immutable canonical-artist mapping table plus resumable campaign and entry
+tables, and backfills 27 confirmed legacy mappings. The normal recent and pilot paths now consult
+that durable mapping before snapshot-scoped evidence. Automatic writes cannot replace a different
+durable ID.
+
+The credential-free full-watchlist plan reuses those 27 mappings and forecasts 293 strong-seed
+validations in 12 multiple-artist requests. Stage A is gated to 40 starts, ten minutes, concurrency
+one, a 1,100 millisecond minimum interval, and exact confirmation
+`APPLE_PUBLIC_CATALOG_STRONG_SEEDS_320`. It has no search, pagination, release discovery, or
+other-provider method. The remaining 272 ambiguous artists have a six-batch plan only. Stage B is
+not live-authorized. Apple starts remain 222, 22 migrations are applied, and
+`APPLE_MUSIC_ENABLED=false` remains required.
+
+The Apple branch now has a credential-free parser and aggregate plan command for the immutable
+free-iTunes identity-seed artifact. Independent validation confirms schema version 1, exactly 593
+artists, the declared watchlist hash and artifact self-hash, and classification totals of 307
+high-confidence seeds, 13 evidence-supported seeds, 272 ambiguous seeds, one manual-review entry,
+and zero `no_candidate` entries. The manual-review entry is the single artist without any candidate.
+
+The artifact contains 1,693 candidate IDs across 592 artists. Every ID remains an unconfirmed
+candidate until independent Apple validation. The intake plan performs no automatic confirmation,
+database access, credential access, token generation, provider initialization, or network request.
+Live candidate validation requires a separately bounded milestone. Historical Apple starts remain
+222 and `APPLE_MUSIC_ENABLED=false` remains required.
+
 The exact five-artist discovery run after the mapping-only bootstrap is complete. Its tracked
 manifest froze ZHU, Don Diablo, SISTO, William Black, and YUSSI with eight in-scope releases. The
 `seed_discovery_5` scope required confirmation `APPLE_RECENT_SEED_DISCOVERY_5`, the fixed
@@ -139,6 +165,10 @@ iTunes pilot snapshot is immutable input only.
 
 ## Implementation
 
+- `pnpm apple:identity-seeds -- --plan --artifact <path>` validates the strict identity-seed
+  schema, exact scope and classification totals, candidate semantics, public URL safety, duplicate
+  identities and candidates, the ordered watchlist hash, and the artifact self-hash. Its output is
+  aggregate-only, authorizes no live work, and never initializes Apple runtime services.
 - `AppleDeveloperTokenManager` generates ES256 developer tokens from an external P-256 key, caches
   them only in memory, and refreshes before expiration.
 - `AppleMusicClient` permits only exact-host public catalog GET requests and implements artist

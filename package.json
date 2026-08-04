@@ -11,6 +11,7 @@
     "app:up:dev": "tsx apps/scanner/src/app-ops.ts up --development",
     "app:down": "tsx apps/scanner/src/app-ops.ts down",
     "apple:pilot": "tsx apps/scanner/src/apple-music-pilot-cli.ts",
+    "apple:identity-seeds": "tsx apps/scanner/src/apple-music-identity-seed-plan-cli.ts",
     "apple:recent": "tsx apps/scanner/src/apple-music-recent-cli.ts",
     "build": "pnpm --filter @radar/web build",
     "db:backup": "tsx apps/scanner/src/database-ops-cli.ts backup",

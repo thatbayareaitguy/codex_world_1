@@ -8,20 +8,30 @@ import {
   createAppleMusicComparisonRun,
   createAppleMusicRequestPersistence,
   finishAppleMusicComparisonRun,
+  finishAppleMusicIdentityCampaign,
+  getAppleMusicIdentityCampaign,
   getConfirmedAppleMusicArtistMapping,
+  getDurableAppleMusicArtistMapping,
   getLastSuccessfulAppleMusicRecentScan,
   getAppleMusicOperationalStatus,
   releaseAppleMusicPilotLease,
+  saveDurableAppleMusicArtistMapping,
   saveAppleMusicArtistMapping,
   saveAppleMusicCatalog,
   saveAppleMusicComparisons,
   saveAppleMusicRecentCandidates,
+  seedAppleMusicIdentityCampaignEntries,
+  startAppleMusicIdentityCampaign,
+  updateAppleMusicIdentityCampaignEntry,
 } from "./apple-music";
 import {
   appleMusicAlbums,
   appleMusicArtistMappings,
   appleMusicComparisonRuns,
   appleMusicComparisons,
+  appleMusicDurableArtistMappings,
+  appleMusicIdentityCampaignEntries,
+  appleMusicIdentityCampaigns,
   appleMusicMappingCandidates,
   appleMusicProviderState,
   appleMusicRecentCandidates,
@@ -60,12 +70,18 @@ describe.sequential("Apple Music isolated persistence and global request gate", 
     await connection.db.delete(appleMusicRequestEvents);
     await connection.db.delete(appleMusicResponseCache);
     await connection.db.delete(appleMusicProviderState);
+    await connection.db.delete(appleMusicIdentityCampaignEntries);
+    await connection.db.delete(appleMusicIdentityCampaigns);
+    await connection.db.delete(appleMusicDurableArtistMappings);
     await connection.db
       .delete(appleMusicComparisonRuns)
       .where(eq(appleMusicComparisonRuns.snapshotId, snapshotId));
   });
 
   afterAll(async () => {
+    await connection.db.delete(appleMusicIdentityCampaignEntries);
+    await connection.db.delete(appleMusicIdentityCampaigns);
+    await connection.db.delete(appleMusicDurableArtistMappings);
     if (snapshotId) {
       await connection.db
         .delete(appleMusicComparisonRuns)
@@ -854,6 +870,98 @@ describe.sequential("Apple Music isolated persistence and global request gate", 
       stopReason: "recent_sample_completed",
     });
     expect(await getLastSuccessfulAppleMusicRecentScan(connection.db)).toBeInstanceOf(Date);
+  });
+
+  it("keeps durable artist mappings immutable across runs", async () => {
+    const canonicalArtistId = randomUUID();
+    const runId = await createRunningRun(2);
+    await saveDurableAppleMusicArtistMapping(connection.db, {
+      appleArtistId: "synthetic-artist-a",
+      artifactHash: "a".repeat(64),
+      artistName: "Synthetic Artist",
+      canonicalArtistId,
+      confirmationMethod: "high_confidence_seed",
+      confirmedRunId: runId,
+      sourceClassification: "high_confidence_seed",
+    });
+    await expect(
+      saveDurableAppleMusicArtistMapping(connection.db, {
+        appleArtistId: "synthetic-artist-b",
+        artifactHash: "a".repeat(64),
+        artistName: "Different Artist",
+        canonicalArtistId,
+        confirmationMethod: "catalog_evidence",
+        confirmedRunId: runId,
+        sourceClassification: "ambiguous_seed",
+      }),
+    ).rejects.toThrow("cannot be replaced");
+    await expect(
+      getDurableAppleMusicArtistMapping(connection.db, canonicalArtistId),
+    ).resolves.toMatchObject({
+      appleArtistId: "synthetic-artist-a",
+      confirmationMethod: "high_confidence_seed",
+    });
+  });
+
+  it("persists an artifact-bound resumable identity campaign", async () => {
+    const runId = await createRunningRun(2);
+    const canonicalArtistId = randomUUID();
+    const campaign = await startAppleMusicIdentityCampaign(connection.db, {
+      artifactHash: "b".repeat(64),
+      implementationCommit: "c".repeat(40),
+      runId,
+      schemaVersion: 1,
+      stage: "strong_seeds",
+      watchlistHash: "d".repeat(64),
+    });
+    await seedAppleMusicIdentityCampaignEntries(connection.db, campaign.id, [
+      {
+        artifactClassification: "high_confidence_seed",
+        candidateCount: 1,
+        canonicalArtistId,
+        status: "pending",
+        validationPath: "batched_artist_lookup",
+      },
+    ]);
+    await updateAppleMusicIdentityCampaignEntry(connection.db, {
+      batchIndex: 0,
+      campaignId: campaign.id,
+      canonicalArtistId,
+      evidence: { idReturned: true, nameCompatible: true },
+      selectedAppleArtistId: "synthetic-artist",
+      selectedArtistName: "Synthetic Artist",
+      status: "confirmed",
+    });
+    await finishAppleMusicIdentityCampaign(connection.db, campaign.id, {
+      metrics: { requestCount: 1 },
+      status: "controlled_partial",
+      stopReason: "resume_required",
+    });
+    const resumed = await startAppleMusicIdentityCampaign(connection.db, {
+      artifactHash: "b".repeat(64),
+      implementationCommit: "e".repeat(40),
+      runId,
+      schemaVersion: 1,
+      stage: "strong_seeds",
+      watchlistHash: "d".repeat(64),
+    });
+    expect(resumed.id).toBe(campaign.id);
+    await expect(
+      startAppleMusicIdentityCampaign(connection.db, {
+        artifactHash: "b".repeat(64),
+        implementationCommit: "e".repeat(40),
+        runId,
+        schemaVersion: 2,
+        stage: "strong_seeds",
+        watchlistHash: "d".repeat(64),
+      }),
+    ).rejects.toThrow("metadata changed");
+    await expect(
+      getAppleMusicIdentityCampaign(connection.db, "b".repeat(64), "strong_seeds"),
+    ).resolves.toMatchObject({ id: campaign.id, status: "running" });
+    expect(await connection.db.select().from(appleMusicIdentityCampaignEntries)).toMatchObject([
+      { attempts: 1, status: "confirmed" },
+    ]);
   });
 
   async function createRunningRun(requestBudget: number): Promise<string> {

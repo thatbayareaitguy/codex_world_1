@@ -4,6 +4,18 @@ Date: 2026-08-03
 
 ## Authorization and boundary
 
+The full-watchlist identity onboarding path is now implemented credential-free and awaiting its
+separate Stage A checkpoint. It vendors the exact sanitized 593-artist artifact from the isolated
+iTunes branch, verifies its approved hashes and classifications, and treats all supplied catalog
+IDs as candidates until Apple returns the same ID with a compatible canonical name or alias.
+
+The Stage A plan reuses 27 durable mappings and forecasts 293 validations in 12 multiple-artist
+requests. Its hard limits are 40 starts, ten minutes, concurrency one, at least 1,100 milliseconds
+between starts, no search, no pagination, and no release discovery. The remaining 272 ambiguous
+artists are plan-only. Their existing catalog-evidence scoring thresholds are unchanged, and no
+Stage B request is authorized by this checkpoint. The durable campaign and its one new migration
+make the work restart-safe without changing the recent-release request behavior.
+
 The narrow discovery scope for the five newly confirmed seed artists is complete. It accepted
 only the tracked `apple-music-recent-seed-discovery-manifest.json`, fixed evaluation time,
 `optimized_four_source`, and confirmation `APPLE_RECENT_SEED_DISCOVERY_5`. The manifest contains

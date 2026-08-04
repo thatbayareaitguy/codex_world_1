@@ -9,6 +9,7 @@ import {
   finishAppleMusicComparisonRun,
   getAppleMusicOperationalStatus,
   getConfirmedAppleMusicArtistMapping,
+  getDurableAppleMusicArtistMapping,
   getLastSuccessfulAppleMusicRecentScan,
   releaseAppleMusicPilotLease,
   saveAppleMusicArtistMapping,
@@ -243,7 +244,12 @@ function createStore(db: RadarDatabase): AppleMusicRecentStore {
   return {
     claimLease: (runId) => claimAppleMusicPilotLease(db, runId),
     createRun: (input) => createAppleMusicComparisonRun(db, input),
-    findConfirmedMapping: (input) => getConfirmedAppleMusicArtistMapping(db, input),
+    findConfirmedMapping: async (input) => {
+      const durable = await getDurableAppleMusicArtistMapping(db, input.canonicalArtistId);
+      return durable
+        ? { appleArtistId: durable.appleArtistId }
+        : getConfirmedAppleMusicArtistMapping(db, input);
+    },
     finishRun: (runId, input) => finishAppleMusicComparisonRun(db, runId, input),
     importSnapshot: (snapshot) => importItunesSnapshot(db, snapshot),
     lastSuccessfulCompletedAt: () => getLastSuccessfulAppleMusicRecentScan(db),

@@ -1,0 +1,414 @@
+import { execFileSync } from "node:child_process";
+import { writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import {
+  appleMusicRequestEvents,
+  advanceAppleMusicIdentityCampaign,
+  claimAppleMusicPilotLease,
+  createAppleMusicComparisonRun,
+  createAppleMusicRequestPersistence,
+  createDatabase,
+  finishAppleMusicComparisonRun,
+  finishAppleMusicIdentityCampaign,
+  getAppleMusicIdentityCampaign,
+  getAppleMusicOperationalStatus,
+  getLatestAppleMusicOperationalSnapshotId,
+  listAppleMusicIdentityCampaignEntries,
+  listDurableAppleMusicArtistMappings,
+  releaseAppleMusicPilotLease,
+  saveAppleMusicArtistMapping,
+  saveDurableAppleMusicArtistMapping,
+  seedAppleMusicIdentityCampaignEntries,
+  startAppleMusicIdentityCampaign,
+  updateAppleMusicIdentityCampaignEntry,
+  type RadarDatabase,
+} from "@radar/db";
+import {
+  AppleDeveloperTokenManager,
+  AppleMusicClient,
+  loadProviderConfiguration,
+} from "@radar/providers";
+import { asc, eq } from "drizzle-orm";
+import {
+  createAppleMusicFullWatchlistPlan,
+  createAppleMusicManualReviewArtifacts,
+  authorizeAppleMusicFullWatchlist,
+  appleMusicFullWatchlistConfirmation,
+  runAppleMusicFullWatchlistStrongSeeds,
+  type AppleMusicFullWatchlistCampaignEntry,
+  type AppleMusicFullWatchlistStore,
+} from "./apple-music-full-watchlist-mapping";
+import {
+  createAppleMusicIdentitySeedPlan,
+  readAppleMusicIdentitySeedArtifact,
+  validateApprovedAppleMusicIdentitySeedArtifact,
+} from "./apple-music-identity-seed-artifact";
+import type { AppleMusicPilotStoredEvidence } from "./apple-music-pilot-runner";
+import { loadLocalEnvironment } from "./local-env";
+
+export type AppleMusicIdentitySeedCommand =
+  | { artifactPath: string; mode: "plan" }
+  | { artifactPath: string; mode: "full_watchlist_plan" }
+  | {
+      artifactPath: string;
+      confirmation: typeof appleMusicFullWatchlistConfirmation;
+      mode: "strong_seeds_live";
+      stage: "strong_seeds";
+    }
+  | {
+      artifactPath: string;
+      localOutputPath: string;
+      markdownOutputPath: string;
+      mode: "report";
+    };
+
+export function parseAppleMusicIdentitySeedPlanCommand(
+  args: string[],
+): AppleMusicIdentitySeedCommand {
+  const artifactPath = requiredOption(args, "--artifact");
+  if (args.includes("--report")) {
+    assertExactArguments(args, [
+      "--report",
+      "--artifact",
+      artifactPath,
+      "--markdown-output",
+      requiredOption(args, "--markdown-output"),
+      "--local-output",
+      requiredOption(args, "--local-output"),
+    ]);
+    return {
+      artifactPath,
+      localOutputPath: requiredOption(args, "--local-output"),
+      markdownOutputPath: requiredOption(args, "--markdown-output"),
+      mode: "report",
+    };
+  }
+  if (args.includes("--execute-live")) {
+    const confirmation = requiredOption(args, "--confirm-live");
+    const stage = requiredOption(args, "--stage");
+    assertExactArguments(args, [
+      "--execute-live",
+      "--confirm-live",
+      confirmation,
+      "--stage",
+      stage,
+      "--artifact",
+      artifactPath,
+    ]);
+    if (confirmation !== appleMusicFullWatchlistConfirmation) {
+      throw new Error(
+        `Strong-seed validation requires --confirm-live ${appleMusicFullWatchlistConfirmation}.`,
+      );
+    }
+    if (stage !== "strong_seeds") throw new Error("Only stage strong_seeds is authorized.");
+    return {
+      artifactPath,
+      confirmation: appleMusicFullWatchlistConfirmation,
+      mode: "strong_seeds_live",
+      stage: "strong_seeds",
+    };
+  }
+  if (!args.includes("--plan")) {
+    throw new Error("Apple identity-seed intake requires --plan, --report, or --execute-live.");
+  }
+  if (args.includes("--full-watchlist-mapping-bootstrap")) {
+    assertExactArguments(args, [
+      "--plan",
+      "--full-watchlist-mapping-bootstrap",
+      "--artifact",
+      artifactPath,
+    ]);
+    return { artifactPath, mode: "full_watchlist_plan" };
+  }
+  assertExactArguments(args, ["--plan", "--artifact", artifactPath]);
+  return { artifactPath, mode: "plan" };
+}
+
+async function main(): Promise<void> {
+  const command = parseAppleMusicIdentitySeedPlanCommand(process.argv.slice(2));
+  const artifact = await readAppleMusicIdentitySeedArtifact(command.artifactPath);
+  if (command.mode === "plan") {
+    process.stdout.write(
+      `${JSON.stringify(createAppleMusicIdentitySeedPlan(artifact), null, 2)}\n`,
+    );
+    return;
+  }
+  const databaseUrl = readAppleDatabaseUrlOnly();
+  assertAppleDatabase(databaseUrl);
+  const connection = createDatabase(databaseUrl);
+  try {
+    if (command.mode === "full_watchlist_plan") {
+      const mappings = await listDurableAppleMusicArtistMappings(
+        connection.db,
+        artifact.entries.map((entry) => entry.watchedArtistId),
+      );
+      process.stdout.write(
+        `${JSON.stringify(createAppleMusicFullWatchlistPlan(artifact, mappings), null, 2)}\n`,
+      );
+      return;
+    }
+    if (command.mode === "report") {
+      validateApprovedAppleMusicIdentitySeedArtifact(artifact);
+      const campaign = await getAppleMusicIdentityCampaign(
+        connection.db,
+        artifact.artifactSelfHash,
+        "strong_seeds",
+      );
+      if (!campaign) throw new Error("No strong-seed campaign exists for this artifact.");
+      const outputs = createAppleMusicManualReviewArtifacts(
+        artifact,
+        await readCampaignEntries(connection.db, campaign.id),
+      );
+      const markdownPath = assertOutputPath(command.markdownOutputPath, "docs");
+      const localPath = assertOutputPath(command.localOutputPath, ".app-runtime");
+      await writeFile(markdownPath, outputs.markdown, { encoding: "utf8" });
+      await writeFile(localPath, outputs.localJson, { encoding: "utf8" });
+      const localEntries = JSON.parse(outputs.localJson) as unknown;
+      if (!Array.isArray(localEntries)) throw new Error("Local review output must be an array.");
+      process.stdout.write(
+        `${JSON.stringify({ localEntriesWritten: localEntries.length, mode: "identity_review_report", networkRequestsStarted: 0 }, null, 2)}\n`,
+      );
+      return;
+    }
+  } finally {
+    if (command.mode !== "strong_seeds_live") await connection.client.end();
+  }
+  try {
+    const environment = loadLocalEnvironment(
+      process.env,
+      resolve(process.cwd(), ".app-runtime/apple-music.env"),
+    );
+    const configuration = loadProviderConfiguration(environment);
+    const authorization = authorizeAppleMusicFullWatchlist({
+      confirmation: command.confirmation,
+      executeLive: true,
+      otherProvidersDisabled: otherProvidersDisabled(configuration),
+      persistentAppleMusicEnabled: environment.APPLE_MUSIC_ENABLED,
+      stage: command.stage,
+      storefront: configuration.appleMusic.storefront,
+    });
+    assertLiveCheckpoint();
+    assertLiveCredentialShape(configuration.appleMusic);
+    let tokenManager: AppleDeveloperTokenManager | undefined;
+    const summary = await runAppleMusicFullWatchlistStrongSeeds({
+      artifact,
+      authorization,
+      createClient: (runId, leaseToken) => {
+        tokenManager ??= new AppleDeveloperTokenManager({
+          keyId: configuration.appleMusic.keyId!,
+          privateKeyPath: configuration.appleMusic.privateKeyPath!,
+          teamId: configuration.appleMusic.teamId!,
+          tokenLifetimeSeconds: configuration.appleMusic.tokenLifetimeSeconds,
+        });
+        return new AppleMusicClient({
+          enabled: true,
+          maxRequestsPerRun: 40,
+          maxResponseBytes: configuration.appleMusic.maxResponseBytes,
+          maximumRuntimeMs: 600_000,
+          maxRetries: 1,
+          minRequestIntervalMs: 1_100,
+          persistence: createAppleMusicRequestPersistence(connection.db, {
+            runLeaseToken: leaseToken,
+          }),
+          requestTimeoutMs: configuration.appleMusic.requestTimeoutMs,
+          runId,
+          storefront: authorization.storefront,
+          tokenProvider: tokenManager,
+        });
+      },
+      implementationCommit: git(["rev-parse", "HEAD"]),
+      store: createStore(connection.db),
+    });
+    process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+  } finally {
+    await connection.client.end();
+  }
+}
+
+function createStore(db: RadarDatabase): AppleMusicFullWatchlistStore {
+  return {
+    advanceCampaign: (campaignId, nextBatchIndex) =>
+      advanceAppleMusicIdentityCampaign(db, campaignId, nextBatchIndex),
+    claimLease: (runId) => claimAppleMusicPilotLease(db, runId),
+    createRun: (input) => createAppleMusicComparisonRun(db, input),
+    findCampaign: (artifactHash, stage) => getAppleMusicIdentityCampaign(db, artifactHash, stage),
+    finishCampaign: (campaignId, input) => finishAppleMusicIdentityCampaign(db, campaignId, input),
+    finishRun: (runId, input) => finishAppleMusicComparisonRun(db, runId, input),
+    latestOperationalSnapshotId: () => getLatestAppleMusicOperationalSnapshotId(db),
+    listCampaignEntries: (campaignId) => readCampaignEntries(db, campaignId),
+    listDurableMappings: (canonicalArtistIds) =>
+      listDurableAppleMusicArtistMappings(db, canonicalArtistIds),
+    operationalStatus: () => getAppleMusicOperationalStatus(db),
+    readEvidence: (runId) => readStoredEvidence(db, runId),
+    releaseLease: (leaseToken) => releaseAppleMusicPilotLease(db, leaseToken),
+    saveDurableMapping: (input) => saveDurableAppleMusicArtistMapping(db, input),
+    saveMapping: async (input) => {
+      await saveAppleMusicArtistMapping(db, input);
+    },
+    seedCampaignEntries: (campaignId, entries) =>
+      seedAppleMusicIdentityCampaignEntries(db, campaignId, entries),
+    startCampaign: (input) => startAppleMusicIdentityCampaign(db, input),
+    updateCampaignEntry: (input) => updateAppleMusicIdentityCampaignEntry(db, input),
+  };
+}
+
+async function readCampaignEntries(
+  db: RadarDatabase,
+  campaignId: string,
+): Promise<AppleMusicFullWatchlistCampaignEntry[]> {
+  return (await listAppleMusicIdentityCampaignEntries(db, campaignId)).map((entry) => ({
+    artifactClassification: entry.artifactClassification,
+    attempts: entry.attempts,
+    batchIndex: entry.batchIndex,
+    candidateCount: entry.candidateCount,
+    canonicalArtistId: entry.canonicalArtistId,
+    evidence: entry.evidence,
+    manualReviewReason: entry.manualReviewReason,
+    selectedAppleArtistId: entry.selectedAppleArtistId,
+    selectedArtistName: entry.selectedArtistName,
+    status: entry.status as AppleMusicFullWatchlistCampaignEntry["status"],
+    validationPath: entry.validationPath,
+  }));
+}
+
+async function readStoredEvidence(
+  db: RadarDatabase,
+  runId: string,
+): Promise<AppleMusicPilotStoredEvidence> {
+  const events = await db
+    .select({
+      cacheHit: appleMusicRequestEvents.cacheHit,
+      endpointCategory: appleMusicRequestEvents.endpointCategory,
+      requestIdentity: appleMusicRequestEvents.requestIdentity,
+      startedAt: appleMusicRequestEvents.startedAt,
+      status: appleMusicRequestEvents.status,
+    })
+    .from(appleMusicRequestEvents)
+    .where(eq(appleMusicRequestEvents.runId, runId))
+    .orderBy(asc(appleMusicRequestEvents.startedAt));
+  const network = events.filter((event) => !event.cacheHit);
+  const intervals = network
+    .slice(1)
+    .map((event, index) => event.startedAt.getTime() - network[index]!.startedAt.getTime());
+  return {
+    authenticationAttempts: 0,
+    cacheHits: events.length - network.length,
+    endpointRequestCounts: countBy(network.map((event) => event.endpointCategory)),
+    httpStatusCounts: countBy(
+      network.map((event) => (event.status === null ? "none" : String(event.status))),
+    ),
+    maximumConcurrency: network.length > 0 ? 1 : 0,
+    ...(intervals.length > 0 ? { minimumRequestIntervalMs: Math.min(...intervals) } : {}),
+    paginationRequests: 0,
+    requestCount: network.length,
+    retryCount: Math.max(
+      0,
+      network.length - new Set(network.map((event) => event.requestIdentity)).size,
+    ),
+  };
+}
+
+function readAppleDatabaseUrlOnly(): string {
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+  return "postgres://radar:radar@127.0.0.1:55435/radar_apple";
+}
+
+function assertAppleDatabase(databaseUrl: string): void {
+  const url = new URL(databaseUrl);
+  if (
+    url.protocol !== "postgres:" ||
+    url.hostname !== "127.0.0.1" ||
+    url.port !== "55435" ||
+    url.pathname !== "/radar_apple"
+  ) {
+    throw new Error("Refusing to use a database other than the isolated radar_apple database.");
+  }
+}
+
+function assertLiveCheckpoint(): void {
+  if (git(["branch", "--show-current"]) !== "codex/apple-music-discovery") {
+    throw new Error("Strong-seed validation requires codex/apple-music-discovery.");
+  }
+  if (git(["status", "--porcelain"])) {
+    throw new Error("Strong-seed validation requires a clean implementation checkpoint.");
+  }
+  if (git(["rev-list", "--left-right", "--count", "HEAD...@{u}"]) !== "0\t0") {
+    throw new Error("Strong-seed validation requires synchronized local and upstream branches.");
+  }
+}
+
+function assertLiveCredentialShape(
+  configuration: ReturnType<typeof loadProviderConfiguration>["appleMusic"],
+): void {
+  if (
+    !configuration.teamId ||
+    !configuration.keyId ||
+    !configuration.mediaId ||
+    !configuration.privateKeyPath
+  ) {
+    throw new Error("The isolated Apple catalog credentials are incomplete.");
+  }
+}
+
+function otherProvidersDisabled(
+  configuration: ReturnType<typeof loadProviderConfiguration>,
+): boolean {
+  return (
+    !configuration.spotify.enabled &&
+    !configuration.spotify.playlistWritesEnabled &&
+    !configuration.itunes.enabled &&
+    !configuration.musicbrainz.enabled &&
+    !configuration.reddit.enabled &&
+    !configuration.soundcloudManualLinksEnabled
+  );
+}
+
+function assertOutputPath(path: string, directory: "docs" | ".app-runtime"): string {
+  const output = resolve(path);
+  const allowed = resolve(process.cwd(), directory);
+  if (output !== allowed && !output.startsWith(`${allowed}\\`)) {
+    throw new Error(`Output must remain under ${directory}.`);
+  }
+  return output;
+}
+
+function requiredOption(args: string[], name: string): string {
+  const positions = args.flatMap((value, index) => (value === name ? [index] : []));
+  if (positions.length !== 1) throw new Error(`${name} must be provided exactly once.`);
+  const value = args[positions[0]! + 1];
+  if (!value || value.startsWith("--")) throw new Error(`${name} requires a value.`);
+  return value;
+}
+
+function assertExactArguments(args: string[], expected: string[]): void {
+  if (args.length !== expected.length) throw new Error("Unexpected Apple identity-seed argument.");
+  const remaining = [...expected];
+  for (const value of args) {
+    const index = remaining.indexOf(value);
+    if (index < 0) throw new Error(`Unexpected Apple identity-seed argument: ${value}`);
+    remaining.splice(index, 1);
+  }
+  if (remaining.length > 0) throw new Error("Apple identity-seed arguments are incomplete.");
+}
+
+function countBy(values: string[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const value of values) counts[value] = (counts[value] ?? 0) + 1;
+  return counts;
+}
+
+function git(args: string[]): string {
+  return execFileSync("git", ["-C", process.cwd(), ...args], {
+    encoding: "utf8",
+    windowsHide: true,
+  }).trim();
+}
+
+if (process.argv[1]?.endsWith("apple-music-identity-seed-plan-cli.ts")) {
+  main().catch((error) => {
+    process.stderr.write(
+      `${error instanceof Error ? error.message : "Apple identity-seed command failed."}\n`,
+    );
+    process.exitCode = 1;
+  });
+}
