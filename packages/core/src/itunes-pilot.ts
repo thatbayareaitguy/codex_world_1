@@ -56,6 +56,8 @@ export interface ItunesTrackCandidate {
 
 export interface SpotifyGroundTruthRelease {
   canonicalReleaseId: string;
+  evidenceCutoff?: string;
+  evidenceSource?: string;
   normalizedTitle: string;
   releaseDate: string;
   releaseType: string;
@@ -64,9 +66,12 @@ export interface SpotifyGroundTruthRelease {
   trackCount?: number;
   tracks?: Array<{
     durationMs?: number;
+    isrc?: string;
     normalizedTitle: string;
+    releaseDate?: string;
     title: string;
   }>;
+  upc?: string;
   version?: string;
 }
 

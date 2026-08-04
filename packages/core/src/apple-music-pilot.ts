@@ -3,7 +3,7 @@ import {
   type ItunesCollectionCandidate,
   type SpotifyGroundTruthRelease,
 } from "./itunes-pilot";
-import { normalizeText } from "./normalize";
+import { normalizeIdentifier, normalizeText } from "./normalize";
 
 export type AppleMusicMappingStatus =
   | "existing_id_confirmed"
@@ -45,6 +45,7 @@ export interface AppleMusicAlbumCandidate {
 
 export interface AppleMusicSongCandidate {
   albumId?: string;
+  albumTitle?: string;
   artistIds: string[];
   artistName: string;
   discNumber?: number;
@@ -61,11 +62,19 @@ export interface AppleMusicSongCandidate {
 
 export interface AppleMusicMappingEvidence {
   artistId: string;
+  contradictoryIsrcCount: number;
+  contradictoryUpcCount: number;
   conflictingReleaseTitles: string[];
+  evidenceTier: "code_conflict" | "isrc_exact" | "none" | "title_overlap" | "upc_exact";
+  exactIsrcMatchCount: number;
   exactReleaseTitles: string[];
   exactTrackTitles: string[];
+  exactUpcMatchCount: number;
+  isrcMatchState: "conflicting" | "duplicated" | "exact" | "no_signal";
+  nameCompatible: boolean;
   reasons: string[];
   score: number;
+  upcMatchState: "conflicting" | "duplicated" | "exact" | "no_signal";
 }
 
 export interface AppleMusicMappingDecision {
@@ -170,9 +179,43 @@ export function resolveAppleMusicArtistFromCatalogEvidence(input: {
     normalizeArtist(input.canonicalName),
     ...input.aliases.map(normalizeArtist),
   ]);
-  const evidence = input.candidateCatalogs.map((catalog) =>
+  const rawEvidence = input.candidateCatalogs.map((catalog) =>
     catalogEvidence(catalog.artist.artistId, catalog.albums, catalog.songs, input.groundTruth),
   );
+  const compatible = input.candidateCatalogs.map((catalog) =>
+    eligibleNames.has(normalizeArtist(catalog.artist.name)),
+  );
+  const isrcCandidateCount = rawEvidence.filter(
+    (item, index) => compatible[index] && item.exactIsrcMatchCount > 0,
+  ).length;
+  const upcCandidateCount = rawEvidence.filter(
+    (item, index) => compatible[index] && item.exactUpcMatchCount > 0,
+  ).length;
+  let evidence = rawEvidence.map((item, index) => {
+    const nameCompatible = compatible[index] ?? false;
+    return {
+      ...item,
+      isrcMatchState: !nameCompatible
+        ? ("no_signal" as const)
+        : item.contradictoryIsrcCount > 0
+          ? ("conflicting" as const)
+          : item.exactIsrcMatchCount === 0
+            ? ("no_signal" as const)
+            : isrcCandidateCount > 1
+              ? ("duplicated" as const)
+              : ("exact" as const),
+      nameCompatible,
+      upcMatchState: !nameCompatible
+        ? ("no_signal" as const)
+        : item.contradictoryUpcCount > 0
+          ? ("conflicting" as const)
+          : item.exactUpcMatchCount === 0
+            ? ("no_signal" as const)
+            : upcCandidateCount > 1
+              ? ("duplicated" as const)
+              : ("exact" as const),
+    };
+  });
   const ranked = input.candidateCatalogs
     .map((catalog, index) => ({ catalog, evidence: evidence[index]! }))
     .filter(({ catalog }) => eligibleNames.has(normalizeArtist(catalog.artist.name)))
@@ -183,10 +226,55 @@ export function resolveAppleMusicArtistFromCatalogEvidence(input: {
     );
   const strongest = ranked[0];
   const second = ranked[1];
+  const isrcCandidates = ranked.filter(({ evidence: item }) => item.exactIsrcMatchCount > 0);
+  const upcCandidates = ranked.filter(({ evidence: item }) => item.exactUpcMatchCount > 0);
+  const uniqueIsrc = isrcCandidates.length === 1 ? isrcCandidates[0] : undefined;
+  const uniqueUpc = upcCandidates.length === 1 ? upcCandidates[0] : undefined;
+  const codeConflict = Boolean(
+    uniqueIsrc &&
+    uniqueUpc &&
+    uniqueIsrc.catalog.artist.artistId !== uniqueUpc.catalog.artist.artistId,
+  );
+  if (codeConflict) {
+    evidence = evidence.map((item) => ({
+      ...item,
+      isrcMatchState:
+        item.artistId === uniqueIsrc?.catalog.artist.artistId
+          ? ("conflicting" as const)
+          : item.isrcMatchState,
+      upcMatchState:
+        item.artistId === uniqueUpc?.catalog.artist.artistId
+          ? ("conflicting" as const)
+          : item.upcMatchState,
+    }));
+  }
+  const codeWinner = codeConflict ? undefined : (uniqueIsrc ?? uniqueUpc);
+  if (
+    codeWinner &&
+    codeWinner.evidence.conflictingReleaseTitles.length === 0 &&
+    codeWinner.evidence.contradictoryIsrcCount === 0 &&
+    codeWinner.evidence.contradictoryUpcCount === 0
+  ) {
+    return {
+      candidates: input.candidateCatalogs.map((catalog) => catalog.artist),
+      confidence: 0.99,
+      evidence,
+      reason:
+        uniqueIsrc && uniqueUpc
+          ? "One compatible candidate has unique exact ISRC and UPC identity evidence."
+          : uniqueIsrc
+            ? "One compatible candidate has unique exact ISRC identity evidence."
+            : "One compatible candidate has unique exact UPC identity evidence.",
+      selected: codeWinner.catalog.artist,
+      status: "evidence_confirmed",
+    };
+  }
   if (
     strongest &&
     strongest.evidence.score >= 3 &&
     strongest.evidence.conflictingReleaseTitles.length === 0 &&
+    strongest.evidence.contradictoryIsrcCount === 0 &&
+    strongest.evidence.contradictoryUpcCount === 0 &&
     (!second || strongest.evidence.score - second.evidence.score >= 2)
   ) {
     return {
@@ -202,8 +290,9 @@ export function resolveAppleMusicArtistFromCatalogEvidence(input: {
     candidates: input.candidateCatalogs.map((catalog) => catalog.artist),
     confidence: 0,
     evidence,
-    reason:
-      input.candidateCatalogs.length === 0
+    reason: codeConflict
+      ? "Exact ISRC and UPC identity evidence point to different candidates."
+      : input.candidateCatalogs.length === 0
         ? "No Apple catalog evidence was available."
         : "Catalog evidence did not uniquely identify one compatible artist.",
     status: input.candidateCatalogs.length === 0 ? "no_match" : "ambiguous",
@@ -315,7 +404,10 @@ function catalogEvidence(
   songs: AppleMusicSongCandidate[],
   groundTruth: SpotifyGroundTruthRelease[],
 ): AppleMusicMappingEvidence {
-  const releaseTitles = new Set(albums.map((album) => normalizeText(album.title)));
+  const releaseTitles = new Set([
+    ...albums.map((album) => normalizeText(album.title)),
+    ...songs.flatMap((song) => (song.albumTitle ? [normalizeText(song.albumTitle)] : [])),
+  ]);
   const trackTitles = new Set(songs.map((song) => normalizeText(song.title)));
   const exactReleaseTitles = groundTruth
     .filter((release) => releaseTitles.has(normalizeText(release.title)))
@@ -336,19 +428,137 @@ function catalogEvidence(
       }),
     )
     .map((release) => release.title);
+  const groundTruthIsrcs = new Set(
+    groundTruth
+      .flatMap((release) => release.tracks ?? [])
+      .map((track) => normalizeAppleIdentityIsrc(track.isrc))
+      .filter(isPresent),
+  );
+  const groundTruthUpcs = new Set(
+    groundTruth.map((release) => normalizeAppleIdentityUpc(release.upc)).filter(isPresent),
+  );
+  const exactIsrcMatchCount = new Set(
+    songs
+      .map((song) => normalizeAppleIdentityIsrc(song.isrc))
+      .filter((isrc): isrc is string => Boolean(isrc && groundTruthIsrcs.has(isrc))),
+  ).size;
+  const exactUpcMatchCount = new Set(
+    albums
+      .map((album) => normalizeAppleIdentityUpc(album.upc))
+      .filter((upc): upc is string => Boolean(upc && groundTruthUpcs.has(upc))),
+  ).size;
+  const contradictoryIsrcCount = countContradictoryIsrcs(songs, groundTruth);
+  const contradictoryUpcCount = countContradictoryUpcs(albums, groundTruth);
   const score = exactReleaseTitles.length * 3 + Math.min(2, exactTrackTitles.length);
+  const evidenceTier =
+    contradictoryIsrcCount > 0 || contradictoryUpcCount > 0
+      ? "code_conflict"
+      : exactIsrcMatchCount > 0
+        ? "isrc_exact"
+        : exactUpcMatchCount > 0
+          ? "upc_exact"
+          : score > 0
+            ? "title_overlap"
+            : "none";
   return {
     artistId,
+    contradictoryIsrcCount,
+    contradictoryUpcCount,
     conflictingReleaseTitles,
+    evidenceTier,
+    exactIsrcMatchCount,
     exactReleaseTitles,
     exactTrackTitles,
+    exactUpcMatchCount,
+    isrcMatchState: "no_signal",
+    nameCompatible: false,
     reasons: [
+      `${exactIsrcMatchCount} exact ISRC overlap(s).`,
+      `${exactUpcMatchCount} exact UPC overlap(s).`,
       `${exactReleaseTitles.length} exact release-title overlap(s).`,
       `${exactTrackTitles.length} exact track-title overlap(s).`,
       `${conflictingReleaseTitles.length} conflicting release-date overlap(s).`,
+      `${contradictoryIsrcCount} same-title, compatible-date contradictory ISRC overlap(s).`,
+      `${contradictoryUpcCount} same-title, compatible-date contradictory UPC overlap(s).`,
     ],
     score,
+    upcMatchState: "no_signal",
   };
+}
+
+export function normalizeAppleIdentityIsrc(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const normalized = normalizeIdentifier(value.trim());
+  return /^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$/.test(normalized) ? normalized : undefined;
+}
+
+export function normalizeAppleIdentityUpc(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  return /^[0-9]{8,14}$/.test(trimmed) ? trimmed : undefined;
+}
+
+function countContradictoryIsrcs(
+  songs: AppleMusicSongCandidate[],
+  groundTruth: SpotifyGroundTruthRelease[],
+): number {
+  const conflicts = new Set<string>();
+  for (const release of groundTruth) {
+    for (const track of release.tracks ?? []) {
+      const expected = normalizeAppleIdentityIsrc(track.isrc);
+      if (!expected) continue;
+      for (const song of songs) {
+        const actual = normalizeAppleIdentityIsrc(song.isrc);
+        if (
+          actual &&
+          actual !== expected &&
+          normalizeText(song.title) === normalizeText(track.title) &&
+          datesCompatible(song.releaseDate, track.releaseDate ?? release.releaseDate)
+        ) {
+          conflicts.add(`${normalizeText(track.title)}:${expected}:${actual}`);
+        }
+      }
+    }
+  }
+  return conflicts.size;
+}
+
+function countContradictoryUpcs(
+  albums: AppleMusicAlbumCandidate[],
+  groundTruth: SpotifyGroundTruthRelease[],
+): number {
+  const conflicts = new Set<string>();
+  for (const release of groundTruth) {
+    const expected = normalizeAppleIdentityUpc(release.upc);
+    if (!expected) continue;
+    for (const album of albums) {
+      const actual = normalizeAppleIdentityUpc(album.upc);
+      if (
+        actual &&
+        actual !== expected &&
+        normalizeText(album.title) === normalizeText(release.title) &&
+        datesCompatible(album.releaseDate, release.releaseDate)
+      ) {
+        conflicts.add(`${normalizeText(release.title)}:${expected}:${actual}`);
+      }
+    }
+  }
+  return conflicts.size;
+}
+
+function datesCompatible(left: string | undefined, right: string | undefined): boolean {
+  if (!left || !right) return false;
+  const leftDate = Date.parse(left.slice(0, 10));
+  const rightDate = Date.parse(right.slice(0, 10));
+  return (
+    Number.isFinite(leftDate) &&
+    Number.isFinite(rightDate) &&
+    Math.abs(leftDate - rightDate) <= 30 * 86_400_000
+  );
+}
+
+function isPresent(value: string | undefined): value is string {
+  return value !== undefined;
 }
 
 function appleAlbumAsItunesCollection(album: AppleMusicAlbumCandidate): ItunesCollectionCandidate {

@@ -14,10 +14,22 @@ minimum pacing, concurrency one, and zero retry, search, pagination, release-dis
 other-provider requests. Historical starts are 234. The lease is released, the queue and cooldown
 are clear, 22 migrations are applied, and `APPLE_MUSIC_ENABLED=false` remains required.
 
-The manual-review queue contains 273 artists. All 272 ambiguous seeds have multiple exact-name
-candidates and no imported overlap. Seventy-seven have exactly two candidates and are eligible for
-the existing catalog-evidence resolver; 195 require manual narrowing, and one artist has no
-candidate. Stage B has six bounded batches but was not executed and remains unauthorized.
+The manual-review queue contains 273 artists. Credential-free Stage B Phase 1 replayed all 272
+ambiguous seeds and included the candidate-free artist in the accounting. The shared resolver now
+accepts every bounded artifact candidate, up to ten, and supports safe unique ISRC and UPC evidence.
+The existing title thresholds and date-conflict protection are unchanged.
+
+The real replay produced zero offline automatic resolutions. Six ambiguous artists have approved
+release and track history but lack candidate catalog metadata. The other 266 lack usable
+watched-artist history in the approved local sources. Current approved ground truth contains zero
+ISRCs and zero UPCs for the ambiguous cohort, and none of the 1,340 ambiguous candidate IDs has
+reusable candidate catalog evidence in the sanitized Apple cache. Synthetic tests are capability
+evidence only and are not counted as real resolutions.
+
+The ignored cadence-ranked review JSON and HTML cover all 273 entries. Six entries have dated
+history covering 12 releases inside 90 days; the other 267 explicitly have unavailable cadence.
+The strict manual-decision artifact is review-hash-bound and supports confirm, reject, or defer,
+but no decision was applied.
 
 The Apple branch now has a credential-free parser and aggregate plan command for the immutable
 free-iTunes identity-seed artifact. Independent validation confirms schema version 1, exactly 593
@@ -49,16 +61,17 @@ remix recall. Mapping is 17 of 25. One Alok release remains mapping-unevaluable,
 catalog misses remain, and matcher misses and invalid accepted candidates are zero. Historical
 Apple starts are 222. The provider is disabled with no active run, lease, cooldown, or queue.
 
-The bounded thresholds were met. The next separate milestone should request a sanitized
-full-watchlist public Apple/iTunes artist-ID candidate artifact from the free-iTunes workstream.
-Production integration and merge remain unauthorized.
+The proposed, nonauthorized Phase 2 is one six-artist batch with 39 bounded candidates: two batch
+artist lookups, 39 Top Songs first pages, up to 39 Singles fallbacks, eight retry and safety starts,
+an 88-request ceiling, and a 156,800-millisecond ceiling. It skips 1,301 candidates that current
+ground truth cannot distinguish. Production integration and merge remain unauthorized.
 
 ## Mapping bootstrap history
 
 The mapping-only 13-artist bootstrap is implemented and its authorized live run completed. The
-existing catalog-evidence resolver is now called by both the fixed-candidate bootstrap and the
-normal recent cold-start path when exactly two exact-name or alias candidates remain. Existing
-durable mappings return before search or evidence work. The scorer is unchanged: release-title
+existing catalog-evidence resolver is called by both the fixed-candidate bootstrap and the normal
+recent cold-start path. The cold-start path now passes every bounded exact-name or alias candidate.
+Existing durable mappings return before search or evidence work. The title scorer is unchanged: release-title
 overlap is weighted three, track overlap contributes up to two, date conflicts block confirmation,
 and a safe winner needs a score of at least three and a margin of at least two.
 

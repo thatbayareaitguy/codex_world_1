@@ -244,7 +244,7 @@ export function createAppleMusicFullWatchlistPlan(
       0,
     );
     const evidenceRequests = entries.reduce(
-      (total, entry) => total + Math.min(2, entry.alternateCandidateIds.length),
+      (total, entry) => total + entry.alternateCandidateIds.length,
       0,
     );
     return {

@@ -10,10 +10,12 @@ compatible-name binding produced no missing, rejected, ambiguous, or conflicting
 durable total is 320 of 593 artists, or 54.0%.
 
 The run made no search, pagination, release discovery, or other-provider request. The remaining 272
-ambiguous artists and one candidate-free artist are in a sanitized review queue. Only 77 ambiguous
-artists already have exactly two bounded candidates and can proceed automatically to the unchanged
-catalog-evidence resolver. Stage B was not executed and remains unauthorized. The durable campaign
-does not change recent-release request behavior.
+ambiguous artists and one candidate-free artist are in a sanitized review queue. Credential-free
+Stage B Phase 1 now permits every bounded artifact candidate, up to ten, to reach the unchanged
+title fallback and the new stronger ISRC and UPC evidence tier. The real replay produced zero
+offline confirmations because 266 artists lack usable watched history and the other six lack
+candidate catalog metadata. Stage B Phase 2 was not executed and remains unauthorized. The durable
+campaign does not change the recent-release discovery profile.
 
 The narrow discovery scope for the five newly confirmed seed artists is complete. It accepted
 only the tracked `apple-music-recent-seed-discovery-manifest.json`, fixed evaluation time,
@@ -40,9 +42,10 @@ pnpm apple:recent -- --execute-live --confirm-live APPLE_RECENT_SEED_DISCOVERY_5
 ### Mapping bootstrap history
 
 The mapping-only bootstrap execution path is implemented and its authorized 13-artist run is
-complete. It reuses the existing catalog-evidence resolver for the exact two-candidate ambiguity
-case and adds the same resolver to the one-time `apple:recent` cold-start path. Recurring scans
-return an existing durable confirmed mapping before any search or evidence lookup.
+complete. The catalog-evidence resolver now supports every bounded compatible candidate rather
+than only the exact two-candidate ambiguity case. Recurring scans return an existing durable
+confirmed mapping before any search or evidence lookup. This identity-only update does not change
+the recent-release endpoint profile.
 
 Mapping precedence is: durable confirmed mapping, future manually confirmed evidence, approved
 public-ID seed validated by an Apple artist lookup, unique exact normalized-name search result,
@@ -104,9 +107,9 @@ conflict, and a lead of at least two points over the runner-up.
 Before this checkpoint, direct callers existed only in credential-free core tests. The original
 exhaustive pilot and recent runner did not call it, and the bootstrap was plan-only. The shared
 Top Songs adapter now derives parent-album evidence from each song while retaining track evidence,
-then calls this resolver. The normal recent cold-start path does so only when exactly two exact
-canonical-name or alias candidates remain. The bootstrap does so only for the two fixed artifact
-candidates. No parallel scoring implementation was added.
+then calls this resolver. The normal recent cold-start path now passes every bounded exact
+canonical-name or alias candidate. The historical bootstrap still contains only its two fixed
+artifact candidates. No parallel scoring implementation was added.
 
 ## Window
 

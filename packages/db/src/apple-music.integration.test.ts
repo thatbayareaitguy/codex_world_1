@@ -708,11 +708,19 @@ describe.sequential("Apple Music isolated persistence and global request gate", 
       evidence: [
         {
           artistId: "42",
+          contradictoryIsrcCount: 0,
+          contradictoryUpcCount: 0,
           conflictingReleaseTitles: [],
+          evidenceTier: "title_overlap" as const,
+          exactIsrcMatchCount: 0,
           exactReleaseTitles: ["Album"],
           exactTrackTitles: ["Track"],
+          exactUpcMatchCount: 0,
+          isrcMatchState: "no_signal" as const,
+          nameCompatible: true,
           reasons: ["Synthetic fixture evidence."],
           score: 4,
+          upcMatchState: "no_signal" as const,
         },
       ],
       reason: "Synthetic exact match.",
@@ -900,6 +908,37 @@ describe.sequential("Apple Music isolated persistence and global request gate", 
     ).resolves.toMatchObject({
       appleArtistId: "synthetic-artist-a",
       confirmationMethod: "high_confidence_seed",
+    });
+  });
+
+  it("keeps a manual confirmation ahead of later automatic evidence", async () => {
+    const canonicalArtistId = randomUUID();
+    const runId = await createRunningRun(2);
+    await saveDurableAppleMusicArtistMapping(connection.db, {
+      appleArtistId: "manual-artist",
+      artifactHash: "a".repeat(64),
+      artistName: "Manually Confirmed Artist",
+      canonicalArtistId,
+      confirmationMethod: "manual_confirmation",
+      confirmedRunId: runId,
+      sourceClassification: "manual_review",
+    });
+    await expect(
+      saveDurableAppleMusicArtistMapping(connection.db, {
+        appleArtistId: "automatic-artist",
+        artifactHash: "b".repeat(64),
+        artistName: "Automatic Candidate",
+        canonicalArtistId,
+        confirmationMethod: "catalog_evidence",
+        confirmedRunId: runId,
+        sourceClassification: "ambiguous_seed",
+      }),
+    ).rejects.toThrow("cannot be replaced");
+    await expect(
+      getDurableAppleMusicArtistMapping(connection.db, canonicalArtistId),
+    ).resolves.toMatchObject({
+      appleArtistId: "manual-artist",
+      confirmationMethod: "manual_confirmation",
     });
   });
 

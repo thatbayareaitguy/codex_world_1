@@ -418,9 +418,16 @@ describe("Apple recent cold-start identity resolution", () => {
     );
   });
 
-  it("does not resolve from a truncated pool containing more than two exact candidates", async () => {
+  it("passes every bounded compatible candidate to the evidence resolver", async () => {
     const client = recentClient();
-    const resolver = vi.fn();
+    client.getArtistTopSongsFirstPage.mockResolvedValue({ items: [], nextPresent: false });
+    const resolver = vi.fn<typeof resolveAppleMusicArtistFromCatalogEvidence>((input) => ({
+      candidates: input.candidateCatalogs.map((candidate) => candidate.artist),
+      confidence: 0,
+      evidence: [],
+      reason: "Synthetic three-candidate replay.",
+      status: "ambiguous",
+    }));
     const decision = await resolveColdStartAppleMusicMapping({
       aliases: [],
       canonicalName: "NURKO",
@@ -431,8 +438,11 @@ describe("Apple recent cold-start identity resolution", () => {
       searchCandidates: ["1", "2", "3"].map((artistId) => ({ artistId, name: "NURKO" })),
     });
     expect(decision.status).toBe("ambiguous");
-    expect(client.getArtistTopSongsFirstPage).not.toHaveBeenCalled();
-    expect(resolver).not.toHaveBeenCalled();
+    expect(client.getArtistTopSongsFirstPage).toHaveBeenCalledTimes(3);
+    expect(resolver.mock.calls[0]![0].candidateCatalogs).toHaveLength(3);
+    expect(
+      resolver.mock.calls[0]![0].candidateCatalogs.map((candidate) => candidate.artist.artistId),
+    ).toEqual(["1", "2", "3"]);
   });
 
   it("preserves ambiguity when candidate evidence is unavailable", async () => {

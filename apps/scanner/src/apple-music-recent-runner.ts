@@ -847,7 +847,7 @@ export async function resolveColdStartAppleMusicMapping(input: {
     canonicalName: input.canonicalName,
     maximumCandidates: input.searchCandidates.length,
   });
-  if (eligible.length !== 2) return initial;
+  if (eligible.length < 2) return initial;
   const candidateEvidence = [];
   let complete = true;
   for (const candidate of eligible) {

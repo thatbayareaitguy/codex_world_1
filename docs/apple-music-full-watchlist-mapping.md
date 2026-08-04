@@ -4,9 +4,11 @@ Date: 2026-08-03
 
 ## Authorization boundary
 
-This checkpoint imported and validated the immutable 593-artist identity artifact and completed
-the one-time resumable Stage A strong-seed campaign. Stage B ambiguous automation is planned but
-was not executed and is not authorized.
+This checkpoint imported and validated the immutable 593-artist identity artifact, completed the
+one-time resumable Stage A strong-seed campaign, and completed credential-free Stage B Phase 1.
+Phase 1 added safe ISRC and UPC evidence, widened the resolver to all bounded artifact candidates,
+replayed the 272 ambiguous entries offline, and built ignored assisted-review artifacts. Phase 2
+live execution was not performed and is not authorized.
 
 The campaign cannot run recent-release discovery, artist search, pagination, album detail, tracks,
 playback, personal-library operations, playlists, Apple Music Feed, or another provider. Persistent
@@ -47,10 +49,32 @@ table. Automatic writes use insert-only conflict behavior. A later ambiguous, re
 different candidate cannot replace a durable mapping. Normal pilot and recent-scan identity paths
 read the durable mapping before their older snapshot-scoped evidence.
 
+## Stage B Phase 1 result
+
+The credential-free replay evaluated all 272 ambiguous entries and included the candidate-free
+entry in final review accounting. It found zero offline automatic resolutions, six artists with
+approved release and track history that require live candidate evidence, and 266 artists without
+usable watched-artist history in the approved local sources. None of the ambiguous candidate IDs
+has reusable catalog metadata in the existing sanitized cache. ISRC and UPC ground-truth coverage
+is zero, so code evidence changed no actual result.
+
+The previous exact-two cold-start guard was removed. All bounded artifact candidates, up to the
+artifact maximum of ten, now reach the same deterministic resolver. Existing title thresholds,
+runner-up comparison, and date-conflict protection remain unchanged.
+
+Details and the nonauthorized Phase 2 proposal are in
+`docs/apple-music-identity-stage-b-phase1.md`.
+
 ## Credential-free plan
 
 ```powershell
 pnpm apple:identity-seeds -- --plan --full-watchlist-mapping-bootstrap --artifact apps/scanner/src/apple-music-full-watchlist-identity-seeds-v1.json
+```
+
+The Stage B replay command is:
+
+```powershell
+pnpm apple:identity-seeds -- --plan --stage-b-evidence-replay --artifact apps/scanner/src/apple-music-full-watchlist-identity-seeds-v1.json
 ```
 
 The plan reads the vendored artifact and durable mapping rows. It makes zero writes, reads no Apple
@@ -117,35 +141,20 @@ strong group contains only 320 artists. It requires safe Stage B confirmations o
 
 The remaining ambiguous artifact group has 272 artists and 1,340 bounded alternate candidate IDs.
 All 272 have multiple exact-name candidates, no alias match, and no imported title overlap. Artist
-lookup alone therefore cannot safely confirm one. Candidate resource validation requires 56
-batched lookup starts across six groups of at most 50 artists.
+lookup alone therefore cannot safely confirm one. Looking up every candidate would require 54
+multiple-artist requests at 25 IDs per request, before catalog evidence.
 
-Only 77 artists already have exactly two bounded candidates and can enter the existing
-catalog-evidence resolver automatically. The other 195 have three to ten candidates, with no
-authorized signal for choosing two, so they require manual narrowing before evidence requests.
-The single candidate-free artist also remains manual review.
+Phase 1 proved that only six ambiguous artists have usable approved watched history. Their 39
+bounded candidates form the only evidence-targeted proposed live batch. It would require two
+multiple-artist lookup requests, 39 Top Songs first pages, up to 39 Singles fallbacks, and eight
+retry and safety requests, for an 88-request and 156,800-millisecond ceiling. The other 1,301
+candidate requests are skipped because the current approved ground truth cannot distinguish them.
+Expected manual review is 267 to 273 artists. No Phase 2 execution is authorized.
 
-| Batch | Artists | Candidate IDs | Lookup starts | Two-candidate artists | Top Songs starts | Maximum Singles fallbacks | Base maximum | Proposed ceiling |
-| ----: | ------: | ------------: | ------------: | --------------------: | ---------------: | ------------------------: | -----------: | ---------------: |
-|     1 |      50 |           261 |            11 |                    12 |               24 |                        24 |           59 |               75 |
-|     2 |      50 |           246 |            10 |                    10 |               20 |                        20 |           50 |               65 |
-|     3 |      50 |           226 |            10 |                    19 |               38 |                        38 |           86 |              105 |
-|     4 |      50 |           247 |            10 |                    16 |               32 |                        32 |           74 |               90 |
-|     5 |      50 |           269 |            11 |                    12 |               24 |                        24 |           59 |               75 |
-|     6 |      22 |            91 |             4 |                     8 |               16 |                        16 |           36 |               50 |
-
-The exact automatic evidence plan is 154 Top Songs first pages. Singles is an adaptive fallback,
-so its honest exact pre-response range is zero to 154 starts. The base worst case is 364 starts;
-the separately reviewed ceilings total 460 and include retry and safety headroom. Each batch should
-receive a five-minute runtime ceiling, concurrency one, and 1,100 millisecond pacing. No pagination
-or search is permitted.
-
-Stage B cannot be executed by this checkpoint. Its technical automatic-confirmation range is zero
-to 77 artists. The prior two-candidate live sample confirmed zero of eight, so current evidence
-does not support a narrower expected range. At least 196 artists are likely to require manual
-review before or regardless of Stage B. The resolver remains unchanged: three points for exact
+The resolver now accepts all bounded candidates. Its title fallback remains three points for exact
 release-title overlap, up to two for track-title overlap, a 30-day date-conflict block, a minimum
-score of three, and a minimum winning margin of two.
+score of three, and a minimum winning margin of two. Unique safe ISRC or UPC is a stronger explicit
+tier; missing or unrelated codes remain neutral and duplicated or conflicting codes cannot decide.
 
 ## Manual review
 

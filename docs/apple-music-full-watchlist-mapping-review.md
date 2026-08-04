@@ -4,6 +4,14 @@ This queue contains only unresolved identities. Numeric catalog IDs remain in th
 
 Unresolved artists: 273
 
+Credential-free Stage B Phase 1 replayed all 272 ambiguous entries. Zero were auto-resolvable from
+existing local evidence, six require candidate catalog evidence, 266 lack usable watched-artist
+ground truth, and one entry remains candidate-free. The table below is the sanitized Stage A queue,
+not a record of completed candidate retrieval. The cadence-ranked working review is intentionally
+ignored at `.app-runtime/apple-music-stage-b-review.json` and
+`.app-runtime/apple-music-stage-b-review.html`; it contains the bounded public candidate links and
+supports hash-bound confirm, reject, or defer records without applying them.
+
 | Artist             | Aliases | Candidates evaluated | Path                     | Release overlaps | Track overlaps | Conflicts | Score gap     | Status        | Reason                                                                                        | User verification                                                          |
 | ------------------ | ------- | -------------------: | ------------------------ | ---------------: | -------------: | --------: | ------------- | ------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | 12th Planet        | None    |                    0 | stage_b_or_manual_review |                0 |              0 |         0 | Not available | manual_review | Multiple exact-name candidates remain and existing evidence does not uniquely identify one.   | Compare the bounded candidate pages and confirm the exact artist identity. |

@@ -35,7 +35,11 @@ const album = (
   ...overrides,
 });
 
-const song = (songId: string, title = "Signal Fire"): AppleMusicSongCandidate => ({
+const song = (
+  songId: string,
+  title = "Signal Fire",
+  overrides: Partial<AppleMusicSongCandidate> = {},
+): AppleMusicSongCandidate => ({
   albumId: "album-1",
   artistIds: ["artist-1"],
   artistName: "Artist",
@@ -43,6 +47,7 @@ const song = (songId: string, title = "Signal Fire"): AppleMusicSongCandidate =>
   pageNumber: 1,
   songId,
   title,
+  ...overrides,
 });
 
 const groundTruth: SpotifyGroundTruthRelease[] = [
@@ -227,6 +232,266 @@ describe("Apple Music artist mapping", () => {
       groundTruth,
     });
     expect(tied).toMatchObject({ status: "ambiguous" });
+  });
+
+  it("uses a unique exact ISRC only for one compatible candidate", () => {
+    const codedGroundTruth: SpotifyGroundTruthRelease[] = [
+      {
+        ...groundTruth[0]!,
+        tracks: [
+          {
+            isrc: " us-aaa-26-00001 ",
+            normalizedTitle: "signal fire",
+            title: "Signal Fire",
+          },
+        ],
+      },
+    ];
+    const decision = resolveAppleMusicArtistFromCatalogEvidence({
+      aliases: [],
+      candidateCatalogs: [
+        {
+          albums: [],
+          artist: artist("winner", "Artist"),
+          songs: [song("winner-song", "Unrelated", { isrc: "USAAA2600001" })],
+        },
+        {
+          albums: [],
+          artist: artist("other", "Artist"),
+          songs: [song("other-song", "Unrelated", { isrc: "USBBB2600002" })],
+        },
+      ],
+      canonicalName: "Artist",
+      groundTruth: codedGroundTruth,
+    });
+    expect(decision).toMatchObject({
+      selected: { artistId: "winner" },
+      status: "evidence_confirmed",
+    });
+    expect(decision.evidence[0]).toMatchObject({
+      evidenceTier: "isrc_exact",
+      exactIsrcMatchCount: 1,
+    });
+    expect(
+      resolveAppleMusicArtistFromCatalogEvidence({
+        aliases: [],
+        candidateCatalogs: [
+          {
+            albums: [],
+            artist: { ...artist("wrong-name", "Different Artist"), genreNames: ["Popular"] },
+            songs: [song("wrong-song", "Unrelated", { isrc: "USAAA2600001" })],
+          },
+          {
+            albums: [],
+            artist: { ...artist("compatible", "Artist"), genreNames: ["Unknown"] },
+            songs: [],
+          },
+        ],
+        canonicalName: "Artist",
+        groundTruth: codedGroundTruth,
+      }),
+    ).toMatchObject({ status: "ambiguous" });
+  });
+
+  it("keeps duplicated, missing, and unrelated ISRC evidence neutral or ambiguous", () => {
+    const codedGroundTruth: SpotifyGroundTruthRelease[] = [
+      {
+        ...groundTruth[0]!,
+        tracks: [
+          {
+            isrc: "USAAA2600001",
+            normalizedTitle: "signal fire",
+            title: "Signal Fire",
+          },
+        ],
+      },
+    ];
+    const duplicated = resolveAppleMusicArtistFromCatalogEvidence({
+      aliases: [],
+      candidateCatalogs: ["one", "two"].map((id) => ({
+        albums: [],
+        artist: artist(id, "Artist"),
+        songs: [song(`${id}-song`, "Unrelated", { isrc: "USAAA2600001" })],
+      })),
+      canonicalName: "Artist",
+      groundTruth: codedGroundTruth,
+    });
+    expect(duplicated).toMatchObject({ status: "ambiguous" });
+    expect(duplicated.evidence.every((evidence) => evidence.isrcMatchState === "duplicated")).toBe(
+      true,
+    );
+
+    const neutral = resolveAppleMusicArtistFromCatalogEvidence({
+      aliases: [],
+      candidateCatalogs: [
+        { albums: [], artist: artist("missing", "Artist"), songs: [song("missing")] },
+        {
+          albums: [],
+          artist: artist("unrelated", "Artist"),
+          songs: [song("unrelated", "Other", { isrc: "USBBB2600002" })],
+        },
+      ],
+      canonicalName: "Artist",
+      groundTruth: codedGroundTruth,
+    });
+    expect(neutral).toMatchObject({ status: "ambiguous" });
+    expect(neutral.evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ contradictoryIsrcCount: 0, exactIsrcMatchCount: 0 }),
+      ]),
+    );
+  });
+
+  it("blocks a same-title compatible-date contradictory ISRC", () => {
+    const decision = resolveAppleMusicArtistFromCatalogEvidence({
+      aliases: [],
+      candidateCatalogs: [
+        {
+          albums: [album("candidate")],
+          artist: artist("candidate", "Artist"),
+          songs: [
+            song("candidate-song", "Signal Fire", {
+              isrc: "USBBB2600002",
+              releaseDate: "2026-07-01",
+            }),
+          ],
+        },
+      ],
+      canonicalName: "Artist",
+      groundTruth: [
+        {
+          ...groundTruth[0]!,
+          tracks: [
+            {
+              isrc: "USAAA2600001",
+              normalizedTitle: "signal fire",
+              title: "Signal Fire",
+            },
+          ],
+        },
+      ],
+    });
+    expect(decision).toMatchObject({ status: "ambiguous" });
+    expect(decision.evidence[0]).toMatchObject({
+      contradictoryIsrcCount: 1,
+      evidenceTier: "code_conflict",
+    });
+  });
+
+  it("uses unique UPC evidence and keeps duplicated or missing UPC evidence nondecisive", () => {
+    const codedGroundTruth: SpotifyGroundTruthRelease[] = [
+      { ...groundTruth[0]!, upc: " 012345678905 " },
+    ];
+    const unique = resolveAppleMusicArtistFromCatalogEvidence({
+      aliases: [],
+      candidateCatalogs: [
+        {
+          albums: [album("winner", "Other", { upc: "012345678905" })],
+          artist: artist("winner", "Artist"),
+          songs: [],
+        },
+        {
+          albums: [album("other", "Other")],
+          artist: artist("other", "Artist"),
+          songs: [],
+        },
+      ],
+      canonicalName: "Artist",
+      groundTruth: codedGroundTruth,
+    });
+    expect(unique).toMatchObject({ selected: { artistId: "winner" } });
+
+    const duplicated = resolveAppleMusicArtistFromCatalogEvidence({
+      aliases: [],
+      candidateCatalogs: ["one", "two"].map((id) => ({
+        albums: [album(id, "Other", { upc: "012345678905" })],
+        artist: artist(id, "Artist"),
+        songs: [],
+      })),
+      canonicalName: "Artist",
+      groundTruth: codedGroundTruth,
+    });
+    expect(duplicated).toMatchObject({ status: "ambiguous" });
+    expect(duplicated.evidence.every((evidence) => evidence.upcMatchState === "duplicated")).toBe(
+      true,
+    );
+    expect(
+      resolveAppleMusicArtistFromCatalogEvidence({
+        aliases: [],
+        candidateCatalogs: [
+          { albums: [album("missing", "Other")], artist: artist("missing", "Artist"), songs: [] },
+        ],
+        canonicalName: "Artist",
+        groundTruth: codedGroundTruth,
+      }),
+    ).toMatchObject({ status: "ambiguous" });
+  });
+
+  it("keeps conflicting unique ISRC and UPC winners ambiguous", () => {
+    const decision = resolveAppleMusicArtistFromCatalogEvidence({
+      aliases: [],
+      candidateCatalogs: [
+        {
+          albums: [],
+          artist: artist("isrc", "Artist"),
+          songs: [song("isrc-song", "Other", { isrc: "USAAA2600001" })],
+        },
+        {
+          albums: [album("upc-album", "Other", { upc: "012345678905" })],
+          artist: artist("upc", "Artist"),
+          songs: [],
+        },
+      ],
+      canonicalName: "Artist",
+      groundTruth: [
+        {
+          ...groundTruth[0]!,
+          tracks: [
+            {
+              isrc: "USAAA2600001",
+              normalizedTitle: "signal fire",
+              title: "Signal Fire",
+            },
+          ],
+          upc: "012345678905",
+        },
+      ],
+    });
+    expect(decision).toMatchObject({
+      reason: "Exact ISRC and UPC identity evidence point to different candidates.",
+      status: "ambiguous",
+    });
+  });
+
+  it("ranks three and ten candidates deterministically using the actual runner-up", () => {
+    const candidates = Array.from({ length: 10 }, (_, index) => {
+      const id = String(10 - index);
+      return {
+        albums:
+          id === "7"
+            ? [album("seven")]
+            : id === "8"
+              ? [album("eight", "Signal Fire"), album("eight-two", "Signal Fire")]
+              : [],
+        artist: artist(id, "Artist"),
+        songs: [],
+      };
+    });
+    const first = resolveAppleMusicArtistFromCatalogEvidence({
+      aliases: [],
+      candidateCatalogs: candidates,
+      canonicalName: "Artist",
+      groundTruth,
+    });
+    const reversed = resolveAppleMusicArtistFromCatalogEvidence({
+      aliases: [],
+      candidateCatalogs: [...candidates].reverse(),
+      canonicalName: "Artist",
+      groundTruth,
+    });
+    expect(first).toMatchObject({ status: "ambiguous" });
+    expect(reversed).toMatchObject({ status: "ambiguous" });
+    expect(first.evidence).toHaveLength(10);
   });
 });
 

@@ -12,9 +12,17 @@ The run made 12 multiple-artist starts, all HTTP 200, in 12,953 milliseconds. Mi
 pagination, release discovery, and other-provider requests were zero. Historical Apple starts are 234. The lease is released, the queue and cooldown are clear, and `APPLE_MUSIC_ENABLED=false`.
 
 Permanent coverage is 320 of 593, or 54.0%. The remaining queue is 272 ambiguous identities plus
-one artist without a candidate. Only 77 ambiguous artists have exactly two candidates and can enter
-the existing resolver automatically; the other 195 require manual narrowing. Stage B is planned in
-six bounded batches but was not executed and remains unauthorized.
+one artist without a candidate. Credential-free Stage B Phase 1 now supports every bounded
+candidate, adds safe ISRC and UPC evidence, and has replayed all 272 ambiguous entries. Zero are
+offline auto-resolvable, six have usable watched history but need candidate catalog evidence, and
+266 lack usable watched history in the approved local sources. Phase 2 was not executed and remains
+unauthorized.
+
+The replay made zero network requests and zero database writes. Historical Apple starts remain
+234, durable mappings remain 320, and no ambiguous candidate catalog is reusable from the current
+sanitized cache. The cadence-ranked local review covers 273 entries. Six have dated history, with
+12 releases inside 90 days; the other 267 explicitly have unavailable cadence. The review JSON and
+HTML are ignored under `.app-runtime` and no manual decision was applied.
 
 Discovery on the five newly confirmed seed artists is complete. The exact scope was ZHU, Don
 Diablo, SISTO, William Black, and YUSSI, representing eight frozen in-scope releases. The run
@@ -31,9 +39,10 @@ exists, historical Apple starts are 222, and `APPLE_MUSIC_ENABLED=false`.
 Combined 25-artist evidence is now 17 of 21 full-cohort exact recall and 17 of 20 mapped-artist
 exact recall. Mapping is 17 of 25, primary recall is 12 of 13, matcher misses are zero, one Alok
 release remains mapping-unevaluable, and the three prior catalog misses remain. The bounded
-thresholds were met. The next separate milestone should request a sanitized full-watchlist public
-Apple/iTunes artist-ID candidate artifact from the free-iTunes workstream. Production integration
-and merge remain unauthorized.
+thresholds were met. The next separate identity milestone, if authorized, should run only the
+six-artist, 39-candidate evidence-targeted Stage B batch described in
+`docs/apple-music-identity-stage-b-phase1.md`. Production integration and merge remain
+unauthorized.
 
 ## Mapping bootstrap history
 

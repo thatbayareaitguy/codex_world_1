@@ -1,8 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import {
+  appleMusicAlbums,
   appleMusicRequestEvents,
+  appleMusicResponseCache,
+  appleMusicSongs,
   advanceAppleMusicIdentityCampaign,
   claimAppleMusicPilotLease,
   createAppleMusicComparisonRun,
@@ -44,11 +47,22 @@ import {
   validateApprovedAppleMusicIdentitySeedArtifact,
 } from "./apple-music-identity-seed-artifact";
 import type { AppleMusicPilotStoredEvidence } from "./apple-music-pilot-runner";
+import {
+  buildAppleMusicStageBGroundTruth,
+  createAppleMusicStageBPhase2Plan,
+  createAppleMusicStageBReviewArtifact,
+  createAppleMusicStageBReviewHtml,
+  extractAppleMusicStageBCandidateCatalogs,
+  replayAppleMusicStageB,
+  type AppleMusicStageBSourceRelease,
+} from "./apple-music-stage-b";
+import { latestItunesSnapshot, pilotGroundTruth } from "./itunes-pilot-repository";
 import { loadLocalEnvironment } from "./local-env";
 
 export type AppleMusicIdentitySeedCommand =
   | { artifactPath: string; mode: "plan" }
   | { artifactPath: string; mode: "full_watchlist_plan" }
+  | { artifactPath: string; mode: "stage_b_evidence_replay" }
   | {
       artifactPath: string;
       confirmation: typeof appleMusicFullWatchlistConfirmation;
@@ -111,6 +125,10 @@ export function parseAppleMusicIdentitySeedPlanCommand(
   if (!args.includes("--plan")) {
     throw new Error("Apple identity-seed intake requires --plan, --report, or --execute-live.");
   }
+  if (args.includes("--stage-b-evidence-replay")) {
+    assertExactArguments(args, ["--plan", "--stage-b-evidence-replay", "--artifact", artifactPath]);
+    return { artifactPath, mode: "stage_b_evidence_replay" };
+  }
   if (args.includes("--full-watchlist-mapping-bootstrap")) {
     assertExactArguments(args, [
       "--plan",
@@ -144,6 +162,132 @@ async function main(): Promise<void> {
       );
       process.stdout.write(
         `${JSON.stringify(createAppleMusicFullWatchlistPlan(artifact, mappings), null, 2)}\n`,
+      );
+      return;
+    }
+    if (command.mode === "stage_b_evidence_replay") {
+      validateApprovedAppleMusicIdentitySeedArtifact(artifact);
+      const requestCountBefore = await historicalAppleRequestCount(connection.db);
+      const durableBefore = await listDurableAppleMusicArtistMappings(
+        connection.db,
+        artifact.entries.map((entry) => entry.watchedArtistId),
+      );
+      const snapshot = await latestItunesSnapshot(connection.db);
+      if (!snapshot) throw new Error("The approved frozen Apple-side snapshot is unavailable.");
+      const sourceReleases = (await pilotGroundTruth(connection.db, snapshot.id)).map(
+        (release): AppleMusicStageBSourceRelease => ({
+          canonicalReleaseId: release.canonicalReleaseId,
+          evidenceCutoff: snapshot.snapshotTimestamp.toISOString(),
+          evidenceSource: "approved_frozen_spotify_snapshot",
+          releaseDate: release.releaseDate,
+          releaseType: release.releaseType,
+          sourceReleaseId: release.spotifyReleaseId,
+          title: release.title,
+          tracks: parseSnapshotTracks(release.tracks, release.releaseDate),
+          watchedArtistId: release.canonicalArtistId,
+        }),
+      );
+      const allowedCandidateIds = new Set(
+        artifact.entries.flatMap((entry) => [
+          ...(entry.candidateArtistId ? [entry.candidateArtistId] : []),
+          ...entry.alternateCandidateIds,
+        ]),
+      );
+      const [albumRows, songRows, cacheRows] = await Promise.all([
+        connection.db.select().from(appleMusicAlbums),
+        connection.db.select().from(appleMusicSongs),
+        connection.db.select().from(appleMusicResponseCache),
+      ]);
+      const candidateCatalogs = extractAppleMusicStageBCandidateCatalogs(
+        {
+          albums: albumRows.map((album) => ({
+            albumId: album.appleAlbumId,
+            artistIds: parseStringArray(album.artistIds),
+            artistName: album.artistName,
+            paginationPath: "offline-sanitized-database",
+            pageNumber: album.pageNumber,
+            ...(album.releaseDate ? { releaseDate: album.releaseDate } : {}),
+            sourceView: parseSourceView(album.sourceView),
+            title: album.title,
+            ...(album.trackCount === null ? {} : { trackCount: album.trackCount }),
+            ...(album.upc ? { upc: album.upc } : {}),
+          })),
+          artists: [],
+          cacheResponses: cacheRows.map((row) => row.response),
+          evidenceCutoff: artifact.evidenceCutoffDate,
+          songs: songRows.map((song) => ({
+            ...(song.appleAlbumId ? { albumId: song.appleAlbumId } : {}),
+            artistIds: parseStringArray(song.artistIds),
+            artistName: song.artistName,
+            ...(song.discNumber === null ? {} : { discNumber: song.discNumber }),
+            ...(song.durationMs === null ? {} : { durationMs: song.durationMs }),
+            ...(song.isrc ? { isrc: song.isrc } : {}),
+            paginationPath: "offline-sanitized-database",
+            pageNumber: song.pageNumber,
+            ...(song.releaseDate ? { releaseDate: song.releaseDate } : {}),
+            songId: song.appleSongId,
+            title: song.title,
+            ...(song.trackNumber === null ? {} : { trackNumber: song.trackNumber }),
+          })),
+        },
+        allowedCandidateIds,
+      );
+      const groundTruth = buildAppleMusicStageBGroundTruth(artifact, sourceReleases);
+      const replay = replayAppleMusicStageB({
+        artifact,
+        candidateCatalogs,
+        groundTruth,
+        now: new Date(artifact.evidenceCutoffDate),
+      });
+      const review = createAppleMusicStageBReviewArtifact({
+        artifact,
+        candidateCatalogs,
+        createdAt: new Date(artifact.evidenceCutoffDate),
+        replay,
+      });
+      const jsonPath = assertOutputPath(
+        ".app-runtime/apple-music-stage-b-review.json",
+        ".app-runtime",
+      );
+      const htmlPath = assertOutputPath(
+        ".app-runtime/apple-music-stage-b-review.html",
+        ".app-runtime",
+      );
+      await mkdir(dirname(jsonPath), { recursive: true });
+      await Promise.all([
+        writeFile(jsonPath, `${JSON.stringify(review, null, 2)}\n`, "utf8"),
+        writeFile(htmlPath, createAppleMusicStageBReviewHtml(review), "utf8"),
+      ]);
+      const requestCountAfter = await historicalAppleRequestCount(connection.db);
+      const durableAfter = await listDurableAppleMusicArtistMappings(
+        connection.db,
+        artifact.entries.map((entry) => entry.watchedArtistId),
+      );
+      if (requestCountAfter !== requestCountBefore) {
+        throw new Error("Apple Stage B replay changed the historical HTTP-start count.");
+      }
+      if (durableMappingFingerprint(durableAfter) !== durableMappingFingerprint(durableBefore)) {
+        throw new Error("Apple Stage B replay changed durable mappings.");
+      }
+      process.stdout.write(
+        `${JSON.stringify(
+          {
+            coverage: replay.coverage,
+            counts: replay.counts,
+            durableMappingsBeforeAndAfter: durableAfter.length,
+            historicalAppleHttpStartsBeforeAndAfter: requestCountAfter,
+            localReviewArtifactsWritten: 2,
+            mode: replay.mode,
+            phase2Plan: createAppleMusicStageBPhase2Plan({
+              artifact,
+              candidateCatalogs,
+              replay,
+            }),
+            safety: replay.safety,
+          },
+          null,
+          2,
+        )}\n`,
       );
       return;
     }
@@ -395,6 +539,76 @@ function countBy(values: string[]): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const value of values) counts[value] = (counts[value] ?? 0) + 1;
   return counts;
+}
+
+function durableMappingFingerprint(
+  mappings: Awaited<ReturnType<typeof listDurableAppleMusicArtistMappings>>,
+): string {
+  return JSON.stringify(
+    [...mappings].sort((left, right) =>
+      left.canonicalArtistId.localeCompare(right.canonicalArtistId),
+    ),
+  );
+}
+
+async function historicalAppleRequestCount(db: RadarDatabase): Promise<number> {
+  const rows = await db
+    .select({ id: appleMusicRequestEvents.id })
+    .from(appleMusicRequestEvents)
+    .where(eq(appleMusicRequestEvents.cacheHit, false));
+  return rows.length;
+}
+
+function parseStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function parseSnapshotTracks(
+  value: unknown,
+  releaseDate: string,
+): AppleMusicStageBSourceRelease["tracks"] {
+  if (!Array.isArray(value)) return [];
+  return (value as unknown[]).flatMap((track) => {
+    if (!isRecord(track) || typeof track.title !== "string") return [];
+    const durationMs =
+      "durationMs" in track && typeof track.durationMs === "number" ? track.durationMs : undefined;
+    const isrc = "isrc" in track && typeof track.isrc === "string" ? track.isrc : undefined;
+    return [
+      {
+        ...(durationMs === undefined ? {} : { durationMs }),
+        ...(isrc ? { isrc } : {}),
+        releaseDate,
+        title: track.title,
+      },
+    ];
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function parseSourceView(value: string) {
+  const supported = new Set([
+    "latest-release",
+    "singles",
+    "full-albums",
+    "live-albums",
+    "compilation-albums",
+    "appears-on-albums",
+    "album",
+  ]);
+  if (!supported.has(value)) return "album" as const;
+  return value as
+    | "latest-release"
+    | "singles"
+    | "full-albums"
+    | "live-albums"
+    | "compilation-albums"
+    | "appears-on-albums"
+    | "album";
 }
 
 function git(args: string[]): string {

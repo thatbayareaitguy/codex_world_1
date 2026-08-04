@@ -57,6 +57,7 @@ function albumsFromTopSongs(songs: AppleMusicSong[]): AppleMusicAlbumCandidate[]
 function songAsCandidate(song: AppleMusicSong): AppleMusicSongCandidate {
   return {
     ...(song.albumId ? { albumId: song.albumId } : {}),
+    ...(song.albumName ? { albumTitle: song.albumName } : {}),
     artistIds: song.artistIds,
     artistName: song.artistName,
     ...(song.discNumber === undefined ? {} : { discNumber: song.discNumber }),

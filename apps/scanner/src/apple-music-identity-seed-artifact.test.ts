@@ -82,6 +82,14 @@ describe("Apple full-watchlist identity-seed artifact", () => {
     ).toEqual({ artifactPath: "identity-seeds.json", mode: "full_watchlist_plan" });
     expect(
       parseAppleMusicIdentitySeedPlanCommand([
+        "--plan",
+        "--stage-b-evidence-replay",
+        "--artifact",
+        "identity-seeds.json",
+      ]),
+    ).toEqual({ artifactPath: "identity-seeds.json", mode: "stage_b_evidence_replay" });
+    expect(
+      parseAppleMusicIdentitySeedPlanCommand([
         "--execute-live",
         "--confirm-live",
         "APPLE_PUBLIC_CATALOG_STRONG_SEEDS_320",
