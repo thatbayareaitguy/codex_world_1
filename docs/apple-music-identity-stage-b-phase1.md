@@ -4,19 +4,19 @@ Date: 2026-08-04
 
 ## Result and boundary
 
-This credential-free checkpoint strengthened the existing identity resolver and replayed all 272
-ambiguous seed entries using only approved local evidence. It made no Apple or other-provider
-request, read no credential or private key, generated no token, and wrote no development-database
-row. The 320 durable mappings remain unchanged. A later, separately authorized milestone now
-permits one bounded Phase 2 candidate-evidence run for the six replay-eligible artists after a
-committed and pushed credential-free checkpoint. Production integration and merge remain
-unauthorized. Persistent `APPLE_MUSIC_ENABLED=false` remains required.
+This checkpoint strengthened the existing identity resolver, replayed all 272 ambiguous seed
+entries using approved local evidence, and then completed one separately authorized bounded Phase
+2 candidate-evidence run for the six replay-eligible artists. The credential-free checkpoint was
+committed and pushed before live execution. The live run made 80 Apple public-catalog starts and
+made no search, pagination, release-discovery, or other-provider request. It produced no safe
+automatic confirmation, so the 320 durable mappings remain unchanged. Production integration and
+merge remain unauthorized. Persistent `APPLE_MUSIC_ENABLED=false` remains required.
 
-The replay produced zero offline automatic resolutions. Six artists have usable approved watched
-release and track history but no cached candidate catalog metadata. The other 266 ambiguous artists
-lack usable watched-artist history in the approved local sources. The candidate-free artist remains
-manual review. Synthetic tests prove the new code-evidence behavior but are not counted as real
-resolutions.
+The replay produced zero offline automatic resolutions. Six artists had usable approved watched
+release and track history but no cached candidate catalog metadata. Live first-page Top Songs and
+Singles evidence still left all six ambiguous. The other 266 ambiguous artists lack usable
+watched-artist history in the approved local sources. The candidate-free artist remains manual
+review. Synthetic tests prove the code-evidence behavior but are not counted as real resolutions.
 
 ## Resolver and evidence audit
 
@@ -183,9 +183,47 @@ HTTP 401, 403, and 429, unsafe navigation, response identity defects, isolation 
 budget exhaustion stop the run. The minimum expected manual-review count is 267 and the maximum
 is 273, depending on whether the six evidence-targeted artists resolve.
 
+## Phase 2 live result
+
+The pushed pre-live checkpoint was `8113cecb5a5d310ed8348b7de104039e0f05d368`.
+The exact live scope was 1991, 4B, Alok, GRiZ, REAPER, and Rueben, containing 39 unique candidates
+bound to the immutable artifact. Both batch lookups returned every submitted candidate with a
+compatible name. No candidate was missing, duplicated, extra, or incompatible.
+
+The run requested Top Songs once and Singles once for every compatible candidate because Top Songs
+alone did not meet the confirmation threshold. All candidates had zero release-title, ISRC, UPC,
+date-conflict, and other conflict evidence. Except for the nonzero entries below, every candidate
+also had zero track-title overlap and score:
+
+| Artist | Candidates | Nonzero candidate evidence                       | Winning margin | Unavailable views | Result    |
+| ------ | ---------: | ------------------------------------------------ | -------------: | ----------------: | --------- |
+| 1991   |          5 | `candidate_5`: one track-title overlap, score 1  |              1 |                 0 | ambiguous |
+| 4B     |          9 | None                                             |              0 |                 3 | ambiguous |
+| Alok   |          8 | `candidate_8`: one track-title overlap, score 1  |              1 |                 0 | ambiguous |
+| GRiZ   |          5 | `candidate_5`: two track-title overlaps, score 2 |              2 |                 0 | ambiguous |
+| REAPER |         10 | None                                             |              0 |                 2 | ambiguous |
+| Rueben |          2 | `candidate_1`: two track-title overlaps, score 2 |              2 |                 0 | ambiguous |
+
+No score reached the minimum three-point threshold. No durable mapping was written, and every
+artist remains in manual review. The five unavailable candidate views were nonterminal HTTP 404
+responses and were not converted into empty evidence.
+
+The run completed in 89,188 milliseconds with 80 starts: two multiple-artist batch lookups, 39 Top
+Songs first pages, and 39 Singles first pages. It recorded 75 HTTP 200 and five HTTP 404 responses,
+zero retries, zero cache hits, zero pagination, concurrency one, and a 1,106 millisecond minimum
+request-start interval. Eight request starts remained. The lease was released, the queue and
+cooldown are clear, and the final historical total is 314 starts.
+
+This six-artist result does not support expanding automatic Stage B retrieval under the current
+ground truth. It resolved zero of six after 80 starts. The next identity milestone should improve
+approved offline ground truth or apply hash-bound human decisions, then use live candidate evidence
+only for cases that have a realistic distinguishing signal.
+
 ## Safety evidence
 
-Historical Apple HTTP starts were 234 before and after the replay. Durable mappings remained 320.
-No active provider state was created, no schema changed, no provider or production state was
-contacted, and no credential, private-key information, raw response, complete request URL, or
-numeric candidate ID is included in this document.
+Historical Apple HTTP starts were 234 before live execution and 314 afterward. Durable mappings
+remained 320. The post-run credential-free replay made zero requests and zero writes. Apple doctor
+is `READY` with 22 migrations, the provider remains disabled, and no active run, lease, queue, or
+cooldown remains. No schema changed, no other provider or production state was contacted, and no
+credential, private-key information, raw response, complete request URL, or numeric candidate ID
+is included in this document.

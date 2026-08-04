@@ -7,29 +7,39 @@ The full-watchlist Stage A identity campaign is complete. It reused 27 durable m
 and imported-conflict checks. This yields 307 of 307 high-confidence and 13 of 13
 evidence-supported artists durably mapped, including the reused mappings.
 
-The run made 12 multiple-artist starts, all HTTP 200, in 12,953 milliseconds. Minimum pacing was
-1,107 milliseconds, concurrency was one, and retries, missing IDs, conflicts, searches,
-pagination, release discovery, and other-provider requests were zero. Historical Apple starts are 234. The lease is released, the queue and cooldown are clear, and `APPLE_MUSIC_ENABLED=false`.
+The Stage A run made 12 multiple-artist starts, all HTTP 200, in 12,953 milliseconds. Minimum pacing
+was 1,107 milliseconds, concurrency was one, and retries, missing IDs, conflicts, searches,
+pagination, release discovery, and other-provider requests were zero.
 
 Permanent coverage is 320 of 593, or 54.0%. The remaining queue is 272 ambiguous identities plus
-one artist without a candidate. Credential-free Stage B Phase 1 now supports every bounded
+one artist without a candidate. Credential-free Stage B Phase 1 supports every bounded
 candidate, adds safe ISRC and UPC evidence, and has replayed all 272 ambiguous entries. Zero are
 offline auto-resolvable, six have usable watched history but need candidate catalog evidence, and
-266 lack usable watched history in the approved local sources. Phase 2 had not been executed at
-the credential-free replay checkpoint.
+266 lack usable watched history in the approved local sources.
 
-A separately authorized Stage B Phase 2 checkpoint now pins exactly 1991, 4B, Alok, GRiZ,
-REAPER, and Rueben with 39 unique candidates from the immutable artifact. The credential-free
-plan validates two batch lookups, up to 39 Top Songs first pages, conditional Singles only for
-unresolved eligible artists, an 88-start ceiling, 180 seconds, concurrency one, and 1,100
-millisecond minimum pacing. Search, pagination, release discovery, and other providers are
-unreachable. Live execution remains pending the clean committed and pushed pre-live gate.
+A separately authorized Stage B Phase 2 run completed for exactly 1991, 4B, Alok, GRiZ, REAPER,
+and Rueben with 39 unique candidates from the immutable artifact. All 39 submitted candidates were
+returned and name-compatible. The run made two batch lookups, 39 Top Songs first-page requests,
+and 39 Singles first-page requests. Search, pagination, release discovery, and other providers were
+unreachable.
 
-The replay made zero network requests and zero database writes. Historical Apple starts remain
-234, durable mappings remain 320, and no ambiguous candidate catalog is reusable from the current
-sanitized cache. The cadence-ranked local review covers 273 entries. Six have dated history, with
-12 releases inside 90 days; the other 267 explicitly have unavailable cadence. The review JSON and
-HTML are ignored under `.app-runtime` and no manual decision was applied.
+All six results remained ambiguous and no durable mapping was written. The only nonzero scores were
+one track-title point for one 1991 candidate, one for one Alok candidate, and two each for one GRiZ
+and one Rueben candidate. 4B and REAPER had no nonzero score. Every release-title, ISRC, UPC, and
+conflict count was zero. The minimum safe score is three.
+
+The run completed in 89,188 milliseconds with 80 starts, 75 HTTP 200 responses, five nonterminal
+HTTP 404 responses, zero retries, zero cache hits, zero pagination, concurrency one, and 1,106
+milliseconds minimum pacing. Historical starts are 314, durable mappings remain 320, and the
+unresolved queue remains 273. The lease is released, queue and cooldown are clear, 22 migrations
+are applied, Apple doctor is `READY`, and `APPLE_MUSIC_ENABLED=false`.
+
+The post-run replay made zero requests and zero writes. The cadence-ranked local review still
+covers 273 entries. Six have dated history, with 12 releases inside 90 days; the other 267
+explicitly have unavailable cadence. The review JSON and HTML are ignored under `.app-runtime` and
+no manual decision was applied. Automatic Stage B expansion is not supported by this result: zero
+of six candidates were confirmed after 80 requests. The next identity milestone should improve
+approved offline ground truth or apply hash-bound manual decisions.
 
 Discovery on the five newly confirmed seed artists is complete. The exact scope was ZHU, Don
 Diablo, SISTO, William Black, and YUSSI, representing eight frozen in-scope releases. The run
@@ -46,10 +56,8 @@ exists, historical Apple starts are 222, and `APPLE_MUSIC_ENABLED=false`.
 Combined 25-artist evidence is now 17 of 21 full-cohort exact recall and 17 of 20 mapped-artist
 exact recall. Mapping is 17 of 25, primary recall is 12 of 13, matcher misses are zero, one Alok
 release remains mapping-unevaluable, and the three prior catalog misses remain. The bounded
-thresholds were met. The next separate identity milestone, if authorized, should run only the
-six-artist, 39-candidate evidence-targeted Stage B batch described in
-`docs/apple-music-identity-stage-b-phase1.md`. Production integration and merge remain
-unauthorized.
+thresholds were met. The later six-artist Stage B candidate-evidence run is documented in
+`docs/apple-music-identity-stage-b-phase1.md`. Production integration and merge remain unauthorized.
 
 ## Mapping bootstrap history
 

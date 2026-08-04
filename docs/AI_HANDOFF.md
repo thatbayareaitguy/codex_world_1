@@ -11,8 +11,7 @@ evidence conflicts, rejected results, or ambiguous strong-seed results.
 
 Stage A made 12 multiple-artist HTTP 200 starts in 12,953 milliseconds with 1,107 millisecond
 minimum pacing, concurrency one, and zero retry, search, pagination, release-discovery, or
-other-provider requests. Historical starts are 234. The lease is released, the queue and cooldown
-are clear, 22 migrations are applied, and `APPLE_MUSIC_ENABLED=false` remains required.
+other-provider requests.
 
 The manual-review queue contains 273 artists. Credential-free Stage B Phase 1 replayed all 272
 ambiguous seeds and included the candidate-free artist in the accounting. The shared resolver now
@@ -26,15 +25,26 @@ ISRCs and zero UPCs for the ambiguous cohort, and none of the 1,340 ambiguous ca
 reusable candidate catalog evidence in the sanitized Apple cache. Synthetic tests are capability
 evidence only and are not counted as real resolutions.
 
-A separately authorized Stage B Phase 2 checkpoint now pins exactly 1991, 4B, Alok, GRiZ,
-REAPER, and Rueben with 39 unique artifact candidates. Its credential-free plan validates the
-hash-bound scope, 320 unchanged durable mappings, and 234 unchanged historical starts without
-credentials, token generation, HTTP initialization, or writes. The live gate permits only two
-candidate batch lookups, one Top Songs first page per compatible candidate, and conditional
-Singles first pages for unresolved artists, under 88 starts and 180 seconds. It cannot search,
-paginate, or run release discovery. Live execution remains pending the committed pre-live gate.
+A separately authorized Stage B Phase 2 run completed for exactly 1991, 4B, Alok, GRiZ, REAPER,
+and Rueben with 39 unique artifact candidates. Its credential-free plan validated the hash-bound
+scope, 320 unchanged durable mappings, and 234 unchanged historical starts without credentials,
+token generation, HTTP initialization, or writes. The implementation was committed and pushed
+before live execution.
 
-The ignored cadence-ranked review JSON and HTML cover all 273 entries. Six entries have dated
+Both batch lookups returned every submitted candidate with compatible names. The run then made 39
+Top Songs and 39 conditional Singles first-page requests. All six artists remained ambiguous and
+no durable mapping was written. 1991 and Alok each had a single one-point track-title candidate;
+GRiZ and Rueben each had a two-point candidate; 4B and REAPER had no nonzero score. Every
+release-title, ISRC, UPC, and conflict count was zero, so no result met the three-point minimum.
+
+The Stage B run completed in 89,188 milliseconds with 80 starts: 75 HTTP 200 and five nonterminal
+HTTP 404 responses. It used concurrency one and 1,106 millisecond minimum pacing, with zero retry,
+cache hit, pagination, search, release discovery, or other-provider request. Historical starts are 314. Durable mappings remain 320 of 593, the unresolved queue remains 272 ambiguous plus one
+candidate-free entry, and automatic Stage B confirmation was zero of six. The lease is released,
+the queue and cooldown are clear, 22 migrations are applied, Apple doctor is `READY`, and
+`APPLE_MUSIC_ENABLED=false` remains required.
+
+The regenerated ignored cadence-ranked review JSON and HTML cover all 273 entries. Six entries have dated
 history covering 12 releases inside 90 days; the other 267 explicitly have unavailable cadence.
 The strict manual-decision artifact is review-hash-bound and supports confirm, reject, or defer,
 but no decision was applied.
@@ -69,10 +79,11 @@ remix recall. Mapping is 17 of 25. One Alok release remains mapping-unevaluable,
 catalog misses remain, and matcher misses and invalid accepted candidates are zero. Historical
 Apple starts are 222. The provider is disabled with no active run, lease, cooldown, or queue.
 
-The proposed, nonauthorized Phase 2 is one six-artist batch with 39 bounded candidates: two batch
-artist lookups, 39 Top Songs first pages, up to 39 Singles fallbacks, eight retry and safety starts,
-an 88-request ceiling, and a 156,800-millisecond ceiling. It skips 1,301 candidates that current
-ground truth cannot distinguish. Production integration and merge remain unauthorized.
+The completed Phase 2 skipped 1,301 candidates that current ground truth cannot distinguish. Zero
+confirmations after 80 starts does not justify a broader automatic candidate sweep. The next
+identity milestone should improve approved offline ground truth or apply hash-bound manual
+decisions before any further bounded retrieval. Production integration and merge remain
+unauthorized.
 
 ## Mapping bootstrap history
 
@@ -123,7 +134,7 @@ evidence replays at 10 of 10 exact, and the 25-artist evidence replays at 9 of 2
 - Five-artist milestone starting checkpoint: `92de802140ff7a9c7c8aca675492f09a6629d045`
 - Upstream: `origin/codex/apple-music-discovery`
 - Latest live run: `completed/recent_optimized_seed_discovery_5_completed`
-- Current historical Apple HTTP-start total: 222
+- Historical Apple HTTP-start total at that checkpoint: 222
 - Provider state: disabled, no active run, lease, cooldown, or queue
 
 The 25-artist validation completed with 12 search-confirmed and 13 ambiguous mappings. The
@@ -388,10 +399,11 @@ integration, merge, or scheduler activation is authorized.
 
 ## Next milestone
 
-Perform a credential-free design and test update for a bounded comparison of Arm B with and
-without `latest-release`, plus a targeted first-page remix-discovery correction for the known
-MUST DIE! miss. Any subsequent live comparison requires separate authorization and a clean,
-committed, pushed pre-live checkpoint.
+Do not expand automatic Stage B candidate retrieval using the current ground truth. The bounded
+six-artist experiment confirmed zero identities after 80 starts. The next identity milestone
+should improve approved offline release or track evidence, or apply hash-bound human review
+decisions. Any further live Apple work requires separate authorization and a clean, committed,
+pushed pre-live checkpoint.
 
 The representative 25-artist sample, other 583 watchlist artists, production integration,
 scheduling, playlists, Music User Tokens, personal libraries, playback, Apple Music Feed, and

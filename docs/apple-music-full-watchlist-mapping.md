@@ -5,11 +5,13 @@ Date: 2026-08-04
 ## Authorization boundary
 
 This checkpoint imported and validated the immutable 593-artist identity artifact, completed the
-one-time resumable Stage A strong-seed campaign, and completed credential-free Stage B Phase 1.
+one-time resumable Stage A strong-seed campaign, completed credential-free Stage B Phase 1, and
+completed one bounded Stage B Phase 2 live candidate-evidence run.
 Phase 1 added safe ISRC and UPC evidence, widened the resolver to all bounded artifact candidates,
 replayed the 272 ambiguous entries offline, and built ignored assisted-review artifacts. A
-separately authorized checkpoint now permits one bounded Phase 2 run for exactly the six
-replay-eligible artists after credential-free verification is committed and pushed.
+separately authorized checkpoint permitted one bounded Phase 2 run for exactly the six
+replay-eligible artists after credential-free verification was committed and pushed. That run is
+complete and produced no durable confirmation.
 
 The campaign cannot run recent-release discovery, artist search, pagination, album detail, tracks,
 playback, personal-library operations, playlists, Apple Music Feed, or another provider. Persistent
@@ -138,7 +140,7 @@ Strong-seed confirmation was 100%. Permanent full-watchlist coverage is 320 of 5
 The suggested 80% full-watchlist indicator cannot be reached by Stage A alone because the entire
 strong group contains only 320 artists. It requires safe Stage B confirmations or manual review.
 
-## Stage B bounded live checkpoint
+## Stage B bounded live result
 
 The remaining ambiguous artifact group has 272 artists and 1,340 bounded alternate candidate IDs.
 All 272 have multiple exact-name candidates, no alias match, and no imported title overlap. Artist
@@ -146,14 +148,12 @@ lookup alone therefore cannot safely confirm one. Looking up every candidate wou
 multiple-artist requests at 25 IDs per request, before catalog evidence.
 
 Phase 1 proved that only six ambiguous artists have usable approved watched history. Their 39
-bounded candidates form the only authorized evidence-targeted live batch. It requires two
-multiple-artist lookup requests, 39 Top Songs first pages, up to 39 Singles fallbacks, and eight
-retry and safety requests, for an 88-request and 180,000-millisecond ceiling. The other 1,301
-candidate requests are skipped because the current approved ground truth cannot distinguish them.
-Expected manual review is 267 to 273 artists.
+bounded candidates formed the only authorized evidence-targeted live batch. The other 1,301
+candidate requests were skipped because the current approved ground truth cannot distinguish them.
 
-The plan and live command are documented in `docs/apple-music-identity-stage-b-phase1.md`. The
-runner accepts only exact confirmation `APPLE_IDENTITY_STAGE_B_EVIDENCE_6`, the immutable
+The plan, command, and sanitized result are documented in
+`docs/apple-music-identity-stage-b-phase1.md`. The runner accepts only exact confirmation
+`APPLE_IDENTITY_STAGE_B_EVIDENCE_6`, the immutable
 artifact, US storefront, persistent provider-disabled state, synchronized clean branch, and the
 hash-validated ignored review artifact. It cannot search, paginate, or run release discovery.
 
@@ -161,6 +161,18 @@ The resolver now accepts all bounded candidates. Its title fallback remains thre
 release-title overlap, up to two for track-title overlap, a 30-day date-conflict block, a minimum
 score of three, and a minimum winning margin of two. Unique safe ISRC or UPC is a stronger explicit
 tier; missing or unrelated codes remain neutral and duplicated or conflicting codes cannot decide.
+
+The completed run submitted and received all 39 candidates in two bound batch lookups. It then made
+39 Top Songs and 39 conditional Singles first-page requests. All six artists remained ambiguous,
+and no durable mapping was written. The result was 75 HTTP 200 responses, five nonterminal HTTP 404
+responses, zero retries or pagination, 89,188 milliseconds runtime, concurrency one, and 1,106
+milliseconds minimum pacing. Historical Apple starts increased from 234 to 314. Durable coverage
+remains 320 of 593, or 54.0%, and the unresolved queue remains 272 ambiguous identities plus one
+candidate-free artist.
+
+Zero of six automatic confirmations after 80 starts shows that automatic candidate retrieval is
+not worthwhile for expansion under the current ground-truth coverage. The next safe path is
+stronger approved offline evidence or hash-bound manual decisions, not a broader live sweep.
 
 ## Manual review
 
