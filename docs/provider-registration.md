@@ -1,6 +1,6 @@
 # Provider Registration
 
-Verified: 2026-07-21
+Verified: 2026-08-04
 
 ## Spotify
 
@@ -21,6 +21,23 @@ Official references: [Development Mode migration](https://developer.spotify.com/
 
 No registration, API key, or paid account is required for public non-commercial reads. Set `MUSICBRAINZ_CONTACT_EMAIL` to a monitored address. The client identifies itself as `TSNewMusicRadar/<version> (<contact>)` and serializes requests to one per second.
 
+## Apple Music
+
+An active Apple Developer Program membership is required and is an explicitly approved paid
+prerequisite. In Certificates, Identifiers & Profiles, create a Media ID with MusicKit enabled,
+create a Media Services private key, associate it with that Media ID, and retain the team ID and key
+ID. Store the downloaded `.p8` private key outside the repository.
+
+Configure `APPLE_MUSIC_TEAM_ID`, `APPLE_MUSIC_KEY_ID`, `APPLE_MUSIC_PRIVATE_KEY_PATH`, and
+`APPLE_MUSIC_STOREFRONT`, then set `APPLE_MUSIC_ENABLED=true`. The server generates short-lived
+developer tokens. Do not create, request, or store a Music User Token because this application uses
+only public catalog data.
+
+Official references: [MusicKit](https://developer.apple.com/musickit/),
+[media identifier and private key](https://developer.apple.com/help/account/capabilities/create-a-media-identifier-and-private-key),
+[user authentication boundary](https://developer.apple.com/documentation/applemusicapi/user-authentication-for-musickit),
+and [program membership](https://developer.apple.com/programs/whats-included/).
+
 ## Reddit
 
 Do not enable Reddit before receiving explicit Data API approval. Reddit determines whether access is free or paid. If payment is required, this project will not use the provider. After approved access is received, configure the approved client ID, client secret, and a descriptive User-Agent in the form `platform:application:version (by /u/contact)`, then set both `REDDIT_ENABLED=true` and `REDDIT_ACCESS_APPROVED=true`. The approval flag is an owner record, not proof from Reddit.
@@ -29,4 +46,4 @@ Official references: [Responsible Builder Policy](https://support.reddithelp.com
 
 ## Deferred Providers
 
-Do not register YouTube, SoundCloud API, Apple Music, or TIDAL for this milestone. Manual SoundCloud outbound links require no provider registration and are disabled by default. Future SoundCloud Artist Pro work remains deferred because paid API access violates the cost constraint.
+Do not register YouTube, SoundCloud API, or TIDAL for this milestone. Manual SoundCloud outbound links require no provider registration and are disabled by default. Future SoundCloud Artist Pro work remains deferred because paid API access has not been approved.

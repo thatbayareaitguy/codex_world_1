@@ -1,6 +1,12 @@
 import { and, desc, eq, inArray, lt, or } from "drizzle-orm";
 import type { RadarDatabase } from "./client";
-import { musicbrainzScanBatches, scanRuns, spotifyArtistScans, spotifyScanBatches } from "./schema";
+import {
+  appleMusicScanBatches,
+  musicbrainzScanBatches,
+  scanRuns,
+  spotifyArtistScans,
+  spotifyScanBatches,
+} from "./schema";
 
 export interface ScanHistoryEntry {
   artistCount: number | null;
@@ -75,12 +81,13 @@ export async function listScanHistoryPage(
   if (selectedRuns.length === 0) return { entries: [], hasMore: false, nextCursor: null };
 
   const runIds = selectedRuns.map((run) => run.id);
-  const [spotifyBatches, musicbrainzBatches] = await Promise.all([
+  const [spotifyBatches, musicbrainzBatches, appleMusicBatches] = await Promise.all([
     db.select().from(spotifyScanBatches).where(inArray(spotifyScanBatches.scanRunId, runIds)),
     db
       .select()
       .from(musicbrainzScanBatches)
       .where(inArray(musicbrainzScanBatches.scanRunId, runIds)),
+    db.select().from(appleMusicScanBatches).where(inArray(appleMusicScanBatches.scanRunId, runIds)),
   ]);
   const spotifyBatchIds = spotifyBatches.map((batch) => batch.id);
   const spotifyArtists =
@@ -101,6 +108,11 @@ export async function listScanHistoryPage(
       batch.scanRunId ? [[batch.scanRunId, batch] as const] : [],
     ),
   );
+  const appleMusicByRun = new Map(
+    appleMusicBatches.flatMap((batch) =>
+      batch.scanRunId ? [[batch.scanRunId, batch] as const] : [],
+    ),
+  );
   const requestsBySpotifyBatch = new Map<string, number>();
   for (const artist of spotifyArtists) {
     requestsBySpotifyBatch.set(
@@ -112,27 +124,33 @@ export async function listScanHistoryPage(
   const entries = selectedRuns.map((run) => {
     const spotifyBatch = spotifyByRun.get(run.id);
     const musicbrainzBatch = musicbrainzByRun.get(run.id);
-    const batch = spotifyBatch ?? musicbrainzBatch;
+    const appleMusicBatch = appleMusicByRun.get(run.id);
+    const batch = spotifyBatch ?? musicbrainzBatch ?? appleMusicBatch;
     return {
       artistCount:
         batch?.totalArtists ??
         (run.artistFilter ? 1 : run.artistsProcessedCount > 0 ? run.artistsProcessedCount : null),
       artistFilter: run.artistFilter,
       batchId: batch?.id ?? null,
-      batchMode: spotifyBatch?.mode ?? (musicbrainzBatch ? "musicbrainz" : null),
+      batchMode:
+        spotifyBatch?.mode ??
+        (musicbrainzBatch ? "musicbrainz" : appleMusicBatch ? "apple_music" : null),
       completedAt: run.completedAt,
       createdCount: run.insertedCount,
       dryRun: run.dryRun,
       failureCount:
         spotifyBatch?.failedArtists ??
         musicbrainzBatch?.failedArtists ??
+        appleMusicBatch?.failedArtists ??
         (run.providersFailed.length > 0 ? run.providersFailed.length : null),
       id: run.id,
       partialArtistCount: spotifyBatch?.partialArtists ?? null,
       provider:
         run.provider ?? (run.providersRequested.length === 1 ? run.providersRequested[0]! : null),
       providersRequested: run.providersRequested,
-      requestCount: spotifyBatch ? (requestsBySpotifyBatch.get(spotifyBatch.id) ?? 0) : null,
+      requestCount: spotifyBatch
+        ? (requestsBySpotifyBatch.get(spotifyBatch.id) ?? 0)
+        : (appleMusicBatch?.requestCount ?? null),
       reviewCount: run.reviewCount,
       startedAt: run.startedAt,
       status: run.status,

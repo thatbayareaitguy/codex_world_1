@@ -1,114 +1,110 @@
 # AI Handoff
 
-Updated: 2026-07-30 19:45 PDT (UTC-07:00)
+Updated: 2026-08-04 12:35 PDT (UTC-07:00)
 
-This is the canonical implementation and operational snapshot. It excludes credentials, personal
-account data, authorization material, and raw provider payloads.
+This is the canonical implementation and operational snapshot. It excludes credentials, tokens,
+private keys, personal provider data, authorization headers, and raw provider payloads.
 
 ## Repository State
 
 - Branch: `codex/release-radar-hardening`.
-- Latest implementation commit: `2f41192` (`fix: resume expired Spotify campaigns safely`).
-- The branch was synchronized with upstream at `0/0`, with a clean worktree, before this handoff
-  update.
-- Current milestone: the existing 292-artist Spotify campaign is completing its final 91 pending
-  members after a second authoritative quota cooldown and bounded continuation.
+- Latest implementation commit: current HEAD, `feat: integrate Apple Music discovery`.
+- The worktree is clean and the upstream branch matches after the normal push.
+- Current milestone: production Apple Music public-catalog discovery is complete and verified.
+- Source-only Apple worktree `codex_world_1_apple` and the iTunes worktree remain unchanged.
 
 ## Architecture And Database
 
-- TypeScript pnpm monorepo with a Next.js web/API application, short-lived Node scanner,
-  provider-neutral core, Drizzle/PostgreSQL repositories, validated provider adapters, and fixtures.
-- PostgreSQL is authoritative for canonical music data, source evidence, request telemetry,
-  cooldowns, leases, scheduler work, album retrieval checkpoints, and campaign state.
-- Production has 17 applied forward migrations. The latest migration adds normalized, secret-safe
-  Spotify 429 classifications.
-- Every Spotify API and token request uses one PostgreSQL-backed request gate. Concurrency is one,
-  request starts are at least 10 seconds apart, provider cooldowns are durable, and playlist writes
-  remain disabled.
-- Campaign execution is bounded to one work item per tick, at most six requests and 90 seconds.
-  Base artists currently become eligible every 145.7 seconds, while release-detail and track work
-  may consume additional requests between base-artist claims.
+- TypeScript pnpm monorepo: Next.js web/API, short-lived Node scanner, provider-neutral core,
+  Drizzle/PostgreSQL repositories, runtime-validated providers, Vitest, and Playwright.
+- PostgreSQL is authoritative for canonical identity, evidence, feed, reviews, scans, request gates,
+  cooldowns, batches, and provider cursors.
+- Production has 18 applied forward migrations. Migration `0017_confused_whistler.sql` adds Apple
+  request state, response cache, scan batches, artist scans, artist state, request events, and
+  candidate-free mapping reviews.
+- A verified PostgreSQL custom-format backup was created before migration at
+  `%LOCALAPPDATA%\TSNewMusicRadar\backups\ts-new-music-radar-2026-08-04T18-50-33-713Z.dump`.
+  `pg_restore --list` reported 397 archive entries from PostgreSQL 17.10.
+- Spotify, Apple Music, and MusicBrainz use separate PostgreSQL-backed global request gates.
+  Playlist writes remain disabled.
 
-## Active Spotify Campaign
+## Verified
 
-- Campaign: `a68a793c-477a-4918-aab1-876fe6b5316a`.
-- Snapshot at 2026-07-30 19:45 PDT: the database row is `running`; 201 of 292 qualifying artist
-  successes, 91 pending, zero active reservations, and no campaign lease.
-- Progress: 68.8% complete by qualifying artists.
-- The first continuation created 174 Spotify requests: 101 artist-album, 67 album-detail, and six
-  OAuth requests. It added 100 qualifying successes before Spotify returned one confirmed
-  `QUOTA_EXCEEDED` response on the 101st artist-album request.
-- Spotify supplied Retry-After `68398`, producing a cooldown from 2026-07-29 22:08 PDT through
-  2026-07-30 17:08 PDT. The prior continuation deadline expired two minutes before that cooldown.
-- The current continuation began with a successful custom-format PostgreSQL backup. Malixe resumed
-  from the quota-limited attempt and succeeded using two requests started 10.008 seconds apart,
-  with no new 429 or cooldown.
-- The latest base-artist request received HTTP 429 with confirmed `quota_exceeded`. Spotify supplied
-  Retry-After `68432`; the durable cooldown remains active until 2026-07-29 10:04 PDT.
-- The temporary task `TS New Music Radar Final Spotify Continuation` runs the campaign CLI
-  headlessly through `conhost.exe --headless` and `node.exe --import tsx`. It repeats approximately
-  once per minute, ignores overlapping invocations, wakes the computer where supported, and has a
-  three-minute per-invocation limit.
-- Campaign hard deadline passed at 2026-07-28 18:01 PDT. Cooldown handling prevented another work
-  claim from processing the expired deadline, so the row remained stale `running`. The campaign was
-  safely changed to `paused` through the existing control path without altering members or work.
-- Same-campaign deadline extension and resume are implemented with baseline, success-count,
-  reservation, lease, and work-preservation guards. The current deadline is
-  2026-07-31 19:43 PDT.
+- Apple normal command: `pnpm scan -- --provider apple_music`.
+- Secure ES256 developer-token generation, strict catalog endpoint allowlist, bounded payloads,
+  timeouts, retry and cooldown handling, response cache, and safe request telemetry.
+- Identity bootstrap preserved 320 confirmed mappings. The review queue contains 1,341 pending
+  candidate rows for 273 unresolved artists, including one candidate-free manual numeric-ID case.
+- Candidate confirmation, replacement, sibling-review resolution, candidate-free validation,
+  reload persistence, and accessible review controls are covered by database and Playwright tests.
+- Shallow first-page `singles` and `full-albums` discovery uses a 30-day or last-success window and
+  fetches tracks only for eligible releases. Optional missing views and invalid release records are
+  isolated. A direct artist lookup distinguishes a valid empty catalog from an invalid mapping.
+- Live canary: YUSSI completed twice without duplicates. Apple evidence and artwork attached to the
+  existing canonical Spotify-backed `Hold On` feed appearance.
+- Full live batch: 320 of 320 mapped artists completed, zero artist failures, 209 legitimate
+  no-result artists, 829 real requests, 50 cache hits, minimum real request interval 1102 ms, zero
+  429 responses, and no cooldown.
+- Production Apple totals: 130 release external IDs, 239 track external IDs, 267 candidates, 267
+  evidence rows, 239 appearance sources, 130 artwork rows, 40 new canonical releases, 61 new
+  canonical tracks, and 239 canonical feed items with Apple evidence.
+- Release mix: 95 singles, 12 EPs, five albums, four remixes, and 14 credited features.
+- Matching: 174 exact barcode and position matches, four strict metadata matches, 61 new canonical
+  tracks, and 28 manual-review candidates. Duplicate checks are zero across provider IDs,
+  candidates, evidence, appearances, and feed dedupe keys.
+- No incomplete Apple request events, unfinished artist rows, active batches, leases, queue entries,
+  cooldowns, or stale locks remain.
+- Final verification passed: formatting, lint, strict type checking, production build, 351 unit
+  tests in 45 files, 91 PostgreSQL integration tests in 16 files, and 25 Playwright tests.
+- `pnpm doctor` reports READY with 18 migrations, 834 persisted Apple requests, no Apple lease or
+  cooldown, and no stale locks. `git diff --check` and the secret/artifact audit are clean.
+- A live local browser smoke test against the migrated production database showed Apple artwork,
+  evidence links, provider-neutral matches, candidate reviews, and the candidate-free numeric-ID
+  workflow with no browser console errors.
 
-## Confirmed Capabilities
+## Implemented But Not Live-Verified
 
-- **Verified:** canonical watchlist and feed, Spotify followed-artist import, bounded and resumable
-  discovery, artwork, evidence, album-track completeness, scan history, cooldown handling,
-  secret-safe 429 telemetry, MusicBrainz mapping/discovery, MockProvider, and policy controls.
-- **Live verified:** exact bounded-campaign targeting, durable progress across restarts and sleep,
-  single-request serialization, 10-second minimum request spacing, cooldown recovery, release
-  persistence, album completeness, and idempotency.
-- **Partially verified:** Spotify Development Mode capacity. Three historical 429 events exist
-  across varied immediate request intervals. All occurred after at least 151 requests in the
-  preceding 24 hours, but only one is confirmed as `quota_exceeded`; the provider limit remains
-  unpublished and cannot be inferred from three events.
-- **Blocked:** Reddit live access pending approval.
-- **Deferred:** playlist writes, SoundCloud automation, additional providers, playback, and
-  reconciliation execution.
+- Apple settings and system-status projections, scan history, feed source filtering, and on-demand
+  scan routing are covered by automated tests. The on-demand route was not invoked live because the
+  routine production environment intentionally remains Apple-disabled and the completed live scan
+  required no additional provider requests.
+- Routine unattended Apple scheduling is not implemented.
 
-## Verification
+## Provider And Policy State
 
-- Current credential-free checkpoint: format, lint, strict TypeScript across six projects,
-  production build, 291 unit tests, 83 PostgreSQL integration tests, 23 Playwright tests, doctor,
-  and diff checks passed.
-- Doctor reports the local system `READY` apart from the required Spotify cooldown wait. PostgreSQL
-  is available, 17 migrations are applied, playlist writes remain disabled, and no stale lock
-  exists.
+- Apple Music is enabled only when server-side credentials are supplied. Production `.env` was not
+  modified. The active Apple Developer Program membership is an explicitly approved paid exception.
+- Apple scope is public catalog only. No Music User Token, subscriber library, recommendations,
+  favorites, playback, playlist access, or mutation exists.
+- Apple publishes no numeric request limit in the cited official documentation. The verified local
+  policy remains one request at a time and at least 1100 ms between starts.
+- Spotify has no active cooldown. Its unpublished Development Mode quota remains a risk. Playlist
+  writes remain disabled.
+- Reddit remains blocked pending explicit Data API approval. SoundCloud automation, YouTube, and
+  TIDAL remain excluded or deferred.
+- Spotify's broad cross-service policy language remains unresolved. Provider data and artwork stay
+  namespaced, no provider payload is sent to another provider, and no playback or mixed queue exists.
 
 ## Known Risks
 
-- Spotify Development Mode limits are unpublished. A valid Retry-After remains authoritative.
-- Fixed 145.7-second artist spacing does not cap total request volume because release follow-ups
-  run between base artists.
-- The campaign has 91 pending baseline artists and must finish or stop safely before its
-  2026-07-31 19:43 PDT continuation deadline.
-- Do not change pacing or campaign architecture while this validation campaign is active.
-
-## Required Post-Campaign Architecture Review
-
-Implement and validate adaptive, request-budgeted base-artist pacing:
-
-- Count actual catalog, release-detail, track-page, and OAuth requests rather than treating one
-  artist as one request.
-- Pull the next base artist forward when follow-up work is empty and rolling request budgets allow.
-- Delay the next base artist when the previous artist consumed multiple follow-up requests.
-- Preserve the global 10-second minimum, one-request concurrency, rolling 30-minute and 24-hour
-  boundaries, durable cooldowns, request leases, resumability, and playlist isolation.
-- Use persisted request telemetry and a conservative configurable budget. Do not probe Spotify to
-  discover a limit.
-- Compare campaign throughput, requests per artist, 429 frequency, and idle time before replacing
-  the fixed schedule.
+- Catalog completeness is bounded by confirmed mappings, the configured Apple storefront, first
+  view pages, and the 30-day or last-success window. It is not guaranteed.
+- 273 watchlist artists still require manual Apple mapping decisions.
+- Apple catalog views may legitimately return 404 for absent optional views. The provider now
+  verifies the artist when both required discovery views are absent.
+- Credentials currently live outside the production worktree and must be configured through a
+  secure server environment for routine application use.
 
 ## Immediate Next Step
 
-Allow the headless continuation task to process only campaign
-`a68a793c-477a-4918-aab1-876fe6b5316a`. Monitor qualifying successes, request pacing, cooldowns,
-campaign-attributed work, and the 24-hour deadline. Stop and preserve progress on a provider
-cooldown, integrity failure, or unexpected provider or playlist request. Conduct the adaptive-pacing
-architecture review after this campaign.
+Configure the verified Apple credentials in the secure server runtime, then resolve the highest
+priority pending artist mappings before designing a bounded unattended Apple schedule and deeper
+catalog reconciliation.
+
+## Deferred
+
+- Apple user authorization, personal library import, recommendations, playback, favorites, and
+  playlist writes.
+- Deep Apple catalog pagination, full historical reconciliation, and automatic Apple scheduling.
+- Reddit live access, SoundCloud automation, YouTube, TIDAL, multi-user deployment, and commercial
+  operation.

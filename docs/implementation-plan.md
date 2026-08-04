@@ -162,4 +162,4 @@ Verified: 2026-07-16
 
 ## Completion Boundary
 
-This milestone does not add playback, public users, cloud infrastructure, commercial behavior, analytics, SoundCloud API access, YouTube, Apple Music, or TIDAL. Reddit remains disabled until the owner has actual approved access and configures it explicitly. Live Spotify and Reddit calls are never part of standard tests.
+This historical stabilization milestone did not add playback, public users, cloud infrastructure, commercial behavior, analytics, SoundCloud API access, YouTube, or TIDAL. Apple Music public-catalog discovery was implemented later under a separately approved milestone and paid-program exception. Reddit remains disabled until the owner has actual approved access and configures it explicitly. Live provider calls are never part of standard tests.

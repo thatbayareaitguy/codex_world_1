@@ -3,6 +3,7 @@ import {
   matchCandidate,
   normalizeIdentifier,
   normalizeText,
+  parseAppleMusicReleaseArtwork,
   parseSpotifyReleaseArtwork,
   type CanonicalTrack,
   type MatchDecision,
@@ -84,6 +85,7 @@ import { mockProviderFixture } from "@radar/testing";
 import { and, eq, lt, or } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { ScannerOptions } from "./args";
+import { runAppleMusicScan } from "./apple-music-scan";
 import {
   buildDryRunReport,
   candidateKey,
@@ -142,11 +144,11 @@ export interface ScanRuntime {
   signal: AbortSignal;
 }
 
-interface PersistRunContext {
+export interface PersistRunContext {
   artistsProcessedCount: number;
   cumulativeBase: ScanSummary;
   id: string;
-  status: "running" | "completed" | "paused" | "cancelled" | "rate_limited";
+  status: "running" | "completed" | "partial" | "paused" | "cancelled" | "rate_limited";
 }
 
 const scanHeartbeatTtlMs = 30_000;
@@ -249,8 +251,37 @@ export async function runScanUnlocked(
   runtime?: ScanRuntime,
 ): Promise<ScanSummary> {
   const requested = options.provider;
-  if (requested && !["mock", "spotify", "musicbrainz", "reddit"].includes(requested)) {
+  if (
+    requested &&
+    !["mock", "spotify", "musicbrainz", "reddit", "apple_music"].includes(requested)
+  ) {
     throw new Error(`Provider ${requested} is excluded from the current milestone`);
+  }
+
+  if (requested === "apple_music") {
+    if (!configuration.databaseUrl) {
+      throw new Error("DATABASE_URL is required for Apple Music scans");
+    }
+    const { db, client } = createDatabase(configuration.databaseUrl);
+    try {
+      return await runAppleMusicScan(
+        db,
+        configuration,
+        options,
+        (candidates, context) =>
+          persistCandidates(
+            db,
+            candidates,
+            { ...options, provider: "apple_music" },
+            undefined,
+            undefined,
+            context,
+          ),
+        runtime ?? {},
+      );
+    } finally {
+      await client.end();
+    }
   }
 
   if (requested === "reddit") {
@@ -965,8 +996,45 @@ export async function runScanUnlocked(
         };
       }
     }
+    if (!requested && configuration.appleMusic.configured) {
+      try {
+        const result = await runAppleMusicScan(
+          db,
+          configuration,
+          { ...options, provider: "apple_music" },
+          (candidates, context) =>
+            persistCandidates(
+              db,
+              candidates,
+              { ...options, provider: "apple_music" },
+              undefined,
+              undefined,
+              context,
+            ),
+          runtime ?? {},
+        );
+        aggregate.discovered += result.discovered;
+        aggregate.inserted += result.inserted;
+        aggregate.skipped += result.skipped;
+        aggregate.needsReview += result.needsReview;
+        aggregate.providerResults!.apple_music = result.providerResults.apple_music ?? {
+          discovered: result.discovered,
+          inserted: result.inserted,
+        };
+      } catch (error) {
+        const failure = new Error(safeScanError(error));
+        failures.push(failure);
+        aggregate.providerResults!.apple_music = {
+          discovered: 0,
+          error: failure.message,
+          inserted: 0,
+        };
+      }
+    }
     const attemptedProviders =
-      providers.length + (!requested && configuration.reddit.configured ? 1 : 0);
+      providers.length +
+      (!requested && configuration.reddit.configured ? 1 : 0) +
+      (!requested && configuration.appleMusic.configured ? 1 : 0);
     if (
       (attemptedProviders > 0 && failures.length === attemptedProviders) ||
       (requested && failures.length > 0)
@@ -1284,8 +1352,13 @@ async function persistCandidatesUnlocked(
           columns: { id: true, matchedTrackId: true },
         });
         if (existing) {
-          const artwork = parseSpotifyReleaseArtwork(candidate.spotifyRelease);
-          if (candidate.provider === "spotify" && artwork) {
+          const artwork =
+            candidate.provider === "spotify"
+              ? parseSpotifyReleaseArtwork(candidate.spotifyRelease)
+              : candidate.provider === "apple_music"
+                ? parseAppleMusicReleaseArtwork(candidate.appleMusicRelease)
+                : null;
+          if (artwork) {
             const existingReleaseExternalId = await tx.query.releaseExternalIds.findFirst({
               where: and(
                 eq(releaseExternalIds.provider, candidate.provider),
@@ -1578,14 +1651,18 @@ function releaseProviderFields(
   currentFields: unknown,
 ): Record<string, unknown> {
   const current = isRecord(currentFields) ? currentFields : {};
-  const artwork = parseSpotifyReleaseArtwork(candidate.spotifyRelease);
+  const spotifyArtwork = parseSpotifyReleaseArtwork(candidate.spotifyRelease);
+  const appleMusicArtwork = parseAppleMusicReleaseArtwork(candidate.appleMusicRelease);
   return {
     ...current,
     releaseDate: candidate.releaseDate,
     releaseDatePrecision: candidate.releaseDatePrecision,
     releaseType: candidate.releaseType,
     sourceLabel: candidate.sourceLabel,
-    ...(candidate.provider === "spotify" && artwork ? { spotify: artwork } : {}),
+    ...(candidate.provider === "spotify" && spotifyArtwork ? { spotify: spotifyArtwork } : {}),
+    ...(candidate.provider === "apple_music" && appleMusicArtwork
+      ? { apple_music: appleMusicArtwork }
+      : {}),
   };
 }
 
@@ -1949,7 +2026,12 @@ async function upsertReleaseExternalId(
     ),
     columns: { providerFields: true },
   });
-  const artwork = parseSpotifyReleaseArtwork(candidate.spotifyRelease);
+  const artwork =
+    candidate.provider === "spotify"
+      ? parseSpotifyReleaseArtwork(candidate.spotifyRelease)
+      : candidate.provider === "apple_music"
+        ? parseAppleMusicReleaseArtwork(candidate.appleMusicRelease)
+        : null;
   await db
     .insert(releaseExternalIds)
     .values({

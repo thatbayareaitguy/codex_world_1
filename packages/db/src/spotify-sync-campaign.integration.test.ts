@@ -51,9 +51,7 @@ beforeEach(async () => {
   await db.delete(spotifySchedulerState);
   await db.delete(spotifyArtistCoverage);
   await db.delete(spotifyProviderState);
-  await db.delete(artistExternalIds);
-  await db.delete(artistFollows);
-  await db.delete(artists);
+  await db.execute(sql`truncate table artists restart identity cascade`);
 });
 
 afterAll(async () => {

@@ -17,13 +17,34 @@ stages idempotent, but the current implementation does not resume inside a Music
 MusicBrainz consumes canonical artist names, aliases, and confirmed MBIDs. It does not consume
 raw Spotify response metadata. Spotify cooldown state and MusicBrainz state are independent.
 
+## Apple Music execution boundary
+
+Apple Music discovery is a read-only public-catalog workflow. The scanner creates a short-lived
+ES256 developer token from a server-only Media Services private key and never requests a Music User
+Token. It uses only confirmed canonical artist mappings. Ambiguous candidates and candidate-free
+artists use the same persistent mapping-review workflow as MusicBrainz, with provider-specific
+validation and evidence.
+
+Each normal Apple scan creates or resumes a persisted batch. Per-artist windows begin at the last
+successful scan or the 30-day floor. Discovery requests only the first `singles` and `full-albums`
+view pages, deduplicates releases, and fetches track details only for eligible releases. One absent
+view is an empty optional view. If both are absent, one targeted artist request distinguishes a valid
+empty catalog from an invalid mapping. Invalid album-track records are recorded in request telemetry
+and skipped without discarding valid releases for the same artist.
+
+`apple_music_provider_state` supplies one global request lease, at least 1100 ms between request
+starts, durable cooldown state, and queue metrics. Batches persist each artist outcome immediately.
+Interrupted `running` rows become retryable on compatible resume, completed artists are not repeated,
+and request or runtime budget stops preserve the batch. Valid Apple candidates enter the existing
+canonical matching, appearance, evidence, artwork, and feed pathways, so no Apple-only feed exists.
+
 ## Runtime
 
 - `apps/web`: Next.js UI and server-only OAuth, import, mapping, Reddit source, status, and playlist routes.
 - `apps/scanner`: Node.js command for manual, scheduled, filtered, dry-run, backfill, and full scans.
 - `packages/core`: provider-neutral types, normalization, matching, logging, and URL safety.
 - `packages/db`: Drizzle schema, forward migrations, repositories, OAuth state, token manager, Reddit evidence persistence, scan locks, and operation locks.
-- `packages/providers`: runtime-validated Spotify, MusicBrainz, and approval-gated Reddit clients; deterministic Reddit parsing; adapters; import and playlist planners; and MockProvider.
+- `packages/providers`: runtime-validated Spotify, Apple Music, MusicBrainz, and approval-gated Reddit clients; deterministic Reddit parsing; adapters; import and playlist planners; and MockProvider.
 - PostgreSQL: canonical records, provider records, evidence, decisions, cursors, locks, runs, and exports.
 
 Drizzle is used because it keeps the schema and SQL migrations explicit, has a small runtime surface, and permits conflict-safe PostgreSQL writes without generating a separate client.
@@ -32,13 +53,13 @@ Drizzle is used because it keeps the schema and SQL migrations explicit, has a s
 
 1. A user manually creates a canonical artist or explicitly approves a Spotify import preview.
 2. Provider IDs are attached to that canonical artist with provenance, confidence, and confirmation state.
-3. The scanner loads only confirmed mappings and invokes providers independently.
+3. The scanner loads only confirmed mappings and invokes providers independently. Apple Music mapping candidates that are not confirmed remain in review and cannot scan automatically.
 4. Typed provider candidates are matched to canonical tracks independently from canonical releases.
 5. A transaction preserves provider IDs, source evidence, upcoming history, feed state, availability, match reasons, and the provenance-backed release-to-track appearance.
 6. Spotify playlist planning selects only exact or manually confirmed Spotify tracks and compares them with current playlist items. Writes default off. When explicitly enabled, route and client guards allow additions only to the server-configured owned private playlist and record them in the export ledger.
 7. Reddit text is parsed locally, matched only against the canonical watchlist, and enters review unless exact canonical artist and title are corroborated by existing Spotify availability. Reddit content is never sent to AI.
 
-Spotify responses are never submitted to MusicBrainz. MusicBrainz mapping starts from canonical names, user aliases, and confirmed decisions. Canonical display data is provider-neutral; source-specific values remain in external-ID provider fields and evidence records.
+Spotify responses are never submitted to MusicBrainz. MusicBrainz mapping starts from canonical names, user aliases, and confirmed decisions. Canonical display data is provider-neutral; source-specific values remain in external-ID provider fields and evidence records. Apple and Spotify artwork remain separately namespaced and are rendered only when the matching provider supplies evidence for that canonical release appearance.
 
 The browser cannot supply or select a Spotify write target. `SPOTIFY_ALLOWED_PLAYLIST_ID` is the only target authority. Playlist creation, rename, visibility changes, artwork, follow, unfollow, removal, replacement, and reordering are outside the provider-client surface.
 
@@ -53,8 +74,10 @@ parser at the documented `error.reason` location. Request telemetry stores the n
 token; historical events without that evidence aggregate as `legacy_unknown`. Raw response bodies
 and arbitrary messages are never retained. Doctor reports the latest safe event and rolling
 classification counts. Classification does not alter the request gate, pacing, Retry-After, or
-cooldown behavior. MusicBrainz uses one shared serial request gate. Reddit uses its own global
-request gate and cannot instantiate without recorded approval. Provider failures are isolated.
+cooldown behavior. Apple Music and MusicBrainz each use independent shared serial request gates.
+Apple request events retain only safe endpoint, timing, status, response-size, cooldown, and error
+classification fields. Reddit uses its own global request gate and cannot instantiate without
+recorded approval. Provider failures are isolated.
 
 One global operation lock serializes normal and provider-specific scans. Provider locks still guard persistence. Expired locks are visible through `scan:status` and only stale locks can be cleared. Detailed scan errors and metrics expire while aggregate history remains.
 

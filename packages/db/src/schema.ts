@@ -160,6 +160,22 @@ export const musicbrainzArtistScanStatusEnum = pgEnum("musicbrainz_artist_scan_s
   "cancelled",
   "failed",
 ]);
+export const appleMusicBatchStatusEnum = pgEnum("apple_music_batch_status", [
+  "pending",
+  "running",
+  "completed",
+  "partial",
+  "paused",
+  "rate_limited",
+  "failed",
+]);
+export const appleMusicArtistScanStatusEnum = pgEnum("apple_music_artist_scan_status", [
+  "pending",
+  "running",
+  "completed",
+  "retryable",
+  "terminal",
+]);
 export const matchStatusEnum = pgEnum("match_status", [
   "new",
   "matched",
@@ -384,7 +400,7 @@ export const artistMappingReviews = pgTable(
       .notNull()
       .references(() => artists.id, { onDelete: "cascade" }),
     provider: providerEnum("provider").notNull(),
-    proposedExternalId: text("proposed_external_id").notNull(),
+    proposedExternalId: text("proposed_external_id"),
     providerName: text("provider_name").notNull(),
     matchScore: numeric("match_score", { precision: 4, scale: 3 }).notNull(),
     matchReasons: text("match_reasons").array().notNull(),
@@ -831,6 +847,124 @@ export const musicbrainzArtistScans = pgTable(
     uniqueIndex("musicbrainz_artist_scans_batch_artist_unique").on(table.batchId, table.artistId),
     uniqueIndex("musicbrainz_artist_scans_batch_position_unique").on(table.batchId, table.position),
     index("musicbrainz_artist_scans_status_idx").on(table.status, table.updatedAt),
+  ],
+);
+
+export const appleMusicProviderState = pgTable("apple_music_provider_state", {
+  id: text("id").primaryKey().default("global"),
+  nextRequestAt: timestamp("next_request_at", { withTimezone: true }),
+  lastRequestStartedAt: timestamp("last_request_started_at", { withTimezone: true }),
+  leaseOwner: text("lease_owner"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  queueDepth: integer("queue_depth").notNull().default(0),
+  requestCount: integer("request_count").notNull().default(0),
+  cooldownUntil: timestamp("cooldown_until", { withTimezone: true }),
+  cooldownIndefinite: boolean("cooldown_indefinite").notNull().default(false),
+  cooldownObservedAt: timestamp("cooldown_observed_at", { withTimezone: true }),
+  cooldownErrorClassification: text("cooldown_error_classification"),
+  retryAfterSeconds: integer("retry_after_seconds"),
+  updatedAt,
+});
+
+export const appleMusicResponseCache = pgTable("apple_music_response_cache", {
+  requestIdentity: text("request_identity").primaryKey(),
+  response: jsonb("response").notNull(),
+  responseHash: text("response_hash").notNull(),
+  storedAt: timestamp("stored_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt,
+});
+
+export const appleMusicScanBatches = pgTable(
+  "apple_music_scan_batches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    scanRunId: uuid("scan_run_id").references(() => scanRuns.id, { onDelete: "set null" }),
+    status: appleMusicBatchStatusEnum("status").notNull().default("pending"),
+    totalArtists: integer("total_artists").notNull(),
+    completedArtists: integer("completed_artists").notNull().default(0),
+    failedArtists: integer("failed_artists").notNull().default(0),
+    requestCount: integer("request_count").notNull().default(0),
+    windowDays: integer("window_days").notNull().default(30),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [index("apple_music_scan_batches_status_idx").on(table.status, table.createdAt)],
+);
+
+export const appleMusicArtistScans = pgTable(
+  "apple_music_artist_scans",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    batchId: uuid("batch_id")
+      .notNull()
+      .references(() => appleMusicScanBatches.id, { onDelete: "cascade" }),
+    artistId: uuid("artist_id")
+      .notNull()
+      .references(() => artists.id, { onDelete: "cascade" }),
+    providerArtistId: text("provider_artist_id").notNull(),
+    position: integer("position").notNull(),
+    status: appleMusicArtistScanStatusEnum("status").notNull().default("pending"),
+    windowStart: date("window_start").notNull(),
+    windowEnd: date("window_end").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    requestCount: integer("request_count").notNull().default(0),
+    candidateCount: integer("candidate_count").notNull().default(0),
+    releaseCount: integer("release_count").notNull().default(0),
+    errorClassification: text("error_classification"),
+    retryEligibleAt: timestamp("retry_eligible_at", { withTimezone: true }),
+    lastPersistedAt: timestamp("last_persisted_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("apple_music_artist_scans_batch_artist_unique").on(table.batchId, table.artistId),
+    uniqueIndex("apple_music_artist_scans_batch_position_unique").on(table.batchId, table.position),
+    index("apple_music_artist_scans_status_idx").on(table.status, table.updatedAt),
+  ],
+);
+
+export const appleMusicArtistState = pgTable("apple_music_artist_state", {
+  artistId: uuid("artist_id")
+    .primaryKey()
+    .references(() => artists.id, { onDelete: "cascade" }),
+  providerArtistId: text("provider_artist_id").notNull(),
+  lastSuccessfulAt: timestamp("last_successful_at", { withTimezone: true }),
+  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+  lastStatus: text("last_status").notNull().default("never_scanned"),
+  errorClassification: text("error_classification"),
+  retryEligibleAt: timestamp("retry_eligible_at", { withTimezone: true }),
+  createdAt,
+  updatedAt,
+});
+
+export const appleMusicRequestEvents = pgTable(
+  "apple_music_request_events",
+  {
+    id: uuid("id").primaryKey(),
+    scanRunId: uuid("scan_run_id")
+      .notNull()
+      .references(() => scanRuns.id, { onDelete: "cascade" }),
+    batchId: uuid("batch_id")
+      .notNull()
+      .references(() => appleMusicScanBatches.id, { onDelete: "cascade" }),
+    endpointCategory: text("endpoint_category").notNull(),
+    requestIdentity: text("request_identity").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    status: integer("status"),
+    responseBytes: integer("response_bytes").notNull().default(0),
+    retryAfterSeconds: integer("retry_after_seconds"),
+    cooldownUntil: timestamp("cooldown_until", { withTimezone: true }),
+    errorClassification: text("error_classification"),
+    cacheHit: boolean("cache_hit").notNull().default(false),
+    createdAt,
+  },
+  (table) => [
+    index("apple_music_request_events_run_started_idx").on(table.scanRunId, table.startedAt),
+    index("apple_music_request_events_batch_started_idx").on(table.batchId, table.startedAt),
   ],
 );
 

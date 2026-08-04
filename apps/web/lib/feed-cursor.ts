@@ -8,7 +8,7 @@ export interface FeedQueryFilters {
   dateFrom?: string;
   dateTo?: string;
   exactOnly?: boolean;
-  provider?: "mock" | "musicbrainz" | "reddit" | "spotify";
+  provider?: "apple_music" | "mock" | "musicbrainz" | "reddit" | "spotify";
   releaseType?: string;
   search?: string;
   sort: (typeof feedSorts)[number];

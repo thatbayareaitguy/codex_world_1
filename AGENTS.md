@@ -2,8 +2,8 @@
 
 - Preserve the canonical model, matching engine, source evidence, watchlist, feed, scanner, provider interfaces, and MockProvider.
 - Before implementing a real provider, verify current official account, payment, authentication, functionality, terms, and policy constraints. Record unresolved policy language and never claim provider approval.
-- No provider may require paid developer access, membership, API subscription, or commercial plan. The owner's existing Spotify Premium subscription is the only permitted paid prerequisite.
-- Active providers are Spotify, MusicBrainz, MockProvider, and the approval-gated Reddit evidence adapter. Reddit must remain disabled until explicit API approval is received and recorded. Do not add YouTube, SoundCloud API, Apple Music, or TIDAL adapters in this milestone.
+- Apple Music public-catalog access through the owner's paid Apple Developer Program membership is an explicitly approved exception to the former no-paid-provider rule. Do not add any other provider that requires paid developer access, membership, API subscription, or a commercial plan without a new explicit decision.
+- Active providers are Spotify, Apple Music, MusicBrainz, MockProvider, and the approval-gated Reddit evidence adapter. Reddit must remain disabled until explicit API approval is received and recorded. Do not add YouTube, SoundCloud API, or TIDAL adapters in this milestone.
 - Never add SoundCloud credentials, OAuth, API requests, account import, search requests, monitoring, metadata, artwork, HTML fetching, scraping, browser automation, playback, oEmbed, or playlist writing.
 - SoundCloud is limited to the existing safe manual outbound-link feature and must be hidden by default behind `SOUNDCLOUD_MANUAL_LINKS_ENABLED=false`.
 - Accept SoundCloud field URLs only from `soundcloud.com` or its subdomains over HTTPS. Reject unsafe schemes, embedded credentials, lookalike domains, and non-track paths for track fields.
@@ -16,6 +16,10 @@
 - Any future Spotify write must be an addition to the single valid `SPOTIFY_ALLOWED_PLAYLIST_ID`, pass route-level and provider-client enabled, target, ownership, private, and non-collaborative checks, and use only exact or manually confirmed tracks.
 - Never expose Spotify playlist creation, selection, rename, visibility changes, artwork upload, follow, unfollow, remove, replace, or reorder operations.
 - Real provider tests must use synthetic fixtures and injected HTTP mocks. Normal verification must never call live providers.
+- Apple Music is limited to read-only public catalog discovery with a server-generated developer token. Do not request a Music User Token, personal library data, recommendations, playback, favorites, or playlist access.
+- Every Apple Music request must use the PostgreSQL-backed global gate with concurrency one and at least 1100 ms between starts. Preserve cooldowns, bounded response parsing, request telemetry, per-artist progress, and restart-safe batches.
+- Apple Music normal scans use confirmed mappings, first-page `singles` and `full-albums` views, targeted track details for eligible releases, and a maximum 30-day lookback for artists without a prior successful scan. Missing optional views and invalid release records must not stop unrelated artists.
+- Apple Music artwork may render only for exact Apple evidence, from the validated Apple artwork host, and must link to the corresponding Apple Music release. Never copy Apple artwork to another provider context or download, proxy, transform, or rehost it.
 - Every Spotify Web API and token request must use the shared PostgreSQL-backed client-ID gate. Keep concurrency at one and the request-start interval at or above five seconds unless a later explicitly verified milestone changes the policy.
 - Never bypass, probe during, or erase a valid Spotify provider cooldown. Persist safe 429 evidence without tokens, provider payloads, or artist-specific URLs.
 - Spotify artist scans must remain bounded, persisted per artist, resumable, and partial when a page limit is reached. The first full staged batch requires explicit confirmation and must never launch the whole watchlist at once.
@@ -32,3 +36,4 @@
 - Never use a raw Spotify response to build a MusicBrainz request. MusicBrainz discovery starts only from a confirmed canonical artist mapping.
 - A MusicBrainz release-group ID alone is not sufficient to merge tracks. Require the same disc, track position, and normalized title unless the recording ID is exact.
 - After every substantial task, update `docs/AI_HANDOFF.md` from current repository and database evidence. Keep it concise and exclude credentials, tokens, personal provider data, authorization headers, and raw API payloads.
+- Implementation tasks continue through coding, tests, debugging, retries, final review, and the requested user-visible workflow. Ordinary local failures and isolated provider-record failures are not stop conditions. A plan, migration, runner, canary, or intermediate report alone is not completion.

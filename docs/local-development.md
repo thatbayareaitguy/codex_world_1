@@ -24,6 +24,8 @@ pnpm dev -- --hostname 127.0.0.1 --port 3000
 
 Generate a base64-encoded 32-byte `APP_ENCRYPTION_KEY`. Set `MUSICBRAINZ_CONTACT_EMAIL` to a monitored address. Register the exact Spotify callback `http://127.0.0.1:3000/api/auth/spotify/callback`. Optional providers can be disabled independently.
 
+Apple Music public-catalog discovery requires an active Apple Developer Program team, a MusicKit-enabled Media ID, and a Media Services private key. Configure `APPLE_MUSIC_TEAM_ID`, `APPLE_MUSIC_KEY_ID`, `APPLE_MUSIC_PRIVATE_KEY_PATH`, and a two-letter `APPLE_MUSIC_STOREFRONT`, then set `APPLE_MUSIC_ENABLED=true`. Keep the `.p8` key outside the repository. Do not configure or request a Music User Token.
+
 Spotify playlist writes are off by default. Leave `SPOTIFY_PLAYLIST_WRITES_ENABLED=false` and `SPOTIFY_ALLOWED_PLAYLIST_ID=` for read-only authorization. If add-only export is explicitly enabled later, manually create a private non-collaborative playlist in Spotify and configure its 22-character ID. The browser cannot select or override this ID.
 
 Reddit must stay disabled until explicit Data API approval exists. `REDDIT_ACCESS_APPROVED=true` records the owner's assertion only and is not evidence of approval. Manual SoundCloud links can be enabled with `SOUNDCLOUD_MANUAL_LINKS_ENABLED=true`; this causes no SoundCloud request.
@@ -40,6 +42,8 @@ pnpm scan -- --provider spotify --artist <internal-artist-id> --dry-run --spotif
 pnpm scan -- --provider spotify --spotify-mode daily
 pnpm scan -- --provider spotify --spotify-mode reconciliation --confirm-spotify-batch
 pnpm scan -- --provider musicbrainz
+pnpm scan -- --provider apple_music
+pnpm scan -- --provider apple_music --artist <internal-artist-id>
 pnpm scan -- --provider reddit
 pnpm scan -- --artist <internal-artist-id>
 pnpm scan -- --dry-run
@@ -54,6 +58,8 @@ pnpm spotify:reconcile-releases -- --release <canonical-release-id> --page-size 
 Normal scans use one global database lock. Each provider records an independent run and failure, and a provider failure does not stop the remaining providers. Detailed errors and provider metrics expire after `SCAN_DETAIL_RETENTION_DAYS`; aggregate counts and timestamps remain.
 
 Spotify uses one database-backed queue across web and scanner processes. The default interval is five seconds with concurrency one. A provider 429 persists a client-wide cooldown across restart; do not clear or bypass a valid integer-second wait. Initial scans are limited to 15 artists per batch and begin paused for confirmation. See [Spotify Development Mode Scanning](spotify-development-mode-scanning.md).
+
+Apple Music uses a separate database-backed queue with concurrency one and a minimum 1100 ms request-start interval. Normal scans load only confirmed Apple mappings, use first-page `singles` and `full-albums` views, fetch tracks only for eligible recent releases, and persist after every artist. A never-scanned artist uses at most a 30-day lookback; later scans begin at the last successful timestamp within that floor. Missing optional views and invalid release records are isolated. Resume with the same normal command after a budget, runtime, transient, or cooldown stop.
 
 The artwork backfill reads only stored Spotify album IDs and calls the official album endpoint. It defaults to dry-run, requires an explicit limit from 1 through 25, and needs `--apply` before it writes provider metadata. Apply mode saves a provider cursor after every completed release; add `--resume` to continue after that cursor. The command never searches Spotify, inspects playlists, or changes canonical release and track identity.
 

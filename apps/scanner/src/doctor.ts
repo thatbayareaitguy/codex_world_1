@@ -1,5 +1,6 @@
 import {
   createDatabase,
+  getAppleMusicOperationalStatus,
   getSpotify429Telemetry,
   getSpotifyOperationalStatus,
   getSpotifySchedulerStatus,
@@ -26,6 +27,10 @@ export interface DoctorCheck {
 }
 
 export interface DoctorDatabaseStatus {
+  appleMusicCooldownActive?: boolean;
+  appleMusicCooldownUntil?: string;
+  appleMusicLeaseActive?: boolean;
+  appleMusicRequestCount?: number;
   connected: boolean;
   failedScans: number;
   lastSuccessfulScan?: string;
@@ -188,6 +193,24 @@ export async function collectDoctorReport(
             )
           : ready("Spotify cooldown", "No active Spotify cooldown was detected.", false),
       );
+      if (databaseStatus.appleMusicCooldownActive !== undefined) {
+        checks.push(
+          databaseStatus.appleMusicCooldownActive
+            ? action(
+                "Apple Music cooldown",
+                databaseStatus.appleMusicCooldownUntil
+                  ? `Apple Music requests are blocked until ${databaseStatus.appleMusicCooldownUntil}.`
+                  : "Apple Music requests are blocked pending manual review.",
+                "Wait for the provider cooldown. Do not probe or bypass it.",
+                false,
+              )
+            : ready(
+                "Apple Music operations",
+                `${databaseStatus.appleMusicRequestCount ?? 0} persisted requests; ${databaseStatus.appleMusicLeaseActive ? "one active lease" : "no active lease"}; no active cooldown.`,
+                false,
+              ),
+        );
+      }
       checks.push(
         ready(
           "Last successful scan",
@@ -298,6 +321,7 @@ export async function collectDoctorReport(
     );
   }
   if (configuration) {
+    checks.push(...appleMusicChecks(configuration));
     checks.push(...spotifyChecks(configuration, environment));
     checks.push(...musicBrainzChecks(configuration));
     checks.push(...redditChecks(configuration, environment));
@@ -384,6 +408,7 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
     let spotifyRateLimits: DoctorDatabaseStatus["spotifyRateLimits"];
     let spotifyScheduler: DoctorDatabaseStatus["spotifyScheduler"];
     let spotifySyncCampaign: DoctorDatabaseStatus["spotifySyncCampaign"];
+    let appleMusicStatus: Awaited<ReturnType<typeof getAppleMusicOperationalStatus>> | undefined;
     try {
       const [failed] = await db
         .select({ count: sql<number>`count(*)::int` })
@@ -450,11 +475,24 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
           target: campaign.targetSuccesses,
         };
       }
+      if (migrationCount >= expectedMigrationCount()) {
+        appleMusicStatus = await getAppleMusicOperationalStatus(db);
+      }
     } catch {
       // Migration status already explains why operational tables cannot be read.
     }
     return {
       connected: true,
+      ...(appleMusicStatus
+        ? {
+            appleMusicCooldownActive: appleMusicStatus.cooldownActive,
+            ...(appleMusicStatus.cooldownUntil
+              ? { appleMusicCooldownUntil: appleMusicStatus.cooldownUntil.toISOString() }
+              : {}),
+            appleMusicLeaseActive: appleMusicStatus.leaseActive,
+            appleMusicRequestCount: appleMusicStatus.requestCount,
+          }
+        : {}),
       failedScans,
       ...(lastSuccessfulScan ? { lastSuccessfulScan } : {}),
       migrationCount,
@@ -471,6 +509,41 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
   } finally {
     await client.end();
   }
+}
+
+function appleMusicChecks(
+  configuration: ReturnType<typeof loadProviderConfiguration>,
+): DoctorCheck[] {
+  if (!configuration.appleMusic.enabled) {
+    return [optional("Apple Music", "Apple Music catalog discovery is disabled.")];
+  }
+  const checks = [
+    configuration.appleMusic.configured
+      ? ready(
+          "Apple Music configuration",
+          "Apple Music catalog credentials are configured and hidden.",
+        )
+      : action(
+          "Apple Music configuration",
+          "Apple Music catalog credentials are incomplete.",
+          "Set APPLE_MUSIC_TEAM_ID, APPLE_MUSIC_KEY_ID, and APPLE_MUSIC_PRIVATE_KEY_PATH.",
+        ),
+  ];
+  if (configuration.appleMusic.privateKeyPath) {
+    checks.push(
+      existsSync(configuration.appleMusic.privateKeyPath)
+        ? ready(
+            "Apple Music private key",
+            "The configured private-key file is available and hidden.",
+          )
+        : action(
+            "Apple Music private key",
+            "The configured private-key file is unavailable.",
+            "Correct APPLE_MUSIC_PRIVATE_KEY_PATH without committing the key.",
+          ),
+    );
+  }
+  return checks;
 }
 
 function spotifyChecks(

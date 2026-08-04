@@ -2,6 +2,7 @@ import {
   artistImportRuns,
   artistMappingReviews,
   createDatabase,
+  getAppleMusicOperationalStatus,
   getSpotifySchedulerStatus,
   oauthAccounts,
   operationLocks,
@@ -21,6 +22,12 @@ export const dynamic = "force-dynamic";
 export async function GET(): Promise<NextResponse> {
   const configuration = loadProviderConfiguration();
   const base = {
+    appleMusic: {
+      configured: configuration.appleMusic.configured,
+      enabled: configuration.appleMusic.enabled,
+      minRequestIntervalMs: configuration.appleMusic.minRequestIntervalMs,
+      storefront: configuration.appleMusic.storefront,
+    },
     backup: { lastCompletedAt: lastBackupTime() },
     database: { configured: Boolean(configuration.databaseUrl) },
     generatedAt: new Date().toISOString(),
@@ -76,6 +83,8 @@ export async function GET(): Promise<NextResponse> {
       redditReview,
       reconcile,
       spotifyScheduler,
+      appleMusicMappingReview,
+      appleMusicOperational,
     ] = await Promise.all([
       connection.client<{ count: number }[]>`
           select count(*)::int as count from drizzle.__drizzle_migrations
@@ -113,15 +122,26 @@ export async function GET(): Promise<NextResponse> {
         .orderBy(desc(redditReconciliationRuns.startedAt))
         .limit(1),
       getSpotifySchedulerStatus(connection.db),
+      connection.db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(artistMappingReviews)
+        .where(
+          and(
+            eq(artistMappingReviews.provider, "apple_music"),
+            eq(artistMappingReviews.status, "pending"),
+          ),
+        ),
+      getAppleMusicOperationalStatus(connection.db),
     ]);
-    const latest = (provider: "spotify" | "musicbrainz" | "reddit") =>
+    const latest = (provider: "apple_music" | "spotify" | "musicbrainz" | "reddit") =>
       recentRuns.find((run) => run.provider === provider);
-    const successful = (provider: "spotify" | "musicbrainz" | "reddit") =>
+    const successful = (provider: "apple_music" | "spotify" | "musicbrainz" | "reddit") =>
       recentRuns.find((run) => run.provider === provider && run.status === "completed");
     const now = Date.now();
     const activeLocks = locks.filter((lock) => lock.expiresAt.getTime() > now);
     const staleLocks = locks.filter((lock) => lock.expiresAt.getTime() <= now);
     const spotifyLatest = latest("spotify");
+    const appleMusicLatest = latest("apple_music");
     const musicBrainzLatest = latest("musicbrainz");
     const redditLatest = latest("reddit");
     const running = recentRuns.find((run) => run.status === "running");
@@ -129,6 +149,17 @@ export async function GET(): Promise<NextResponse> {
 
     return NextResponse.json({
       ...base,
+      appleMusic: {
+        ...base.appleMusic,
+        cooldownActive: appleMusicOperational.cooldownActive,
+        cooldownUntil: appleMusicOperational.cooldownUntil,
+        lastError: scanError(appleMusicLatest?.errors),
+        lastSuccessfulScanAt: successful("apple_music")?.completedAt ?? null,
+        leaseActive: appleMusicOperational.leaseActive,
+        mappingReviewCount: appleMusicMappingReview[0]?.count ?? 0,
+        queueDepth: appleMusicOperational.queueDepth,
+        requestCount: appleMusicOperational.requestCount,
+      },
       database: {
         configured: true,
         connected: true,

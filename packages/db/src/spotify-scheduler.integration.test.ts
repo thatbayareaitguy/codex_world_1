@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createDatabase, type RadarDatabase } from "./client";
 import {
@@ -63,9 +63,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await db.delete(spotifySchedulerWork);
-  await db.delete(artistFollows);
-  await db.delete(artists);
   await db.delete(spotifyReleaseTrackRetrievals);
+  await db.execute(sql`truncate table artists restart identity cascade`);
 });
 
 afterAll(async () => {

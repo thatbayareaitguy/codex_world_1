@@ -64,6 +64,10 @@ export default async function HomePage({
       initialArtists={initialArtists}
       initialItems={initialItems}
       providerConfiguration={{
+        appleMusic: {
+          configured: configuration.appleMusic.configured,
+          enabled: configuration.appleMusic.enabled,
+        },
         databaseConfigured: Boolean(configuration.databaseUrl),
         musicbrainz: {
           configured: configuration.musicbrainz.configured,

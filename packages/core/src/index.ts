@@ -1,4 +1,5 @@
 export * from "./logger";
+export * from "./apple-music-artwork";
 export * from "./matching";
 export * from "./normalize";
 export * from "./retry";

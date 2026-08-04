@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createDatabase } from "./client";
 import { listScanHistoryPage } from "./scan-history";
-import { scanRuns } from "./schema";
+import { appleMusicScanBatches, scanRuns } from "./schema";
 
 const databaseUrl =
   process.env.TEST_DATABASE_URL ?? "postgres://radar:radar@127.0.0.1:5433/radar_test";
@@ -53,5 +53,43 @@ describe.sequential("scan history pagination", () => {
     await expect(
       listScanHistoryPage(connection.db, { cursor: "not-a-cursor", limit: 10 }),
     ).rejects.toThrow(/cursor/i);
+  });
+
+  it("reports persisted Apple Music batch counts and request telemetry", async () => {
+    const [run] = await connection.db
+      .insert(scanRuns)
+      .values({
+        completedAt: new Date("2026-08-04T19:00:10.000Z"),
+        insertedCount: 4,
+        provider: "apple_music",
+        providersCompleted: ["apple_music"],
+        providersRequested: ["apple_music"],
+        startedAt: new Date("2026-08-04T19:00:00.000Z"),
+        status: "completed",
+        triggerType: "provider_manual",
+      })
+      .returning({ id: scanRuns.id });
+    expect(run).toBeDefined();
+    const [batch] = await connection.db
+      .insert(appleMusicScanBatches)
+      .values({
+        completedArtists: 2,
+        failedArtists: 0,
+        requestCount: 7,
+        scanRunId: run!.id,
+        status: "completed",
+        totalArtists: 2,
+      })
+      .returning({ id: appleMusicScanBatches.id });
+
+    const history = await listScanHistoryPage(connection.db, { limit: 50 });
+    expect(history.entries.find((entry) => entry.id === run!.id)).toMatchObject({
+      artistCount: 2,
+      batchId: batch!.id,
+      batchMode: "apple_music",
+      failureCount: 0,
+      provider: "apple_music",
+      requestCount: 7,
+    });
   });
 });

@@ -1,4 +1,5 @@
 import {
+  parseAppleMusicReleaseArtwork,
   parseSpotifyReleaseArtwork,
   safeProviderEvidenceUrl,
   type FeedFixtureItem,
@@ -485,6 +486,7 @@ async function projectFeedGroups(
       return href ? [{ ...row, href }] : [];
     });
     const hasSpotifyEvidence = safeEvidence.some((row) => row.provider === "spotify");
+    const hasAppleMusicEvidence = safeEvidence.some((row) => row.provider === "apple_music");
     const storedSpotifyArtwork = (externalByRelease.get(release?.id ?? "") ?? [])
       .filter((row) => row.provider === "spotify")
       .map((row) => parseSpotifyReleaseArtwork(providerField(row.providerFields, "spotify")))
@@ -492,6 +494,14 @@ async function projectFeedGroups(
     const spotifyArtwork = hasSpotifyEvidence
       ? (storedSpotifyArtwork ??
         parseSpotifyReleaseArtwork(providerField(candidate.rawPayload, "spotifyRelease")))
+      : null;
+    const storedAppleMusicArtwork = (externalByRelease.get(release?.id ?? "") ?? [])
+      .filter((row) => row.provider === "apple_music")
+      .map((row) => parseAppleMusicReleaseArtwork(providerField(row.providerFields, "apple_music")))
+      .find((artwork) => artwork !== null);
+    const appleMusicArtwork = hasAppleMusicEvidence
+      ? (storedAppleMusicArtwork ??
+        parseAppleMusicReleaseArtwork(providerField(candidate.rawPayload, "appleMusicRelease")))
       : null;
     const completeness = retrievalByRelease.get(release?.id ?? "");
     const availabilities = feed.trackId ? (availabilityByTrack.get(feed.trackId) ?? []) : [];
@@ -547,6 +557,7 @@ async function projectFeedGroups(
           provider: providerLabel(row.provider),
         })),
         spotify: spotifyState,
+        ...(appleMusicArtwork ? { appleMusicArtwork } : {}),
         ...(spotifyArtwork ? { spotifyArtwork } : {}),
         state: feed.state === "saved" || feed.state === "listened" ? "new" : feed.state,
         title: track?.title ?? candidate.title,
@@ -603,6 +614,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function providerLabel(provider: string): string {
   if (provider === "musicbrainz") return "MusicBrainz";
   if (provider === "spotify") return "Spotify";
+  if (provider === "apple_music") return "Apple Music";
   if (provider === "reddit") return "Reddit";
   return "Mock provider";
 }

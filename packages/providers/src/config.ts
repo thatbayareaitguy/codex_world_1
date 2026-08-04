@@ -13,6 +13,35 @@ const optionalSpotifyPlaylistId = z.preprocess(
 );
 
 const environmentSchema = z.object({
+  APPLE_MUSIC_ENABLED: booleanFlag(false),
+  APPLE_MUSIC_KEY_ID: z
+    .string()
+    .regex(/^[A-Z0-9]{10}$/)
+    .optional(),
+  APPLE_MUSIC_MAX_REQUESTS_PER_RUN: z.coerce.number().int().min(1).max(10_000).default(1500),
+  APPLE_MUSIC_MAX_RUNTIME_MS: z.coerce
+    .number()
+    .int()
+    .min(60_000)
+    .max(14_400_000)
+    .default(7_200_000),
+  APPLE_MUSIC_MIN_REQUEST_INTERVAL_MS: z.coerce.number().int().min(1100).max(300_000).default(1100),
+  APPLE_MUSIC_PRIVATE_KEY_PATH: z.string().min(1).optional(),
+  APPLE_MUSIC_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(15_000),
+  APPLE_MUSIC_STOREFRONT: z
+    .string()
+    .regex(/^[a-z]{2}$/)
+    .default("us"),
+  APPLE_MUSIC_TEAM_ID: z
+    .string()
+    .regex(/^[A-Z0-9]{10}$/)
+    .optional(),
+  APPLE_MUSIC_TOKEN_LIFETIME_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(300)
+    .max(15_777_000)
+    .default(3600),
   APP_BASE_URL: z.url().default("http://127.0.0.1:3000"),
   APP_ENCRYPTION_KEY: z.string().min(1).optional(),
   DATABASE_URL: z.string().min(1).optional(),
@@ -56,6 +85,19 @@ const environmentSchema = z.object({
 });
 
 export interface ProviderConfiguration {
+  appleMusic: {
+    configured: boolean;
+    enabled: boolean;
+    keyId?: string;
+    maxRequestsPerRun: number;
+    maxRuntimeMs: number;
+    minRequestIntervalMs: number;
+    privateKeyPath?: string;
+    requestTimeoutMs: number;
+    storefront: string;
+    teamId?: string;
+    tokenLifetimeSeconds: number;
+  };
   appBaseUrl: string;
   appEncryptionKey?: string;
   databaseUrl?: string;
@@ -128,8 +170,29 @@ export function loadProviderConfiguration(
     parsed.REDDIT_CLIENT_SECRET &&
     redditUserAgentValid,
   );
+  const appleMusicConfigured = Boolean(
+    parsed.APPLE_MUSIC_ENABLED &&
+    parsed.APPLE_MUSIC_TEAM_ID &&
+    parsed.APPLE_MUSIC_KEY_ID &&
+    parsed.APPLE_MUSIC_PRIVATE_KEY_PATH,
+  );
 
   return {
+    appleMusic: {
+      configured: appleMusicConfigured,
+      enabled: parsed.APPLE_MUSIC_ENABLED,
+      ...(parsed.APPLE_MUSIC_KEY_ID ? { keyId: parsed.APPLE_MUSIC_KEY_ID } : {}),
+      maxRequestsPerRun: parsed.APPLE_MUSIC_MAX_REQUESTS_PER_RUN,
+      maxRuntimeMs: parsed.APPLE_MUSIC_MAX_RUNTIME_MS,
+      minRequestIntervalMs: parsed.APPLE_MUSIC_MIN_REQUEST_INTERVAL_MS,
+      ...(parsed.APPLE_MUSIC_PRIVATE_KEY_PATH
+        ? { privateKeyPath: parsed.APPLE_MUSIC_PRIVATE_KEY_PATH }
+        : {}),
+      requestTimeoutMs: parsed.APPLE_MUSIC_REQUEST_TIMEOUT_MS,
+      storefront: parsed.APPLE_MUSIC_STOREFRONT,
+      ...(parsed.APPLE_MUSIC_TEAM_ID ? { teamId: parsed.APPLE_MUSIC_TEAM_ID } : {}),
+      tokenLifetimeSeconds: parsed.APPLE_MUSIC_TOKEN_LIFETIME_SECONDS,
+    },
     appBaseUrl: parsed.APP_BASE_URL,
     ...(parsed.APP_ENCRYPTION_KEY ? { appEncryptionKey: parsed.APP_ENCRYPTION_KEY } : {}),
     ...(parsed.DATABASE_URL ? { databaseUrl: parsed.DATABASE_URL } : {}),

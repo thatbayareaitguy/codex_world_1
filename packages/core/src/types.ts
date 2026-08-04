@@ -85,6 +85,18 @@ export interface SpotifyReleaseArtwork {
   sourceProvider: "spotify";
 }
 
+export interface AppleMusicReleaseArtwork {
+  albumId: string;
+  albumUrl: string;
+  image: {
+    height: number;
+    url: string;
+    width: number;
+  };
+  lastObservedAt: string;
+  sourceProvider: "apple_music";
+}
+
 export interface TrackCandidate {
   provider: ProviderName;
   externalReleaseId: string;
@@ -115,6 +127,7 @@ export interface TrackCandidate {
   evidenceType: string;
   payloadHash: string;
   isUpcoming?: boolean;
+  appleMusicRelease?: AppleMusicReleaseArtwork;
   spotifyRelease?: SpotifyReleaseArtwork;
 }
 
@@ -201,6 +214,7 @@ export interface FeedFixtureItem {
   sources: Array<{ provider: string; href: string; evidenceHref: string }>;
   spotify: AvailabilityState;
   spotifyArtwork?: SpotifyReleaseArtwork;
+  appleMusicArtwork?: AppleMusicReleaseArtwork;
   soundcloudState: SoundCloudLinkState;
   links: Array<{ label: string; href: string }>;
   confidence: number;

@@ -20,6 +20,7 @@ export function validateProviderEvidenceUrl(
   if (provider === "spotify") return validateSpotifyUrl(url);
   if (provider === "musicbrainz") return validateMusicBrainzUrl(url);
   if (provider === "reddit") return validateRedditUrl(url);
+  if (provider === "apple_music") return validateAppleMusicUrl(url);
   if (provider === "soundcloud") {
     const soundcloud = validateSoundCloudUrl(url.toString(), "track");
     return soundcloud.valid && soundcloud.normalizedUrl
@@ -28,6 +29,23 @@ export function validateProviderEvidenceUrl(
   }
   if (provider === "mock") return validateGenericEvidenceUrl(url);
   return invalid("Provider evidence links are not supported");
+}
+
+function validateAppleMusicUrl(url: URL): ProviderUrlValidationResult {
+  if (url.hostname !== "music.apple.com") {
+    return invalid("Apple Music evidence host is not allowed");
+  }
+  if (url.hash) return invalid("Apple Music evidence fragments are not allowed");
+  const segments = pathSegments(url);
+  if (
+    segments.length < 3 ||
+    segments[0] !== "us" ||
+    !["album", "artist"].includes(segments[1]!) ||
+    !/^\d+$/.test(segments.at(-1)!)
+  ) {
+    return invalid("Apple Music evidence path or identifier is malformed");
+  }
+  return valid(url);
 }
 
 export function safeProviderEvidenceUrl(provider: string, value: string): string | null {

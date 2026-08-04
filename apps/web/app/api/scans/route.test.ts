@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const {
   end,
   findFirst,
+  getAppleMusicOperationalStatus,
   getSpotifyOperationalStatus,
   getSpotifySchedulerStatus,
   history,
@@ -40,6 +41,18 @@ const {
   return {
     end: vi.fn(() => Promise.resolve()),
     findFirst: vi.fn(),
+    getAppleMusicOperationalStatus: vi.fn(() =>
+      Promise.resolve({
+        cooldownActive: false,
+        cooldownIndefinite: false,
+        cooldownUntil: null,
+        lastRequestStartedAt: null,
+        leaseActive: false,
+        nextRequestAt: null,
+        queueDepth: 0,
+        requestCount: 0,
+      }),
+    ),
     getSpotifyOperationalStatus: vi.fn(() => Promise.resolve({ queueDepth: 0 })),
     getSpotifySchedulerStatus: vi.fn(() =>
       Promise.resolve({
@@ -97,6 +110,7 @@ vi.mock("@radar/db", () => ({
     client: { end },
     db: {
       query: {
+        appleMusicScanBatches: { findFirst },
         musicbrainzProviderState: { findFirst },
         musicbrainzScanBatches: { findFirst },
         operationLocks: { findFirst },
@@ -104,6 +118,9 @@ vi.mock("@radar/db", () => ({
       select,
     },
   })),
+  appleMusicArtistScans: {},
+  appleMusicScanBatches: { createdAt: "createdAt" },
+  getAppleMusicOperationalStatus,
   getSpotifyOperationalStatus,
   getSpotifySchedulerStatus,
   latestSpotifyBatch,
@@ -119,6 +136,7 @@ vi.mock("@radar/db", () => ({
 }));
 vi.mock("@radar/providers", () => ({
   loadProviderConfiguration: vi.fn(() => ({
+    appleMusic: { configured: false },
     databaseUrl: "postgres://synthetic",
     musicbrainz: { configured: false },
     spotify: {

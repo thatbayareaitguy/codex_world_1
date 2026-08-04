@@ -875,7 +875,7 @@ describe.sequential("complete deterministic fake-provider workflow", () => {
   it("persists mocked Reddit evidence idempotently and purges deleted source content", async () => {
     const userId = await ensureLocalOwner(connection.db);
     const [spotifyBackedTrack] = await connection.db
-      .select({ id: tracks.id })
+      .select({ artistId: artists.id, id: tracks.id })
       .from(tracks)
       .innerJoin(trackCredits, eq(trackCredits.trackId, tracks.id))
       .innerJoin(artists, eq(artists.id, trackCredits.artistId))
@@ -884,6 +884,24 @@ describe.sequential("complete deterministic fake-provider workflow", () => {
       )
       .limit(1);
     expect(spotifyBackedTrack).toBeDefined();
+    const lumenArtists = await connection.db
+      .select({ id: artists.id })
+      .from(artists)
+      .where(eq(artists.normalizedName, "lumen field"));
+    for (const artist of lumenArtists) {
+      if (artist.id === spotifyBackedTrack!.artistId) continue;
+      await connection.db
+        .update(artistFollows)
+        .set({ active: false })
+        .where(and(eq(artistFollows.artistId, artist.id), eq(artistFollows.userId, userId)));
+    }
+    await connection.db
+      .insert(artistFollows)
+      .values({ active: true, artistId: spotifyBackedTrack!.artistId, source: "test", userId })
+      .onConflictDoUpdate({
+        set: { active: true },
+        target: [artistFollows.userId, artistFollows.artistId],
+      });
     await connection.db
       .insert(trackAvailabilities)
       .values({

@@ -204,6 +204,9 @@ select:focus-visible {
 .provider-dot.musicbrainz {
   background: #8d78b3;
 }
+.provider-dot.apple_music {
+  background: #f05b66;
+}
 .sidebar-footer {
   margin-top: auto;
 }
@@ -854,6 +857,8 @@ select:focus-visible {
   background: #f5d9d3;
   border-radius: 4px;
 }
+.provider-group-artwork,
+.provider-artwork-cover,
 .spotify-group-artwork,
 .spotify-artwork-cover {
   padding: 0;
@@ -861,6 +866,8 @@ select:focus-visible {
   overflow: hidden;
   text-decoration: none;
 }
+.provider-group-artwork img,
+.provider-artwork-cover img,
 .spotify-group-artwork img,
 .spotify-artwork-cover img {
   width: 100%;
@@ -868,6 +875,8 @@ select:focus-visible {
   display: block;
   object-fit: contain;
 }
+.provider-group-artwork:focus-visible,
+.provider-artwork-cover:focus-visible,
 .spotify-group-artwork:focus-visible,
 .spotify-artwork-cover:focus-visible {
   outline: 2px solid var(--cyan);
@@ -917,10 +926,10 @@ select:focus-visible {
 .release-feed-group.is-collapsed .release-feed-group-title small {
   display: none;
 }
-.release-feed-group.is-collapsed .release-feed-group-icon:not(.spotify-group-artwork) {
+.release-feed-group.is-collapsed .release-feed-group-icon:not(.provider-group-artwork) {
   display: none;
 }
-.release-feed-group.is-collapsed:has(.release-feed-group-icon:not(.spotify-group-artwork))
+.release-feed-group.is-collapsed:has(.release-feed-group-icon:not(.provider-group-artwork))
   .release-feed-group-heading {
   grid-template-columns: 28px minmax(0, 1fr) auto;
 }
@@ -1001,6 +1010,8 @@ select:focus-visible {
 .cover-gold {
   background: #a1722a;
 }
+.provider-artwork-cover::before,
+.provider-artwork-cover::after,
 .spotify-artwork-cover::before,
 .spotify-artwork-cover::after {
   display: none;
@@ -1947,11 +1958,11 @@ select:focus-visible {
   .release-feed-group.is-collapsed .release-feed-group-count {
     grid-column: 3;
   }
-  .release-feed-group.is-collapsed:has(.release-feed-group-icon:not(.spotify-group-artwork))
+  .release-feed-group.is-collapsed:has(.release-feed-group-icon:not(.provider-group-artwork))
     .release-feed-group-heading {
     grid-template-columns: 28px minmax(0, 1fr);
   }
-  .release-feed-group.is-collapsed:has(.release-feed-group-icon:not(.spotify-group-artwork))
+  .release-feed-group.is-collapsed:has(.release-feed-group-icon:not(.provider-group-artwork))
     .release-feed-group-count {
     grid-column: 2;
   }

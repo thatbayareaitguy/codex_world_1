@@ -8,14 +8,14 @@
 - `artists`, `artist_aliases`, and `artist_follows`: provider-neutral identity, user aliases, inclusion rules, tracking source, and active state.
 - `artist_external_ids`: provider mappings with confirmation, score, reasons, source, provider URL, and timestamps.
 - `artist_import_runs` and `artist_import_candidates`: preview, selection, decision, counts, provenance, and import history.
-- `artist_mapping_reviews`: ambiguous MusicBrainz mapping proposals and decisions.
+- `artist_mapping_reviews`: ambiguous MusicBrainz and Apple Music mapping proposals and decisions. Apple candidate-free rows permit a manually supplied numeric catalog artist ID.
 
 ## Catalog and Evidence
 
 - `releases` and `tracks`: provider-neutral release and recording identity. `tracks.release_id` is deprecated but retained as a compatibility pointer to the recording's first canonical release; it is no longer authoritative and is scheduled for removal only in a later compatibility-safe migration.
 - `release_track_appearances`: canonical many-to-many release/recording membership with disc number, track number, provider order, presentation metadata, and first/last observation times. Its deterministic identity is release, track, disc, and track position.
 - `release_track_appearance_sources`: candidate and provider release/track provenance, observed credits, and observation times for each appearance.
-- `release_external_ids` and `track_external_ids`: provider-specific IDs, URLs, and namespaced fields. Multiple provider IDs may point at one canonical entity. Spotify release rows may store `provider_fields.spotify` with the album ID, canonical album URL, selected artwork URL, width, height, source provider, and last-observed timestamp. The database stores no image bytes.
+- `release_external_ids` and `track_external_ids`: provider-specific IDs, URLs, and namespaced fields. Multiple provider IDs may point at one canonical entity. Spotify and Apple Music release rows may store provider-namespaced album URLs and validated artwork URLs, dimensions, provider IDs, and observation timestamps. The database stores no image bytes.
 - `track_credits`: ordered credited names and explicit roles without erasing source spelling.
 - `track_availabilities`: provider, region, state, URL, and provider track ID.
 - `release_candidates`: immutable normalized observations, raw minimized fields, payload hash, match rule, confidence, reasons, algorithm version, and canonical target.
@@ -30,6 +30,9 @@
 ## Operations and Export
 
 - `scan_runs`: trigger, requested/completed/failed providers, filter, dry-run state, start, finish, aggregate counts, sanitized errors, metrics, and detail expiry.
+- `apple_music_provider_state` and `apple_music_request_events`: global request lease, minimum start time, queue depth, request count, cooldown, safe endpoint category, status, response size, and redacted failure classification.
+- `apple_music_scan_batches`, `apple_music_artist_scans`, and `apple_music_artist_state`: restart-safe mapped-watchlist batches, ordered per-artist work, date windows, request and candidate counts, terminal or retryable outcomes, and last successful scan state.
+- `apple_music_response_cache`: bounded validated response reuse scoped by request identity. It contains no credentials or authorization headers.
 - `spotify_provider_state`: singleton client-ID request gate, lease, queue depth, request count, next request time, and provider-directed cooldown evidence.
 - `spotify_request_events`: safe endpoint-category metrics, request timing, status, queue wait, raw and parsed `Retry-After`, cooldown, and redacted classifications.
 - `spotify_scan_batches`: bounded Spotify mode, page limit, confirmation, pause/cancel state, estimates, and aggregate artist outcomes, including blocked mappings.

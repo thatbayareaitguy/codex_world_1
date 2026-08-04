@@ -1,5 +1,6 @@
 import {
   createDatabase,
+  getAppleMusicOperationalStatus,
   getSpotifyOperationalStatus,
   getSpotifySchedulerStatus,
   latestSpotifyBatch,
@@ -12,6 +13,8 @@ import {
   scanRuns,
   selectDefaultScanHistoryEntry,
   spotifyCoverageSummary,
+  appleMusicArtistScans,
+  appleMusicScanBatches,
 } from "@radar/db";
 import { loadProviderConfiguration } from "@radar/providers";
 import { and, asc, desc, eq, gt } from "drizzle-orm";
@@ -27,7 +30,7 @@ export const runtime = "nodejs";
 const startScanSchema = z.object({
   artistId: z.uuid().optional(),
   musicbrainzBatchId: z.uuid().optional(),
-  provider: z.enum(["mock", "musicbrainz", "spotify"]).optional(),
+  provider: z.enum(["apple_music", "mock", "musicbrainz", "spotify"]).optional(),
   since: z.iso.date().optional(),
 });
 
@@ -70,6 +73,8 @@ export async function GET(request?: NextRequest): Promise<NextResponse> {
       musicbrainzBatch,
       spotifyCoverage,
       spotifyScheduler,
+      appleMusicOperational,
+      appleMusicBatch,
     ] = await Promise.all([
       connection.db.select().from(scanRuns).orderBy(desc(scanRuns.startedAt)).limit(20),
       connection.db.query.operationLocks.findFirst({
@@ -93,7 +98,18 @@ export async function GET(request?: NextRequest): Promise<NextResponse> {
       }),
       spotifyCoverageSummary(connection.db),
       getSpotifySchedulerStatus(connection.db),
+      getAppleMusicOperationalStatus(connection.db),
+      connection.db.query.appleMusicScanBatches.findFirst({
+        orderBy: [desc(appleMusicScanBatches.createdAt)],
+      }),
     ]);
+    const appleMusicArtistRows = appleMusicBatch
+      ? await connection.db
+          .select()
+          .from(appleMusicArtistScans)
+          .where(eq(appleMusicArtistScans.batchId, appleMusicBatch.id))
+          .orderBy(asc(appleMusicArtistScans.position))
+      : [];
     const musicbrainzArtistRows = musicbrainzBatch
       ? await connection.db
           .select()
@@ -105,6 +121,10 @@ export async function GET(request?: NextRequest): Promise<NextResponse> {
     const requestedProviders = configuredScanProviders(configuration, activeScanLock?.metadata);
     return NextResponse.json(
       {
+        appleMusic: {
+          batch: appleMusicBatch ? { ...appleMusicBatch, artistScans: appleMusicArtistRows } : null,
+          operational: appleMusicOperational,
+        },
         active: activeScanLock
           ? describeActiveScan(activeScanLock, runs, requestedProviders)
           : null,
@@ -238,6 +258,7 @@ function configuredScanProviders(
   const requested = scanProviderFromMetadata(metadata);
   if (requested && requested !== "all") return [requested];
   const configured = [
+    ...(configuration.appleMusic.configured ? ["apple_music"] : []),
     ...(configuration.spotify.configured ? ["spotify"] : []),
     ...(configuration.musicbrainz.configured ? ["musicbrainz"] : []),
   ];

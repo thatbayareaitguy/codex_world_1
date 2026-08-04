@@ -2,6 +2,21 @@ import { describe, expect, it } from "vitest";
 import { safeProviderEvidenceUrl, validateProviderEvidenceUrl } from "./provider-urls";
 
 describe("provider evidence URLs", () => {
+  it("accepts catalog Apple Music evidence and rejects lookalike hosts", () => {
+    expect(
+      safeProviderEvidenceUrl(
+        "apple_music",
+        "https://music.apple.com/us/album/example-release/123456789",
+      ),
+    ).toBe("https://music.apple.com/us/album/example-release/123456789");
+    expect(
+      safeProviderEvidenceUrl(
+        "apple_music",
+        "https://music.apple.com.evil.test/us/album/example-release/123456789",
+      ),
+    ).toBeNull();
+  });
+
   it("accepts only expected Spotify web entities with base62 IDs", () => {
     expect(
       safeProviderEvidenceUrl("spotify", "https://open.spotify.com/track/0123456789ABCDEFGHIJKL"),

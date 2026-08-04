@@ -10,7 +10,7 @@ const querySchema = z.object({
   dateTo: z.iso.date().optional(),
   exactOnly: z.enum(["true", "false"]).optional(),
   limit: z.coerce.number().int().min(25).max(200).default(100),
-  provider: z.enum(["mock", "musicbrainz", "reddit", "spotify"]).optional(),
+  provider: z.enum(["apple_music", "mock", "musicbrainz", "reddit", "spotify"]).optional(),
   releaseType: z.string().trim().min(1).max(40).optional(),
   search: z.string().trim().min(1).max(100).optional(),
   sort: z.enum(["release", "first-seen"]).default("release"),

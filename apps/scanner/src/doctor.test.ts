@@ -30,8 +30,10 @@ describe("doctor", () => {
     );
     expect(report.overall).toBe("READY");
     expect(
-      report.checks.filter((check) => check.state === "OPTIONAL_PROVIDER_DISABLED"),
-    ).toHaveLength(4);
+      report.checks
+        .filter((check) => check.state === "OPTIONAL_PROVIDER_DISABLED")
+        .map((check) => check.name),
+    ).toEqual(["Apple Music", "Spotify", "MusicBrainz", "Reddit", "SoundCloud manual links"]);
   });
 
   it("does not require an encryption key when Spotify is explicitly disabled", async () => {

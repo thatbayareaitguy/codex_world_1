@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { parseArgs } from "./args";
 
 describe("parseArgs", () => {
+  it("accepts apple as the normal Apple Music provider alias", () => {
+    expect(parseArgs(["--provider", "apple"]).provider).toBe("apple_music");
+  });
   it("supports dry-run and debugging filters", () => {
     expect(
       parseArgs(["--", "--dry-run", "--provider", "mock", "--artist", "artist-1", "--full"]),

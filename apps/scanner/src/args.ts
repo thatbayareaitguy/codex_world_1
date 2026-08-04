@@ -93,10 +93,11 @@ export function parseArgs(args: string[]): ScannerOptions {
     }
     if (arg === "--provider") {
       const value = args[index + 1];
-      if (!value || !providerNames.includes(value as ProviderName)) {
+      const normalized = value === "apple" ? "apple_music" : value;
+      if (!normalized || !providerNames.includes(normalized as ProviderName)) {
         throw new Error(`--provider must be one of: ${providerNames.join(", ")}`);
       }
-      options.provider = value as ProviderName;
+      options.provider = normalized as ProviderName;
       index += 1;
       continue;
     }
