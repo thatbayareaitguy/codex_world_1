@@ -4,19 +4,20 @@ Updated: 2026-08-03
 
 ## Repository state
 
-The Apple branch now implements the full 593-artist identity onboarding checkpoint. One narrow
-migration creates an immutable canonical-artist mapping table plus resumable campaign and entry
-tables, and backfills 27 confirmed legacy mappings. The normal recent and pilot paths now consult
-that durable mapping before snapshot-scoped evidence. Automatic writes cannot replace a different
-durable ID.
+The full-watchlist Stage A identity campaign completed. It reused 27 durable mappings and confirmed
+all 293 submitted strong seeds. The total durable mapping state is 320 of 593 artists: all 307
+high-confidence and all 13 evidence-supported seeds. There were no missing IDs, name conflicts,
+evidence conflicts, rejected results, or ambiguous strong-seed results.
 
-The credential-free full-watchlist plan reuses those 27 mappings and forecasts 293 strong-seed
-validations in 12 multiple-artist requests. Stage A is gated to 40 starts, ten minutes, concurrency
-one, a 1,100 millisecond minimum interval, and exact confirmation
-`APPLE_PUBLIC_CATALOG_STRONG_SEEDS_320`. It has no search, pagination, release discovery, or
-other-provider method. The remaining 272 ambiguous artists have a six-batch plan only. Stage B is
-not live-authorized. Apple starts remain 222, 22 migrations are applied, and
-`APPLE_MUSIC_ENABLED=false` remains required.
+Stage A made 12 multiple-artist HTTP 200 starts in 12,953 milliseconds with 1,107 millisecond
+minimum pacing, concurrency one, and zero retry, search, pagination, release-discovery, or
+other-provider requests. Historical starts are 234. The lease is released, the queue and cooldown
+are clear, 22 migrations are applied, and `APPLE_MUSIC_ENABLED=false` remains required.
+
+The manual-review queue contains 273 artists. All 272 ambiguous seeds have multiple exact-name
+candidates and no imported overlap. Seventy-seven have exactly two candidates and are eligible for
+the existing catalog-evidence resolver; 195 require manual narrowing, and one artist has no
+candidate. Stage B has six bounded batches but was not executed and remains unauthorized.
 
 The Apple branch now has a credential-free parser and aggregate plan command for the immutable
 free-iTunes identity-seed artifact. Independent validation confirms schema version 1, exactly 593
@@ -27,8 +28,8 @@ and zero `no_candidate` entries. The manual-review entry is the single artist wi
 The artifact contains 1,693 candidate IDs across 592 artists. Every ID remains an unconfirmed
 candidate until independent Apple validation. The intake plan performs no automatic confirmation,
 database access, credential access, token generation, provider initialization, or network request.
-Live candidate validation requires a separately bounded milestone. Historical Apple starts remain
-222 and `APPLE_MUSIC_ENABLED=false` remains required.
+The aggregate intake plan itself remains credential-free and performs no automatic confirmation,
+database write, credential access, token generation, provider initialization, or network request.
 
 The exact five-artist discovery run after the mapping-only bootstrap is complete. Its tracked
 manifest froze ZHU, Don Diablo, SISTO, William Black, and YUSSI with eight in-scope releases. The

@@ -2,18 +2,19 @@
 
 ## Current state
 
-The current checkpoint implements the credential-free full-watchlist identity artifact intake,
-zero-network plan, durable mapping precedence, resumable Stage A campaign, and sanitized review
-outputs. The immutable artifact contains exactly 593 artists: 307 high-confidence seeds, 13
-evidence-supported seeds, 272 ambiguous seeds, and one artist requiring manual review without a
-candidate. Every supplied catalog ID remains an unconfirmed candidate.
+The full-watchlist Stage A identity campaign is complete. It reused 27 durable mappings, submitted
+293 strong candidate IDs, received all 293, and confirmed all 293 after exact ID, compatible-name,
+and imported-conflict checks. This yields 307 of 307 high-confidence and 13 of 13
+evidence-supported artists durably mapped, including the reused mappings.
 
-The real plan reuses 27 existing durable mappings. Stage A therefore has 293 candidate IDs to
-validate in 12 batches of at most 25, under a 40-start, ten-minute gate with concurrency one and a
-1,100 millisecond pacing floor. It can call only the multiple-artist catalog lookup. Search,
-pagination, release discovery, and other providers are unreachable. Stage B is plan-only and is
-not authorized for live execution. Historical Apple starts remain 222 and the provider remains
-persistently disabled.
+The run made 12 multiple-artist starts, all HTTP 200, in 12,953 milliseconds. Minimum pacing was
+1,107 milliseconds, concurrency was one, and retries, missing IDs, conflicts, searches,
+pagination, release discovery, and other-provider requests were zero. Historical Apple starts are 234. The lease is released, the queue and cooldown are clear, and `APPLE_MUSIC_ENABLED=false`.
+
+Permanent coverage is 320 of 593, or 54.0%. The remaining queue is 272 ambiguous identities plus
+one artist without a candidate. Only 77 ambiguous artists have exactly two candidates and can enter
+the existing resolver automatically; the other 195 require manual narrowing. Stage B is planned in
+six bounded batches but was not executed and remains unauthorized.
 
 Discovery on the five newly confirmed seed artists is complete. The exact scope was ZHU, Don
 Diablo, SISTO, William Black, and YUSSI, representing eight frozen in-scope releases. The run

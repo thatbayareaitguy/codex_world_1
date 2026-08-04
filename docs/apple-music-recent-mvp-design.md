@@ -4,17 +4,16 @@ Date: 2026-08-03
 
 ## Authorization and boundary
 
-The full-watchlist identity onboarding path is now implemented credential-free and awaiting its
-separate Stage A checkpoint. It vendors the exact sanitized 593-artist artifact from the isolated
-iTunes branch, verifies its approved hashes and classifications, and treats all supplied catalog
-IDs as candidates until Apple returns the same ID with a compatible canonical name or alias.
+The full-watchlist Stage A identity onboarding path is complete. It reused 27 durable mappings and
+confirmed all 293 submitted candidates in 12 multiple-artist HTTP 200 requests. Exact ID and
+compatible-name binding produced no missing, rejected, ambiguous, or conflicting result. The
+durable total is 320 of 593 artists, or 54.0%.
 
-The Stage A plan reuses 27 durable mappings and forecasts 293 validations in 12 multiple-artist
-requests. Its hard limits are 40 starts, ten minutes, concurrency one, at least 1,100 milliseconds
-between starts, no search, no pagination, and no release discovery. The remaining 272 ambiguous
-artists are plan-only. Their existing catalog-evidence scoring thresholds are unchanged, and no
-Stage B request is authorized by this checkpoint. The durable campaign and its one new migration
-make the work restart-safe without changing the recent-release request behavior.
+The run made no search, pagination, release discovery, or other-provider request. The remaining 272
+ambiguous artists and one candidate-free artist are in a sanitized review queue. Only 77 ambiguous
+artists already have exactly two bounded candidates and can proceed automatically to the unchanged
+catalog-evidence resolver. Stage B was not executed and remains unauthorized. The durable campaign
+does not change recent-release request behavior.
 
 The narrow discovery scope for the five newly confirmed seed artists is complete. It accepted
 only the tracked `apple-music-recent-seed-discovery-manifest.json`, fixed evaluation time,
