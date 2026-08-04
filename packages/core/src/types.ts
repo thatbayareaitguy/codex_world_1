@@ -193,6 +193,7 @@ export interface FeedFixtureItem {
   releaseTitle: string;
   releaseType: ReleaseType;
   releaseDate: string;
+  releaseGroupDate?: string;
   releaseDatePrecision?: "day" | "month" | "year";
   releaseCompleteness?: {
     expectedTracks: number;

@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-08-04 12:35 PDT (UTC-07:00)
+Updated: 2026-08-04 13:57 PDT (UTC-07:00)
 
 This is the canonical implementation and operational snapshot. It excludes credentials, tokens,
 private keys, personal provider data, authorization headers, and raw provider payloads.
@@ -8,9 +8,12 @@ private keys, personal provider data, authorization headers, and raw provider pa
 ## Repository State
 
 - Branch: `codex/release-radar-hardening`.
-- Latest implementation commit: current HEAD, `feat: integrate Apple Music discovery`.
-- The worktree is clean and the upstream branch matches after the normal push.
-- Current milestone: production Apple Music public-catalog discovery is complete and verified.
+- Latest implementation commit: `e8ecbd237b3ed661953020f1f7239bf644584c28`,
+  `feat: integrate Apple Music discovery`.
+- HEAD matches `origin/codex/release-radar-hardening`. The worktree contains the verified Apple
+  prerelease-placeholder and upcoming-state correction listed below; it is not committed.
+- Current milestone: production Apple Music public-catalog discovery is complete. Prerelease
+  semantics have been corrected and verified locally.
 - Source-only Apple worktree `codex_world_1_apple` and the iTunes worktree remain unchanged.
 
 ## Architecture And Database
@@ -25,6 +28,9 @@ private keys, personal provider data, authorization headers, and raw provider pa
 - A verified PostgreSQL custom-format backup was created before migration at
   `%LOCALAPPDATA%\TSNewMusicRadar\backups\ts-new-music-radar-2026-08-04T18-50-33-713Z.dump`.
   `pg_restore --list` reported 397 archive entries from PostgreSQL 17.10.
+- A second verified custom-format backup was created before the prerelease data correction at
+  `%LOCALAPPDATA%\TSNewMusicRadar\backups\ts-new-music-radar-2026-08-04T20-50-12-848Z.dump`.
+  `pg_restore --list` reported 429 archive entries from PostgreSQL 17.10.
 - Spotify, Apple Music, and MusicBrainz use separate PostgreSQL-backed global request gates.
   Playlist writes remain disabled.
 
@@ -49,12 +55,20 @@ private keys, personal provider data, authorization headers, and raw provider pa
   evidence rows, 239 appearance sources, 130 artwork rows, 40 new canonical releases, 61 new
   canonical tracks, and 239 canonical feed items with Apple evidence.
 - Release mix: 95 singles, 12 EPs, five albums, four remixes, and 14 credited features.
+- Apple album completeness is now preserved. Exact `Track N` placeholders are suppressed only for
+  incomplete or future prereleases, named prerelease songs remain discoverable, and future songs
+  are persisted as Upcoming. Group headers use the canonical album date and label future dates as
+  Expected.
+- Production correction for Apple release `6770600098` was transaction-guarded: 11 isolated
+  placeholder candidates, appearances, and tracks were removed; two named future songs were
+  changed from New to Upcoming; one upcoming album announcement was recorded. The existing April
+  song remains New. The feed now shows three named tracks and `Expected 09/25/2026`.
 - Matching: 174 exact barcode and position matches, four strict metadata matches, 61 new canonical
   tracks, and 28 manual-review candidates. Duplicate checks are zero across provider IDs,
   candidates, evidence, appearances, and feed dedupe keys.
 - No incomplete Apple request events, unfinished artist rows, active batches, leases, queue entries,
   cooldowns, or stale locks remain.
-- Final verification passed: formatting, lint, strict type checking, production build, 351 unit
+- Final verification passed: formatting, lint, strict type checking, production build, 352 unit
   tests in 45 files, 91 PostgreSQL integration tests in 16 files, and 25 Playwright tests.
 - `pnpm doctor` reports READY with 18 migrations, 834 persisted Apple requests, no Apple lease or
   cooldown, and no stale locks. `git diff --check` and the secret/artifact audit are clean.
@@ -89,6 +103,8 @@ private keys, personal provider data, authorization headers, and raw provider pa
 
 - Catalog completeness is bounded by confirmed mappings, the configured Apple storefront, first
   view pages, and the 30-day or last-success window. It is not guaranteed.
+- Apple may expose unnamed prerelease track slots. The provider now suppresses exact `Track N`
+  placeholders, but differently named placeholders would still require a new verified rule.
 - 273 watchlist artists still require manual Apple mapping decisions.
 - Apple catalog views may legitimately return 404 for absent optional views. The provider now
   verifies the artist when both required discovery views are absent.
@@ -97,9 +113,9 @@ private keys, personal provider data, authorization headers, and raw provider pa
 
 ## Immediate Next Step
 
-Configure the verified Apple credentials in the secure server runtime, then resolve the highest
-priority pending artist mappings before designing a bounded unattended Apple schedule and deeper
-catalog reconciliation.
+Review and commit the verified Apple prerelease correction, then resolve the highest-priority
+pending artist mappings before designing a bounded unattended Apple schedule and deeper catalog
+reconciliation.
 
 ## Deferred
 

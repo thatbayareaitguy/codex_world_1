@@ -199,6 +199,8 @@ test("includes the artist in grouped release headings", async ({ page }) => {
       ...groupedBase,
       artist: "Au5",
       id: "grouped-release-track-1",
+      releaseDate: "2026-04-29",
+      releaseGroupDate: "2099-09-25",
       releaseTitle: "Inverse",
       releaseType: "ep" as const,
       title: "Primordium",
@@ -208,6 +210,8 @@ test("includes the artist in grouped release headings", async ({ page }) => {
       ...groupedBase,
       artist: "Au5",
       id: "grouped-release-track-2",
+      releaseDate: "2099-09-25",
+      releaseGroupDate: "2099-09-25",
       releaseTitle: "Inverse",
       releaseType: "ep" as const,
       title: "Scission",
@@ -225,6 +229,7 @@ test("includes the artist in grouped release headings", async ({ page }) => {
   await page.getByRole("button", { name: "Refresh feed" }).click();
   const group = page.getByRole("region", { name: "Au5 - Inverse Ep" });
   await expect(group.locator(".release-feed-group-title strong")).toHaveText("Au5 - Inverse");
+  await expect(group.locator(".release-feed-group-title small")).toHaveText("Expected 09/25/2099");
   await expect(group.getByRole("article").getByRole("heading")).toHaveText([
     "Au5 - Scission",
     "Au5 - Primordium",

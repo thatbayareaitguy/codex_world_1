@@ -543,6 +543,7 @@ async function projectFeedGroups(
             }
           : {}),
         releaseDate: candidate.releaseDate,
+        ...(release ? { releaseGroupDate: release.releaseDate } : {}),
         releaseDatePrecision:
           release?.releaseDatePrecision === "year" || release?.releaseDatePrecision === "month"
             ? release.releaseDatePrecision

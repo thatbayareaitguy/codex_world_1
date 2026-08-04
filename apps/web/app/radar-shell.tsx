@@ -2396,7 +2396,7 @@ function FeedView({
                   <div className="release-feed-group-title">
                     <span>{titleCase(group.releaseType)}</span>
                     <strong>{groupTitle}</strong>
-                    <small>Released {formatDate(group.releaseDate)}</small>
+                    <small>{formatReleaseGroupDate(group.releaseDate)}</small>
                   </div>
                   <span className="release-feed-group-count">{group.items.length} tracks</span>
                 </div>
@@ -5070,6 +5070,7 @@ const feedItemResponseSchema = z.object({
     .optional(),
   region: z.string(),
   releaseDate: z.string(),
+  releaseGroupDate: z.string().optional(),
   releaseDatePrecision: z.enum(["day", "month", "year"]).optional(),
   releaseCompleteness: z
     .object({
@@ -5828,7 +5829,9 @@ function groupFeedItems(items: FeedFixtureItem[]) {
     }
   >();
   for (const item of items) {
-    const key = item.releaseId ?? `${item.releaseTitle}:${item.releaseDate}:${item.releaseType}`;
+    const key =
+      item.releaseId ??
+      `${item.releaseTitle}:${item.releaseGroupDate ?? item.releaseDate}:${item.releaseType}`;
     const group = groups.get(key);
     if (group) {
       group.items.push(item);
@@ -5837,7 +5840,7 @@ function groupFeedItems(items: FeedFixtureItem[]) {
         artist: item.artist,
         items: [item],
         key,
-        releaseDate: item.releaseDate,
+        releaseDate: item.releaseGroupDate ?? item.releaseDate,
         releaseTitle: item.releaseTitle,
         releaseType: item.releaseType,
       });
@@ -6051,6 +6054,11 @@ function titleCase(value: string): string {
 function formatDate(value: string): string {
   const [year, month, day] = value.split("-");
   return `${month}/${day}/${year}`;
+}
+
+function formatReleaseGroupDate(value: string, now = new Date()): string {
+  const today = now.toISOString().slice(0, 10);
+  return `${value > today ? "Expected" : "Released"} ${formatDate(value)}`;
 }
 
 function formatReleaseTitleDate(

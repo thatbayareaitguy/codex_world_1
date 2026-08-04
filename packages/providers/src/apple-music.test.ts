@@ -87,6 +87,7 @@ const album = (id = "album-1", overrides: Record<string, unknown> = {}) => ({
   attributes: {
     artistName: "Artist",
     genreNames: ["Dance"],
+    isComplete: true,
     isSingle: false,
     name: "Album",
     releaseDate: "2026-07-01",

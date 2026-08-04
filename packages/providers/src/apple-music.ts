@@ -90,6 +90,7 @@ const albumResourceSchema = z.object({
       contentRating: z.enum(["clean", "explicit"]).optional(),
       genreNames: z.array(z.string()).default([]),
       isCompilation: z.boolean().optional(),
+      isComplete: z.boolean().optional(),
       isSingle: z.boolean().optional(),
       name: z.string().min(1),
       releaseDate: z.string().optional(),
@@ -204,6 +205,7 @@ export interface AppleMusicAlbum {
   evidenceUrl?: string;
   genreNames: string[];
   isCompilation?: boolean;
+  isComplete?: boolean;
   isSingle?: boolean;
   paginationPath: string;
   pageNumber: number;
@@ -1150,8 +1152,10 @@ export class AppleMusicProvider implements DiscoveryProvider {
           }
           throw error;
         }
+        const observedAt = this.now();
         for (const song of songs) {
-          artistCandidates.push(toTrackCandidate(mapping, album, song, this.now()));
+          if (isUnresolvedPrereleasePlaceholder(album, song, observedAt)) continue;
+          artistCandidates.push(toTrackCandidate(mapping, album, song, observedAt));
         }
       }
       candidates.push(...artistCandidates);
@@ -1602,6 +1606,7 @@ function sanitizeAlbumResource(
       ...(album.contentRating ? { contentRating: album.contentRating } : {}),
       genreNames: album.genreNames,
       ...(album.isCompilation === undefined ? {} : { isCompilation: album.isCompilation }),
+      ...(album.isComplete === undefined ? {} : { isComplete: album.isComplete }),
       ...(album.isSingle === undefined ? {} : { isSingle: album.isSingle }),
       name: album.title,
       ...(album.releaseDate ? { releaseDate: album.releaseDate } : {}),
@@ -1716,6 +1721,9 @@ function normalizeAlbum(
     ...(resource.attributes.isCompilation === undefined
       ? {}
       : { isCompilation: resource.attributes.isCompilation }),
+    ...(resource.attributes.isComplete === undefined
+      ? {}
+      : { isComplete: resource.attributes.isComplete }),
     ...(resource.attributes.isSingle === undefined
       ? {}
       : { isSingle: resource.attributes.isSingle }),
@@ -1788,6 +1796,7 @@ function toTrackCandidate(
     throw new AppleMusicClientError("Apple Music evidence URL is missing.", "invalid_payload");
   }
   const releaseType = classifyAlbum(album);
+  const isUpcoming = isFutureReleaseDate(releaseDate.date, observedAt);
   const artwork = appleMusicArtwork(album, observedAt);
   const payloadHash = createHash("sha256")
     .update(
@@ -1814,6 +1823,7 @@ function toTrackCandidate(
     externalReleaseId: album.albumId,
     externalTrackId,
     firstSeenAt: observedAt.toISOString(),
+    ...(isUpcoming ? { isUpcoming: true } : {}),
     ...(song.isrc ? { isrc: song.isrc } : {}),
     payloadHash,
     provider: "apple_music",
@@ -1829,6 +1839,20 @@ function toTrackCandidate(
     ...(song.trackNumber === undefined ? {} : { trackNumber: song.trackNumber }),
     ...(album.upc ? { upc: album.upc } : {}),
   };
+}
+
+function isUnresolvedPrereleasePlaceholder(
+  album: AppleMusicAlbum,
+  song: AppleMusicSong,
+  observedAt: Date,
+): boolean {
+  if (!/^track\s+\d+$/i.test(song.title.trim())) return false;
+  const releaseDate = normalizeReleaseDate(song.releaseDate ?? album.releaseDate);
+  return album.isComplete === false || isFutureReleaseDate(releaseDate.date, observedAt);
+}
+
+function isFutureReleaseDate(releaseDate: string, observedAt: Date): boolean {
+  return releaseDate > observedAt.toISOString().slice(0, 10);
 }
 
 function appleMusicArtwork(

@@ -164,6 +164,52 @@ describe("Apple Music shallow discovery provider", () => {
     expect(result.candidates[0]?.externalReleaseId).toBe("recent");
     expect(batches).toEqual([{ candidates: 1, releases: 2 }]);
   });
+
+  it("keeps announced prerelease songs, skips unresolved placeholders, and marks them upcoming", async () => {
+    const prerelease = {
+      ...album("prerelease", "2026-09-25", "full-albums"),
+      isComplete: false,
+      trackCount: 3,
+    };
+    const getArtistViewFirstPage = vi.fn((_artistId: string, view: string) =>
+      Promise.resolve({
+        items: view === "full-albums" ? [prerelease] : [],
+        nextPresent: false,
+      }),
+    );
+    const placeholder = {
+      ...song("prerelease"),
+      releaseDate: "2026-09-25",
+      songId: "placeholder-song",
+      title: "Track 1",
+    };
+    const announced = {
+      ...song("prerelease"),
+      releaseDate: "2026-09-25",
+      songId: "announced-song",
+      title: "Announced Song",
+      trackNumber: 2,
+    };
+    const provider = new AppleMusicProvider(
+      {
+        getAlbumTracks: vi.fn(() => Promise.resolve([placeholder, announced])),
+        getArtistViewFirstPage,
+      } as unknown as AppleMusicClient,
+      [{ appleArtistId: "101", canonicalArtistId: "canonical-1", canonicalName: "Artist" }],
+      () => new Date("2026-08-04T12:00:00.000Z"),
+    );
+
+    const result = await provider.scan({
+      filter: { provider: "apple_music", since: "2026-07-05" },
+    });
+
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]).toMatchObject({
+      externalTrackId: "announced-song",
+      isUpcoming: true,
+      title: "Announced Song",
+    });
+  });
 });
 
 function album(
@@ -177,6 +223,7 @@ function album(
     artistName: "Artist",
     evidenceUrl: `https://music.apple.com/us/album/${albumId}`,
     genreNames: ["Electronic"],
+    isComplete: true,
     isSingle: sourceView === "singles",
     paginationPath: `/v1/catalog/us/albums/${albumId}`,
     pageNumber: 1,
