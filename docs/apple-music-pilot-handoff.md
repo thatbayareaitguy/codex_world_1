@@ -15,8 +15,15 @@ Permanent coverage is 320 of 593, or 54.0%. The remaining queue is 272 ambiguous
 one artist without a candidate. Credential-free Stage B Phase 1 now supports every bounded
 candidate, adds safe ISRC and UPC evidence, and has replayed all 272 ambiguous entries. Zero are
 offline auto-resolvable, six have usable watched history but need candidate catalog evidence, and
-266 lack usable watched history in the approved local sources. Phase 2 was not executed and remains
-unauthorized.
+266 lack usable watched history in the approved local sources. Phase 2 had not been executed at
+the credential-free replay checkpoint.
+
+A separately authorized Stage B Phase 2 checkpoint now pins exactly 1991, 4B, Alok, GRiZ,
+REAPER, and Rueben with 39 unique candidates from the immutable artifact. The credential-free
+plan validates two batch lookups, up to 39 Top Songs first pages, conditional Singles only for
+unresolved eligible artists, an 88-start ceiling, 180 seconds, concurrency one, and 1,100
+millisecond minimum pacing. Search, pagination, release discovery, and other providers are
+unreachable. Live execution remains pending the clean committed and pushed pre-live gate.
 
 The replay made zero network requests and zero database writes. Historical Apple starts remain
 234, durable mappings remain 320, and no ambiguous candidate catalog is reusable from the current

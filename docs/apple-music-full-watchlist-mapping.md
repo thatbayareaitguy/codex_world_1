@@ -1,14 +1,15 @@
 # Apple Music Full-Watchlist Identity Mapping
 
-Date: 2026-08-03
+Date: 2026-08-04
 
 ## Authorization boundary
 
 This checkpoint imported and validated the immutable 593-artist identity artifact, completed the
 one-time resumable Stage A strong-seed campaign, and completed credential-free Stage B Phase 1.
 Phase 1 added safe ISRC and UPC evidence, widened the resolver to all bounded artifact candidates,
-replayed the 272 ambiguous entries offline, and built ignored assisted-review artifacts. Phase 2
-live execution was not performed and is not authorized.
+replayed the 272 ambiguous entries offline, and built ignored assisted-review artifacts. A
+separately authorized checkpoint now permits one bounded Phase 2 run for exactly the six
+replay-eligible artists after credential-free verification is committed and pushed.
 
 The campaign cannot run recent-release discovery, artist search, pagination, album detail, tracks,
 playback, personal-library operations, playlists, Apple Music Feed, or another provider. Persistent
@@ -137,7 +138,7 @@ Strong-seed confirmation was 100%. Permanent full-watchlist coverage is 320 of 5
 The suggested 80% full-watchlist indicator cannot be reached by Stage A alone because the entire
 strong group contains only 320 artists. It requires safe Stage B confirmations or manual review.
 
-## Stage B plan only
+## Stage B bounded live checkpoint
 
 The remaining ambiguous artifact group has 272 artists and 1,340 bounded alternate candidate IDs.
 All 272 have multiple exact-name candidates, no alias match, and no imported title overlap. Artist
@@ -145,11 +146,16 @@ lookup alone therefore cannot safely confirm one. Looking up every candidate wou
 multiple-artist requests at 25 IDs per request, before catalog evidence.
 
 Phase 1 proved that only six ambiguous artists have usable approved watched history. Their 39
-bounded candidates form the only evidence-targeted proposed live batch. It would require two
+bounded candidates form the only authorized evidence-targeted live batch. It requires two
 multiple-artist lookup requests, 39 Top Songs first pages, up to 39 Singles fallbacks, and eight
-retry and safety requests, for an 88-request and 156,800-millisecond ceiling. The other 1,301
+retry and safety requests, for an 88-request and 180,000-millisecond ceiling. The other 1,301
 candidate requests are skipped because the current approved ground truth cannot distinguish them.
-Expected manual review is 267 to 273 artists. No Phase 2 execution is authorized.
+Expected manual review is 267 to 273 artists.
+
+The plan and live command are documented in `docs/apple-music-identity-stage-b-phase1.md`. The
+runner accepts only exact confirmation `APPLE_IDENTITY_STAGE_B_EVIDENCE_6`, the immutable
+artifact, US storefront, persistent provider-disabled state, synchronized clean branch, and the
+hash-validated ignored review artifact. It cannot search, paginate, or run release discovery.
 
 The resolver now accepts all bounded candidates. Its title fallback remains three points for exact
 release-title overlap, up to two for track-title overlap, a 30-day date-conflict block, a minimum

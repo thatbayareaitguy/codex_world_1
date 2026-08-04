@@ -10,6 +10,7 @@ import {
   extractAppleMusicStageBCandidateCatalogs,
   parseAppleMusicStageBManualDecisionArtifact,
   replayAppleMusicStageB,
+  validateAppleMusicStageBReviewArtifact,
   type AppleMusicStageBCandidateCatalog,
   type AppleMusicStageBSourceRelease,
 } from "./apple-music-stage-b";
@@ -168,6 +169,21 @@ describe("Apple Music Stage B offline evidence", () => {
       canonicalName: "Artist One",
     });
     expect(review.artists[0]?.candidates[0]).toMatchObject({ candidateArtistId: "101", rank: 1 });
+    expect(validateAppleMusicStageBReviewArtifact(review, value.artifactSelfHash)).toEqual(review);
+    expect(() =>
+      validateAppleMusicStageBReviewArtifact(
+        { ...review, evidenceCutoff: "2026-07-30T00:00:00.000Z" },
+        value.artifactSelfHash,
+      ),
+    ).toThrow("hash validation failed");
+    const filtered = createAppleMusicStageBReviewArtifact({
+      artifact: value,
+      candidateCatalogs: catalogs,
+      createdAt: new Date("2026-07-29T23:59:59Z"),
+      replay,
+      resolvedWatchedArtistIds: new Set([ambiguousOne]),
+    });
+    expect(filtered.artists.some((artist) => artist.watchedArtistId === ambiguousOne)).toBe(false);
     const html = createAppleMusicStageBReviewHtml(review);
     expect(html).toContain("Download decision artifact");
     expect(html).not.toMatch(/authorization|developer.?token|private.?key/i);

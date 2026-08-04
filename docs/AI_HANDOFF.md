@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-08-03
+Updated: 2026-08-04
 
 ## Repository state
 
@@ -25,6 +25,14 @@ watched-artist history in the approved local sources. Current approved ground tr
 ISRCs and zero UPCs for the ambiguous cohort, and none of the 1,340 ambiguous candidate IDs has
 reusable candidate catalog evidence in the sanitized Apple cache. Synthetic tests are capability
 evidence only and are not counted as real resolutions.
+
+A separately authorized Stage B Phase 2 checkpoint now pins exactly 1991, 4B, Alok, GRiZ,
+REAPER, and Rueben with 39 unique artifact candidates. Its credential-free plan validates the
+hash-bound scope, 320 unchanged durable mappings, and 234 unchanged historical starts without
+credentials, token generation, HTTP initialization, or writes. The live gate permits only two
+candidate batch lookups, one Top Songs first page per compatible candidate, and conditional
+Singles first pages for unresolved artists, under 88 starts and 180 seconds. It cannot search,
+paginate, or run release discovery. Live execution remains pending the committed pre-live gate.
 
 The ignored cadence-ranked review JSON and HTML cover all 273 entries. Six entries have dated
 history covering 12 releases inside 90 days; the other 267 explicitly have unavailable cadence.

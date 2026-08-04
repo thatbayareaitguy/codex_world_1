@@ -1,6 +1,6 @@
 # Apple Music Recent-Release MVP
 
-Date: 2026-08-03
+Date: 2026-08-04
 
 ## Authorization and boundary
 
@@ -16,6 +16,12 @@ title fallback and the new stronger ISRC and UPC evidence tier. The real replay 
 offline confirmations because 266 artists lack usable watched history and the other six lack
 candidate catalog metadata. Stage B Phase 2 was not executed and remains unauthorized. The durable
 campaign does not change the recent-release discovery profile.
+
+The separately authorized six-artist Stage B candidate-evidence command remains identity-only.
+It can use batch artist validation, Top Songs identity evidence, and conditional Singles identity
+evidence for the 39 immutable candidates. It cannot invoke this MVP's recent-release runner,
+search, pagination, detail retrieval, feed mutation, or scheduler behavior. The discovery profile
+and every production path remain unchanged.
 
 The narrow discovery scope for the five newly confirmed seed artists is complete. It accepted
 only the tracked `apple-music-recent-seed-discovery-manifest.json`, fixed evaluation time,

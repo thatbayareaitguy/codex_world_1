@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import {
   appleMusicAlbums,
@@ -54,8 +54,21 @@ import {
   createAppleMusicStageBReviewHtml,
   extractAppleMusicStageBCandidateCatalogs,
   replayAppleMusicStageB,
+  validateAppleMusicStageBReviewArtifact,
   type AppleMusicStageBSourceRelease,
 } from "./apple-music-stage-b";
+import {
+  appleMusicStageBLiveConfirmation,
+  appleMusicStageBLiveMaximumRuntimeMs,
+  appleMusicStageBLiveMinimumRequestIntervalMs,
+  appleMusicStageBLiveRequestBudget,
+  authorizeAppleMusicStageBLive,
+  createAppleMusicStageBLivePlan,
+  createAppleMusicStageBLiveScope,
+  runAppleMusicStageBLive,
+  type AppleMusicStageBLiveScope,
+  type AppleMusicStageBLiveStore,
+} from "./apple-music-stage-b-live";
 import { latestItunesSnapshot, pilotGroundTruth } from "./itunes-pilot-repository";
 import { loadLocalEnvironment } from "./local-env";
 
@@ -63,6 +76,12 @@ export type AppleMusicIdentitySeedCommand =
   | { artifactPath: string; mode: "plan" }
   | { artifactPath: string; mode: "full_watchlist_plan" }
   | { artifactPath: string; mode: "stage_b_evidence_replay" }
+  | { artifactPath: string; mode: "stage_b_candidate_evidence_plan" }
+  | {
+      artifactPath: string;
+      confirmation: typeof appleMusicStageBLiveConfirmation;
+      mode: "stage_b_candidate_evidence_live";
+    }
   | {
       artifactPath: string;
       confirmation: typeof appleMusicFullWatchlistConfirmation;
@@ -99,6 +118,26 @@ export function parseAppleMusicIdentitySeedPlanCommand(
   }
   if (args.includes("--execute-live")) {
     const confirmation = requiredOption(args, "--confirm-live");
+    if (args.includes("--stage-b-candidate-evidence")) {
+      assertExactArguments(args, [
+        "--execute-live",
+        "--confirm-live",
+        confirmation,
+        "--stage-b-candidate-evidence",
+        "--artifact",
+        artifactPath,
+      ]);
+      if (confirmation !== appleMusicStageBLiveConfirmation) {
+        throw new Error(
+          `Apple Stage B requires --confirm-live ${appleMusicStageBLiveConfirmation}.`,
+        );
+      }
+      return {
+        artifactPath,
+        confirmation: appleMusicStageBLiveConfirmation,
+        mode: "stage_b_candidate_evidence_live",
+      };
+    }
     const stage = requiredOption(args, "--stage");
     assertExactArguments(args, [
       "--execute-live",
@@ -129,6 +168,15 @@ export function parseAppleMusicIdentitySeedPlanCommand(
     assertExactArguments(args, ["--plan", "--stage-b-evidence-replay", "--artifact", artifactPath]);
     return { artifactPath, mode: "stage_b_evidence_replay" };
   }
+  if (args.includes("--stage-b-candidate-evidence")) {
+    assertExactArguments(args, [
+      "--plan",
+      "--stage-b-candidate-evidence",
+      "--artifact",
+      artifactPath,
+    ]);
+    return { artifactPath, mode: "stage_b_candidate_evidence_plan" };
+  }
   if (args.includes("--full-watchlist-mapping-bootstrap")) {
     assertExactArguments(args, [
       "--plan",
@@ -154,6 +202,8 @@ async function main(): Promise<void> {
   const databaseUrl = readAppleDatabaseUrlOnly();
   assertAppleDatabase(databaseUrl);
   const connection = createDatabase(databaseUrl);
+  let stageBLiveScope: AppleMusicStageBLiveScope | undefined;
+  let stageBLiveSnapshotId: string | undefined;
   try {
     if (command.mode === "full_watchlist_plan") {
       const mappings = await listDurableAppleMusicArtistMappings(
@@ -164,6 +214,60 @@ async function main(): Promise<void> {
         `${JSON.stringify(createAppleMusicFullWatchlistPlan(artifact, mappings), null, 2)}\n`,
       );
       return;
+    }
+    if (
+      command.mode === "stage_b_candidate_evidence_plan" ||
+      command.mode === "stage_b_candidate_evidence_live"
+    ) {
+      validateApprovedAppleMusicIdentitySeedArtifact(artifact);
+      const requestCountBefore = await historicalAppleRequestCount(connection.db);
+      const durableBefore = await listDurableAppleMusicArtistMappings(
+        connection.db,
+        artifact.entries.map((entry) => entry.watchedArtistId),
+      );
+      const context = await loadStageBOfflineContext(connection.db, artifact);
+      const reviewValue = JSON.parse(
+        await readFile(
+          resolve(process.cwd(), ".app-runtime/apple-music-stage-b-review.json"),
+          "utf8",
+        ),
+      ) as unknown;
+      const review = validateAppleMusicStageBReviewArtifact(reviewValue, artifact.artifactSelfHash);
+      const scope = createAppleMusicStageBLiveScope({
+        artifact,
+        durableMappings: durableBefore,
+        groundTruth: context.groundTruth,
+        replay: context.replay,
+        reviewArtifactHash: review.artifactSelfHash,
+      });
+      assertStageBReviewScope(review, scope);
+      const requestCountAfter = await historicalAppleRequestCount(connection.db);
+      const durableAfter = await listDurableAppleMusicArtistMappings(
+        connection.db,
+        artifact.entries.map((entry) => entry.watchedArtistId),
+      );
+      if (
+        requestCountAfter !== requestCountBefore ||
+        durableMappingFingerprint(durableAfter) !== durableMappingFingerprint(durableBefore)
+      ) {
+        throw new Error("Apple Stage B plan changed isolated Apple state.");
+      }
+      if (command.mode === "stage_b_candidate_evidence_plan") {
+        process.stdout.write(
+          `${JSON.stringify(
+            {
+              ...createAppleMusicStageBLivePlan(scope),
+              durableMappingsBeforeAndAfter: durableAfter.length,
+              historicalAppleHttpStartsBeforeAndAfter: requestCountAfter,
+            },
+            null,
+            2,
+          )}\n`,
+        );
+        return;
+      }
+      stageBLiveScope = scope;
+      stageBLiveSnapshotId = context.snapshotId;
     }
     if (command.mode === "stage_b_evidence_replay") {
       validateApprovedAppleMusicIdentitySeedArtifact(artifact);
@@ -244,6 +348,9 @@ async function main(): Promise<void> {
         candidateCatalogs,
         createdAt: new Date(artifact.evidenceCutoffDate),
         replay,
+        resolvedWatchedArtistIds: new Set(
+          durableBefore.map((mapping) => mapping.canonicalArtistId),
+        ),
       });
       const jsonPath = assertOutputPath(
         ".app-runtime/apple-music-stage-b-review.json",
@@ -315,7 +422,12 @@ async function main(): Promise<void> {
       return;
     }
   } finally {
-    if (command.mode !== "strong_seeds_live") await connection.client.end();
+    if (
+      command.mode !== "strong_seeds_live" &&
+      command.mode !== "stage_b_candidate_evidence_live"
+    ) {
+      await connection.client.end();
+    }
   }
   try {
     const environment = loadLocalEnvironment(
@@ -323,6 +435,53 @@ async function main(): Promise<void> {
       resolve(process.cwd(), ".app-runtime/apple-music.env"),
     );
     const configuration = loadProviderConfiguration(environment);
+    if (command.mode === "stage_b_candidate_evidence_live") {
+      if (!stageBLiveScope || !stageBLiveSnapshotId) {
+        throw new Error("Apple Stage B live scope was not validated.");
+      }
+      const authorization = authorizeAppleMusicStageBLive({
+        confirmation: command.confirmation,
+        executeLive: true,
+        otherProvidersDisabled: otherProvidersDisabled(configuration),
+        persistentAppleMusicEnabled: environment.APPLE_MUSIC_ENABLED,
+        storefront: configuration.appleMusic.storefront,
+      });
+      assertLiveCheckpoint();
+      assertLiveCredentialShape(configuration.appleMusic);
+      let tokenManager: AppleDeveloperTokenManager | undefined;
+      const summary = await runAppleMusicStageBLive({
+        authorization,
+        createClient: (runId, leaseToken) => {
+          tokenManager ??= new AppleDeveloperTokenManager({
+            keyId: configuration.appleMusic.keyId!,
+            privateKeyPath: configuration.appleMusic.privateKeyPath!,
+            teamId: configuration.appleMusic.teamId!,
+            tokenLifetimeSeconds: configuration.appleMusic.tokenLifetimeSeconds,
+          });
+          return new AppleMusicClient({
+            enabled: true,
+            maxRequestsPerRun: appleMusicStageBLiveRequestBudget,
+            maxResponseBytes: configuration.appleMusic.maxResponseBytes,
+            maximumRuntimeMs: appleMusicStageBLiveMaximumRuntimeMs,
+            maxRetries: 1,
+            minRequestIntervalMs: appleMusicStageBLiveMinimumRequestIntervalMs,
+            persistence: createAppleMusicRequestPersistence(connection.db, {
+              runLeaseToken: leaseToken,
+            }),
+            requestTimeoutMs: configuration.appleMusic.requestTimeoutMs,
+            runId,
+            storefront: authorization.storefront,
+            tokenProvider: tokenManager,
+          });
+        },
+        implementationCommit: git(["rev-parse", "HEAD"]),
+        scope: stageBLiveScope,
+        snapshotId: stageBLiveSnapshotId,
+        store: createStageBLiveStore(connection.db),
+      });
+      process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+      return;
+    }
     const authorization = authorizeAppleMusicFullWatchlist({
       confirmation: command.confirmation,
       executeLive: true,
@@ -393,6 +552,127 @@ function createStore(db: RadarDatabase): AppleMusicFullWatchlistStore {
       seedAppleMusicIdentityCampaignEntries(db, campaignId, entries),
     startCampaign: (input) => startAppleMusicIdentityCampaign(db, input),
     updateCampaignEntry: (input) => updateAppleMusicIdentityCampaignEntry(db, input),
+  };
+}
+
+function createStageBLiveStore(db: RadarDatabase): AppleMusicStageBLiveStore {
+  return {
+    claimLease: (runId) => claimAppleMusicPilotLease(db, runId),
+    createRun: (input) => createAppleMusicComparisonRun(db, input),
+    finishRun: (runId, input) => finishAppleMusicComparisonRun(db, runId, input),
+    listDurableMappings: (canonicalArtistIds) =>
+      listDurableAppleMusicArtistMappings(db, canonicalArtistIds),
+    operationalStatus: () => getAppleMusicOperationalStatus(db),
+    readEvidence: (runId) => readStoredEvidence(db, runId),
+    releaseLease: (leaseToken) => releaseAppleMusicPilotLease(db, leaseToken),
+    saveDurableMapping: (input) => saveDurableAppleMusicArtistMapping(db, input),
+    saveMapping: async (input) => {
+      await saveAppleMusicArtistMapping(db, input);
+    },
+  };
+}
+
+function assertStageBReviewScope(
+  review: ReturnType<typeof validateAppleMusicStageBReviewArtifact>,
+  scope: AppleMusicStageBLiveScope,
+): void {
+  const eligible = review.artists.filter(
+    (artist) => artist.classification === "requires_live_candidate_evidence",
+  );
+  const reviewById = new Map(eligible.map((artist) => [artist.watchedArtistId, artist]));
+  if (eligible.length !== 6) {
+    throw new Error("Apple Stage B review does not contain the exact six-artist live scope.");
+  }
+  for (const artist of scope.artists) {
+    const reviewArtist = reviewById.get(artist.watchedArtistId);
+    if (
+      !reviewArtist ||
+      reviewArtist.canonicalName !== artist.canonicalName ||
+      reviewArtist.candidates.length !== artist.candidateArtistIds.length ||
+      reviewArtist.candidates.some(
+        (candidate) => !artist.candidateArtistIds.includes(candidate.candidateArtistId),
+      )
+    ) {
+      throw new Error("Apple Stage B review scope differs from the replay-derived live scope.");
+    }
+  }
+}
+
+async function loadStageBOfflineContext(
+  db: RadarDatabase,
+  artifact: Awaited<ReturnType<typeof readAppleMusicIdentitySeedArtifact>>,
+) {
+  const snapshot = await latestItunesSnapshot(db);
+  if (!snapshot) throw new Error("The approved frozen Apple-side snapshot is unavailable.");
+  const sourceReleases = (await pilotGroundTruth(db, snapshot.id)).map(
+    (release): AppleMusicStageBSourceRelease => ({
+      canonicalReleaseId: release.canonicalReleaseId,
+      evidenceCutoff: snapshot.snapshotTimestamp.toISOString(),
+      evidenceSource: "approved_frozen_spotify_snapshot",
+      releaseDate: release.releaseDate,
+      releaseType: release.releaseType,
+      sourceReleaseId: release.spotifyReleaseId,
+      title: release.title,
+      tracks: parseSnapshotTracks(release.tracks, release.releaseDate),
+      watchedArtistId: release.canonicalArtistId,
+    }),
+  );
+  const allowedCandidateIds = new Set(
+    artifact.entries.flatMap((entry) => [
+      ...(entry.candidateArtistId ? [entry.candidateArtistId] : []),
+      ...entry.alternateCandidateIds,
+    ]),
+  );
+  const [albumRows, songRows, cacheRows] = await Promise.all([
+    db.select().from(appleMusicAlbums),
+    db.select().from(appleMusicSongs),
+    db.select().from(appleMusicResponseCache),
+  ]);
+  const candidateCatalogs = extractAppleMusicStageBCandidateCatalogs(
+    {
+      albums: albumRows.map((album) => ({
+        albumId: album.appleAlbumId,
+        artistIds: parseStringArray(album.artistIds),
+        artistName: album.artistName,
+        paginationPath: "offline-sanitized-database",
+        pageNumber: album.pageNumber,
+        ...(album.releaseDate ? { releaseDate: album.releaseDate } : {}),
+        sourceView: parseSourceView(album.sourceView),
+        title: album.title,
+        ...(album.trackCount === null ? {} : { trackCount: album.trackCount }),
+        ...(album.upc ? { upc: album.upc } : {}),
+      })),
+      artists: [],
+      cacheResponses: cacheRows.map((row) => row.response),
+      evidenceCutoff: artifact.evidenceCutoffDate,
+      songs: songRows.map((song) => ({
+        ...(song.appleAlbumId ? { albumId: song.appleAlbumId } : {}),
+        artistIds: parseStringArray(song.artistIds),
+        artistName: song.artistName,
+        ...(song.discNumber === null ? {} : { discNumber: song.discNumber }),
+        ...(song.durationMs === null ? {} : { durationMs: song.durationMs }),
+        ...(song.isrc ? { isrc: song.isrc } : {}),
+        paginationPath: "offline-sanitized-database",
+        pageNumber: song.pageNumber,
+        ...(song.releaseDate ? { releaseDate: song.releaseDate } : {}),
+        songId: song.appleSongId,
+        title: song.title,
+        ...(song.trackNumber === null ? {} : { trackNumber: song.trackNumber }),
+      })),
+    },
+    allowedCandidateIds,
+  );
+  const groundTruth = buildAppleMusicStageBGroundTruth(artifact, sourceReleases);
+  return {
+    candidateCatalogs,
+    groundTruth,
+    replay: replayAppleMusicStageB({
+      artifact,
+      candidateCatalogs,
+      groundTruth,
+      now: new Date(artifact.evidenceCutoffDate),
+    }),
+    snapshotId: snapshot.id,
   };
 }
 

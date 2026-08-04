@@ -1,14 +1,16 @@
 # Apple Music Identity Stage B, Phase 1
 
-Date: 2026-08-03
+Date: 2026-08-04
 
 ## Result and boundary
 
 This credential-free checkpoint strengthened the existing identity resolver and replayed all 272
 ambiguous seed entries using only approved local evidence. It made no Apple or other-provider
 request, read no credential or private key, generated no token, and wrote no development-database
-row. The 320 durable mappings remain unchanged. Production integration, Phase 2 execution, and
-merge remain unauthorized. Persistent `APPLE_MUSIC_ENABLED=false` remains required.
+row. The 320 durable mappings remain unchanged. A later, separately authorized milestone now
+permits one bounded Phase 2 candidate-evidence run for the six replay-eligible artists after a
+committed and pushed credential-free checkpoint. Production integration and merge remain
+unauthorized. Persistent `APPLE_MUSIC_ENABLED=false` remains required.
 
 The replay produced zero offline automatic resolutions. Six artists have usable approved watched
 release and track history but no cached candidate catalog metadata. The other 266 ambiguous artists
@@ -141,29 +143,45 @@ requires a watched artist, decision timestamp, decision type, and a bounded cand
 or reject, permits an optional evidence note, rejects duplicate or out-of-scope artists and
 candidates, and validates its own hash. No real decision was applied.
 
-## Proposed Phase 2, not authorized
+## Bounded Phase 2 live gate
 
 An exhaustive batch lookup for all 1,340 candidate IDs would require 54 artist-batch requests at
 the provider's supported maximum of 25 IDs. Current evidence shows that this would not make 266
 artists automatically distinguishable, so the proposed live work skips their 1,301 candidates.
 
-The exact evidence-targeted proposal is one six-artist batch: Alok, REAPER, Rueben, 1991, 4B, and
-GRiZ. It contains 39 bounded candidate IDs. The proposed maximum is:
+The exact evidence-targeted scope is one six-artist batch: Alok, REAPER, Rueben, 1991, 4B, and
+GRiZ. It contains 39 bounded candidate IDs. The maximum is:
 
 - 2 multiple-artist lookup requests
 - 39 Top Songs first-page requests
 - up to 39 Singles first-page fallback requests
 - 8 retry and safety requests
 - 88 requests total
-- 156,800 milliseconds total
+- 180,000 milliseconds total
 - concurrency one and a proposed minimum 1,100-millisecond start interval, which is a local safety
   rule and not a claimed Apple allowance
 - no search, pagination, release discovery, detail lookup, or other provider
 
-The minimum expected manual-review count is 267 and the maximum is 273, depending on whether the
-six evidence-targeted artists resolve. The future run must remain restart-safe and stop on any
-authentication, isolation, cooldown, unsafe-response, or budget failure. This document neither
-authorizes Phase 2 nor provides an executable live command.
+The credential-free plan is:
+
+```powershell
+pnpm apple:identity-seeds -- --plan --stage-b-candidate-evidence --artifact apps/scanner/src/apple-music-full-watchlist-identity-seeds-v1.json
+```
+
+The separately confirmed live form is:
+
+```powershell
+pnpm apple:identity-seeds -- --execute-live --confirm-live APPLE_IDENTITY_STAGE_B_EVIDENCE_6 --stage-b-candidate-evidence --artifact apps/scanner/src/apple-music-full-watchlist-identity-seeds-v1.json
+```
+
+The command validates all candidate identities in two maximum-25 batch lookups, fetches one
+minimal Top Songs first page for each compatible candidate, and runs the existing resolver. It
+fetches a minimal Singles first page only for unresolved artists whose approved release-title
+evidence can still distinguish at least two compatible candidates. It never searches, runs
+release discovery, or follows pagination. HTTP 400 and 404 are candidate-local and nonretryable;
+HTTP 401, 403, and 429, unsafe navigation, response identity defects, isolation defects, and
+budget exhaustion stop the run. The minimum expected manual-review count is 267 and the maximum
+is 273, depending on whether the six evidence-targeted artists resolve.
 
 ## Safety evidence
 

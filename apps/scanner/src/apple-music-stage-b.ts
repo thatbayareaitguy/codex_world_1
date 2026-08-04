@@ -459,6 +459,7 @@ export function createAppleMusicStageBReviewArtifact(input: {
   candidateCatalogs: Map<string, AppleMusicStageBCandidateCatalog>;
   createdAt: Date;
   replay: AppleMusicStageBReplaySummary;
+  resolvedWatchedArtistIds?: Set<string>;
 }): AppleMusicStageBReviewArtifact {
   const replayById = new Map(
     input.replay.artists.map((artist) => [artist.watchedArtistId, artist]),
@@ -466,8 +467,9 @@ export function createAppleMusicStageBReviewArtifact(input: {
   const artists = input.artifact.entries
     .filter(
       (entry) =>
-        entry.classification === "ambiguous_seed" ||
-        entry.classification === "manual_review_required",
+        !input.resolvedWatchedArtistIds?.has(entry.watchedArtistId) &&
+        (entry.classification === "ambiguous_seed" ||
+          entry.classification === "manual_review_required"),
     )
     .map((entry) => {
       const replay = requiredReplayArtist(replayById, entry.watchedArtistId);
@@ -530,6 +532,30 @@ export function createAppleMusicStageBReviewArtifact(input: {
     sourceArtifactHash: input.artifact.artifactSelfHash,
   };
   return { artifactSelfHash: sha256(canonicalJson(withoutHash)), ...withoutHash };
+}
+
+export function validateAppleMusicStageBReviewArtifact(
+  value: unknown,
+  sourceArtifactHash: string,
+): AppleMusicStageBReviewArtifact {
+  if (!isRecord(value)) throw new Error("Apple Stage B review artifact must be an object.");
+  if (
+    value.schemaVersion !== appleMusicStageBReviewSchemaVersion ||
+    value.sourceArtifactHash !== sourceArtifactHash ||
+    typeof value.artifactSelfHash !== "string" ||
+    !/^[a-f0-9]{64}$/.test(value.artifactSelfHash) ||
+    typeof value.createdAt !== "string" ||
+    typeof value.evidenceCutoff !== "string" ||
+    !Array.isArray(value.artists)
+  ) {
+    throw new Error("Apple Stage B review artifact metadata is invalid.");
+  }
+  const content: Record<string, unknown> = { ...value };
+  Reflect.deleteProperty(content, "artifactSelfHash");
+  if (sha256(canonicalJson(content)) !== value.artifactSelfHash) {
+    throw new Error("Apple Stage B review artifact hash validation failed.");
+  }
+  return value as unknown as AppleMusicStageBReviewArtifact;
 }
 
 const manualDecisionSchema = z

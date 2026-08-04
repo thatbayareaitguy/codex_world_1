@@ -6,8 +6,10 @@ Unresolved artists: 273
 
 Credential-free Stage B Phase 1 replayed all 272 ambiguous entries. Zero were auto-resolvable from
 existing local evidence, six require candidate catalog evidence, 266 lack usable watched-artist
-ground truth, and one entry remains candidate-free. The table below is the sanitized Stage A queue,
-not a record of completed candidate retrieval. The cadence-ranked working review is intentionally
+ground truth, and one entry remains candidate-free. A separately authorized bounded command now
+pins those six artists and their 39 artifact candidates for two batch lookups, first-page Top
+Songs, and conditional first-page Singles. The table below is the sanitized Stage A queue, not a
+record of completed candidate retrieval. The cadence-ranked working review is intentionally
 ignored at `.app-runtime/apple-music-stage-b-review.json` and
 `.app-runtime/apple-music-stage-b-review.html`; it contains the bounded public candidate links and
 supports hash-bound confirm, reject, or defer records without applying them.
