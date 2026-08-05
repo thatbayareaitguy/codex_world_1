@@ -1,4 +1,9 @@
-import { artistExternalIds, artists, listArtistMappingReviewsPage } from "@radar/db";
+import {
+  artistExternalIds,
+  artists,
+  listArtistMappingReviewArtistsPage,
+  listArtistMappingReviewsPage,
+} from "@radar/db";
 import { and, eq } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
@@ -20,12 +25,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
     const context = await createProviderDatabaseServerContext();
     try {
-      const reviewPage = await listArtistMappingReviewsPage(context.db, {
-        ...(artistId ? { artistId } : {}),
-        ...(cursor ? { cursor } : {}),
-        limit,
-        provider: "apple_music",
-      });
+      const reviewPage = artistId
+        ? await listArtistMappingReviewsPage(context.db, {
+            artistId,
+            ...(cursor ? { cursor } : {}),
+            limit,
+            provider: "apple_music",
+          })
+        : await listArtistMappingReviewArtistsPage(context.db, {
+            ...(cursor ? { cursor } : {}),
+            limit,
+            provider: "apple_music",
+          });
       const mappings = artistId
         ? await context.db
             .select({

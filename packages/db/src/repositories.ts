@@ -7,6 +7,7 @@ import {
   artistFollows,
   artistImportCandidates,
   artistImportRuns,
+  artistProviderIdentityStatuses,
   artists,
   oauthAccounts,
   oauthStates,
@@ -432,6 +433,32 @@ export async function confirmSpotifyImport(
         .onConflictDoUpdate({
           target: [artistFollows.userId, artistFollows.artistId],
           set: { active: true },
+        });
+      await tx
+        .insert(artistProviderIdentityStatuses)
+        .values({
+          artistId: resolvedArtistId,
+          decidedAt: new Date(),
+          evidence: ["Exact Spotify identity from the user's followed-artist import"],
+          externalId: candidate.providerArtistId,
+          provider: "spotify",
+          reason: "Spotify supplied the exact followed-artist identity.",
+          status: "automatically_confirmed",
+        })
+        .onConflictDoUpdate({
+          target: [
+            artistProviderIdentityStatuses.artistId,
+            artistProviderIdentityStatuses.provider,
+          ],
+          set: {
+            decidedAt: new Date(),
+            evidence: ["Exact Spotify identity from the user's followed-artist import"],
+            externalId: candidate.providerArtistId,
+            linkedArtistId: null,
+            reason: "Spotify supplied the exact followed-artist identity.",
+            status: "automatically_confirmed",
+            updatedAt: new Date(),
+          },
         });
     }
     summary.persisted = (

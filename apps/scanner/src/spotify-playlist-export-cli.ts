@@ -86,7 +86,9 @@ export function sanitizedSpotifyPlaylistExportOutput(input: {
       existingDuplicateTracks: input.plan.existingDuplicateTrackIds.length,
       finalPlaylistItems: input.plan.finalTrackIds.length,
       orderingConflicts: input.plan.orderingConflicts.length,
+      releaseGroupingConflicts: input.plan.releaseGroupingConflicts.length,
       skipped: input.plan.skips.length,
+      unrelatedItems: input.plan.unrelatedItems.length,
     },
     skipCounts,
     additions: input.plan.additions.map((item) => ({
@@ -103,6 +105,17 @@ export function sanitizedSpotifyPlaylistExportOutput(input: {
       title: item.title,
     })),
     orderingConflicts: input.plan.orderingConflicts,
+    releaseGroupingConflicts: input.plan.releaseGroupingConflicts,
+    unrelatedItems: input.plan.unrelatedItems.map((item) => ({
+      ...(item.addedAt ? { addedAt: item.addedAt } : {}),
+      ...(item.albumId ? { albumId: item.albumId } : {}),
+      ...(item.albumTitle ? { albumTitle: item.albumTitle } : {}),
+      ...(item.artistNames ? { artistNames: item.artistNames } : {}),
+      position: item.position,
+      ...(item.releaseDate ? { releaseDate: item.releaseDate } : {}),
+      trackId: item.trackId,
+      ...(item.title ? { title: item.title } : {}),
+    })),
     ...(input.run ? { run: input.run } : {}),
   };
 }

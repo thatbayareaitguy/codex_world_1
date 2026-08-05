@@ -58,12 +58,23 @@ describe("Spotify playlist export CLI", () => {
         existingDuplicateTrackIds: [],
         finalTrackIds: [],
         orderingConflicts: [],
+        releaseGroupingConflicts: [],
         skips: [
           {
             feedItemId: "feed-skip",
             reason: "uncertain_spotify_match",
             title: "Uncertain",
             trackId: "track-skip",
+          },
+        ],
+        unrelatedItems: [
+          {
+            artistNames: ["User Artist"],
+            position: 2,
+            releaseDate: "2020-01-01",
+            reason: "not_in_export_set",
+            title: "User Track",
+            trackId: "9999999999999999999999",
           },
         ],
       },
@@ -78,6 +89,15 @@ describe("Spotify playlist export CLI", () => {
       additions: [{ position: 4, reason: "missing_from_playlist" }],
       skips: [{ reason: "uncertain_spotify_match", title: "Uncertain" }],
       target: { id: "1234567890123456789012" },
+      unrelatedItems: [
+        {
+          artistNames: ["User Artist"],
+          position: 2,
+          releaseDate: "2020-01-01",
+          title: "User Track",
+          trackId: "9999999999999999999999",
+        },
+      ],
     });
   });
 });

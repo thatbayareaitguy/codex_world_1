@@ -362,7 +362,7 @@ export async function collectDoctorReport(
   const portState = await (dependencies.portProbe ?? probePort)(port);
   checks.push(
     portState === "application"
-      ? ready("Application port", `TS New Music Radar is responding on 127.0.0.1:${port}.`)
+      ? ready("Application port", `TS New Music Scanner is responding on 127.0.0.1:${port}.`)
       : portState === "available"
         ? ready("Application port", `Port ${port} is available on loopback.`)
         : error(
@@ -382,7 +382,7 @@ export async function collectDoctorReport(
 }
 
 export function formatDoctorReport(report: DoctorReport): string {
-  const lines = [`TS New Music Radar doctor`, `Overall: ${report.overall}`, ""];
+  const lines = [`TS New Music Scanner doctor`, `Overall: ${report.overall}`, ""];
   for (const check of report.checks) {
     lines.push(`[${check.state}] ${check.name}: ${check.message}`);
     if (check.remediation) lines.push(`  Fix: ${check.remediation}`);

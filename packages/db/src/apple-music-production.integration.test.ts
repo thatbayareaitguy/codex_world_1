@@ -13,7 +13,9 @@ import {
 import { createDatabase } from "./client";
 import {
   confirmArtistMappingExternalId,
+  decideArtistProviderIdentityStatus,
   decideArtistMapping,
+  listArtistMappingReviewArtistsPage,
   listArtistMappingReviewsPage,
 } from "./provider-mappings";
 import {
@@ -22,6 +24,7 @@ import {
   artistExternalIds,
   artistFollows,
   artistMappingReviews,
+  artistProviderIdentityStatuses,
   artists,
   scanRuns,
   users,
@@ -96,6 +99,18 @@ describe.sequential("Apple Music production identity and batches", () => {
     });
     expect(page.reviews).toHaveLength(3);
     expect(page.reviews.filter((review) => review.proposedExternalId === null)).toHaveLength(1);
+    const artistPage = await listArtistMappingReviewArtistsPage(connection.db, {
+      limit: 20,
+      provider: "apple_music",
+    });
+    expect(artistPage.summary).toEqual({ pendingCandidates: 3, unresolvedArtists: 2 });
+    expect(new Set(artistPage.reviews.map((review) => review.artistId)).size).toBe(2);
+    expect(
+      await connection.db
+        .select()
+        .from(artistProviderIdentityStatuses)
+        .where(eq(artistProviderIdentityStatuses.provider, "apple_music")),
+    ).toHaveLength(4);
   });
 
   it("confirms, replaces, and manually supplies mappings while resolving sibling reviews", async () => {
@@ -132,6 +147,20 @@ describe.sequential("Apple Music production identity and batches", () => {
     ).toHaveLength(0);
 
     expect(
+      await decideArtistProviderIdentityStatus(connection.db, {
+        artistId: artistIds[3]!,
+        provider: "apple_music",
+        status: "confirmed_unavailable",
+      }),
+    ).toMatchObject({ idempotent: false, status: "confirmed_unavailable" });
+    expect(
+      await decideArtistProviderIdentityStatus(connection.db, {
+        artistId: artistIds[3]!,
+        provider: "apple_music",
+        status: "confirmed_unavailable",
+      }),
+    ).toMatchObject({ idempotent: true, status: "confirmed_unavailable" });
+    expect(
       await confirmArtistMappingExternalId(connection.db, {
         artistId: artistIds[3]!,
         externalId: "301",
@@ -145,6 +174,14 @@ describe.sequential("Apple Music production identity and batches", () => {
         provider: "apple_music",
       }),
     ).toMatchObject({ externalId: "301", idempotent: true });
+    expect(
+      await connection.db.query.artistProviderIdentityStatuses.findFirst({
+        where: and(
+          eq(artistProviderIdentityStatuses.artistId, artistIds[3]!),
+          eq(artistProviderIdentityStatuses.provider, "apple_music"),
+        ),
+      }),
+    ).toMatchObject({ externalId: "301", status: "manually_confirmed" });
   });
 
   it("resumes only a compatible persisted batch and advances per artist", async () => {

@@ -1,5 +1,5 @@
 param(
-  [string]$TaskName = "TS New Music Radar Spotify Campaign 100"
+  [string]$TaskName = "TS New Music Scanner Spotify Campaign 100"
 )
 
 $ErrorActionPreference = "Stop"

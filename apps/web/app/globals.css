@@ -112,6 +112,10 @@ select:focus-visible {
 .brand strong {
   color: #fff;
 }
+.brand-name {
+  font-size: 12px;
+  line-height: 1.2;
+}
 .brand-mark {
   width: 31px;
   height: 31px;
@@ -1696,6 +1700,54 @@ select:focus-visible {
   border-left: 4px solid var(--gold);
   border-radius: 6px;
 }
+.mapping-review-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.mapping-review-summary strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+.mapping-review-group {
+  display: grid;
+  gap: 8px;
+  padding: 12px 0 20px;
+  border-bottom: 1px solid var(--line);
+}
+.mapping-review-group-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.mapping-review-group-heading h2 {
+  margin: 6px 0 2px;
+}
+.mapping-review-group-heading small,
+.mapping-confirmed-evidence {
+  color: var(--muted);
+  font-size: 10px;
+}
+.mapping-confirmed-evidence {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 10px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.mapping-confirmed-evidence a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--cyan);
+}
 .review-card .state {
   display: inline-block;
   margin-bottom: 10px;
@@ -2039,6 +2091,10 @@ select:focus-visible {
     grid-column: 2;
   }
   .review-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .mapping-review-group-heading {
     align-items: stretch;
     flex-direction: column;
   }

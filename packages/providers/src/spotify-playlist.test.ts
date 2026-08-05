@@ -154,6 +154,71 @@ describe("Spotify playlist planning", () => {
     expect(plan.additions).toHaveLength(0);
   });
 
+  it("reports unrelated playlist items and release groups split by them", () => {
+    const first = candidate("first", "0000000000000000000001", {
+      providerReleaseId: "spotify-album-together",
+      releaseId: "release-together",
+      releaseTitle: "Together",
+      trackNumber: 1,
+    });
+    const second = candidate("second", "0000000000000000000002", {
+      providerReleaseId: "spotify-album-together",
+      releaseId: "release-together",
+      releaseTitle: "Together",
+      trackNumber: 2,
+    });
+    const unrelated = "9999999999999999999999";
+    const plan = planSpotifyPlaylistExport(
+      [first, second],
+      [
+        { position: 0, trackId: first.providerTrackId! },
+        {
+          albumId: "different-spotify-album",
+          artistNames: ["User Artist"],
+          position: 1,
+          releaseDate: "2020-01-01",
+          title: "User Track",
+          trackId: unrelated,
+        },
+        { position: 2, trackId: second.providerTrackId! },
+      ],
+      new Set(),
+    );
+
+    expect(plan.releaseGroupingConflicts).toEqual([
+      {
+        positions: [0, 2],
+        releaseId: "release-together",
+        releaseTitle: "Together",
+      },
+    ]);
+    expect(plan.unrelatedItems).toEqual([
+      expect.objectContaining({
+        artistNames: ["User Artist"],
+        position: 1,
+        reason: "not_in_export_set",
+        releaseDate: "2020-01-01",
+        title: "User Track",
+        trackId: unrelated,
+      }),
+    ]);
+
+    const sameAlbumPlan = planSpotifyPlaylistExport(
+      [first, second],
+      [
+        { position: 0, trackId: first.providerTrackId! },
+        {
+          albumId: "spotify-album-together",
+          position: 1,
+          trackId: unrelated,
+        },
+        { position: 2, trackId: second.providerTrackId! },
+      ],
+      new Set(),
+    );
+    expect(sameAlbumPlan.releaseGroupingConflicts).toEqual([]);
+  });
+
   it("splits positional additions at Spotify's 100-item limit", () => {
     const plan = planSpotifyPlaylistExport(
       Array.from({ length: 205 }, (_, index) =>

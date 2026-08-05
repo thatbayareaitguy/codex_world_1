@@ -12,7 +12,7 @@ describe("Spotify campaign Windows runner", () => {
     const cleanup = readFileSync(resolve("scripts/remove-spotify-campaign-task.ps1"), "utf8");
 
     expect(runner).toContain("pnpm.cmd spotify:campaign -- tick --campaign $CampaignId");
-    expect(registration).toContain("TS New Music Radar Spotify Campaign 100");
+    expect(registration).toContain("TS New Music Scanner Spotify Campaign 100");
     expect(registration).toContain("-MultipleInstances IgnoreNew");
     expect(registration).toContain("-RepetitionInterval (New-TimeSpan -Minutes 1)");
     expect(registration).toContain("-WakeToRun");

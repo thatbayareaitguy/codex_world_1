@@ -1,4 +1,9 @@
-import { artistExternalIds, artists, listMusicBrainzMappingReviewsPage } from "@radar/db";
+import {
+  artistExternalIds,
+  artists,
+  listArtistMappingReviewArtistsPage,
+  listMusicBrainzMappingReviewsPage,
+} from "@radar/db";
 import { and, eq } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
@@ -20,11 +25,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
     const context = await createMusicBrainzServerContext();
     try {
-      const reviewPage = await listMusicBrainzMappingReviewsPage(context.db, {
-        ...(artistId ? { artistId } : {}),
-        ...(cursor ? { cursor } : {}),
-        limit,
-      });
+      const reviewPage = artistId
+        ? await listMusicBrainzMappingReviewsPage(context.db, {
+            artistId,
+            ...(cursor ? { cursor } : {}),
+            limit,
+          })
+        : await listArtistMappingReviewArtistsPage(context.db, {
+            ...(cursor ? { cursor } : {}),
+            limit,
+            provider: "musicbrainz",
+          });
       const mappings = artistId
         ? await context.db
             .select({

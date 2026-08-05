@@ -2,7 +2,7 @@
 
 ## Objective
 
-TS New Music Radar is a private, single-user, non-commercial release tracker. It maintains a provider-neutral watchlist, scans Spotify, Apple Music, and MusicBrainz, can parse approved Reddit evidence when explicitly enabled, preserves evidence, and presents one chronological feed. MockProvider supports local development and automated tests.
+TS New Music Scanner is a private, single-user, non-commercial release tracker. It maintains a provider-neutral watchlist, scans Spotify, Apple Music, and MusicBrainz, can parse approved Reddit evidence when explicitly enabled, preserves evidence, and presents one chronological feed. MockProvider supports local development and automated tests.
 
 The product optimizes for recall but never guarantees completeness. It has no audio playback, previews, players, embeds, public signup, advertising, or mixed-service queue.
 

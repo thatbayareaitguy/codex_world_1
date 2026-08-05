@@ -7,6 +7,7 @@
 - `oauth_states`: expiring, hashed, single-use OAuth state and encrypted PKCE verifier.
 - `artists`, `artist_aliases`, and `artist_follows`: provider-neutral identity, user aliases, inclusion rules, tracking source, and active state.
 - `artist_external_ids`: provider mappings with confirmation, score, reasons, source, provider URL, and timestamps.
+- `artist_provider_identity_statuses`: one durable status per canonical artist and provider. It distinguishes automatic and manual confirmations from confirmed-unavailable, alias/duplicate, intentional exclusion, and unresolved manual-decision states without treating review candidates as canonical mappings.
 - `artist_import_runs` and `artist_import_candidates`: preview, selection, decision, counts, provenance, and import history.
 - `artist_mapping_reviews`: ambiguous MusicBrainz and Apple Music mapping proposals and decisions. Apple candidate-free rows permit a manually supplied numeric catalog artist ID.
 

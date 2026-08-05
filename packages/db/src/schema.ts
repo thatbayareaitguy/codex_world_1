@@ -176,6 +176,14 @@ export const appleMusicArtistScanStatusEnum = pgEnum("apple_music_artist_scan_st
   "retryable",
   "terminal",
 ]);
+export const artistProviderIdentityStatusEnum = pgEnum("artist_provider_identity_status", [
+  "automatically_confirmed",
+  "manually_confirmed",
+  "confirmed_unavailable",
+  "alias_or_duplicate",
+  "intentionally_excluded",
+  "requires_manual_decision",
+]);
 export const matchStatusEnum = pgEnum("match_status", [
   "new",
   "matched",
@@ -432,6 +440,43 @@ export const artistMappingReviews = pgTable(
       table.status,
       table.updatedAt,
       table.id,
+    ),
+  ],
+);
+
+export const artistProviderIdentityStatuses = pgTable(
+  "artist_provider_identity_statuses",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    artistId: uuid("artist_id")
+      .notNull()
+      .references(() => artists.id, { onDelete: "cascade" }),
+    provider: providerEnum("provider").notNull(),
+    status: artistProviderIdentityStatusEnum("status").notNull(),
+    externalId: text("external_id"),
+    linkedArtistId: uuid("linked_artist_id").references(() => artists.id, {
+      onDelete: "set null",
+    }),
+    reason: text("reason").notNull(),
+    evidence: text("evidence")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    decidedBy: text("decided_by").notNull().default("system"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("artist_provider_identity_artist_provider_unique").on(
+      table.artistId,
+      table.provider,
+    ),
+    index("artist_provider_identity_status_idx").on(
+      table.provider,
+      table.status,
+      table.updatedAt,
+      table.artistId,
     ),
   ],
 );

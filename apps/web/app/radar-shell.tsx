@@ -340,8 +340,8 @@ interface SpotifyBatchStatus {
 }
 
 const filters: Array<{ state: FeedState | "all"; label: string }> = [
-  { state: "all", label: "All" },
   { state: "new", label: "New" },
+  { state: "all", label: "All" },
   { state: "upcoming", label: "Upcoming" },
   { state: "saved", label: "Saved" },
   { state: "listened", label: "Listened" },
@@ -375,7 +375,7 @@ export function RadarShell({
   const [activeView, setActiveView] = useState<AppView>("feed");
   const reviewFeedMode = activeView === "review";
   const [hydrated, setHydrated] = useState(false);
-  const [activeFilter, setActiveFilter] = useState<FeedState | "all">("all");
+  const [activeFilter, setActiveFilter] = useState<FeedState | "all">("new");
   const [items, setItems] = useState(initialItems);
   const itemsRef = useRef(initialItems);
   const feedRevisionRef = useRef(initialFeedRevision);
@@ -1119,8 +1119,8 @@ export function RadarShell({
           <span className="brand-mark" aria-hidden="true">
             <Radio size={19} />
           </span>
-          <span>
-            TS <strong>RADAR</strong>
+          <span className="brand-name">
+            <strong>TS NEW MUSIC SCANNER</strong>
           </span>
         </div>
 
@@ -1179,7 +1179,7 @@ export function RadarShell({
           <div className="profile-row">
             <span className="avatar">TS</span>
             <div>
-              <strong>Personal radar</strong>
+              <strong>Personal scanner</strong>
               <small>Mock mode</small>
             </div>
           </div>
@@ -1189,7 +1189,7 @@ export function RadarShell({
       <main className="main" id={activeView}>
         <header className="topbar">
           <div className="mobile-brand">
-            <Radio size={18} /> TS RADAR
+            <Radio size={18} /> TS NEW MUSIC SCANNER
           </div>
           {activeView === "feed" || activeView === "review" ? (
             <label className="search-field">
@@ -3569,6 +3569,61 @@ function SoundCloudLinksView({
   );
 }
 
+function providerDisplayName(provider: "apple_music" | "musicbrainz" | "spotify"): string {
+  if (provider === "apple_music") return "Apple Music";
+  return provider === "musicbrainz" ? "MusicBrainz" : "Spotify";
+}
+
+function summarizeMappingReviews(reviews: Array<{ artistId: string }>): {
+  pendingCandidates: number;
+  unresolvedArtists: number;
+} {
+  return {
+    pendingCandidates: reviews.length,
+    unresolvedArtists: new Set(reviews.map((review) => review.artistId)).size,
+  };
+}
+
+function groupMappingReviews<
+  T extends {
+    artistId: string;
+    artistName: string;
+    confirmedEvidence: Array<{
+      externalId: string;
+      mappingSource: string;
+      provider: "apple_music" | "musicbrainz" | "spotify";
+      url: string | null;
+    }>;
+    provider: "apple_music" | "musicbrainz";
+  },
+>(reviews: T[]) {
+  const groups = new Map<
+    string,
+    {
+      artistId: string;
+      artistName: string;
+      candidates: T[];
+      confirmedEvidence: T["confirmedEvidence"];
+      provider: T["provider"];
+    }
+  >();
+  for (const review of reviews) {
+    const key = `${review.provider}:${review.artistId}`;
+    const current = groups.get(key);
+    if (current) current.candidates.push(review);
+    else {
+      groups.set(key, {
+        artistId: review.artistId,
+        artistName: review.artistName,
+        candidates: [review],
+        confirmedEvidence: review.confirmedEvidence,
+        provider: review.provider,
+      });
+    }
+  }
+  return [...groups.values()];
+}
+
 function ReviewView({
   items,
   onDecision,
@@ -3587,6 +3642,12 @@ function ReviewView({
     Array<{
       artistId: string;
       artistName: string;
+      confirmedEvidence: Array<{
+        externalId: string;
+        mappingSource: string;
+        provider: "apple_music" | "musicbrainz" | "spotify";
+        url: string | null;
+      }>;
       confidence: string;
       id: string;
       name: string;
@@ -3601,6 +3662,12 @@ function ReviewView({
   const [mappingReviewHasMore, setMappingReviewHasMore] = useState<
     Record<"apple_music" | "musicbrainz", boolean>
   >({ apple_music: false, musicbrainz: false });
+  const [mappingReviewSummaries, setMappingReviewSummaries] = useState<
+    Record<"apple_music" | "musicbrainz", { pendingCandidates: number; unresolvedArtists: number }>
+  >({
+    apple_music: { pendingCandidates: 0, unresolvedArtists: 0 },
+    musicbrainz: { pendingCandidates: 0, unresolvedArtists: 0 },
+  });
   const [mappingReviewState, setMappingReviewState] = useState<"loading" | "loaded" | "error">(
     "loading",
   );
@@ -3632,6 +3699,15 @@ function ReviewView({
       setMappingReviews(
         pages.flatMap(([, page]) => page.reviews.filter((review) => review.status === "pending")),
       );
+      setMappingReviewSummaries((current) => ({
+        ...current,
+        ...Object.fromEntries(
+          pages.map(([provider, page]) => [
+            provider,
+            page.summary ?? summarizeMappingReviews(page.reviews),
+          ]),
+        ),
+      }));
       setMappingReviewCursors(
         Object.fromEntries(pages.map(([provider, page]) => [provider, page.nextCursor])) as Record<
           "apple_music" | "musicbrainz",
@@ -3674,6 +3750,10 @@ function ReviewView({
       );
       setMappingReviewCursors((current) => ({ ...current, [provider]: payload.nextCursor }));
       setMappingReviewHasMore((current) => ({ ...current, [provider]: payload.hasMore }));
+      setMappingReviewSummaries((current) => ({
+        ...current,
+        [provider]: payload.summary ?? current[provider],
+      }));
       setMappingReviewState("loaded");
     } catch {
       setMappingReviewState("error");
@@ -3691,16 +3771,28 @@ function ReviewView({
       method: "POST",
     });
     if (response.ok) {
-      setMappingReviews((current) =>
-        decision === "confirm"
-          ? current.filter(
-              (candidate) =>
-                candidate.artistId !== review.artistId || candidate.provider !== review.provider,
-            )
-          : current.filter((candidate) => candidate.id !== review.id),
-      );
+      await loadMappingReviews();
     }
     setMappingDecisionIds((current) => current.filter((id) => id !== review.id));
+  };
+
+  const decideIdentityStatus = async (
+    review: (typeof mappingReviews)[number],
+    status: "confirmed_unavailable" | "intentionally_excluded",
+  ) => {
+    const groupKey = `${review.provider}:${review.artistId}`;
+    setMappingDecisionIds((current) => [...current, groupKey]);
+    try {
+      const response = await fetch("/api/artist-identities/decision", {
+        body: JSON.stringify({ artistId: review.artistId, provider: review.provider, status }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+      if (!response.ok) throw new Error("Identity decision failed");
+      await loadMappingReviews();
+    } finally {
+      setMappingDecisionIds((current) => current.filter((id) => id !== groupKey));
+    }
   };
 
   const filteredMappingReviews = mappingReviews.filter((review) =>
@@ -3710,6 +3802,20 @@ function ReviewView({
         ? review.provider === "apple_music"
         : true,
   );
+  const filteredMappingReviewGroups = groupMappingReviews(filteredMappingReviews);
+  const visibleMappingSummary =
+    reviewFilter === "apple_music_mappings"
+      ? mappingReviewSummaries.apple_music
+      : reviewFilter === "musicbrainz_mappings"
+        ? mappingReviewSummaries.musicbrainz
+        : {
+            pendingCandidates:
+              mappingReviewSummaries.apple_music.pendingCandidates +
+              mappingReviewSummaries.musicbrainz.pendingCandidates,
+            unresolvedArtists:
+              mappingReviewSummaries.apple_music.unresolvedArtists +
+              mappingReviewSummaries.musicbrainz.unresolvedArtists,
+          };
 
   return (
     <section className="content standard-view">
@@ -3744,68 +3850,140 @@ function ReviewView({
             Provider mapping reviews are temporarily unavailable.
           </div>
         )}
+        {reviewFilter !== "matches" && mappingReviewState !== "error" && (
+          <div className="mapping-review-summary" role="status">
+            <strong>{visibleMappingSummary.unresolvedArtists} unresolved artists</strong>
+            <span>{visibleMappingSummary.pendingCandidates} candidate identities</span>
+          </div>
+        )}
         {reviewFilter !== "matches" &&
-          filteredMappingReviews.map((review) => (
-            <article className="review-card" key={review.id}>
-              <div>
-                <span className="state state-needs_review">
-                  {review.provider === "musicbrainz" ? "MusicBrainz" : "Apple Music"} mapping
-                </span>
-                <h2>{review.artistName}</h2>
-                <p>{review.name}</p>
-                <small>
-                  {Math.round(Number(review.confidence) * 100)}% confidence |{" "}
-                  {review.reasons.join("; ")}
-                </small>
-              </div>
-              <div className="review-actions">
-                {review.proposedExternalId ? (
-                  <a
-                    className="secondary-button"
-                    href={
-                      review.provider === "musicbrainz"
-                        ? `https://musicbrainz.org/artist/${review.proposedExternalId}`
-                        : `https://music.apple.com/us/artist/${review.proposedExternalId}`
-                    }
-                    rel="noopener noreferrer"
-                    target="_blank"
-                  >
-                    Evidence <ExternalLink size={13} />
-                  </a>
-                ) : (
-                  <AppleMusicManualMappingForm
-                    artistId={review.artistId}
-                    disabled={mappingDecisionIds.includes(review.id)}
-                    onSaved={() =>
-                      setMappingReviews((current) =>
-                        current.filter(
-                          (candidate) =>
-                            candidate.artistId !== review.artistId ||
-                            candidate.provider !== "apple_music",
-                        ),
-                      )
-                    }
-                  />
+          filteredMappingReviewGroups.map((group) => {
+            const groupPending = mappingDecisionIds.includes(`${group.provider}:${group.artistId}`);
+            return (
+              <section
+                aria-label={`${group.artistName} ${providerDisplayName(group.provider)} identity review`}
+                className="mapping-review-group"
+                key={`${group.provider}:${group.artistId}`}
+              >
+                <div className="mapping-review-group-heading">
+                  <div>
+                    <span className="state state-needs_review">
+                      {providerDisplayName(group.provider)} mapping
+                    </span>
+                    <h2>{group.artistName}</h2>
+                    <small>
+                      Canonical artist | {group.candidates.length} candidate
+                      {group.candidates.length === 1 ? "" : "s"}
+                    </small>
+                  </div>
+                  {group.provider === "apple_music" && (
+                    <div className="review-actions">
+                      <button
+                        className="secondary-button"
+                        disabled={groupPending}
+                        onClick={() =>
+                          void decideIdentityStatus(group.candidates[0]!, "confirmed_unavailable")
+                        }
+                        type="button"
+                      >
+                        Confirm no result
+                      </button>
+                      <button
+                        className="secondary-button"
+                        disabled={groupPending}
+                        onClick={() =>
+                          void decideIdentityStatus(group.candidates[0]!, "intentionally_excluded")
+                        }
+                        type="button"
+                      >
+                        Exclude provider
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {group.confirmedEvidence.length > 0 && (
+                  <div className="mapping-confirmed-evidence">
+                    <strong>Confirmed identity evidence</strong>
+                    {group.confirmedEvidence.map((evidence) =>
+                      evidence.url ? (
+                        <a
+                          href={evidence.url}
+                          key={`${evidence.provider}:${evidence.externalId}`}
+                          rel="noopener noreferrer"
+                          target="_blank"
+                        >
+                          {providerDisplayName(evidence.provider)} {evidence.externalId}
+                          <ExternalLink size={12} />
+                        </a>
+                      ) : (
+                        <span key={`${evidence.provider}:${evidence.externalId}`}>
+                          {providerDisplayName(evidence.provider)} {evidence.externalId}
+                        </span>
+                      ),
+                    )}
+                  </div>
                 )}
-                <button
-                  className="secondary-button"
-                  disabled={mappingDecisionIds.includes(review.id)}
-                  onClick={() => void decideMapping(review, "reject")}
-                  type="button"
-                >
-                  Reject
-                </button>
-                <button
-                  className="primary-button"
-                  disabled={!review.proposedExternalId || mappingDecisionIds.includes(review.id)}
-                  onClick={() => void decideMapping(review, "confirm")}
-                  type="button"
-                >
-                  Confirm or replace
-                </button>
-              </div>
-            </article>
-          ))}
+                {group.candidates.map((review) => (
+                  <article className="review-card" key={review.id}>
+                    <div>
+                      <strong>{review.name}</strong>
+                      <p>
+                        {review.proposedExternalId
+                          ? `${providerDisplayName(review.provider)} artist ID ${review.proposedExternalId}`
+                          : `No ${providerDisplayName(review.provider)} candidate found`}
+                      </p>
+                      <small>
+                        {Math.round(Number(review.confidence) * 100)}% confidence |{" "}
+                        {review.reasons.join("; ")}
+                      </small>
+                    </div>
+                    <div className="review-actions">
+                      {review.proposedExternalId ? (
+                        <a
+                          className="secondary-button"
+                          href={
+                            review.provider === "musicbrainz"
+                              ? `https://musicbrainz.org/artist/${review.proposedExternalId}`
+                              : `https://music.apple.com/us/artist/${review.proposedExternalId}`
+                          }
+                          rel="noopener noreferrer"
+                          target="_blank"
+                        >
+                          Evidence <ExternalLink size={13} />
+                        </a>
+                      ) : (
+                        <AppleMusicManualMappingForm
+                          artistId={review.artistId}
+                          disabled={mappingDecisionIds.includes(review.id) || groupPending}
+                          onSaved={() => void loadMappingReviews()}
+                        />
+                      )}
+                      <button
+                        className="secondary-button"
+                        disabled={mappingDecisionIds.includes(review.id) || groupPending}
+                        onClick={() => void decideMapping(review, "reject")}
+                        type="button"
+                      >
+                        Reject candidate
+                      </button>
+                      <button
+                        className="primary-button"
+                        disabled={
+                          !review.proposedExternalId ||
+                          mappingDecisionIds.includes(review.id) ||
+                          groupPending
+                        }
+                        onClick={() => void decideMapping(review, "confirm")}
+                        type="button"
+                      >
+                        Confirm identity
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </section>
+            );
+          })}
         {reviewFilter !== "matches" &&
           (["musicbrainz", "apple_music"] as const).map((provider) =>
             mappingReviewHasMore[provider] &&
@@ -4285,7 +4463,8 @@ function SettingsView({
             <strong>Spotify playlist permission boundary</strong>
             <small>
               Spotify grants playlist permissions at the account scope level, not to one individual
-              playlist. Release Inbox additionally restricts itself to the configured playlist ID.
+              playlist. TS New Music Scanner additionally restricts itself to the configured
+              playlist ID.
             </small>
           </div>
           <span className="status-chip">
@@ -5080,10 +5259,26 @@ const musicBrainzMappingsResponseSchema = z.object({
 const mappingReviewPageSchema = z.object({
   hasMore: z.boolean().default(false),
   nextCursor: z.string().nullable().default(null),
+  summary: z
+    .object({
+      pendingCandidates: z.number().int().nonnegative(),
+      unresolvedArtists: z.number().int().nonnegative(),
+    })
+    .optional(),
   reviews: z.array(
     z.object({
       artistId: z.string().uuid(),
       artistName: z.string(),
+      confirmedEvidence: z
+        .array(
+          z.object({
+            externalId: z.string(),
+            mappingSource: z.string(),
+            provider: z.enum(["apple_music", "musicbrainz", "spotify"]),
+            url: z.string().url().nullable(),
+          }),
+        )
+        .default([]),
       confidence: z.string(),
       id: z.string().uuid(),
       name: z.string(),

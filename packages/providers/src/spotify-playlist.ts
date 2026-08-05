@@ -18,6 +18,7 @@ export interface SpotifyPlaylistExportCandidate {
   matchRule?: string;
   providerTrackId?: string;
   providerUrl?: string;
+  providerReleaseId?: string;
   releaseDate: string;
   releaseId: string;
   releaseTitle: string;
@@ -28,8 +29,18 @@ export interface SpotifyPlaylistExportCandidate {
 }
 
 export interface SpotifyPlaylistSnapshotItem {
+  addedAt?: string;
+  albumId?: string;
+  albumTitle?: string;
+  artistNames?: string[];
   position: number;
+  releaseDate?: string;
   trackId: string | null;
+  title?: string;
+}
+
+export interface SpotifyPlaylistUnrelatedItem extends SpotifyPlaylistSnapshotItem {
+  reason: "not_in_export_set";
 }
 
 export type SpotifyPlaylistExportSkipReason =
@@ -73,7 +84,13 @@ export interface SpotifyPlaylistExportPlan {
     laterTrackId: string;
     laterPosition: number;
   }>;
+  releaseGroupingConflicts: Array<{
+    positions: number[];
+    releaseId: string;
+    releaseTitle: string;
+  }>;
   skips: SpotifyPlaylistExportSkip[];
+  unrelatedItems: SpotifyPlaylistUnrelatedItem[];
 }
 
 export function planSpotifyPlaylistSync(
@@ -202,6 +219,47 @@ export function planSpotifyPlaylistExport(
     });
   }
 
+  const releaseGroupingConflicts: SpotifyPlaylistExportPlan["releaseGroupingConflicts"] = [];
+  const desiredByRelease = new Map<string, SpotifyPlaylistExportCandidate[]>();
+  for (const candidate of desired) {
+    const group = desiredByRelease.get(candidate.releaseId) ?? [];
+    group.push(candidate);
+    desiredByRelease.set(candidate.releaseId, group);
+  }
+  for (const [releaseId, releaseCandidates] of desiredByRelease) {
+    const exactProviderReleaseId = releaseCandidates.find(
+      (candidate) => candidate.providerReleaseId,
+    )?.providerReleaseId;
+    const desiredPositions = releaseCandidates
+      .map(
+        (candidate) =>
+          playlistItems.find((item) => item.trackId === candidate.providerTrackId)?.position,
+      )
+      .filter((position): position is number => position !== undefined)
+      .sort((left, right) => left - right);
+    if (desiredPositions.length < 2) continue;
+    const positions = playlistItems
+      .filter(
+        (item) =>
+          desiredPositions.includes(item.position) ||
+          (exactProviderReleaseId !== undefined && item.albumId === exactProviderReleaseId),
+      )
+      .map((item) => item.position)
+      .sort((left, right) => left - right);
+    const contiguous = positions.at(-1)! - positions[0]! + 1 === positions.length;
+    if (!contiguous) {
+      releaseGroupingConflicts.push({
+        positions,
+        releaseId,
+        releaseTitle: releaseCandidates[0]!.releaseTitle,
+      });
+    }
+  }
+
+  const unrelatedItems = playlistItems
+    .filter((item) => item.trackId === null || !desiredTrackIds.has(item.trackId))
+    .map((item) => ({ ...item, reason: "not_in_export_set" as const }));
+
   return {
     additions,
     alreadyPresent,
@@ -209,7 +267,9 @@ export function planSpotifyPlaylistExport(
     existingDuplicateTrackIds,
     finalTrackIds: orderedPlaylist,
     orderingConflicts,
+    releaseGroupingConflicts,
     skips,
+    unrelatedItems,
   };
 }
 

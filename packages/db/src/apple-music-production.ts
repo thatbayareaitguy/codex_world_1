@@ -11,6 +11,7 @@ import {
   appleMusicScanBatches,
   artistExternalIds,
   artistMappingReviews,
+  artistProviderIdentityStatuses,
   scanRuns,
 } from "./schema";
 
@@ -318,9 +319,33 @@ export async function bootstrapAppleMusicIdentity(
           .onConflictDoNothing()
           .returning({ id: artistExternalIds.id });
         mappings += inserted.length;
+        await tx
+          .insert(artistProviderIdentityStatuses)
+          .values({
+            artistId: entry.watchedArtistId,
+            decidedAt: new Date(),
+            evidence: entry.evidenceSources,
+            externalId: entry.candidateArtistId,
+            provider: "apple_music",
+            reason: "Validated Apple Music identity seed met the automatic confidence threshold.",
+            status: "automatically_confirmed",
+          })
+          .onConflictDoNothing();
         continue;
       }
       reviewArtistIds.add(entry.watchedArtistId);
+      await tx
+        .insert(artistProviderIdentityStatuses)
+        .values({
+          artistId: entry.watchedArtistId,
+          evidence: entry.evidenceSources,
+          provider: "apple_music",
+          reason:
+            entry.manualReviewReason ??
+            "Available Apple Music identities do not meet the automatic confidence threshold.",
+          status: "requires_manual_decision",
+        })
+        .onConflictDoNothing();
       if (entry.alternateCandidateIds.length === 0) {
         const existing = await tx.query.artistMappingReviews.findFirst({
           where: and(

@@ -53,11 +53,12 @@ Drizzle is used because it keeps the schema and SQL migrations explicit, has a s
 
 1. A user manually creates a canonical artist or explicitly approves a Spotify import preview.
 2. Provider IDs are attached to that canonical artist with provenance, confidence, and confirmation state.
-3. The scanner loads only confirmed mappings and invokes providers independently. Apple Music mapping candidates that are not confirmed remain in review and cannot scan automatically.
-4. Typed provider candidates are matched to canonical tracks independently from canonical releases.
-5. A transaction preserves provider IDs, source evidence, upcoming history, feed state, availability, match reasons, and the provenance-backed release-to-track appearance.
-6. Spotify playlist planning starts from the canonical database-backed feed, keeps followed-artist appearances, selects only exact or manually confirmed Spotify identities, deduplicates repeated recording appearances, and compares the ordered result with current playlist items. Writes default off. When explicitly enabled, route and client guards allow positional additions only to the server-configured owned private playlist.
-7. Reddit text is parsed locally, matched only against the canonical watchlist, and enters review unless exact canonical artist and title are corroborated by existing Spotify availability. Reddit content is never sent to AI.
+3. A provider-specific identity status records whether the mapping was automatic, manually confirmed, confirmed unavailable, an alias or duplicate, intentionally excluded, or still requires a manual decision. Review candidates are grouped by canonical artist and provider, and remain evidence rather than mappings until explicitly confirmed.
+4. The scanner loads only confirmed mappings and invokes providers independently. Apple Music mapping candidates that are not confirmed remain in review and cannot scan automatically.
+5. Typed provider candidates are matched to canonical tracks independently from canonical releases.
+6. A transaction preserves provider IDs, source evidence, upcoming history, feed state, availability, match reasons, and the provenance-backed release-to-track appearance.
+7. Spotify playlist planning starts from the canonical database-backed feed, keeps followed-artist appearances, selects only exact or manually confirmed Spotify identities, deduplicates repeated recording appearances, and compares the ordered result with current playlist items. Writes default off. When explicitly enabled, route and client guards allow positional additions only to the server-configured owned private playlist.
+8. Reddit text is parsed locally, matched only against the canonical watchlist, and enters review unless exact canonical artist and title are corroborated by existing Spotify availability. Reddit content is never sent to AI.
 
 Spotify responses are never submitted to MusicBrainz. MusicBrainz mapping starts from canonical names, user aliases, and confirmed decisions. Canonical display data is provider-neutral; source-specific values remain in external-ID provider fields and evidence records. Apple and Spotify artwork remain separately namespaced and are rendered only when the matching provider supplies evidence for that canonical release appearance.
 

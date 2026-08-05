@@ -338,9 +338,11 @@ describe.sequential("release appearance and Spotify album completeness", () => {
     "preserves completed pages and the resume cursor when retrieval becomes %s",
     async (status) => {
       const albumId = `album-interrupted-${status}-${randomUUID()}`;
+      const startedAt = new Date();
+      const finishedAt = new Date(startedAt.getTime() + 100);
       await recordSpotifyReleaseTrackPage(connection.db, {
         expectedTotalTracks: 25,
-        finishedAt: new Date(),
+        finishedAt,
         items: Array.from({ length: 20 }, (_, index) => ({
           discNumber: 1,
           providerTrackId: `${albumId}-${index + 1}`,
@@ -349,7 +351,7 @@ describe.sequential("release appearance and Spotify album completeness", () => {
         nextOffset: 20,
         offset: 0,
         spotifyAlbumId: albumId,
-        startedAt: new Date(),
+        startedAt,
         terminal: false,
       });
       await markSpotifyReleaseTrackInterrupted(connection.db, {

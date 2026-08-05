@@ -23,6 +23,7 @@ import {
   playlistExports,
   playlistTargets,
   releaseCandidates,
+  releaseExternalIds,
   releases,
   releaseTrackAppearances,
   spotifyPlaylistExportOperations,
@@ -299,6 +300,10 @@ export async function loadCanonicalExportCandidates(
         eq(artistFollows.active, true),
       ),
     );
+  const releaseExternalRows = await db
+    .select({ externalId: releaseExternalIds.externalId, releaseId: releaseExternalIds.releaseId })
+    .from(releaseExternalIds)
+    .where(eq(releaseExternalIds.provider, "spotify"));
   const candidateRows = await db
     .select({
       candidateId: releaseCandidates.id,
@@ -317,6 +322,9 @@ export async function loadCanonicalExportCandidates(
       and(eq(manualMatchDecisions.userId, userId), eq(manualMatchDecisions.decision, "confirm")),
     );
   const followedTrackIds = new Set(followedRows.map((row) => row.trackId));
+  const providerReleaseIdByRelease = new Map(
+    releaseExternalRows.map((row) => [row.releaseId, row.externalId]),
+  );
   const confirmedCandidateIds = new Set(decisions.map((row) => row.candidateId));
   const candidateByTrack = new Map<string, (typeof candidateRows)[number]>();
   for (const candidate of candidateRows) {
@@ -328,6 +336,7 @@ export async function loadCanonicalExportCandidates(
   }
   return feedRows.map((feed) => {
     const candidate = candidateByTrack.get(feed.trackId);
+    const providerReleaseId = providerReleaseIdByRelease.get(feed.releaseId);
     return {
       ...(candidate ? { confidence: Number(candidate.confidence) } : {}),
       discNumber: feed.discNumber,
@@ -337,6 +346,7 @@ export async function loadCanonicalExportCandidates(
       manuallyConfirmed: candidate ? confirmedCandidateIds.has(candidate.candidateId) : false,
       ...(candidate ? { matchRule: candidate.matchRule } : {}),
       ...(candidate ? { providerTrackId: candidate.providerTrackId } : {}),
+      ...(providerReleaseId ? { providerReleaseId } : {}),
       releaseDate: feed.releaseDate,
       releaseId: feed.releaseId,
       releaseTitle: feed.releaseTitle,

@@ -180,8 +180,14 @@ export type SpotifyTrackSummary = z.infer<typeof trackSummarySchema>;
 export type SpotifyTokenResponse = z.infer<typeof spotifyTokenSchema>;
 
 export interface SpotifyPlaylistItemSnapshot {
+  addedAt?: string;
+  albumId?: string;
+  albumTitle?: string;
+  artistNames?: string[];
   position: number;
+  releaseDate?: string;
   trackId: string | null;
+  title?: string;
 }
 
 export interface SpotifyArtistAlbumsPage {
@@ -525,7 +531,21 @@ export class SpotifyClient {
         { signal },
       );
       for (const [index, entry] of page.items.entries()) {
-        items.push({ position: offset + index, trackId: entry.item?.id ?? null });
+        const track = entry.item;
+        items.push({
+          ...(entry.added_at ? { addedAt: entry.added_at } : {}),
+          ...(track
+            ? {
+                albumId: track.album.id,
+                albumTitle: track.album.name,
+                artistNames: track.artists.map((artist) => artist.name),
+                releaseDate: track.album.release_date,
+                title: track.name,
+              }
+            : {}),
+          position: offset + index,
+          trackId: track?.id ?? null,
+        });
       }
       if (!page.next || page.items.length === 0) break;
       offset += page.items.length;

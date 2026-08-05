@@ -1,7 +1,7 @@
 import { feedFixtures, mockScanFeedFixture } from "@radar/testing";
 import { abbreviateSpotifyPlaylistId, loadProviderConfiguration } from "@radar/providers";
 import { RadarShell } from "./radar-shell";
-import { loadDatabaseFeedSnapshot, type DatabaseFeedSummary } from "../lib/feed-server";
+import { loadDatabaseFeedPage, type DatabaseFeedSummary } from "../lib/feed-server";
 import { loadDatabaseWatchlist } from "../lib/watchlist-server";
 import type { WatchlistArtistViewModel } from "../lib/watchlist-types";
 
@@ -29,13 +29,17 @@ export default async function HomePage({
   let feedMode: "database" | "error" | "mock" = "mock";
   let initialArtists: WatchlistArtistViewModel[] = [];
   let watchlistMode: "database" | "error" | "mock" = "mock";
-  if (e2eScanStatusMode) feedMode = "database";
+  if (e2eScanStatusMode) {
+    feedMode = "database";
+    initialItems = feedFixtures.filter((item) => item.state === "new");
+    initialFeedTotalCount = initialItems.length;
+  }
   if (configuration.databaseUrl && configuration.appEncryptionKey && !e2eMockMode) {
     try {
-      const snapshot = await loadDatabaseFeedSnapshot(
-        configuration.databaseUrl,
-        configuration.appEncryptionKey,
-      );
+      const snapshot = await loadDatabaseFeedPage(configuration.databaseUrl, {
+        filters: { sort: "release", state: "new" },
+        secret: configuration.appEncryptionKey,
+      });
       initialItems = snapshot.items;
       initialFeedRevision = snapshot.revision;
       initialFeedHasMore = snapshot.hasMore;

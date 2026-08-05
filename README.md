@@ -1,6 +1,6 @@
-# TS New Music Radar
+# TS New Music Scanner
 
-TS New Music Radar is a private, single-user Release Inbox for a provider-neutral artist watchlist. It discovers releases through Spotify, Apple Music, MusicBrainz, approved Reddit evidence, or deterministic mock fixtures; preserves source evidence; routes uncertain matches to review; and prepares exact or confirmed Spotify tracks for restricted export to one private playlist. It has no playback.
+TS New Music Scanner is a private, single-user Release Inbox for a provider-neutral artist watchlist. It discovers releases through Spotify, Apple Music, MusicBrainz, approved Reddit evidence, or deterministic mock fixtures; preserves source evidence; routes uncertain matches to review; and prepares exact or confirmed Spotify tracks for restricted export to one private playlist. It has no playback.
 
 ## Current Scope
 

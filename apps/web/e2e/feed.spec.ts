@@ -1,6 +1,21 @@
 import { expect, test } from "@playwright/test";
 import { feedFixtures } from "@radar/testing";
 
+test("opens the discovery feed on New and keeps All as the second tab", async ({ page }) => {
+  await page.goto("/#feed");
+
+  const tabs = page.getByRole("tablist", { name: "Feed state" }).getByRole("tab");
+  await expect(tabs.nth(0)).toHaveText("New");
+  await expect(tabs.nth(1)).toHaveText("All");
+  await expect(page.getByRole("tab", { name: "New" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("article")).toHaveCount(2);
+  await expect(page.getByRole("heading", { name: "Juniper Vale - Afterimage" })).toHaveCount(0);
+
+  await page.getByRole("tab", { name: "All" }).click();
+  await expect(page.getByRole("tab", { name: "All" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("article")).toHaveCount(4);
+});
+
 test("shows externally persisted discoveries without reloading the page", async ({ page }) => {
   let revision = "revision-1";
   let revisionChecks = 0;
@@ -138,7 +153,7 @@ test("loads another feed page and keeps unavailable evidence non-clickable", asy
   });
 
   await page.goto("/?e2e-scan-status=database#feed");
-  await page.getByRole("tab", { name: "New" }).click();
+  await page.getByRole("button", { name: "Refresh feed" }).click();
   await expect(page.getByRole("heading", { name: /First Paged Track/ })).toBeVisible();
   await expect(page.getByText("Evidence unavailable", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Evidence" })).toHaveCount(0);
@@ -647,6 +662,7 @@ test("loads MusicBrainz mapping reviews in bounded pages", async ({ page }) => {
   };
   const secondReview = {
     ...firstReview,
+    artistId: "40000000-0000-4000-8000-000000000002",
     artistName: "Older Review Artist",
     id: "50000000-0000-4000-8000-000000000002",
     name: "Older Candidate",
@@ -676,6 +692,7 @@ test("runs a mock scan, opens evidence, changes status, and filters the feed", a
   await page.clock.setFixedTime(new Date("2026-07-19T12:00:00-07:00"));
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Discovery feed" })).toBeVisible();
+  await page.getByRole("tab", { name: "All" }).click();
   await expect(page.getByRole("article")).toHaveCount(4);
   await expect(page.locator(".feed-item .state-new")).toHaveCount(0);
   await expect(page.getByText(/\d+% match/)).toHaveCount(0);
@@ -1232,7 +1249,7 @@ test("navigates every primary view and resolves manual review", async ({ page })
   );
   await expect(
     page.getByText(
-      "Spotify grants playlist permissions at the account scope level, not to one individual playlist. Release Inbox additionally restricts itself to the configured playlist ID.",
+      "Spotify grants playlist permissions at the account scope level, not to one individual playlist. TS New Music Scanner additionally restricts itself to the configured playlist ID.",
     ),
   ).toBeVisible();
   await page.getByLabel("Discovery digest").check();
