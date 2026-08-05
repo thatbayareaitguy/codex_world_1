@@ -34,7 +34,8 @@ export type SpotifyPlaylistWriteDenialCode =
   | "playlist_not_owned"
   | "playlist_not_private"
   | "playlist_collaborative"
-  | "track_id_malformed";
+  | "track_id_malformed"
+  | "playlist_addition_invalid";
 
 export class SpotifyPlaylistWriteDeniedError extends Error {
   constructor(

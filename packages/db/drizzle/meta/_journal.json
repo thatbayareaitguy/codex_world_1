@@ -127,6 +127,13 @@
       "when": 1785867919333,
       "tag": "0017_confused_whistler",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1785878470454,
+      "tag": "0018_romantic_omega_red",
+      "breakpoints": true
     }
   ]
 }

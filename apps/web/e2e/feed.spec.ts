@@ -1201,8 +1201,8 @@ test("navigates every primary view and resolves manual review", async ({ page })
   const navigation = page.getByRole("complementary", { name: "Primary navigation" });
 
   await expect(page.getByRole("heading", { name: "Playlist exports" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Playlist writes disabled" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Inspect configured playlist" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Run live add-only export" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Inspect configured playlist" })).toBeEnabled();
   await expect(page.getByLabel("Existing private Spotify playlist")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Create private playlist" })).toHaveCount(0);
 
@@ -1239,6 +1239,87 @@ test("navigates every primary view and resolves manual review", async ({ page })
 
   await navigation.getByRole("link", { name: /^Discovery feed/ }).click();
   await expect(page.getByRole("heading", { name: "Discovery feed" })).toBeVisible();
+});
+
+test("previews and runs the configured add-only Spotify export", async ({ page }) => {
+  const targetId = "1234567890123456789012";
+  let liveRequests = 0;
+
+  await page.route("**/api/spotify/playlists", async (route) => {
+    await route.fulfill({
+      json: {
+        allowedPlaylistConfigured: true,
+        playlist: { id: "1234...9012", name: "Release Inbox", private: true },
+        writesEnabled: true,
+      },
+    });
+  });
+  await page.route("**/api/spotify/playlist-sync", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        json: {
+          additions: [
+            {
+              position: 2,
+              providerTrackId: "spotify-track-1",
+              releaseDate: "2026-08-04",
+              releaseTitle: "Exact Release",
+              title: "Exact Track",
+            },
+          ],
+          skipCounts: { ambiguous_match: 1, dismissed: 1 },
+          target: {
+            id: targetId,
+            idAbbreviated: "1234...9012",
+            name: "Release Inbox",
+            private: true,
+          },
+          totals: {
+            additions: 1,
+            alreadyPresent: 3,
+            eligible: 4,
+            orderingConflicts: 0,
+            skipped: 2,
+          },
+        },
+      });
+      return;
+    }
+
+    liveRequests += 1;
+    expect(route.request().postData()).toBeNull();
+    await route.fulfill({
+      json: {
+        run: {
+          additionsAttempted: 1,
+          failed: 0,
+          pending: 0,
+          status: "completed",
+        },
+      },
+    });
+  });
+
+  await page.goto("/#exports");
+  await expect(page.getByText("Configured target 1234...9012")).toBeVisible();
+
+  await page.getByRole("button", { name: "Inspect configured playlist" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Owned and private" })).toContainText(
+    "Release Inbox",
+  );
+
+  await page.getByRole("button", { name: "Preview sync" }).click();
+  const preview = page.getByRole("status").filter({ hasText: "1 to add" });
+  await expect(preview).toContainText(targetId);
+  await expect(preview).toContainText("3 already present");
+  await expect(preview).toContainText("1 ambiguous match");
+  await expect(preview).toContainText("1 dismissed");
+
+  await page.getByRole("button", { name: "Run live add-only export" }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Spotify add-only export completed" }),
+  ).toContainText("1 additions attempted, 0 failed, 0 pending");
+  expect(liveRequests).toBe(1);
 });
 
 test("persists a manual review decision across feed refresh and page reload", async ({ page }) => {

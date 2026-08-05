@@ -56,12 +56,14 @@ Drizzle is used because it keeps the schema and SQL migrations explicit, has a s
 3. The scanner loads only confirmed mappings and invokes providers independently. Apple Music mapping candidates that are not confirmed remain in review and cannot scan automatically.
 4. Typed provider candidates are matched to canonical tracks independently from canonical releases.
 5. A transaction preserves provider IDs, source evidence, upcoming history, feed state, availability, match reasons, and the provenance-backed release-to-track appearance.
-6. Spotify playlist planning selects only exact or manually confirmed Spotify tracks and compares them with current playlist items. Writes default off. When explicitly enabled, route and client guards allow additions only to the server-configured owned private playlist and record them in the export ledger.
+6. Spotify playlist planning starts from the canonical database-backed feed, keeps followed-artist appearances, selects only exact or manually confirmed Spotify identities, deduplicates repeated recording appearances, and compares the ordered result with current playlist items. Writes default off. When explicitly enabled, route and client guards allow positional additions only to the server-configured owned private playlist.
 7. Reddit text is parsed locally, matched only against the canonical watchlist, and enters review unless exact canonical artist and title are corroborated by existing Spotify availability. Reddit content is never sent to AI.
 
 Spotify responses are never submitted to MusicBrainz. MusicBrainz mapping starts from canonical names, user aliases, and confirmed decisions. Canonical display data is provider-neutral; source-specific values remain in external-ID provider fields and evidence records. Apple and Spotify artwork remain separately namespaced and are rendered only when the matching provider supplies evidence for that canonical release appearance.
 
-The browser cannot supply or select a Spotify write target. `SPOTIFY_ALLOWED_PLAYLIST_ID` is the only target authority. Playlist creation, rename, visibility changes, artwork, follow, unfollow, removal, replacement, and reordering are outside the provider-client surface.
+The browser and CLI cannot supply or select a Spotify write target. `SPOTIFY_ALLOWED_PLAYLIST_ID` is the only target authority. Before every write boundary, the application verifies the returned playlist ID, connected owner, private state, and non-collaborative state. Playlist creation, rename, visibility changes, artwork, follow, unfollow, removal, replacement, and reordering are outside the provider-client surface.
+
+Playlist export uses `spotify_playlist_export_runs` and `spotify_playlist_export_operations` as a durable execution ledger. A run snapshots the exact target and planned counts; each add, already-present item, and skip is persisted separately. Provider readback reconciles writes that succeeded before a local interruption, and the unique export ledger prevents duplicate managed additions. New releases are planned first, album tracks remain contiguous in disc and track order, and user-added tracks keep their relative order. Existing order conflicts and provider-side duplicates are reported but are never repaired automatically because remove and reorder operations are prohibited.
 
 ## Resilience
 

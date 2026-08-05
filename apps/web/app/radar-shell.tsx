@@ -3281,9 +3281,22 @@ function ExportsView({
   const exportedCount = items.filter((item) => item.exportStatus === "exported").length;
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<{
-    alreadyPresent: string[];
-    rejected: unknown[];
-    toAdd: string[];
+    additions: Array<{
+      position: number;
+      providerTrackId: string;
+      releaseDate: string;
+      releaseTitle: string;
+      title: string;
+    }>;
+    skipCounts: Record<string, number>;
+    target: { id: string; idAbbreviated: string; name: string; private: boolean };
+    totals: {
+      additions: number;
+      alreadyPresent: number;
+      eligible: number;
+      orderingConflicts: number;
+      skipped: number;
+    };
   } | null>(null);
   const [inspectedPlaylist, setInspectedPlaylist] = useState<{
     id: string;
@@ -3307,10 +3320,31 @@ function ExportsView({
     try {
       const payload = z
         .object({
-          alreadyPresent: z.array(z.string()),
-          rejected: z.array(z.unknown()),
-          toAdd: z.array(z.string()),
+          additions: z.array(
+            z.object({
+              position: z.number().int().nonnegative(),
+              providerTrackId: z.string(),
+              releaseDate: z.string(),
+              releaseTitle: z.string(),
+              title: z.string(),
+            }),
+          ),
+          skipCounts: z.record(z.string(), z.number().int().nonnegative()),
+          target: z.object({
+            id: z.string(),
+            idAbbreviated: z.string(),
+            name: z.string(),
+            private: z.boolean(),
+          }),
+          totals: z.object({
+            additions: z.number().int().nonnegative(),
+            alreadyPresent: z.number().int().nonnegative(),
+            eligible: z.number().int().nonnegative(),
+            orderingConflicts: z.number().int().nonnegative(),
+            skipped: z.number().int().nonnegative(),
+          }),
         })
+        .passthrough()
         .parse(await playlistRequest("/api/spotify/playlist-sync", "GET"));
       setPreview(payload);
     } catch {
@@ -3321,10 +3355,19 @@ function ExportsView({
   const syncPlaylist = async () => {
     try {
       const payload = z
-        .object({ added: z.array(z.string()) })
+        .object({
+          run: z.object({
+            additionsAttempted: z.number().int().nonnegative(),
+            failed: z.number().int().nonnegative(),
+            pending: z.number().int().nonnegative(),
+            status: z.enum(["completed", "partial"]),
+          }),
+        })
         .passthrough()
         .parse(await playlistRequest("/api/spotify/playlist-sync", "POST"));
-      onNotice(`Spotify playlist synchronized. ${payload.added.length} tracks added.`);
+      onNotice(
+        `Spotify add-only export ${payload.run.status}. ${payload.run.additionsAttempted} additions attempted, ${payload.run.failed} failed, ${payload.run.pending} pending.`,
+      );
       await previewSync();
     } catch {
       onNotice("Unable to synchronize the Spotify playlist.");
@@ -3422,7 +3465,7 @@ function ExportsView({
             >
               <RefreshCw size={15} />
               {spotifyConfiguration.playlistWritesEnabled
-                ? "Add eligible tracks"
+                ? "Run live add-only export"
                 : "Playlist writes disabled"}
             </button>
           </div>
@@ -3435,9 +3478,17 @@ function ExportsView({
           )}
           {preview && (
             <div className="sync-preview" role="status">
-              <span>{preview.toAdd.length} to add</span>
-              <span>{preview.alreadyPresent.length} already present</span>
-              <span>{preview.rejected.length} blocked</span>
+              <span>{preview.target.name}</span>
+              <span>{preview.target.id}</span>
+              <span>{preview.totals.additions} to add</span>
+              <span>{preview.totals.alreadyPresent} already present</span>
+              <span>{preview.totals.skipped} skipped</span>
+              <span>{preview.totals.orderingConflicts} existing order conflicts</span>
+              {Object.entries(preview.skipCounts).map(([reason, count]) => (
+                <span key={reason}>
+                  {count} {reason.replaceAll("_", " ")}
+                </span>
+              ))}
             </div>
           )}
         </article>

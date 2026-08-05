@@ -5,6 +5,7 @@ import {
   assertOwnedPrivateSpotifyPlaylist,
   assertSpotifyPlaylistWriteTarget,
   assertSpotifyTrackIds,
+  SpotifyPlaylistWriteDeniedError,
   type SpotifyPlaylistWritePolicy,
 } from "./spotify-playlist-policy";
 
@@ -178,6 +179,11 @@ export type SpotifyTrack = z.infer<typeof trackSchema>;
 export type SpotifyTrackSummary = z.infer<typeof trackSummarySchema>;
 export type SpotifyTokenResponse = z.infer<typeof spotifyTokenSchema>;
 
+export interface SpotifyPlaylistItemSnapshot {
+  position: number;
+  trackId: string | null;
+}
+
 export interface SpotifyArtistAlbumsPage {
   items: SpotifyAlbumSummary[];
   nextOffset: number | null;
@@ -209,6 +215,8 @@ export class SpotifyHttpError extends Error {
     readonly retryAfter?: SpotifyRetryAfterEvidence,
     readonly endpointCategory?: string,
     readonly responseClassification?: string,
+    readonly providerReasonToken?: string,
+    readonly providerErrorClassification?: SpotifyProviderErrorClassification,
   ) {
     super(message);
     this.name = "SpotifyHttpError";
@@ -257,9 +265,18 @@ export interface Spotify429ResponseEvidence {
 }
 
 export interface SpotifyErrorResponseEvidence {
+  providerErrorClassification?: SpotifyProviderErrorClassification;
+  providerReasonToken?: string;
   rateLimit?: Spotify429ResponseEvidence;
   responseClassification: string;
 }
+
+export type SpotifyProviderErrorClassification =
+  | "forbidden"
+  | "insufficient_scope"
+  | "premium_required"
+  | "quota_exceeded"
+  | "restriction_violated";
 
 export interface SpotifyRequestGate {
   acquire(input: {
@@ -489,8 +506,8 @@ export class SpotifyClient {
     return this.request(`/playlists/${encodeURIComponent(id)}`, playlistSchema, { signal });
   }
 
-  async getPlaylistTrackIds(id: string, signal?: AbortSignal): Promise<Set<string>> {
-    const ids = new Set<string>();
+  async getPlaylistItems(id: string, signal?: AbortSignal): Promise<SpotifyPlaylistItemSnapshot[]> {
+    const items: SpotifyPlaylistItemSnapshot[] = [];
     let offset = 0;
     while (true) {
       const page = await this.request(
@@ -498,11 +515,21 @@ export class SpotifyClient {
         spotifyPlaylistItemsSchema,
         { signal },
       );
-      for (const entry of page.items) if (entry.item?.id) ids.add(entry.item.id);
+      for (const [index, entry] of page.items.entries()) {
+        items.push({ position: offset + index, trackId: entry.item?.id ?? null });
+      }
       if (!page.next || page.items.length === 0) break;
       offset += page.items.length;
     }
-    return ids;
+    return items;
+  }
+
+  async getPlaylistTrackIds(id: string, signal?: AbortSignal): Promise<Set<string>> {
+    return new Set(
+      (await this.getPlaylistItems(id, signal))
+        .map((item) => item.trackId)
+        .filter((trackId): trackId is string => trackId !== null),
+    );
   }
 
   async addPlaylistItems(id: string, trackIds: string[], signal?: AbortSignal): Promise<string[]> {
@@ -533,6 +560,48 @@ export class SpotifyClient {
       snapshots.push(response.snapshot_id);
     }
     return snapshots;
+  }
+
+  async addPlaylistItemsAtPosition(
+    id: string,
+    trackIds: string[],
+    position: number,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const targetPlaylistId = assertSpotifyPlaylistWriteTarget(this.playlistWritePolicy, id);
+    assertSpotifyTrackIds(trackIds);
+    if (trackIds.length < 1 || trackIds.length > 100) {
+      throw new SpotifyPlaylistWriteDeniedError(
+        "Spotify positional additions require from 1 to 100 tracks",
+        "playlist_addition_invalid",
+      );
+    }
+    if (!Number.isInteger(position) || position < 0) {
+      throw new Error("Spotify playlist insertion position must be a nonnegative integer.");
+    }
+    const [profile, playlist] = await Promise.all([
+      this.getCurrentUser(signal),
+      this.getPlaylist(targetPlaylistId, signal),
+    ]);
+    assertOwnedPrivateSpotifyPlaylist(playlist, profile);
+    log("info", "spotify.playlist_positional_addition_started", {
+      itemCount: trackIds.length,
+      playlistId: abbreviateSpotifyPlaylistId(targetPlaylistId),
+      position,
+    });
+    const response = await this.request(
+      `/playlists/${encodeURIComponent(targetPlaylistId)}/items`,
+      z.object({ snapshot_id: z.string() }),
+      {
+        body: {
+          position,
+          uris: trackIds.map((trackId) => `spotify:track:${trackId}`),
+        },
+        method: "POST",
+        signal,
+      },
+    );
+    return response.snapshot_id;
   }
 
   private async request<T>(
@@ -581,6 +650,8 @@ export class SpotifyClient {
 
         const errorResponse = response.ok ? undefined : await inspectSpotifyErrorResponse(response);
         const responseClassification = errorResponse?.responseClassification;
+        const providerReasonToken = errorResponse?.providerReasonToken;
+        const providerErrorClassification = errorResponse?.providerErrorClassification;
         const retryEvidence =
           response.status === 429
             ? parseSpotifyRetryAfter(response.headers.get("retry-after"), new Date())
@@ -588,6 +659,10 @@ export class SpotifyClient {
         if (permit && this.requestGate) {
           await this.requestGate.complete(permit, {
             status: response.status,
+            ...(providerErrorClassification
+              ? { errorClassification: providerErrorClassification }
+              : {}),
+            ...(providerReasonToken ? { providerReasonToken } : {}),
             ...(responseClassification ? { responseClassification } : {}),
             ...(retryEvidence
               ? {
@@ -602,9 +677,6 @@ export class SpotifyClient {
                     ? { rawRetryAfter: retryEvidence.rawValue }
                     : {}),
                   errorClassification: `rate_limited_${retryEvidence.interpretation}`,
-                  ...(errorResponse?.rateLimit?.providerReasonToken
-                    ? { providerReasonToken: errorResponse.rateLimit.providerReasonToken }
-                    : {}),
                   rateLimitClassification:
                     errorResponse?.rateLimit?.classification ?? "unspecified_429",
                 }
@@ -626,6 +698,8 @@ export class SpotifyClient {
             retryEvidence,
             endpointCategory,
             responseClassification,
+            providerReasonToken,
+            providerErrorClassification,
           );
         }
         return schema.parse(await response.json());
@@ -719,6 +793,7 @@ export class SpotifyOAuthClient {
       redirect_uri: this.redirectUri,
       response_type: "code",
       scope: spotifyAuthorizationScopes(this.playlistWritesEnabled).join(" "),
+      ...(this.playlistWritesEnabled ? { show_dialog: "true" } : {}),
       state,
     }).toString();
     return url.toString();
@@ -759,6 +834,8 @@ export class SpotifyOAuthClient {
       });
       const errorResponse = response.ok ? undefined : await inspectSpotifyErrorResponse(response);
       const responseClassification = errorResponse?.responseClassification;
+      const providerReasonToken = errorResponse?.providerReasonToken;
+      const providerErrorClassification = errorResponse?.providerErrorClassification;
       const retryEvidence =
         response.status === 429
           ? parseSpotifyRetryAfter(response.headers.get("retry-after"), new Date())
@@ -766,6 +843,10 @@ export class SpotifyOAuthClient {
       if (permit && this.requestGate) {
         await this.requestGate.complete(permit, {
           status: response.status,
+          ...(providerErrorClassification
+            ? { errorClassification: providerErrorClassification }
+            : {}),
+          ...(providerReasonToken ? { providerReasonToken } : {}),
           ...(responseClassification ? { responseClassification } : {}),
           ...(retryEvidence
             ? {
@@ -780,9 +861,6 @@ export class SpotifyOAuthClient {
                   ? { rawRetryAfter: retryEvidence.rawValue }
                   : {}),
                 errorClassification: `rate_limited_${retryEvidence.interpretation}`,
-                ...(errorResponse?.rateLimit?.providerReasonToken
-                  ? { providerReasonToken: errorResponse.rateLimit.providerReasonToken }
-                  : {}),
                 rateLimitClassification:
                   errorResponse?.rateLimit?.classification ?? "unspecified_429",
               }
@@ -797,6 +875,8 @@ export class SpotifyOAuthClient {
           retryEvidence,
           "oauth_token",
           responseClassification,
+          providerReasonToken,
+          providerErrorClassification,
         );
       }
       return spotifyTokenSchema.parse(await response.json());
@@ -898,10 +978,42 @@ export async function inspectSpotifyErrorResponse(
     };
   }
   const parsed = parseSpotifyErrorBody(body.value);
+  const providerReasonToken = extractSpotifyProviderReasonToken(parsed.value);
+  const providerErrorClassification = classifySpotifyProviderError(parsed.value);
   return {
+    ...(providerErrorClassification ? { providerErrorClassification } : {}),
+    ...(providerReasonToken ? { providerReasonToken } : {}),
     ...(response.status === 429 ? { rateLimit: classifySpotify429Reason(parsed.value) } : {}),
     responseClassification: parsed.classification,
   };
+}
+
+function classifySpotifyProviderError(
+  body: unknown,
+): SpotifyProviderErrorClassification | undefined {
+  if (!isRecord(body) || !isRecord(body.error)) return undefined;
+  if (body.error.reason === "QUOTA_EXCEEDED") return "quota_exceeded";
+  if (typeof body.error.message !== "string") return undefined;
+  const message = body.error.message.trim().toLowerCase();
+  if (message === "insufficient client scope" || message === "insufficient client scope.") {
+    return "insufficient_scope";
+  }
+  if (message === "quota exceeded" || message === "quota exceeded.") return "quota_exceeded";
+  if (message === "premium required" || message === "premium required.") {
+    return "premium_required";
+  }
+  if (message === "restriction violated" || message === "restriction violated.") {
+    return "restriction_violated";
+  }
+  if (message === "forbidden" || message === "forbidden.") return "forbidden";
+  return undefined;
+}
+
+function extractSpotifyProviderReasonToken(body: unknown): string | undefined {
+  if (!isRecord(body) || !isRecord(body.error) || typeof body.error.reason !== "string") {
+    return undefined;
+  }
+  return spotifyReasonTokenPattern.test(body.error.reason) ? body.error.reason : undefined;
 }
 
 function parseSpotifyErrorBody(body: string): {

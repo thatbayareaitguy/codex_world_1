@@ -19,6 +19,8 @@ export default defineConfig({
       SPOTIFY_CLIENT_ID: "e2e-client-id",
       SPOTIFY_CLIENT_SECRET: "e2e-client-secret",
       SPOTIFY_ENABLED: "true",
+      SPOTIFY_ALLOWED_PLAYLIST_ID: "1234567890123456789012",
+      SPOTIFY_PLAYLIST_WRITES_ENABLED: "true",
       SPOTIFY_REDIRECT_URI: "http://127.0.0.1:3100/api/auth/spotify/callback",
     },
     url: "http://127.0.0.1:3100",

@@ -188,6 +188,18 @@ export const exportStatusEnum = pgEnum("export_status", [
   "skipped",
   "failed",
 ]);
+export const spotifyPlaylistExportRunStatusEnum = pgEnum("spotify_playlist_export_run_status", [
+  "planned",
+  "running",
+  "partial",
+  "completed",
+  "failed",
+]);
+export const spotifyPlaylistExportActionEnum = pgEnum("spotify_playlist_export_action", [
+  "add",
+  "already_present",
+  "skip",
+]);
 export const externalLinkTypeEnum = pgEnum("external_link_type", ["artist_profile", "track"]);
 export const externalLinkStateEnum = pgEnum("external_link_state", [
   "NOT_CHECKED",
@@ -1604,6 +1616,71 @@ export const playlistExports = pgTable(
       table.providerTrackId,
     ),
     index("playlist_export_track_status_idx").on(table.trackId, table.status),
+  ],
+);
+
+export const spotifyPlaylistExportRuns = pgTable(
+  "spotify_playlist_export_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    playlistTargetId: uuid("playlist_target_id")
+      .notNull()
+      .references(() => playlistTargets.id, { onDelete: "cascade" }),
+    mode: text("mode").notNull().default("live"),
+    status: spotifyPlaylistExportRunStatusEnum("status").notNull().default("planned"),
+    targetPlaylistId: text("target_playlist_id").notNull(),
+    playlistName: text("playlist_name").notNull(),
+    snapshotBefore: text("snapshot_before"),
+    snapshotAfter: text("snapshot_after"),
+    eligibleCount: integer("eligible_count").notNull().default(0),
+    additionCount: integer("addition_count").notNull().default(0),
+    alreadyPresentCount: integer("already_present_count").notNull().default(0),
+    skippedCount: integer("skipped_count").notNull().default(0),
+    failedCount: integer("failed_count").notNull().default(0),
+    orderingConflictCount: integer("ordering_conflict_count").notNull().default(0),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    errorCode: text("error_code"),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    index("spotify_playlist_export_runs_target_status_idx").on(
+      table.playlistTargetId,
+      table.status,
+      table.updatedAt,
+    ),
+  ],
+);
+
+export const spotifyPlaylistExportOperations = pgTable(
+  "spotify_playlist_export_operations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => spotifyPlaylistExportRuns.id, { onDelete: "cascade" }),
+    feedItemId: uuid("feed_item_id").references(() => feedItems.id, { onDelete: "set null" }),
+    trackId: uuid("track_id").references(() => tracks.id, { onDelete: "set null" }),
+    providerTrackId: text("provider_track_id"),
+    action: spotifyPlaylistExportActionEnum("action").notNull(),
+    status: exportStatusEnum("status").notNull().default("pending"),
+    desiredOrdinal: integer("desired_ordinal"),
+    insertPosition: integer("insert_position"),
+    reason: text("reason").notNull(),
+    errorCode: text("error_code"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("spotify_playlist_export_operation_feed_unique").on(table.runId, table.feedItemId),
+    index("spotify_playlist_export_operation_status_idx").on(
+      table.runId,
+      table.status,
+      table.desiredOrdinal,
+    ),
   ],
 );
 

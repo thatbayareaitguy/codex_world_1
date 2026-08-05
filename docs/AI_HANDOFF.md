@@ -1,126 +1,122 @@
 # AI Handoff
 
-Updated: 2026-08-04 13:57 PDT (UTC-07:00)
+Updated: 2026-08-04 21:25 PDT (UTC-07:00)
 
-This is the canonical implementation and operational snapshot. It excludes credentials, tokens,
+This is the canonical repository and operational snapshot. It excludes credentials, tokens,
 private keys, personal provider data, authorization headers, and raw provider payloads.
 
 ## Repository State
 
 - Branch: `codex/release-radar-hardening`.
-- Latest implementation commit: `e8ecbd237b3ed661953020f1f7239bf644584c28`,
-  `feat: integrate Apple Music discovery`.
-- HEAD matches `origin/codex/release-radar-hardening`. The worktree contains the verified Apple
-  prerelease-placeholder and upcoming-state correction listed below; it is not committed.
-- Current milestone: production Apple Music public-catalog discovery is complete. Prerelease
-  semantics have been corrected and verified locally.
-- Source-only Apple worktree `codex_world_1_apple` and the iTunes worktree remain unchanged.
+- Local HEAD: the checkpoint commit `feat: add guarded Spotify playlist export`. Its parent and
+  pre-push upstream were `005e51ead1b3b9b4c3d8d1a6df258a34ad608db9`,
+  `fix: handle Apple Music prerelease placeholders`.
+- Worktree: clean after the checkpoint. No secret, local configuration, log, dump, backup,
+  screenshot, trace, or temporary artifact is included.
+- Current milestone: production Spotify add-only export to one configured owned private playlist;
+  implementation is complete, but Spotify rejects the documented write request after clean OAuth.
 
 ## Architecture And Database
 
-- TypeScript pnpm monorepo: Next.js web/API, short-lived Node scanner, provider-neutral core,
-  Drizzle/PostgreSQL repositories, runtime-validated providers, Vitest, and Playwright.
-- PostgreSQL is authoritative for canonical identity, evidence, feed, reviews, scans, request gates,
-  cooldowns, batches, and provider cursors.
-- Production has 18 applied forward migrations. Migration `0017_confused_whistler.sql` adds Apple
-  request state, response cache, scan batches, artist scans, artist state, request events, and
-  candidate-free mapping reviews.
-- A verified PostgreSQL custom-format backup was created before migration at
-  `%LOCALAPPDATA%\TSNewMusicRadar\backups\ts-new-music-radar-2026-08-04T18-50-33-713Z.dump`.
-  `pg_restore --list` reported 397 archive entries from PostgreSQL 17.10.
-- A second verified custom-format backup was created before the prerelease data correction at
-  `%LOCALAPPDATA%\TSNewMusicRadar\backups\ts-new-music-radar-2026-08-04T20-50-12-848Z.dump`.
-  `pg_restore --list` reported 429 archive entries from PostgreSQL 17.10.
-- Spotify, Apple Music, and MusicBrainz use separate PostgreSQL-backed global request gates.
-  Playlist writes remain disabled.
+- TypeScript pnpm monorepo: Next.js web/API, Node scanner and CLI, provider-neutral core,
+  Drizzle/PostgreSQL persistence, Zod-validated provider clients, Vitest, and Playwright.
+- PostgreSQL is authoritative for canonical releases, tracks, appearances, evidence, feed state,
+  review decisions, request gates, cooldowns, and export state.
+- Production has 19 applied forward migrations. Migration `0018_romantic_omega_red.sql` adds
+  durable Spotify playlist-export runs and per-item operations.
+- A pre-migration PostgreSQL custom-format backup was created outside source control on
+  2026-08-04 at 14:39 PDT and verified with 440 archive entries.
+- Spotify playlist writes still default to disabled. The ignored local `.env` is temporarily
+  configured to enable writes only to the approved target; no credential or local configuration
+  file is part of the repository change.
 
 ## Verified
 
-- Apple normal command: `pnpm scan -- --provider apple_music`.
-- Secure ES256 developer-token generation, strict catalog endpoint allowlist, bounded payloads,
-  timeouts, retry and cooldown handling, response cache, and safe request telemetry.
-- Identity bootstrap preserved 320 confirmed mappings. The review queue contains 1,341 pending
-  candidate rows for 273 unresolved artists, including one candidate-free manual numeric-ID case.
-- Candidate confirmation, replacement, sibling-review resolution, candidate-free validation,
-  reload persistence, and accessible review controls are covered by database and Playwright tests.
-- Shallow first-page `singles` and `full-albums` discovery uses a 30-day or last-success window and
-  fetches tracks only for eligible releases. Optional missing views and invalid release records are
-  isolated. A direct artist lookup distinguishes a valid empty catalog from an invalid mapping.
-- Live canary: YUSSI completed twice without duplicates. Apple evidence and artwork attached to the
-  existing canonical Spotify-backed `Hold On` feed appearance.
-- Full live batch: 320 of 320 mapped artists completed, zero artist failures, 209 legitimate
-  no-result artists, 829 real requests, 50 cache hits, minimum real request interval 1102 ms, zero
-  429 responses, and no cooldown.
-- Production Apple totals: 130 release external IDs, 239 track external IDs, 267 candidates, 267
-  evidence rows, 239 appearance sources, 130 artwork rows, 40 new canonical releases, 61 new
-  canonical tracks, and 239 canonical feed items with Apple evidence.
-- Release mix: 95 singles, 12 EPs, five albums, four remixes, and 14 credited features.
-- Apple album completeness is now preserved. Exact `Track N` placeholders are suppressed only for
-  incomplete or future prereleases, named prerelease songs remain discoverable, and future songs
-  are persisted as Upcoming. Group headers use the canonical album date and label future dates as
-  Expected.
-- Production correction for Apple release `6770600098` was transaction-guarded: 11 isolated
-  placeholder candidates, appearances, and tracks were removed; two named future songs were
-  changed from New to Upcoming; one upcoming album announcement was recorded. The existing April
-  song remains New. The feed now shows three named tracks and `Expected 09/25/2026`.
-- Matching: 174 exact barcode and position matches, four strict metadata matches, 61 new canonical
-  tracks, and 28 manual-review candidates. Duplicate checks are zero across provider IDs,
-  candidates, evidence, appearances, and feed dedupe keys.
-- No incomplete Apple request events, unfinished artist rows, active batches, leases, queue entries,
-  cooldowns, or stale locks remain.
-- Final verification passed: formatting, lint, strict type checking, production build, 352 unit
-  tests in 45 files, 91 PostgreSQL integration tests in 16 files, and 25 Playwright tests.
-- `pnpm doctor` reports READY with 18 migrations, 834 persisted Apple requests, no Apple lease or
-  cooldown, and no stale locks. `git diff --check` and the secret/artifact audit are clean.
-- A live local browser smoke test against the migrated production database showed Apple artwork,
-  evidence links, provider-neutral matches, candidate reviews, and the candidate-free numeric-ID
-  workflow with no browser console errors.
+- Canonical-feed export planner preserves followed-artist eligibility, exact or manually confirmed
+  matching, remix and appearance records, deterministic newest-first release order, contiguous disc
+  and track order, and relative order of user-added playlist items.
+- Every browser and CLI live path derives its target only from `SPOTIFY_ALLOWED_PLAYLIST_ID`.
+  Route, service, and provider-client guards reject disabled writes, malformed targets, target
+  mismatch, missing write scope, wrong owner, public playlists, and collaborative playlists before
+  addition.
+- Only add-only playlist operations are implemented. Playlist create, select, rename, visibility change,
+  artwork upload, follow, unfollow, remove, replace, reorder, and deletion remain unavailable.
+- Dry run is read-only and reports the exact target, additions, skips and reasons, existing items,
+  duplicates, and order conflicts. Live mode has a canary limit and a durable per-track ledger.
+- Restart reconciliation reads the playlist before retrying, records provider-success/local-crash
+  cases without duplicate writes, continues after isolated item errors, and stops on policy,
+  authentication, 401, 403, or 429 failures.
+- Live read-only target verification and dry run succeeded against the approved target: 808 eligible
+  additions, 115 skips, 65 duplicate recording appearances, 50 missing Spotify matches, zero
+  existing duplicates, and zero order conflicts.
+- Final credential-free verification passes: formatting, lint, strict type checking, production
+  build, 368 unit tests in 46 files, 95 PostgreSQL integration tests in 17 files, and 26 Playwright
+  tests. One parallel Playwright timing failure passed in isolation and the complete 26-test suite
+  then passed on rerun.
+- The migration verifier completed successfully and `pnpm doctor` reports READY with 19 migrations,
+  no stale lock, and no Spotify cooldown.
+- The client retains only bounded provider reason tokens and allowlisted error categories; raw
+  Spotify error messages and payloads remain discarded.
+- A completely clean OAuth authorization completed at 2026-08-04 21:07 PDT after the prior access
+  and refresh tokens were retired. The authorization URL used the configured Client ID and exact
+  callback, requested `user-follow-read`, `playlist-read-private`, and
+  `playlist-modify-private`, and set `show_dialog=true`. The callback stored the newly issued access
+  and refresh tokens through the encrypted account repository.
+- A one-track direct canary outside export orchestration used one in-memory access token for
+  `GET /me`, `GET /playlists/{id}`, and `POST /playlists/{id}/items`. The two reads returned 200,
+  `/me.id` matched `playlist.owner.id`, and the playlist was private and non-collaborative. The POST
+  still returned 403 with the allowlisted classification `insufficient_scope`. The token fingerprint
+  was identical across all three calls; Spotify returned no request-ID or `WWW-Authenticate` header.
+- The direct append body contained one already-selected pending Spotify URI and omitted `position`.
+  This rules out the exporter's optional positional field as the source of the rejection. Readback
+  and the durable ledger still show zero additions.
 
 ## Implemented But Not Live-Verified
 
-- Apple settings and system-status projections, scan history, feed source filtering, and on-demand
-  scan routing are covered by automated tests. The on-demand route was not invoked live because the
-  routine production environment intentionally remains Apple-disabled and the completed live scan
-  required no additional provider requests.
-- Routine unattended Apple scheduling is not implemented.
+- The complete export, post-export order audit, and second-run idempotency check remain blocked.
+- The three-item exporter canary and the post-reauthorization one-item direct canary were attempted
+  with positional and append request shapes. Spotify returned HTTP 403 `insufficient_scope` every
+  time. Playlist readback and the application ledger both confirm that zero tracks were added.
+- The partial export run remains durable and resumable: 808 add operations are pending, 115 skip
+  operations are recorded, and the application-owned export ledger is empty.
 
 ## Provider And Policy State
 
-- Apple Music is enabled only when server-side credentials are supplied. Production `.env` was not
-  modified. The active Apple Developer Program membership is an explicitly approved paid exception.
-- Apple scope is public catalog only. No Music User Token, subscriber library, recommendations,
-  favorites, playback, playlist access, or mutation exists.
-- Apple publishes no numeric request limit in the cited official documentation. The verified local
-  policy remains one request at a time and at least 1100 ms between starts.
-- Spotify has no active cooldown. Its unpublished Development Mode quota remains a risk. Playlist
-  writes remain disabled.
-- Reddit remains blocked pending explicit Data API approval. SoundCloud automation, YouTube, and
-  TIDAL remain excluded or deferred.
-- Spotify's broad cross-service policy language remains unresolved. Provider data and artwork stay
-  namespaced, no provider payload is sent to another provider, and no playback or mixed queue exists.
+- Spotify has no active cooldown. Development Mode quota remains unpublished and all token and Web
+  API requests use the PostgreSQL-backed ten-second global request gate.
+- Official Spotify documentation rechecked on 2026-08-04 still identifies
+  `playlist-modify-private` as the correct scope and `POST /playlists/{id}/items` with a JSON `uris`
+  array as the correct request for an owned private playlist. The provider response contradicts the
+  fresh token's returned scope list and the verified target identity.
+- Spotify playlist permission is account-wide. Application allowlisting narrows behavior to one
+  target but does not narrow the OAuth grant itself. Spotify's broad cross-service policy language
+  remains unresolved.
+- Apple Music public catalog and MusicBrainz remain independent. Reddit remains approval-gated.
+  SoundCloud automation, YouTube, and TIDAL remain excluded or deferred.
 
 ## Known Risks
 
-- Catalog completeness is bounded by confirmed mappings, the configured Apple storefront, first
-  view pages, and the 30-day or last-success window. It is not guaranteed.
-- Apple may expose unnamed prerelease track slots. The provider now suppresses exact `Track N`
-  placeholders, but differently named placeholders would still require a new verified rule.
-- 273 watchlist artists still require manual Apple mapping decisions.
-- Apple catalog views may legitimately return 404 for absent optional views. The provider now
-  verifies the artist when both required discovery views are absent.
-- Credentials currently live outside the production worktree and must be configured through a
-  secure server environment for routine application use.
+- Live addition is blocked by Spotify HTTP 403 `insufficient_scope` despite a freshly authorized
+  token that reports the documented private-playlist scope. The exact app, Premium owner or
+  allowlisted user, callback, and playlist owner were verified in Spotify Developer Dashboard. The
+  remaining restriction is provider-side and is not exposed by Spotify's response or documentation.
+- Existing playlist order conflicts can only be reported, not repaired, because automatic reorder
+  is prohibited.
+- Records without a confirmed Spotify track are skipped and reconsidered by later exports after the
+  matching or review workflow resolves them.
 
 ## Immediate Next Step
 
-Review and commit the verified Apple prerelease correction, then resolve the highest-priority
-pending artist mappings before designing a bounded unattended Apple schedule and deeper catalog
-reconciliation.
+Checkpoint the complete guarded exporter. Do not issue another playlist write until Spotify support
+or a documented platform change explains why a freshly consented Development Mode user token with
+`playlist-modify-private` receives `Insufficient client scope` on the documented endpoint. When that
+external blocker is resolved, resume the existing 808-operation run with the three-item canary; do
+not recreate the run or select another playlist.
 
 ## Deferred
 
-- Apple user authorization, personal library import, recommendations, playback, favorites, and
-  playlist writes.
-- Deep Apple catalog pagination, full historical reconciliation, and automatic Apple scheduling.
-- Reddit live access, SoundCloud automation, YouTube, TIDAL, multi-user deployment, and commercial
-  operation.
+- Any second playlist target or playlist picker.
+- Playlist creation, deletion, rename, visibility changes, artwork, follow/unfollow, removal,
+  replacement, reordering, or automatic cleanup of user-added items.
+- Combined playback, mixed-provider queues, SoundCloud automation, Reddit live access, YouTube,
+  TIDAL, multi-user deployment, and commercial operation.

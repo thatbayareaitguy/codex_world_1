@@ -74,6 +74,8 @@ describe("Spotify 429 response evidence", () => {
         ),
       ),
     ).resolves.toEqual({
+      providerErrorClassification: "quota_exceeded",
+      providerReasonToken: "QUOTA_EXCEEDED",
       rateLimit: {
         classification: "quota_exceeded",
         providerReasonToken: "QUOTA_EXCEEDED",
@@ -105,6 +107,7 @@ describe("Spotify 429 response evidence", () => {
     await expect(
       inspectSpotifyErrorResponse(jsonResponse({ error: { reason: "NEW_LIMIT_REASON_2" } }, 429)),
     ).resolves.toMatchObject({
+      providerReasonToken: "NEW_LIMIT_REASON_2",
       rateLimit: {
         classification: "unknown_reason",
         providerReasonToken: "NEW_LIMIT_REASON_2",
@@ -155,9 +158,36 @@ describe("Spotify 429 response evidence", () => {
     });
   });
 
-  it("does not attach a rate-limit classification to non-429 errors", async () => {
+  it("retains a safe reason token without misclassifying a non-429 response", async () => {
     await expect(
       inspectSpotifyErrorResponse(jsonResponse({ error: { reason: "QUOTA_EXCEEDED" } }, 403)),
+    ).resolves.toEqual({
+      providerErrorClassification: "quota_exceeded",
+      providerReasonToken: "QUOTA_EXCEEDED",
+      responseClassification: "json_error",
+    });
+  });
+
+  it.each([
+    ["Insufficient client scope", "insufficient_scope"],
+    ["Quota exceeded", "quota_exceeded"],
+    ["Premium required", "premium_required"],
+    ["Restriction violated", "restriction_violated"],
+    ["Forbidden.", "forbidden"],
+  ])("classifies a known safe provider message without retaining it", async (message, expected) => {
+    await expect(
+      inspectSpotifyErrorResponse(jsonResponse({ error: { message } }, 403)),
+    ).resolves.toEqual({
+      providerErrorClassification: expected,
+      responseClassification: "json_error",
+    });
+  });
+
+  it("does not retain unsafe reason text from a non-429 response", async () => {
+    await expect(
+      inspectSpotifyErrorResponse(
+        jsonResponse({ error: { reason: "unsafe account-specific reason" } }, 403),
+      ),
     ).resolves.toEqual({ responseClassification: "json_error" });
   });
 });
@@ -434,6 +464,19 @@ describe("SpotifyClient", () => {
     });
     await expect(permanent.getArtist("artist-1")).rejects.toBeInstanceOf(SpotifyHttpError);
     expect(permanentFetch).toHaveBeenCalledOnce();
+
+    const classifiedFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse({ error: { reason: "QUOTA_EXCEEDED" } }, 403));
+    const classified = new SpotifyClient({
+      accessToken: () => Promise.resolve("token"),
+      fetcher: classifiedFetch,
+    });
+    await expect(classified.getArtist("artist-1")).rejects.toMatchObject({
+      providerErrorClassification: "quota_exceeded",
+      providerReasonToken: "QUOTA_EXCEEDED",
+      status: 403,
+    });
   });
 
   it("rejects playlist additions before any request when writes are disabled", async () => {
@@ -492,6 +535,60 @@ describe("SpotifyClient", () => {
     expect(fetcher.mock.calls[2]?.[0]).toEqual(
       expect.stringContaining("/playlists/1234567890123456789012/items"),
     );
+  });
+
+  it("adds one bounded ordered batch at the configured position", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(profile))
+      .mockResolvedValueOnce(jsonResponse(playlist()))
+      .mockResolvedValueOnce(jsonResponse({ snapshot_id: "positioned" }, 201));
+    const client = new SpotifyClient({
+      accessToken: () => Promise.resolve("token"),
+      fetcher,
+      playlistWritePolicy: {
+        allowedPlaylistId: "1234567890123456789012",
+        enabled: true,
+      },
+    });
+
+    await expect(
+      client.addPlaylistItemsAtPosition(
+        "1234567890123456789012",
+        ["0000000000000000000001", "0000000000000000000002"],
+        7,
+      ),
+    ).resolves.toBe("positioned");
+    const request = fetcher.mock.calls[2]?.[1];
+    expect(request?.method).toBe("POST");
+    expect(typeof request?.body).toBe("string");
+    expect(JSON.parse(request?.body as string)).toEqual({
+      position: 7,
+      uris: ["spotify:track:0000000000000000000001", "spotify:track:0000000000000000000002"],
+    });
+  });
+
+  it("rejects positional additions before any request when the target or batch is invalid", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const client = new SpotifyClient({
+      accessToken: () => Promise.resolve("token"),
+      fetcher,
+      playlistWritePolicy: {
+        allowedPlaylistId: "1234567890123456789012",
+        enabled: true,
+      },
+    });
+
+    await expect(
+      client.addPlaylistItemsAtPosition("abcdefghijklmnopqrstuv", ["0000000000000000000001"], 0),
+    ).rejects.toMatchObject({ code: "playlist_id_mismatch" });
+    await expect(
+      client.addPlaylistItemsAtPosition("1234567890123456789012", [], 0),
+    ).rejects.toMatchObject({ code: "playlist_addition_invalid" });
+    await expect(
+      client.addPlaylistItemsAtPosition("1234567890123456789012", ["0000000000000000000001"], -1),
+    ).rejects.toThrow("nonnegative integer");
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -563,9 +660,27 @@ describe("SpotifyOAuthClient", () => {
       "playlist-read-private",
     ]);
     expect(authorization.searchParams.get("scope")).not.toContain("playlist-modify");
+    expect(authorization.searchParams.has("show_dialog")).toBe(false);
     await expect(client.refresh("refresh")).resolves.toMatchObject({
       refresh_token: "rotated-refresh",
     });
+  });
+
+  it("forces renewed consent when private playlist additions are enabled", () => {
+    const client = new SpotifyOAuthClient({
+      clientId: "client",
+      clientSecret: "secret",
+      playlistWritesEnabled: true,
+      redirectUri: "http://127.0.0.1:3000/api/auth/spotify/callback",
+    });
+    const authorization = new URL(client.authorizationUrl("state", "challenge"));
+
+    expect(authorization.searchParams.get("scope")?.split(" ")).toEqual([
+      "user-follow-read",
+      "playlist-read-private",
+      "playlist-modify-private",
+    ]);
+    expect(authorization.searchParams.get("show_dialog")).toBe("true");
   });
 });
 

@@ -1,17 +1,10 @@
 import {
-  manualMatchDecisions,
-  playlistExports,
-  playlistTargets,
-  releaseCandidates,
-  trackAvailabilities,
+  executeSpotifyPlaylistExport,
+  previewSpotifyPlaylistExport,
+  SpotifyPlaylistExportError,
+  type SpotifyPlaylistExportPreview,
 } from "@radar/db";
-import {
-  assertOwnedPrivateSpotifyPlaylist,
-  loadProviderConfiguration,
-  planSpotifyPlaylistSync,
-  SpotifyPlaylistWriteDeniedError,
-} from "@radar/providers";
-import { and, eq } from "drizzle-orm";
+import { loadProviderConfiguration, SpotifyPlaylistWriteDeniedError } from "@radar/providers";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { assertSameOrigin, enforceRateLimit } from "../../../../lib/request-security";
@@ -23,42 +16,6 @@ import {
 } from "../../../../lib/spotify-playlist-security";
 import { createSpotifyServerContext } from "../../../../lib/spotify-server";
 
-async function loadSyncData(
-  context: Awaited<ReturnType<typeof createSpotifyServerContext>>,
-  playlistId: string,
-) {
-  const rows = await context.db
-    .select({
-      candidateId: releaseCandidates.id,
-      confidence: releaseCandidates.matchConfidence,
-      matchRule: releaseCandidates.matchRule,
-      providerTrackId: trackAvailabilities.providerTrackId,
-      providerUrl: trackAvailabilities.providerUrl,
-      trackId: trackAvailabilities.trackId,
-    })
-    .from(releaseCandidates)
-    .innerJoin(
-      trackAvailabilities,
-      and(
-        eq(releaseCandidates.matchedTrackId, trackAvailabilities.trackId),
-        eq(trackAvailabilities.provider, "spotify"),
-      ),
-    )
-    .where(eq(releaseCandidates.provider, "spotify"));
-  const decisions = await context.db.select().from(manualMatchDecisions);
-  const items = rows.map((row) => ({
-    confidence: Number(row.confidence),
-    manuallyConfirmed: decisions.some(
-      (decision) => decision.candidateId === row.candidateId && decision.decision === "confirm",
-    ),
-    matchRule: row.matchRule,
-    providerTrackId: row.providerTrackId,
-    providerUrl: row.providerUrl,
-  }));
-  const existing = await context.client.getPlaylistTrackIds(playlistId);
-  return { existing, items, rows };
-}
-
 export async function GET(): Promise<NextResponse> {
   try {
     const configuration = loadProviderConfiguration();
@@ -66,16 +23,13 @@ export async function GET(): Promise<NextResponse> {
     if (!playlistId) throw new Error("Spotify playlist is not configured");
     const context = await createSpotifyServerContext();
     try {
-      const [profile, playlist] = await Promise.all([
-        context.client.getCurrentUser(),
-        context.client.getPlaylist(playlistId),
-      ]);
-      assertOwnedPrivateSpotifyPlaylist(playlist, profile);
-      const data = await loadSyncData(context, playlistId);
-      return NextResponse.json({
-        playlistName: playlist.name,
-        ...planSpotifyPlaylistSync(data.items, data.existing),
-      });
+      const preview = await previewSpotifyPlaylistExport(
+        context.db,
+        context.userId,
+        context.client,
+        playlistId,
+      );
+      return NextResponse.json(toResponse(preview));
     } finally {
       await context.close();
     }
@@ -96,66 +50,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const playlistId = requireSpotifyPlaylistWriteRoute(configuration);
     const context = await createSpotifyServerContext();
     try {
-      const [profile, playlist] = await Promise.all([
-        context.client.getCurrentUser(),
-        context.client.getPlaylist(playlistId),
-      ]);
-      assertOwnedPrivateSpotifyPlaylist(playlist, profile);
-      const data = await loadSyncData(context, playlistId);
-      const plan = planSpotifyPlaylistSync(data.items, data.existing);
-      const [target] = await context.db
-        .insert(playlistTargets)
-        .values({
-          autoAddExactMatches: false,
-          enabled: true,
-          name: playlist.name,
-          provider: "spotify",
-          providerPlaylistId: playlistId,
-          userId: context.userId,
-        })
-        .onConflictDoUpdate({
-          target: [playlistTargets.userId, playlistTargets.provider],
-          set: {
-            autoAddExactMatches: false,
-            enabled: true,
-            name: playlist.name,
-            providerPlaylistId: playlistId,
-            updatedAt: new Date(),
+      const result = await executeSpotifyPlaylistExport(
+        context.db,
+        context.userId,
+        context.client,
+        {
+          playlistId,
+          policy: {
+            allowedPlaylistId: playlistId,
+            enabled: configuration.spotify.playlistWritesEnabled,
           },
-        })
-        .returning();
-      if (!target) throw new Error("Spotify playlist export ledger target could not be stored");
-      const snapshots = await context.client.addPlaylistItems(playlistId, plan.toAdd);
-      for (const providerTrackId of plan.toAdd) {
-        const row = data.rows.find((candidate) => candidate.providerTrackId === providerTrackId);
-        if (!row) continue;
-        await context.db
-          .insert(playlistExports)
-          .values({
-            exportedAt: new Date(),
-            playlistTargetId: target.id,
-            providerTrackId,
-            status: "exported",
-            trackId: row.trackId,
-          })
-          .onConflictDoUpdate({
-            target: [playlistExports.playlistTargetId, playlistExports.providerTrackId],
-            set: { exportedAt: new Date(), status: "exported", updatedAt: new Date() },
-          });
-      }
-      await context.db
-        .update(playlistTargets)
-        .set({
-          lastSyncedAt: new Date(),
-          ...(snapshots.at(-1) ? { snapshotId: snapshots.at(-1) } : {}),
-          updatedAt: new Date(),
-        })
-        .where(eq(playlistTargets.id, target.id));
-      return NextResponse.json({
-        added: plan.toAdd,
-        alreadyPresent: plan.alreadyPresent,
-        rejected: plan.rejected,
-      });
+        },
+      );
+      return NextResponse.json({ ...toResponse(result), run: result.run });
     } finally {
       await context.close();
     }
@@ -163,9 +70,52 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (error instanceof SpotifyPlaylistRequestBodyError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
-    if (error instanceof SpotifyPlaylistWriteDeniedError) {
+    if (
+      error instanceof SpotifyPlaylistWriteDeniedError ||
+      error instanceof SpotifyPlaylistExportError
+    ) {
       return NextResponse.json({ error: error.message }, { status: 403 });
     }
     return NextResponse.json({ error: "Unable to synchronize Spotify playlist" }, { status: 400 });
   }
+}
+
+function toResponse(preview: SpotifyPlaylistExportPreview) {
+  const skipCounts = Object.fromEntries(
+    [...new Set(preview.plan.skips.map((item) => item.reason))]
+      .sort()
+      .map((reason) => [
+        reason,
+        preview.plan.skips.filter((item) => item.reason === reason).length,
+      ]),
+  );
+  return {
+    additions: preview.plan.additions.map((item) => ({
+      artistOrder: item.desiredOrdinal,
+      position: item.position,
+      providerTrackId: item.providerTrackId,
+      releaseDate: item.releaseDate,
+      releaseTitle: item.releaseTitle,
+      title: item.title,
+    })),
+    alreadyPresent: preview.plan.alreadyPresent.map((item) => ({
+      appManaged: item.appManaged,
+      position: item.position,
+      providerTrackId: item.providerTrackId,
+      title: item.title,
+    })),
+    existingDuplicateTrackIds: preview.plan.existingDuplicateTrackIds,
+    orderingConflicts: preview.plan.orderingConflicts,
+    skipCounts,
+    skipped: preview.plan.skips,
+    target: preview.target,
+    totals: {
+      additions: preview.plan.additions.length,
+      alreadyPresent: preview.plan.alreadyPresent.length,
+      eligible: preview.plan.desired.length,
+      finalPlaylistItems: preview.plan.finalTrackIds.length,
+      orderingConflicts: preview.plan.orderingConflicts.length,
+      skipped: preview.plan.skips.length,
+    },
+  };
 }
