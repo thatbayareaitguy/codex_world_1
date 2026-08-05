@@ -91,6 +91,24 @@ describe.sequential("Spotify canonical playlist export", () => {
     expect(scopeClient.addCalls).toHaveLength(0);
   });
 
+  it("blocks live export when only the private playlist modification scope is stored", async () => {
+    const fixture = await createFixture({ writeScope: true });
+    await db
+      .update(oauthAccounts)
+      .set({ scopes: ["user-follow-read", "playlist-read-private", "playlist-modify-private"] })
+      .where(eq(oauthAccounts.userId, fixture.userId));
+    const client = new FakePlaylistClient([]);
+
+    await expect(
+      executeSpotifyPlaylistExport(db, fixture.userId, client, {
+        playlistId,
+        policy: { allowedPlaylistId: playlistId, enabled: true },
+      }),
+    ).rejects.toMatchObject({ code: "missing_write_scope" });
+    expect(client.readCalls).toBe(0);
+    expect(client.addCalls).toHaveLength(0);
+  });
+
   it("resumes a canary, reconciles a post-write crash, preserves user tracks, and remains idempotent", async () => {
     const fixture = await createFixture({ writeScope: true });
     const userTrack = "9999999999999999999999";
@@ -237,7 +255,12 @@ async function createFixture(input: {
     provider: "spotify",
     providerAccountId: "spotify-owner",
     scopes: input.writeScope
-      ? ["user-follow-read", "playlist-read-private", "playlist-modify-private"]
+      ? [
+          "user-follow-read",
+          "playlist-read-private",
+          "playlist-modify-private",
+          "playlist-modify-public",
+        ]
       : ["user-follow-read", "playlist-read-private"],
     userId: user.id,
   });

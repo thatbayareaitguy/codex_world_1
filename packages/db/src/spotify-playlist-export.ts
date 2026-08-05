@@ -1,4 +1,5 @@
 import {
+  hasSpotifyPlaylistWriteScopes,
   abbreviateSpotifyPlaylistId,
   assertOwnedPrivateSpotifyPlaylist,
   assertSpotifyPlaylistWriteTarget,
@@ -381,9 +382,9 @@ async function requireSpotifyPlaylistWriteScope(db: RadarDatabase, userId: strin
       isNull(oauthAccounts.disconnectedAt),
     ),
   });
-  if (!account?.scopes.includes("playlist-modify-private")) {
+  if (!account || !hasSpotifyPlaylistWriteScopes(account.scopes)) {
     throw new SpotifyPlaylistExportError(
-      "Spotify must be reauthorized with playlist-modify-private before live export.",
+      "Spotify must be reauthorized with both playlist modification scopes before live export.",
       "missing_write_scope",
     );
   }

@@ -79,6 +79,50 @@ describe("doctor", () => {
     expect(output).not.toContain("1234567890123456789012");
   });
 
+  it("requires both Spotify playlist modification scopes when writes are enabled", async () => {
+    const baseEnvironment = {
+      APP_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+      DATABASE_URL: "postgresql://secret:secret@127.0.0.1:5432/radar",
+      MUSICBRAINZ_ENABLED: "false",
+      REDDIT_ENABLED: "false",
+      SPOTIFY_ALLOWED_PLAYLIST_ID: "1234567890123456789012",
+      SPOTIFY_CLIENT_ID: "client-id",
+      SPOTIFY_CLIENT_SECRET: "client-secret",
+      SPOTIFY_ENABLED: "true",
+      SPOTIFY_PLAYLIST_WRITES_ENABLED: "true",
+      SPOTIFY_REDIRECT_URI: "http://127.0.0.1:3000/api/auth/spotify/callback",
+    };
+    const dependencies = {
+      directoryProbe: () => true,
+      expectedMigrationCount: 6,
+      pnpmVersion: "11.9.0",
+      portProbe: () => Promise.resolve<"available">("available"),
+    };
+    const privateOnly = await collectDoctorReport(baseEnvironment, {
+      ...dependencies,
+      databaseProbe: () =>
+        Promise.resolve({
+          ...databaseReady,
+          spotifyGrantedScopes: ["playlist-modify-private"],
+        }),
+    });
+    expect(
+      privateOnly.checks.find((check) => check.name === "Spotify playlist write scopes"),
+    ).toMatchObject({ state: "ACTION_REQUIRED" });
+
+    const dualScope = await collectDoctorReport(baseEnvironment, {
+      ...dependencies,
+      databaseProbe: () =>
+        Promise.resolve({
+          ...databaseReady,
+          spotifyGrantedScopes: ["playlist-modify-private", "playlist-modify-public"],
+        }),
+    });
+    expect(
+      dualScope.checks.find((check) => check.name === "Spotify playlist write scopes"),
+    ).toMatchObject({ state: "READY" });
+  });
+
   it("reports scheduler database state without treating a disabled scheduler as unhealthy", async () => {
     const report = await collectDoctorReport(
       {

@@ -200,12 +200,21 @@ export interface SpotifyAlbumTracksPage {
 
 export const SPOTIFY_READ_SCOPES = ["user-follow-read", "playlist-read-private"] as const;
 export const SPOTIFY_PRIVATE_PLAYLIST_WRITE_SCOPE = "playlist-modify-private" as const;
+export const SPOTIFY_PUBLIC_PLAYLIST_WRITE_SCOPE = "playlist-modify-public" as const;
+export const SPOTIFY_PLAYLIST_WRITE_SCOPES = [
+  SPOTIFY_PRIVATE_PLAYLIST_WRITE_SCOPE,
+  SPOTIFY_PUBLIC_PLAYLIST_WRITE_SCOPE,
+] as const;
 export const SPOTIFY_SCOPES = SPOTIFY_READ_SCOPES;
 
 export function spotifyAuthorizationScopes(playlistWritesEnabled: boolean): readonly string[] {
   return playlistWritesEnabled
-    ? [...SPOTIFY_READ_SCOPES, SPOTIFY_PRIVATE_PLAYLIST_WRITE_SCOPE]
+    ? [...SPOTIFY_READ_SCOPES, ...SPOTIFY_PLAYLIST_WRITE_SCOPES]
     : [...SPOTIFY_READ_SCOPES];
+}
+
+export function hasSpotifyPlaylistWriteScopes(scopes: readonly string[]): boolean {
+  return SPOTIFY_PLAYLIST_WRITE_SCOPES.every((scope) => scopes.includes(scope));
 }
 
 export class SpotifyHttpError extends Error {

@@ -4,13 +4,18 @@ import {
   getSpotify429Telemetry,
   getSpotifyOperationalStatus,
   getSpotifySchedulerStatus,
+  oauthAccounts,
   operationLocks,
   scanRuns,
   spotifyReleaseTrackCompletenessSummary,
   spotifySyncCampaigns,
 } from "@radar/db";
-import { isValidRedditUserAgent, loadProviderConfiguration } from "@radar/providers";
-import { desc, eq, sql } from "drizzle-orm";
+import {
+  hasSpotifyPlaylistWriteScopes,
+  isValidRedditUserAgent,
+  loadProviderConfiguration,
+} from "@radar/providers";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { accessSync, constants, existsSync, readdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
@@ -39,6 +44,7 @@ export interface DoctorDatabaseStatus {
   resolvedScans?: number;
   spotifyCooldownActive?: boolean;
   spotifyCooldownUntil?: string;
+  spotifyGrantedScopes?: string[];
   spotifyRateLimits?: {
     allTime: Record<string, number>;
     historicalUnclassifiedCount: number;
@@ -322,7 +328,7 @@ export async function collectDoctorReport(
   }
   if (configuration) {
     checks.push(...appleMusicChecks(configuration));
-    checks.push(...spotifyChecks(configuration, environment));
+    checks.push(...spotifyChecks(configuration, environment, databaseStatus));
     checks.push(...musicBrainzChecks(configuration));
     checks.push(...redditChecks(configuration, environment));
     checks.push(
@@ -404,6 +410,7 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
     let staleLocks = 0;
     let spotifyCooldownActive = false;
     let spotifyCooldownUntil: string | undefined;
+    let spotifyGrantedScopes: string[] | undefined;
     let spotifyReleaseTracks: DoctorDatabaseStatus["spotifyReleaseTracks"];
     let spotifyRateLimits: DoctorDatabaseStatus["spotifyRateLimits"];
     let spotifyScheduler: DoctorDatabaseStatus["spotifyScheduler"];
@@ -439,6 +446,11 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
       const spotify = await getSpotifyOperationalStatus(db);
       spotifyCooldownActive = spotify.cooldownActive;
       spotifyCooldownUntil = spotify.cooldownUntil?.toISOString();
+      const spotifyAccount = await db.query.oauthAccounts.findFirst({
+        columns: { scopes: true },
+        where: and(eq(oauthAccounts.provider, "spotify"), isNull(oauthAccounts.disconnectedAt)),
+      });
+      spotifyGrantedScopes = spotifyAccount?.scopes;
       spotifyReleaseTracks = await spotifyReleaseTrackCompletenessSummary(db);
       const rateLimits = await getSpotify429Telemetry(db);
       spotifyRateLimits = {
@@ -499,6 +511,7 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
       ...(migrationError ? { migrationError } : {}),
       resolvedScans,
       spotifyCooldownActive,
+      ...(spotifyGrantedScopes ? { spotifyGrantedScopes } : {}),
       ...(spotifyReleaseTracks ? { spotifyReleaseTracks } : {}),
       ...(spotifyRateLimits ? { spotifyRateLimits } : {}),
       ...(spotifyScheduler ? { spotifyScheduler } : {}),
@@ -549,6 +562,7 @@ function appleMusicChecks(
 function spotifyChecks(
   configuration: ReturnType<typeof loadProviderConfiguration>,
   environment: NodeJS.ProcessEnv,
+  databaseStatus?: DoctorDatabaseStatus,
 ): DoctorCheck[] {
   if (!configuration.spotify.enabled) return [optional("Spotify", "Spotify is disabled.")];
   const checks = [
@@ -611,6 +625,18 @@ function spotifyChecks(
             "Spotify allowed playlist",
             "Playlist writes are enabled without an allowed playlist ID.",
             "Set SPOTIFY_ALLOWED_PLAYLIST_ID or disable SPOTIFY_PLAYLIST_WRITES_ENABLED.",
+          ),
+    );
+    checks.push(
+      hasSpotifyPlaylistWriteScopes(databaseStatus?.spotifyGrantedScopes ?? [])
+        ? ready(
+            "Spotify playlist write scopes",
+            "The connected account granted both required playlist modification scopes.",
+          )
+        : action(
+            "Spotify playlist write scopes",
+            "The connected account has not granted both required playlist modification scopes.",
+            "Disconnect and reconnect Spotify with playlist writes enabled, then confirm both modification scopes.",
           ),
     );
   }

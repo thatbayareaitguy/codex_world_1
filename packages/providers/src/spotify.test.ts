@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  hasSpotifyPlaylistWriteScopes,
   inspectSpotifyErrorResponse,
   parseSpotifyRetryAfter,
   spotifyArtistAlbumsSchema,
@@ -666,7 +667,7 @@ describe("SpotifyOAuthClient", () => {
     });
   });
 
-  it("forces renewed consent when private playlist additions are enabled", () => {
+  it("forces renewed consent with both playlist modification scopes when additions are enabled", () => {
     const client = new SpotifyOAuthClient({
       clientId: "client",
       clientSecret: "secret",
@@ -679,8 +680,17 @@ describe("SpotifyOAuthClient", () => {
       "user-follow-read",
       "playlist-read-private",
       "playlist-modify-private",
+      "playlist-modify-public",
     ]);
     expect(authorization.searchParams.get("show_dialog")).toBe("true");
+  });
+
+  it("requires both playlist modification scopes for write authorization", () => {
+    expect(hasSpotifyPlaylistWriteScopes(["playlist-modify-private"])).toBe(false);
+    expect(hasSpotifyPlaylistWriteScopes(["playlist-modify-public"])).toBe(false);
+    expect(
+      hasSpotifyPlaylistWriteScopes(["playlist-modify-private", "playlist-modify-public"]),
+    ).toBe(true);
   });
 });
 

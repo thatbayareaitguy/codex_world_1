@@ -86,7 +86,7 @@ Keep the pnpm monorepo, strict TypeScript, Drizzle schema and migration history,
 
 ## Verified Provider Constraints
 
-- Spotify Development Mode requires the app owner to retain Premium. Initial authorization requests only `user-follow-read` and `playlist-read-private`. Prepared add-only export requests `playlist-modify-private` only when the default-off write gate is explicitly enabled.
+- Spotify Development Mode requires the app owner to retain Premium. Initial authorization requests only `user-follow-read` and `playlist-read-private`. The add-only export requests both `playlist-modify-private` and `playlist-modify-public` only when the default-off write gate and one allowed private target are explicitly enabled. The broader OAuth scope does not alter the server-side single-playlist, ownership, private, non-collaborative, and add-only restrictions.
 - Use `GET /me` and stable `account_id`, `GET /me/following`, individual artist, album, and track endpoints, and configured playlist `/items` endpoints. Do not list or create playlists for export selection.
 - Do not use removed browse new releases, user playlist routes, bulk track or artist reads, or playlist `/tracks` routes.
 - Spotify followed artists use cursor pagination up to 50 per page. Artist albums and search use no more than 10 per page. Playlist item reads use up to 50 and additions use batches up to 100.
