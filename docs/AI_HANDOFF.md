@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-08-05 11:06 PDT (UTC-07:00)
+Updated: 2026-08-05 13:15 PDT (UTC-07:00)
 
 This is the canonical implementation and operational snapshot. It excludes credentials, tokens,
 private keys, personal provider data, authorization headers, and raw provider payloads.
@@ -8,12 +8,11 @@ private keys, personal provider data, authorization headers, and raw provider pa
 ## Repository State
 
 - Branch: `codex/release-radar-hardening`, tracking the matching GitHub branch.
-- Current commit: the checkpoint containing this document. The starting checkpoint was `faad550`.
-- Current milestone: durable artist identity decisions, grouped provider review, user-facing rename to
-  **TS New Music Scanner**, default `New` feed view, and read-only Spotify playlist-order audit.
-- The checkpoint worktree contains only the implementation, migration, documentation, and tests for
-  this milestone. Local configuration, credentials, logs, dumps, backups, screenshots, and traces
-  remain excluded.
+- Current commit: the documentation checkpoint containing this file. Its implementation parent is
+  `45f5643` (`feat: harden artist identities and playlist auditing`).
+- Current milestone: policy review for exact-evidence Apple Music identity resolution.
+- No application source, provider data, mapping decisions, playlists, scheduler state, or local
+  configuration changed during this review.
 
 ## Architecture And Database
 
@@ -21,79 +20,80 @@ private keys, personal provider data, authorization headers, and raw provider pa
   provider-neutral core, Drizzle/PostgreSQL persistence, Zod validation, Vitest, and Playwright.
 - PostgreSQL is authoritative for canonical music data, feed state, provider identity status,
   review decisions, provider gates and cooldowns, encrypted OAuth accounts, and playlist ledgers.
-- Twenty forward migrations are applied. Migration `0019_eminent_landau.sql` adds one durable
-  artist/provider identity status without rewriting prior migrations.
-- Active watchlist: 593 artists. Identity status rows: 1,186. Spotify has 593 automatic
-  confirmations. Apple Music has 320 automatic confirmations, 1 manual confirmation, and 272
-  artists requiring a manual decision.
+- Twenty forward migrations are applied. No migration is needed for this policy finding.
+- Active watchlist: 593 artists. Spotify has 593 confirmed identities. Apple Music has 320
+  automatic confirmations, 1 manual confirmation, and 272 artists requiring a manual decision
+  across 1,335 candidate identities.
 
 ## Verified
 
-- The feed opens on `New`, with `New` first and `All` second. Other feed content and filters are
-  unchanged.
-- User-facing product text is **TS New Music Scanner** in the web shell, metadata, privacy page,
-  README, PRD, doctor output, and scheduled-task display names. Stable package, database, service,
-  and filesystem identifiers remain unchanged.
-- Provider mapping reviews are grouped by canonical artist and provider. They show candidate count
-  and confirmed cross-provider evidence, persist explicit identity outcomes, reload after decisions,
-  and page by artist rather than by candidate row.
-- Ambiguous provider candidates are not auto-confirmed. All 272 unresolved Apple Music artists have
-  multiple exact normalized-name candidates without enough corroborating evidence.
-- Identity rows and grouped review state persisted across a full app and database restart. The live
-  review page showed 272 unresolved artists and 1,335 candidate identities after restart.
-- A read-only audit touched only Spotify playlist `4l6LaMPL6duulmFe3hRR4Y`: 811 items, 810 eligible
-  canonical tracks, 810 already present, no proposed additions, no duplicate track IDs, and no
-  release-date ordering conflicts. One unrelated user-added item remains preserved.
-- The audit found three exact same-release grouping conflicts: `StarDisc`; `Asleep in the Garden of
-Infernal Stars & The Dreams Strange and Eternal - Remixes`; and `UNTAMED`. No playlist write,
-  removal, replacement, or reorder occurred.
+- Current Apple identity bootstrapping uses a persisted static seed artifact. Runtime Apple
+  scanning does not repeat live name-only searches and does not use confirmed Spotify names to
+  generate Apple search requests.
+- Of the 272 unresolved Apple artists, 141 have persisted primary-artist Spotify release evidence.
+  Those artists have 226 Spotify-sourced UPC-bearing releases. The other 131 do not have persisted
+  primary Spotify release evidence.
+- Zero unresolved artists currently have a persisted primary Spotify track with a canonical ISRC.
+  Spotify track IDs exist, but retrieving their ISRCs and submitting them to Apple would be a new
+  cross-service data transfer.
+- Apple officially supports catalog song lookup by ISRC and album lookup by UPC. These endpoints may
+  be used only with evidence that is user-provided or independently sourced under a compliant
+  provider-neutral workflow.
+- Spotify's current Developer Policy prohibits products integrated with content from another
+  service and prohibits transferring Spotify data to another service outside narrow transfer
+  exceptions. Spotify-derived ISRC/UPC Apple matching was therefore not implemented or live-run.
+- The worktree was clean at the start of this review. No provider request, Spotify playlist read or
+  write, scheduler execution, or database mutation occurred.
 - Verification passes: formatting, lint, strict type checking, production build, 371 unit tests in
   46 files, 96 PostgreSQL integration tests in 17 files, and 28 Playwright tests.
-- `pnpm doctor` reports READY with 20 migrations, no cooldown, no stale lock, scheduler disabled,
-  and the application responding on `127.0.0.1:3000`.
+- `pnpm doctor` reports READY with 20 migrations, no provider cooldown, no stale lock, the Spotify
+  scheduler disabled, Apple Music disabled, and the application responding on `127.0.0.1:3000`.
 
 ## Implemented But Partially Verified
 
+- The grouped Apple identity review and durable identity statuses are implemented and verified.
 - The Spotify rolling scheduler and campaign persistence remain implemented and test-covered, but
   automatic execution is disabled.
 - Apple Music public-catalog discovery is implemented and previously live-tested, but is disabled
-  in the current local configuration. This milestone verified its identity review with database and
-  browser tests, not live Apple requests.
+  in the current local configuration.
 
 ## Provider And Policy State
 
 - Spotify is connected. The shared PostgreSQL request gate and stored cooldown remain authoritative.
 - Playlist writes remain restricted to the single configured playlist and add-only behavior.
-- MusicBrainz is configured. Apple Music is disabled. Reddit remains approval-gated. SoundCloud
-  automation remains excluded.
-- The existing Spotify playlist retains its current provider-side name because playlist rename is
-  outside the allowed client surface.
+- Spotify metadata must remain Spotify-namespaced and must not be sent to Apple Music to resolve an
+  Apple identity.
+- MusicBrainz is configured. Apple Music is disabled with no active cooldown or request lease.
+  Reddit remains approval-gated. SoundCloud automation remains excluded.
 
 ## Known Defects And Risks
 
-- The 272 unresolved Apple Music artist identities require user decisions. They are excluded from
-  automatic Apple scanning and cross-provider matching until resolved.
-- Three playlist release groups are separated by other playlist items. The audit can identify these
-  conflicts, but repository policy prohibits automatic or manual reorder operations through the app.
-- Stable internal names still contain `radar` for compatibility. This is intentional and is not
-  visible product branding.
+- The 272 unresolved Apple Music artist identities still require user decisions or independently
+  sourced exact evidence. They remain excluded from automatic Apple scanning and cross-provider
+  matching until resolved.
+- Using Spotify-derived identifiers for Apple lookup would create a policy violation even though the
+  identifier-matching algorithm itself could be technically deterministic.
+- Three Spotify playlist release groups remain noncontiguous. Reordering remains prohibited.
 
 ## Immediate Next Step
 
-Work through the grouped Apple Music identity queue, starting with artists that have useful
-cross-provider evidence. Do not auto-confirm equal-name candidates. Separately decide whether the
-playlist policy should ever permit a narrowly scoped reorder tool; it is currently prohibited.
+Choose one compliant Apple identity workflow:
+
+1. Continue manual Apple URL/ID entry through the existing grouped review UI.
+2. Use independently sourced MusicBrainz ISRC/UPC evidence only where a canonical MusicBrainz
+   identity is already confirmed, then keep Spotify entirely outside that request and decision path.
+3. Obtain written Spotify approval for the proposed cross-service identifier workflow before any
+   Spotify-derived Apple lookup is implemented.
 
 ## Decisions Needed
 
-- Whether to keep playlist grouping conflicts as report-only findings or approve a future,
-  separately reviewed reorder capability.
-- When to enable Apple Music discovery after enough identities are confirmed.
+- Whether to prioritize manual Apple ID entry or build the narrower MusicBrainz-to-Apple exact
+  evidence workflow.
+- Whether written Spotify approval will be requested for broader cross-service identity matching.
 
 ## Deferred
 
-- Automatic resolution of ambiguous artist identities.
-- Playlist creation, target selection, rename, visibility changes, artwork, removal, replacement,
-  reorder, or cleanup of user-added items.
-- Scheduler activation, additional providers, mixed playback, multi-user deployment, and broad
-  internal identifier renaming.
+- Spotify-derived Apple Music identity resolution.
+- Automatic resolution of ambiguous name-only artist candidates.
+- Playlist reorder, scheduler activation, additional providers, mixed playback, multi-user
+  deployment, and broad internal identifier renaming.
