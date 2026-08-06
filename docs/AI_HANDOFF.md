@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-08-05 13:15 PDT (UTC-07:00)
+Updated: 2026-08-05 20:34 PDT (UTC-07:00)
 
 This is the canonical implementation and operational snapshot. It excludes credentials, tokens,
 private keys, personal provider data, authorization headers, and raw provider payloads.
@@ -8,11 +8,11 @@ private keys, personal provider data, authorization headers, and raw provider pa
 ## Repository State
 
 - Branch: `codex/release-radar-hardening`, tracking the matching GitHub branch.
-- Current commit: the documentation checkpoint containing this file. Its implementation parent is
-  `45f5643` (`feat: harden artist identities and playlist auditing`).
-- Current milestone: policy review for exact-evidence Apple Music identity resolution.
-- No application source, provider data, mapping decisions, playlists, scheduler state, or local
-  configuration changed during this review.
+- Current commit: the documentation checkpoint containing this file. Its parent is `ece61a8`
+  (`docs: record Spotify cross-service identity boundary`).
+- Current milestone: manual Apple Music artist identity resolution.
+- The worktree contains only this handoff update. No application source, playlists, scheduler state,
+  provider credentials, or local configuration changed.
 
 ## Architecture And Database
 
@@ -22,20 +22,17 @@ private keys, personal provider data, authorization headers, and raw provider pa
   review decisions, provider gates and cooldowns, encrypted OAuth accounts, and playlist ledgers.
 - Twenty forward migrations are applied. No migration is needed for this policy finding.
 - Active watchlist: 593 artists. Spotify has 593 confirmed identities. Apple Music has 320
-  automatic confirmations, 1 manual confirmation, and 272 artists requiring a manual decision
-  across 1,335 candidate identities.
+  automatic confirmations, 10 manual confirmations, and 263 artists requiring a manual decision
+  across 1,283 pending candidate identities.
 
 ## Verified
 
 - Current Apple identity bootstrapping uses a persisted static seed artifact. Runtime Apple
   scanning does not repeat live name-only searches and does not use confirmed Spotify names to
   generate Apple search requests.
-- Of the 272 unresolved Apple artists, 141 have persisted primary-artist Spotify release evidence.
-  Those artists have 226 Spotify-sourced UPC-bearing releases. The other 131 do not have persisted
-  primary Spotify release evidence.
-- Zero unresolved artists currently have a persisted primary Spotify track with a canonical ISRC.
-  Spotify track IDs exist, but retrieving their ISRCs and submitting them to Apple would be a new
-  cross-service data transfer.
+- The prior 272-artist policy audit found 141 artists with persisted primary-artist Spotify release
+  evidence, 226 Spotify-sourced UPC-bearing releases, and no persisted primary Spotify track with a
+  canonical ISRC. Spotify-derived evidence remains excluded from Apple lookup.
 - Apple officially supports catalog song lookup by ISRC and album lookup by UPC. These endpoints may
   be used only with evidence that is user-provided or independently sourced under a compliant
   provider-neutral workflow.
@@ -48,6 +45,10 @@ private keys, personal provider data, authorization headers, and raw provider pa
   46 files, 96 PostgreSQL integration tests in 17 files, and 28 Playwright tests.
 - `pnpm doctor` reports READY with 20 migrations, no provider cooldown, no stale lock, the Spotify
   scheduler disabled, Apple Music disabled, and the application responding on `127.0.0.1:3000`.
+- Manual Apple identities were durably confirmed for 4B (`1464086544`), A.M.C (`455181031`), A.way
+  (`1571027485`), and ARTY (`15956984`). Their pending reviews are closed.
+- Amplify remains unresolved. The submitted Amplify URL used ARTY ID `15956984`, which would conflict
+  with ARTY. Amplify has six pending candidates, including Apple artist ID `1516199278`.
 
 ## Implemented But Partially Verified
 
@@ -68,7 +69,7 @@ private keys, personal provider data, authorization headers, and raw provider pa
 
 ## Known Defects And Risks
 
-- The 272 unresolved Apple Music artist identities still require user decisions or independently
+- The 263 unresolved Apple Music artist identities still require user decisions or independently
   sourced exact evidence. They remain excluded from automatic Apple scanning and cross-provider
   matching until resolved.
 - Using Spotify-derived identifiers for Apple lookup would create a policy violation even though the
