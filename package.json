@@ -23,6 +23,7 @@
     "format:check": "prettier --check .",
     "lint": "eslint . --max-warnings=0",
     "scan": "tsx apps/scanner/src/cli.ts",
+    "apple-music:identities": "tsx apps/scanner/src/apple-music-identity-cli.ts",
     "scan:reconcile": "tsx apps/scanner/src/cli.ts --full",
     "scan:status": "tsx apps/scanner/src/scan-status.ts status",
     "scan:unlock-stale": "tsx apps/scanner/src/scan-status.ts unlock-stale",

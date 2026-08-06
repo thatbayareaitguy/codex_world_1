@@ -82,6 +82,21 @@ describe("MusicBrainzClient", () => {
     });
   });
 
+  it("supports a bounded single-page release-group lookup", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(emptyReleaseGroups));
+    const client = new MusicBrainzClient({
+      contactEmail: "owner@example.test",
+      fetcher,
+      gate: new MusicBrainzRateGate(0),
+    });
+    await expect(client.browseReleaseGroupsFirstPage(artistMbid)).resolves.toEqual([]);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const request = fetcher.mock.calls[0]?.[0];
+    const requestUrl =
+      typeof request === "string" ? request : request instanceof URL ? request.href : request?.url;
+    expect(requestUrl).toContain("limit=100&offset=0");
+  });
+
   it("does not retry invalid MusicBrainz payloads", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ releases: [] }));
     const client = new MusicBrainzClient({

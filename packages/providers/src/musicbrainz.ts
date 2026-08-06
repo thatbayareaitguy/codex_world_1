@@ -236,6 +236,17 @@ export class MusicBrainzClient {
     );
   }
 
+  browseReleaseGroupsFirstPage(
+    artistMbid: string,
+    signal?: AbortSignal,
+  ): Promise<MusicBrainzReleaseGroup[]> {
+    return this.get(
+      `/release-group?artist=${encodeURIComponent(artistMbid)}&inc=artist-credits&limit=100&offset=0&fmt=json`,
+      musicbrainzReleaseGroupsSchema,
+      signal,
+    ).then((response) => response["release-groups"]);
+  }
+
   browseReleases(
     artistMbid: string,
     mode: "artist" | "track_artist",

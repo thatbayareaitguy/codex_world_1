@@ -22,6 +22,10 @@ export function logDirectory(environment: NodeJS.ProcessEnv = process.env): stri
   );
 }
 
+export function exportDirectory(environment: NodeJS.ProcessEnv = process.env): string {
+  return join(applicationDataDirectory(environment), "exports");
+}
+
 function configuredPath(value: string | undefined, fallback: string): string {
   return value?.trim() || fallback;
 }

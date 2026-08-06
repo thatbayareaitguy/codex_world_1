@@ -182,6 +182,8 @@ export const artistProviderIdentityStatusEnum = pgEnum("artist_provider_identity
   "confirmed_unavailable",
   "alias_or_duplicate",
   "intentionally_excluded",
+  "split_profile",
+  "intentionally_deferred",
   "requires_manual_decision",
 ]);
 export const matchStatusEnum = pgEnum("match_status", [
@@ -454,6 +456,10 @@ export const artistProviderIdentityStatuses = pgTable(
     provider: providerEnum("provider").notNull(),
     status: artistProviderIdentityStatusEnum("status").notNull(),
     externalId: text("external_id"),
+    externalIds: text("external_ids")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     linkedArtistId: uuid("linked_artist_id").references(() => artists.id, {
       onDelete: "set null",
     }),
@@ -464,6 +470,7 @@ export const artistProviderIdentityStatuses = pgTable(
       .default(sql`'{}'::text[]`),
     decidedBy: text("decided_by").notNull().default("system"),
     decidedAt: timestamp("decided_at", { withTimezone: true }),
+    userNote: text("user_note"),
     createdAt,
     updatedAt,
   },

@@ -1,100 +1,79 @@
 # AI Handoff
 
-Updated: 2026-08-05 20:34 PDT (UTC-07:00)
+Updated: 2026-08-05 00:23 PDT (UTC-07:00)
 
-This is the canonical implementation and operational snapshot. It excludes credentials, tokens,
-private keys, personal provider data, authorization headers, and raw provider payloads.
+Canonical implementation and operational snapshot. Credentials, tokens, private keys, personal
+provider data, authorization headers, and raw provider payloads are excluded.
 
 ## Repository State
 
 - Branch: `codex/release-radar-hardening`, tracking the matching GitHub branch.
-- Current commit: the documentation checkpoint containing this file. Its parent is `ece61a8`
-  (`docs: record Spotify cross-service identity boundary`).
-- Current milestone: manual Apple Music artist identity resolution.
-- The worktree contains only this handoff update. No application source, playlists, scheduler state,
-  provider credentials, or local configuration changed.
+- Current milestone commit: the Apple bulk identity workflow commit containing this file; its parent
+  is `8534f73`, and requested base `ece61a8` is the preceding implementation checkpoint.
+- Worktree and upstream are expected to be clean and synchronized after the milestone push.
+- Milestone: compliant bulk Apple Music artist identity resolution.
 
 ## Architecture And Database
 
-- TypeScript pnpm monorepo with Next.js web/API, Node scanner and operational CLIs,
-  provider-neutral core, Drizzle/PostgreSQL persistence, Zod validation, Vitest, and Playwright.
-- PostgreSQL is authoritative for canonical music data, feed state, provider identity status,
-  review decisions, provider gates and cooldowns, encrypted OAuth accounts, and playlist ledgers.
-- Twenty forward migrations are applied. No migration is needed for this policy finding.
-- Active watchlist: 593 artists. Spotify has 593 confirmed identities. Apple Music has 320
-  automatic confirmations, 10 manual confirmations, and 263 artists requiring a manual decision
-  across 1,283 pending candidate identities.
+- TypeScript pnpm monorepo: Next.js web/API, Node scanner CLIs, provider-neutral core,
+  Drizzle/PostgreSQL, Zod, Vitest, and Playwright.
+- PostgreSQL remains authoritative for canonical records, provider identities, review decisions,
+  request gates, cooldowns, OAuth data, and export ledgers.
+- Twenty-one forward migrations are applied. Migration 0020 adds split-profile and intentionally
+  deferred Apple states, multiple Apple IDs, and user notes while backfilling existing IDs.
+- Active watchlist: 593. Apple identity state: 320 automatic, 26 manual, and 247 unresolved artists
+  across 1,228 pending candidates.
 
 ## Verified
 
-- Current Apple identity bootstrapping uses a persisted static seed artifact. Runtime Apple
-  scanning does not repeat live name-only searches and does not use confirmed Spotify names to
-  generate Apple search requests.
-- The prior 272-artist policy audit found 141 artists with persisted primary-artist Spotify release
-  evidence, 226 Spotify-sourced UPC-bearing releases, and no persisted primary Spotify track with a
-  canonical ISRC. Spotify-derived evidence remains excluded from Apple lookup.
-- Apple officially supports catalog song lookup by ISRC and album lookup by UPC. These endpoints may
-  be used only with evidence that is user-provided or independently sourced under a compliant
-  provider-neutral workflow.
-- Spotify's current Developer Policy prohibits products integrated with content from another
-  service and prohibits transferring Spotify data to another service outside narrow transfer
-  exceptions. Spotify-derived ISRC/UPC Apple matching was therefore not implemented or live-run.
-- The worktree was clean at the start of this review. No provider request, Spotify playlist read or
-  write, scheduler execution, or database mutation occurred.
-- Verification passes: formatting, lint, strict type checking, production build, 371 unit tests in
-  46 files, 96 PostgreSQL integration tests in 17 files, and 28 Playwright tests.
-- `pnpm doctor` reports READY with 20 migrations, no provider cooldown, no stale lock, the Spotify
-  scheduler disabled, Apple Music disabled, and the application responding on `127.0.0.1:3000`.
-- Manual Apple identities were durably confirmed for 4B (`1464086544`), A.M.C (`455181031`), A.way
-  (`1571027485`), and ARTY (`15956984`). Their pending reviews are closed.
-- Amplify remains unresolved. The submitted Amplify URL used ARTY ID `15956984`, which would conflict
-  with ARTY. Amplify has six pending candidates, including Apple artist ID `1516199278`.
+- The CSV export prioritizes confirmed MusicBrainz identities and low candidate counts, exports at
+  most 100 rows, and contains no Spotify-derived columns or values.
+- The generated batch contains 100 rows at
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\exports\apple-music-identities-priority-2026-08-05.csv`.
+- Safe parser accepts only numeric Apple artist IDs or HTTPS `music.apple.com` artist URLs.
+- Preview detects missing IDs, duplicate cross-artist assignments, existing mapping conflicts, name
+  disagreements, unchanged decisions, and non-mapping outcomes.
+- Apply re-verifies exact user IDs and commits the complete batch transactionally. Resolved reviews
+  close and confirmed IDs feed existing Apple scans. Split profiles remain excluded from scanning.
+- Verification passes: formatting, lint, strict TypeScript, production build, 377 unit tests in 48
+  files, 101 PostgreSQL integration tests in 19 files, and 28 Playwright tests.
+- Bounded live MusicBrainz pass: two independently confirmed MBIDs evaluated in two requests; 17
+  and 4 primary release groups inventoried; zero automatic mappings because Apple verification was
+  unavailable. No Spotify request occurred.
+- Doctor reports READY, 21 migrations, no stale lock, and no provider cooldown.
 
-## Implemented But Partially Verified
+## Implemented But Not Fully Verified
 
-- The grouped Apple identity review and durable identity statuses are implemented and verified.
-- The Spotify rolling scheduler and campaign persistence remain implemented and test-covered, but
-  automatic execution is disabled.
-- Apple Music public-catalog discovery is implemented and previously live-tested, but is disabled
-  in the current local configuration.
+- Direct Apple ID preview and transactional apply are unit/integration tested but not live-tested in
+  this environment because Apple developer-token variables are absent.
+- Exact MusicBrainz-to-Apple catalog confirmation is implemented conservatively: exact MB artist
+  name, primary attribution, at least two consistent release-title matches, and one unique winner.
+  It has not been live-tested against Apple in the current environment.
+- The CLI and database paths are complete; only direct Apple live verification remains blocked by
+  local configuration.
 
 ## Provider And Policy State
 
-- Spotify is connected. The shared PostgreSQL request gate and stored cooldown remain authoritative.
-- Playlist writes remain restricted to the single configured playlist and add-only behavior.
-- Spotify metadata must remain Spotify-namespaced and must not be sent to Apple Music to resolve an
-  Apple identity.
-- MusicBrainz is configured. Apple Music is disabled with no active cooldown or request lease.
-  Reddit remains approval-gated. SoundCloud automation remains excluded.
+- Spotify remains connected; scheduler execution was not enabled and no playlist was accessed.
+- Spotify data is excluded from Apple exports, requests, and identity decisions.
+- MusicBrainz is configured. Apple catalog credentials and `APPLE_MUSIC_ENABLED` are absent from the
+  current `.env`; no active Apple cooldown or request lease exists.
+- Reddit remains approval-gated. SoundCloud automation remains excluded.
 
-## Known Defects And Risks
+## Known Risks
 
-- The 263 unresolved Apple Music artist identities still require user decisions or independently
-  sourced exact evidence. They remain excluded from automatic Apple scanning and cross-provider
-  matching until resolved.
-- Using Spotify-derived identifiers for Apple lookup would create a policy violation even though the
-  identifier-matching algorithm itself could be technically deterministic.
-- Three Spotify playlist release groups remain noncontiguous. Reordering remains prohibited.
+- 247 Apple identities remain unresolved. Weak or absent evidence stays in manual review.
+- Split-profile decisions are stored durably but are not scanned until multi-profile scan semantics
+  are explicitly implemented.
+- A manually entered Apple ID can still be wrong despite an exact resource lookup. Name disagreement
+  remains visible in preview and requires the user to review the exact supplied resource.
 
 ## Immediate Next Step
 
-Choose one compliant Apple identity workflow:
-
-1. Continue manual Apple URL/ID entry through the existing grouped review UI.
-2. Use independently sourced MusicBrainz ISRC/UPC evidence only where a canonical MusicBrainz
-   identity is already confirmed, then keep Spotify entirely outside that request and decision path.
-3. Obtain written Spotify approval for the proposed cross-service identifier workflow before any
-   Spotify-derived Apple lookup is implemented.
-
-## Decisions Needed
-
-- Whether to prioritize manual Apple ID entry or build the narrower MusicBrainz-to-Apple exact
-  evidence workflow.
-- Whether written Spotify approval will be requested for broader cross-service identity matching.
+Complete the CSV with exact user-selected Apple URLs or IDs. Restore Apple developer-token settings,
+then run preview, review all warnings, apply, and verify using the documented commands.
 
 ## Deferred
 
-- Spotify-derived Apple Music identity resolution.
-- Automatic resolution of ambiguous name-only artist candidates.
-- Playlist reorder, scheduler activation, additional providers, mixed playback, multi-user
-  deployment, and broad internal identifier renaming.
+- Spotify-derived Apple identity lookup, name-only automatic confirmation, split-profile scanning,
+  scheduler activation, additional providers, mixed playback, and playlist reordering.

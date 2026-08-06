@@ -58,6 +58,43 @@ pnpm spotify:playlist-export -- --live --max-additions 3
 pnpm spotify:playlist-export -- --live
 ```
 
+### Bulk Apple Music identity resolution
+
+Export the next prioritized unresolved batch outside the repository:
+
+```powershell
+pnpm apple-music:identities export --limit 100
+```
+
+Fill `decision`, `apple_music_url_or_id`, and optionally `user_note`. Supported decisions are
+`confirm`, `unavailable`, `split_profile`, and `defer`. Separate multiple IDs for a split profile
+with semicolons. The file intentionally contains no Spotify IDs, URLs, tracks, ISRCs, UPCs, or
+other Spotify-derived evidence.
+
+Preview and apply a completed file only when Apple developer-token credentials are configured:
+
+```powershell
+pnpm apple-music:identities preview --file "C:\path\completed.csv" --confirm-live
+pnpm apple-music:identities apply --file "C:\path\completed.csv" --confirm-live
+pnpm apple-music:identities verify
+```
+
+Preview and apply verify each exact user-supplied ID directly with Apple Music. Unsafe URLs,
+missing artists, duplicate assignments, and mapping conflicts block the entire apply. Name
+disagreements are reported as warnings and never cause candidate substitution. Apply repeats the
+preview and persists the complete file in one transaction.
+
+Run the bounded independent MusicBrainz evidence pass with:
+
+```powershell
+pnpm apple-music:identities musicbrainz-pass --limit 10 --max-candidates 3 --confirm-live
+```
+
+This pass starts only from confirmed MusicBrainz identities and existing Apple candidates. It does
+not search Apple by Spotify or canonical names and never sends Spotify metadata to Apple. Without
+Apple developer-token credentials it inventories bounded MusicBrainz evidence, resolves nothing,
+and reports Apple verification as blocked.
+
 Normal scans use one global database lock. Each provider records an independent run and failure, and a provider failure does not stop the remaining providers. Detailed errors and provider metrics expire after `SCAN_DETAIL_RETENTION_DAYS`; aggregate counts and timestamps remain.
 
 Spotify uses one database-backed queue across web and scanner processes. The default and minimum configured interval is ten seconds with concurrency one. A provider 429 persists a client-wide cooldown across restart; do not clear or bypass a valid integer-second wait. Initial scans are limited to 15 artists per batch and begin paused for confirmation. See [Spotify Development Mode Scanning](spotify-development-mode-scanning.md).

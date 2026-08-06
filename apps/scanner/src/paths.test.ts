@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { applicationDataDirectory, backupDirectory, logDirectory } from "./paths";
+import { applicationDataDirectory, backupDirectory, exportDirectory, logDirectory } from "./paths";
 
 describe("application paths", () => {
   it("uses defaults when optional path variables are blank", () => {
@@ -15,6 +15,7 @@ describe("application paths", () => {
     expect(applicationDataDirectory(environment)).toBe(dataDirectory);
     expect(backupDirectory(environment)).toBe(join(dataDirectory, "backups"));
     expect(logDirectory(environment)).toBe(join(dataDirectory, "logs"));
+    expect(exportDirectory(environment)).toBe(join(dataDirectory, "exports"));
   });
 
   it("uses trimmed explicit path overrides", () => {
