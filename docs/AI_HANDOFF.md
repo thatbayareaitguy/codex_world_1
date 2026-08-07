@@ -6,9 +6,10 @@ Updated: 2026-08-06 21:25 PDT
 
 - Branch: `codex/release-radar-hardening`
 - Starting commit: `c509edf` (`docs: record completed Apple identity queue`)
-- Milestone: MusicBrainz production disablement, verified and pending commit/push
-- Upstream: `origin/codex/release-radar-hardening`; synchronized before this milestone
-- Worktree: milestone files modified; unrelated untracked `outputs/` is excluded
+- Implementation commit: `adf6b75` (`refactor: disable MusicBrainz in normal operation`)
+- Milestone: MusicBrainz production disablement, verified, committed, and pushed
+- Upstream: `origin/codex/release-radar-hardening`; synchronized after the implementation commit
+- Worktree: clean except for unrelated untracked `outputs/`, which remains excluded
 - Database: PostgreSQL healthy with 22 migrations applied; no migration is required for this change
 
 ## Architecture
@@ -57,10 +58,9 @@ Updated: 2026-08-06 21:25 PDT
 
 ## Next Action
 
-1. Finish final credential-free verification, commit, and push this milestone.
-2. Set the ignored local `MUSICBRAINZ_ENABLED=false`, restart the app, and confirm `pnpm doctor` is
+1. Set the ignored local `MUSICBRAINZ_ENABLED=false`, restart the app, and confirm `pnpm doctor` is
    `READY` with `OPTIONAL_PROVIDER_DISABLED`.
-3. Begin the planned Apple-first Spotify reconciliation review without using MusicBrainz.
+2. Begin the planned Apple-first Spotify reconciliation review without using MusicBrainz.
 
 ## Deferred
 
