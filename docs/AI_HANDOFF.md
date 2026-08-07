@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-08-06 20:17 PDT (UTC-07:00)
+Updated: 2026-08-06 20:23 PDT (UTC-07:00)
 
 Canonical implementation and operational snapshot. Credentials, tokens, private keys, personal
 provider data, authorization headers, and raw provider payloads are excluded.
@@ -8,12 +8,12 @@ provider data, authorization headers, and raw provider payloads are excluded.
 ## Repository State
 
 - Branch: `codex/release-radar-hardening`, tracking the matching GitHub branch.
-- Starting commit for this milestone: `5a6d527fc9eb8d33ffe56243500715b8e4591aa9`.
+- Starting commit for this milestone: `249632f4f41564c9fb0a2836abd51b48b39a8f61`.
 - Current milestone commit: the commit containing this document.
 - Worktree contains this handoff update and the intentionally untracked `outputs/` directory. The
   generated CSV output is excluded from the documentation commit. Ignored `.env`, runtime logs, and
   test artifacts are excluded.
-- Milestone: keep provider review queues consistent with the active canonical watchlist.
+- Milestone: complete the active Apple identity review queue from exact user-supplied URLs.
 
 ## Architecture And Database
 
@@ -23,21 +23,22 @@ provider data, authorization headers, and raw provider payloads are excluded.
   catalog snapshots, rankings, request gates, cooldowns, OAuth data, and export ledgers.
 - Twenty-two forward migrations are applied. Migration 0021 adds
   `apple_identity_candidate_catalogs` and `apple_identity_candidate_rankings`.
-- The active canonical watchlist contains 586 artists. Recent user-directed removals deactivate
+- The active canonical watchlist contains 583 artists. Recent user-directed removals deactivate
   follow rows while preserving canonical artists and provider history.
-- Current Apple identity state: 568 confirmed mappings, consisting of 320 automatic and 248 manual.
-  The active review queue contains 100 candidates across 18 unresolved followed artists.
-  Inactive artists retain their identity and review history but are excluded from queue rows and
-  provider status counts. MusicBrainz has no unresolved active-follow review rows.
-- Persisted Apple ranking state: 359 catalog snapshots. Of 505 total ranking rows, 66 rows across 11
-  artists still belong to unresolved identities.
+- Current Apple identity state: 583 confirmed mappings, consisting of 320 automatic and 263 manual.
+  The active Apple and MusicBrainz review queues are empty. The integrity verifier retains nine
+  unresolved inactive identity statuses and 53 historical candidates; these are excluded from queue
+  rows and provider status counts rather than deleted.
+- Persisted Apple ranking state: 359 catalog snapshots. Of 505 total ranking rows, 26 rows across
+  four inactive artists still belong to unresolved identities.
 
 ## Verified
 
 - Apple Music and MusicBrainz review queries, summaries, explicit artist lookups, and system status
   counts require an active follow. Removing an artist therefore hides it from Review Queue without
   deleting canonical, provider, or decision history. The running application excludes blackbear,
-  CLEMS, Dogma, Everything Must Go, Klutch, Lama, and OCTANE from both provider review endpoints.
+  CLEMS, Dogma, Everything Must Go, Klutch, Lama, OCTANE, Riptyde, Taylor Sherman, and Tidez from
+  both provider review endpoints.
 
 - The historical iTunes seed artifact has canonical SHA-256
   `0243f3d28d6cb51ec0474da7486f8d73c66fd13398d17601d021c876ee0f8660` but is not sanctioned as
@@ -177,6 +178,14 @@ provider data, authorization headers, and raw provider payloads are excluded.
   transactionally. Exact normalized names agreed and their pending reviews were closed. Lama was
   removed from the active watchlist without deleting canonical or provider history. OCTANE was
   subsequently removed using the same non-destructive follow deactivation.
+- User-supplied exact URLs for Primate `154097185`, PURGE `131745500`, Result `397231669`, Saint
+  Miller `1459100369`, Sam Norris `1080634222`, Sentient `219344492`, SKVNK `1509307307`, SMG
+  `1615405882`, SPAG/Spag Heddy `441478812`, Subsonic `20161026`, Tails `282019388`, TALONS
+  `1471944151`, Tyraz `1478012312`, INVOLVER `1706336289`, and The Arc `1479112799` were validated
+  through ten gated numeric Apple lookups plus five cache hits, with zero failures. All 15 mappings
+  were applied transactionally. The expected SPAG/Spag Heddy name disagreement was preserved in the
+  audit evidence. Riptyde, Tidez, and Taylor Sherman were removed through non-destructive follow
+  deactivation.
 
 ## Automated Validation
 
@@ -209,18 +218,15 @@ provider data, authorization headers, and raw provider payloads are excluded.
 
 ## Known Risks
 
-- 18 active Apple identities remain unresolved. Most have only ambiguous Apple-family catalog evidence.
-- Some unresolved review groups currently have persisted rankings; remaining groups need bounded
-  catalog enrichment or exact user decisions.
+- No active Apple identity remains unresolved. Nine inactive historical statuses and 53 candidate
+  rows remain preserved for audit and can reappear only if those artists are followed again.
 - Apple/iTunes search agreement is not independent identity proof because both are Apple catalogs.
 - Split-profile conflicts are preserved for review but multi-profile scanning remains unsupported.
 
 ## Immediate Next Step
 
-Reload Review Queue and continue resolving the 18 active Apple identities. Configure Apple
-developer-token settings before any bounded live canary of richer Apple Music relationship views.
-Any proposal to auto-confirm from Apple-only soft signals requires a separate policy decision and a
-larger zero-false calibration sample.
+Begin a bounded Apple discovery canary only after configuring Apple developer-token settings. The
+identity queue itself needs no further manual work for the active watchlist.
 
 ## Deferred
 
