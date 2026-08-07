@@ -5,6 +5,7 @@ import {
   appleIdentityCandidateCatalogs,
   appleIdentityCandidateRankings,
   artistExternalIds,
+  artistFollows,
   artistMappingReviews,
   artistProviderIdentityStatuses,
   artists,
@@ -339,6 +340,7 @@ export async function listArtistMappingReviewArtistsPage(
   const unresolved = and(
     eq(artistMappingReviews.provider, options.provider),
     inArray(artistMappingReviews.status, ["pending", "rejected"]),
+    eq(artistFollows.active, true),
     eq(artistProviderIdentityStatuses.provider, options.provider),
     eq(artistProviderIdentityStatuses.status, "requires_manual_decision"),
     ...(cursor
@@ -354,6 +356,7 @@ export async function listArtistMappingReviewArtistsPage(
     .select({ artistId: artists.id, artistName: artists.name })
     .from(artistMappingReviews)
     .innerJoin(artists, eq(artists.id, artistMappingReviews.artistId))
+    .innerJoin(artistFollows, eq(artistFollows.artistId, artistMappingReviews.artistId))
     .innerJoin(
       artistProviderIdentityStatuses,
       and(
@@ -396,6 +399,7 @@ export async function listArtistMappingReviewArtistsPage(
         })
         .from(artistMappingReviews)
         .innerJoin(artists, eq(artists.id, artistMappingReviews.artistId))
+        .innerJoin(artistFollows, eq(artistFollows.artistId, artistMappingReviews.artistId))
         .innerJoin(
           artistProviderIdentityStatuses,
           and(
@@ -421,6 +425,7 @@ export async function listArtistMappingReviewArtistsPage(
           and(
             eq(artistMappingReviews.provider, options.provider),
             inArray(artistMappingReviews.status, ["pending", "rejected"]),
+            eq(artistFollows.active, true),
             eq(artistProviderIdentityStatuses.status, "requires_manual_decision"),
             inArray(artistMappingReviews.artistId, artistIds),
           ),
@@ -462,19 +467,31 @@ export async function listArtistMappingReviewArtistsPage(
       pendingCandidates: count(artistMappingReviews.id),
     })
     .from(artistMappingReviews)
+    .innerJoin(artistFollows, eq(artistFollows.artistId, artistMappingReviews.artistId))
+    .innerJoin(
+      artistProviderIdentityStatuses,
+      and(
+        eq(artistProviderIdentityStatuses.artistId, artistMappingReviews.artistId),
+        eq(artistProviderIdentityStatuses.provider, artistMappingReviews.provider),
+      ),
+    )
     .where(
       and(
         eq(artistMappingReviews.provider, options.provider),
         eq(artistMappingReviews.status, "pending"),
+        eq(artistFollows.active, true),
+        eq(artistProviderIdentityStatuses.status, "requires_manual_decision"),
       ),
     );
   const [artistSummary] = await db
     .select({ unresolvedArtists: countDistinct(artistProviderIdentityStatuses.artistId) })
     .from(artistProviderIdentityStatuses)
+    .innerJoin(artistFollows, eq(artistFollows.artistId, artistProviderIdentityStatuses.artistId))
     .where(
       and(
         eq(artistProviderIdentityStatuses.provider, options.provider),
         eq(artistProviderIdentityStatuses.status, "requires_manual_decision"),
+        eq(artistFollows.active, true),
       ),
     );
   const last = selectedArtists.at(-1);
@@ -718,9 +735,11 @@ export async function listArtistMappingReviewsPage(
     })
     .from(artistMappingReviews)
     .innerJoin(artists, eq(artists.id, artistMappingReviews.artistId))
+    .innerJoin(artistFollows, eq(artistFollows.artistId, artistMappingReviews.artistId))
     .where(
       and(
         eq(artistMappingReviews.provider, options.provider),
+        eq(artistFollows.active, true),
         ...(options.artistId ? [eq(artistMappingReviews.artistId, options.artistId)] : []),
         ...(!options.artistId ? [eq(artistMappingReviews.status, "pending")] : []),
         ...(cursor

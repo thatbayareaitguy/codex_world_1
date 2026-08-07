@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-08-06 19:58 PDT (UTC-07:00)
+Updated: 2026-08-06 20:17 PDT (UTC-07:00)
 
 Canonical implementation and operational snapshot. Credentials, tokens, private keys, personal
 provider data, authorization headers, and raw provider payloads are excluded.
@@ -8,12 +8,12 @@ provider data, authorization headers, and raw provider payloads are excluded.
 ## Repository State
 
 - Branch: `codex/release-radar-hardening`, tracking the matching GitHub branch.
-- Starting commit for this milestone: `254d7afe54340fd7befd6037c95258ee2e39ec92`.
+- Starting commit for this milestone: `5a6d527fc9eb8d33ffe56243500715b8e4591aa9`.
 - Current milestone commit: the commit containing this document.
 - Worktree contains this handoff update and the intentionally untracked `outputs/` directory. The
   generated CSV output is excluded from the documentation commit. Ignored `.env`, runtime logs, and
   test artifacts are excluded.
-- Milestone: compliant manual Apple artist identity resolution from exact user-supplied URLs.
+- Milestone: keep provider review queues consistent with the active canonical watchlist.
 
 ## Architecture And Database
 
@@ -25,13 +25,19 @@ provider data, authorization headers, and raw provider payloads are excluded.
   `apple_identity_candidate_catalogs` and `apple_identity_candidate_rankings`.
 - The active canonical watchlist contains 586 artists. Recent user-directed removals deactivate
   follow rows while preserving canonical artists and provider history.
-- Current Apple identity state: 568 confirmed mappings, consisting of 320 automatic and 248 manual;
-  25 identity statuses remain unresolved. Pending review contains 142 candidates across 24 of
-  those artists; one unresolved artist currently has no pending candidate row.
+- Current Apple identity state: 568 confirmed mappings, consisting of 320 automatic and 248 manual.
+  The active review queue contains 100 candidates across 18 unresolved followed artists.
+  Inactive artists retain their identity and review history but are excluded from queue rows and
+  provider status counts. MusicBrainz has no unresolved active-follow review rows.
 - Persisted Apple ranking state: 359 catalog snapshots. Of 505 total ranking rows, 66 rows across 11
   artists still belong to unresolved identities.
 
 ## Verified
+
+- Apple Music and MusicBrainz review queries, summaries, explicit artist lookups, and system status
+  counts require an active follow. Removing an artist therefore hides it from Review Queue without
+  deleting canonical, provider, or decision history. The running application excludes blackbear,
+  CLEMS, Dogma, Everything Must Go, Klutch, Lama, and OCTANE from both provider review endpoints.
 
 - The historical iTunes seed artifact has canonical SHA-256
   `0243f3d28d6cb51ec0474da7486f8d73c66fd13398d17601d021c876ee0f8660` but is not sanctioned as
@@ -178,7 +184,8 @@ provider data, authorization headers, and raw provider payloads are excluded.
 - Lint: passed with zero warnings.
 - Strict TypeScript: passed across six workspaces.
 - Unit tests: 388 passed in 52 files.
-- PostgreSQL integration tests: 102 passed in 20 files, including a clean 22-migration test database.
+- PostgreSQL integration tests: 103 passed in 20 files, including active-follow review filtering
+  and a clean 22-migration test database.
 - Production build: passed with 27 generated routes/pages.
 - Playwright: 29 passed.
 - `pnpm db:migrate`: passed and idempotent with 22 applied migrations.
@@ -202,19 +209,18 @@ provider data, authorization headers, and raw provider payloads are excluded.
 
 ## Known Risks
 
-- 25 Apple identities remain unresolved. Most have only ambiguous Apple-family catalog evidence.
-- 11 unresolved review groups currently have persisted rankings; remaining groups need bounded
+- 18 active Apple identities remain unresolved. Most have only ambiguous Apple-family catalog evidence.
+- Some unresolved review groups currently have persisted rankings; remaining groups need bounded
   catalog enrichment or exact user decisions.
 - Apple/iTunes search agreement is not independent identity proof because both are Apple catalogs.
 - Split-profile conflicts are preserved for review but multi-profile scanning remains unsupported.
 
 ## Immediate Next Step
 
-Review the ranked Apple candidates already persisted, then configure Apple developer-token settings
-for a bounded live canary of the richer Apple Music relationship views. After that evidence is
-validated, enrich the remaining unresolved candidates in additional bounded passes. Any proposal to
-auto-confirm from Apple-only soft signals requires a separate policy decision and a larger zero-false
-calibration sample.
+Reload Review Queue and continue resolving the 18 active Apple identities. Configure Apple
+developer-token settings before any bounded live canary of richer Apple Music relationship views.
+Any proposal to auto-confirm from Apple-only soft signals requires a separate policy decision and a
+larger zero-false calibration sample.
 
 ## Deferred
 

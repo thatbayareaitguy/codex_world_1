@@ -1,4 +1,4 @@
-import { artistMappingReviews } from "@radar/db";
+import { artistFollows, artistMappingReviews } from "@radar/db";
 import { loadProviderConfiguration } from "@radar/providers";
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -12,13 +12,17 @@ export async function GET(): Promise<NextResponse> {
   }
   const context = await createMusicBrainzServerContext();
   try {
-    const pending = await context.db.query.artistMappingReviews.findMany({
-      where: and(
-        eq(artistMappingReviews.provider, "musicbrainz"),
-        eq(artistMappingReviews.status, "pending"),
-      ),
-      columns: { id: true },
-    });
+    const pending = await context.db
+      .select({ id: artistMappingReviews.id })
+      .from(artistMappingReviews)
+      .innerJoin(artistFollows, eq(artistFollows.artistId, artistMappingReviews.artistId))
+      .where(
+        and(
+          eq(artistMappingReviews.provider, "musicbrainz"),
+          eq(artistMappingReviews.status, "pending"),
+          eq(artistFollows.active, true),
+        ),
+      );
     return NextResponse.json({ mappingReviewCount: pending.length, state: "ready" });
   } finally {
     await context.close();

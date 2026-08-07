@@ -1,9 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createDatabase } from "./client";
 import { listMusicBrainzMappingReviewsPage } from "./musicbrainz-review-history";
-import { artistMappingReviews, artists } from "./schema";
+import { artistFollows, artistMappingReviews, artists, users } from "./schema";
 
 const databaseUrl =
   process.env.TEST_DATABASE_URL ?? "postgres://radar:radar@127.0.0.1:5433/radar_test";
@@ -11,14 +12,21 @@ const databaseUrl =
 describe.sequential("MusicBrainz mapping review pagination", () => {
   const connection = createDatabase(databaseUrl);
   let artistId = "";
+  const userId = randomUUID();
 
   beforeAll(async () => {
-    await connection.db.execute(sql`truncate table artists restart identity cascade`);
+    await connection.db.execute(sql`truncate table users, artists restart identity cascade`);
+    await connection.db.insert(users).values({
+      displayName: "Review Test User",
+      email: "review-test@example.test",
+      id: userId,
+    });
     const [artist] = await connection.db
       .insert(artists)
       .values({ name: "Synthetic Review Artist", normalizedName: "synthetic review artist" })
       .returning({ id: artists.id });
     artistId = artist!.id;
+    await connection.db.insert(artistFollows).values({ artistId, source: "test", userId });
     await connection.db.insert(artistMappingReviews).values(
       Array.from({ length: 23 }, (_, index) => ({
         artistId,
@@ -34,7 +42,7 @@ describe.sequential("MusicBrainz mapping review pagination", () => {
   });
 
   afterAll(async () => {
-    await connection.db.execute(sql`truncate table artists restart identity cascade`);
+    await connection.db.execute(sql`truncate table users, artists restart identity cascade`);
     await connection.client.end();
   });
 

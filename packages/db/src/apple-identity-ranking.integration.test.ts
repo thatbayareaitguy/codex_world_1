@@ -11,7 +11,13 @@ import {
   decideArtistProviderIdentityStatus,
   listArtistMappingReviewArtistsPage,
 } from "./provider-mappings";
-import { artistMappingReviews, artistProviderIdentityStatuses, artists, users } from "./schema";
+import {
+  artistFollows,
+  artistMappingReviews,
+  artistProviderIdentityStatuses,
+  artists,
+  users,
+} from "./schema";
 
 const databaseUrl =
   process.env.TEST_DATABASE_URL ?? "postgres://radar:radar@127.0.0.1:5433/radar_test";
@@ -33,6 +39,7 @@ describe.sequential("persisted Apple identity ranking evidence", () => {
       name: "Ranked Candidate Artist",
       normalizedName: "ranked candidate artist",
     });
+    await connection.db.insert(artistFollows).values({ artistId, source: "test", userId });
     await connection.db.insert(artistProviderIdentityStatuses).values({
       artistId,
       provider: "apple_music",

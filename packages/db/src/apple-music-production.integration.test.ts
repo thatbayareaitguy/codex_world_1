@@ -113,6 +113,43 @@ describe.sequential("Apple Music production identity and batches", () => {
     ).toHaveLength(4);
   });
 
+  it("excludes inactive followed artists from review pages and summaries", async () => {
+    await connection.db
+      .update(artistFollows)
+      .set({ active: false })
+      .where(eq(artistFollows.artistId, artistIds[2]!));
+    try {
+      const grouped = await listArtistMappingReviewArtistsPage(connection.db, {
+        limit: 20,
+        provider: "apple_music",
+      });
+      expect(grouped.summary).toEqual({ pendingCandidates: 1, unresolvedArtists: 1 });
+      expect(new Set(grouped.reviews.map((review) => review.artistId))).toEqual(
+        new Set([artistIds[3]!]),
+      );
+
+      const legacy = await listArtistMappingReviewsPage(connection.db, {
+        limit: 20,
+        provider: "apple_music",
+      });
+      expect(legacy.reviews.map((review) => review.artistId)).toEqual([artistIds[3]]);
+      expect(
+        (
+          await listArtistMappingReviewsPage(connection.db, {
+            artistId: artistIds[2]!,
+            limit: 20,
+            provider: "apple_music",
+          })
+        ).reviews,
+      ).toEqual([]);
+    } finally {
+      await connection.db
+        .update(artistFollows)
+        .set({ active: true })
+        .where(eq(artistFollows.artistId, artistIds[2]!));
+    }
+  });
+
   it("confirms, replaces, and manually supplies mappings while resolving sibling reviews", async () => {
     const ambiguous = await connection.db.query.artistMappingReviews.findFirst({
       where: and(

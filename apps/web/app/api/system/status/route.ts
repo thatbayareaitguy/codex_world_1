@@ -1,5 +1,6 @@
 import {
   artistImportRuns,
+  artistFollows,
   artistMappingReviews,
   createDatabase,
   getAppleMusicOperationalStatus,
@@ -106,10 +107,12 @@ export async function GET(): Promise<NextResponse> {
       connection.db
         .select({ count: sql<number>`count(*)::int` })
         .from(artistMappingReviews)
+        .innerJoin(artistFollows, eq(artistFollows.artistId, artistMappingReviews.artistId))
         .where(
           and(
             eq(artistMappingReviews.provider, "musicbrainz"),
             eq(artistMappingReviews.status, "pending"),
+            eq(artistFollows.active, true),
           ),
         ),
       connection.db
@@ -125,10 +128,12 @@ export async function GET(): Promise<NextResponse> {
       connection.db
         .select({ count: sql<number>`count(*)::int` })
         .from(artistMappingReviews)
+        .innerJoin(artistFollows, eq(artistFollows.artistId, artistMappingReviews.artistId))
         .where(
           and(
             eq(artistMappingReviews.provider, "apple_music"),
             eq(artistMappingReviews.status, "pending"),
+            eq(artistFollows.active, true),
           ),
         ),
       getAppleMusicOperationalStatus(connection.db),
