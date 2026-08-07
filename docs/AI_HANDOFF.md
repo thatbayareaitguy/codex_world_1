@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-08-06 18:53 PDT (UTC-07:00)
+Updated: 2026-08-06 18:55 PDT (UTC-07:00)
 
 Canonical implementation and operational snapshot. Credentials, tokens, private keys, personal
 provider data, authorization headers, and raw provider payloads are excluded.
@@ -8,7 +8,7 @@ provider data, authorization headers, and raw provider payloads are excluded.
 ## Repository State
 
 - Branch: `codex/release-radar-hardening`, tracking the matching GitHub branch.
-- Starting commit for this milestone: `907f37ac8635f07bf05530238b245d8ef6f9e178`.
+- Starting commit for this milestone: `709656809afe2d41da7ba10c2f3d842a48dd3c88`.
 - Current milestone commit: the commit containing this document.
 - Worktree contains only this handoff update until its documentation commit is created and pushed.
   Ignored `.env`, runtime logs, and test artifacts are excluded.
@@ -22,10 +22,10 @@ provider data, authorization headers, and raw provider payloads are excluded.
   catalog snapshots, rankings, request gates, cooldowns, OAuth data, and export ledgers.
 - Twenty-two forward migrations are applied. Migration 0021 adds
   `apple_identity_candidate_catalogs` and `apple_identity_candidate_rankings`.
-- Current Apple identity state: 421 confirmed mappings, consisting of 320 automatic and 101 manual;
-  172 identity statuses remain unresolved. Pending review contains 849 candidates across 171 of
+- Current Apple identity state: 428 confirmed mappings, consisting of 320 automatic and 108 manual;
+  165 identity statuses remain unresolved. Pending review contains 810 candidates across 164 of
   those artists; one unresolved artist currently has no pending candidate row.
-- Persisted Apple ranking state: 213 catalog snapshots. Of 505 total ranking rows, 339 rows across 68
+- Persisted Apple ranking state: 220 catalog snapshots. Of 505 total ranking rows, 332 rows across 67
   artists still belong to unresolved identities.
 
 ## Verified
@@ -102,6 +102,10 @@ provider data, authorization headers, and raw provider payloads are excluded.
   `1331014845`, Jason Ross `129061595`, Jinco `373547544`, and Jon Casey `477268278` were verified
   through 15 gated numeric Apple lookups with zero failures and applied transactionally. Exact
   normalized names agreed and their pending reviews were closed.
+- User-supplied exact URLs for Just A Gent `676417641`, K Motionz `581160699`, K-NINE `30837827`,
+  KANJI `1705037926`, KLOUD `1351315768`, KRANE `887378519`, and KRAYT `1311012711` were verified
+  through seven gated numeric Apple lookups with zero failures and applied transactionally. Exact
+  normalized names agreed and their pending reviews were closed.
 
 ## Automated Validation
 
@@ -133,8 +137,8 @@ provider data, authorization headers, and raw provider payloads are excluded.
 
 ## Known Risks
 
-- 172 Apple identities remain unresolved. Most have only ambiguous Apple-family catalog evidence.
-- 68 unresolved review groups currently have persisted rankings; remaining groups need bounded
+- 165 Apple identities remain unresolved. Most have only ambiguous Apple-family catalog evidence.
+- 67 unresolved review groups currently have persisted rankings; remaining groups need bounded
   catalog enrichment or exact user decisions.
 - Apple/iTunes search agreement is not independent identity proof because both are Apple catalogs.
 - Split-profile conflicts are preserved for review but multi-profile scanning remains unsupported.
