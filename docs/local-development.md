@@ -95,6 +95,20 @@ not search Apple by Spotify or canonical names and never sends Spotify metadata 
 Apple developer-token credentials it inventories bounded MusicBrainz evidence, resolves nothing,
 and reports Apple verification as blocked.
 
+Run the calibrated Apple-family candidate enrichment and exact-link pass with:
+
+```powershell
+pnpm doctor
+pnpm apple-music:identities resolve-pass --confirm-live --limit 100 --max-requests 150 --min-request-interval-ms 3200
+```
+
+`resolve-pass` accepts only retained numeric Apple candidate IDs and independently confirmed
+MusicBrainz IDs. It never submits Spotify-derived query terms or metadata. When Apple Music
+developer-token configuration is available, it reads artist relationship views. Otherwise it uses
+Apple's numeric-ID iTunes lookup endpoint. Catalogs and rankings are persisted and reused. Soft
+Apple-only signals rank review candidates but never confirm them automatically. See
+[Apple Artist Identity Ranking](apple-identity-ranking.md) for the evidence and calibration rules.
+
 Normal scans use one global database lock. Each provider records an independent run and failure, and a provider failure does not stop the remaining providers. Detailed errors and provider metrics expire after `SCAN_DETAIL_RETENTION_DAYS`; aggregate counts and timestamps remain.
 
 Spotify uses one database-backed queue across web and scanner processes. The default and minimum configured interval is ten seconds with concurrency one. A provider 429 persists a client-wide cooldown across restart; do not clear or bypass a valid integer-second wait. Initial scans are limited to 15 artists per batch and begin paused for confirmation. See [Spotify Development Mode Scanning](spotify-development-mode-scanning.md).

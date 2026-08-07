@@ -10,6 +10,12 @@
 - `artist_provider_identity_statuses`: one durable status per canonical artist and provider. It distinguishes automatic and manual confirmations from confirmed-unavailable, alias/duplicate, intentional exclusion, and unresolved manual-decision states without treating review candidates as canonical mappings.
 - `artist_import_runs` and `artist_import_candidates`: preview, selection, decision, counts, provenance, and import history.
 - `artist_mapping_reviews`: ambiguous MusicBrainz and Apple Music mapping proposals and decisions. Apple candidate-free rows permit a manually supplied numeric catalog artist ID.
+- `apple_identity_candidate_catalogs`: reusable, validated Apple-family catalog summaries keyed by
+  numeric Apple artist ID, including source, resource state, namespaced artist URL and artwork,
+  genres, labels, releases, songs, direct credits, payload hash, and observation time.
+- `apple_identity_candidate_rankings`: one calibrated result per canonical artist and Apple
+  candidate, including rank, score, reasons, contradictions, exact-link provenance, title overlaps,
+  elimination safety, and automatic-confirmation eligibility.
 
 ## Catalog and Evidence
 

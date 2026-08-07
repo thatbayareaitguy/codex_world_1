@@ -6,6 +6,7 @@ import {
   listAppleIdentityResolutionBatch,
   verifyAppleIdentityResolutionState,
 } from "./apple-music-identities";
+import { persistAppleIdentityCandidateCatalog } from "./apple-identity-ranking";
 import { createDatabase } from "./client";
 import {
   artistExternalIds,
@@ -97,6 +98,39 @@ describe.sequential("bulk Apple Music identity decisions", () => {
   });
 
   it("persists mapping, split, unavailable, and deferred decisions across a restart", async () => {
+    await connection.db.insert(artistMappingReviews).values([
+      {
+        artistId: artistIds[1]!,
+        matchReasons: ["Split candidate"],
+        matchScore: "0.500",
+        proposedExternalId: "9200",
+        provider: "apple_music",
+        providerName: "Split candidate 9200",
+      },
+      {
+        artistId: artistIds[1]!,
+        matchReasons: ["Split candidate"],
+        matchScore: "0.500",
+        proposedExternalId: "9201",
+        provider: "apple_music",
+        providerName: "Split candidate 9201",
+      },
+    ]);
+    for (const appleArtistId of ["9200", "9201"]) {
+      await persistAppleIdentityCandidateCatalog(connection.db, {
+        catalog: {
+          appleArtistId,
+          artistName: `Apple Artist ${appleArtistId}`,
+          genres: [],
+          labels: [],
+          releases: [],
+          resourceStatus: "valid",
+          songs: [],
+          source: "apple_music_api",
+        },
+        requestIdentity: `test:${appleArtistId}`,
+      });
+    }
     const result = await applyVerifiedAppleIdentityDecisions(connection.db, [
       decision(artistIds[0]!, "confirm", ["9100"]),
       decision(artistIds[1]!, "split_profile", ["9200", "9201"]),

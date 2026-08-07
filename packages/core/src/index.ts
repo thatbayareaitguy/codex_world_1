@@ -1,5 +1,6 @@
 export * from "./logger";
 export * from "./apple-music-artwork";
+export * from "./apple-identity-ranking";
 export * from "./matching";
 export * from "./normalize";
 export * from "./retry";

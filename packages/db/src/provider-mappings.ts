@@ -1,7 +1,9 @@
 import { and, asc, count, countDistinct, desc, eq, gt, inArray, lt, ne, or } from "drizzle-orm";
-import type { ProviderName } from "@radar/core";
+import type { AppleIdentityCandidateCatalog, ProviderName } from "@radar/core";
 import type { RadarDatabase } from "./client";
 import {
+  appleIdentityCandidateCatalogs,
+  appleIdentityCandidateRankings,
   artistExternalIds,
   artistMappingReviews,
   artistProviderIdentityStatuses,
@@ -129,13 +131,13 @@ export async function confirmArtistMappingExternalId(
 export async function decideArtistMapping(
   db: RadarDatabase,
   input: {
-    decision: "confirm" | "reject";
+    decision: "confirm" | "reject" | "restore";
     provider: "apple_music" | "musicbrainz";
     reviewId: string;
   },
 ): Promise<{
   artistId: string;
-  decision: "confirm" | "reject";
+  decision: "confirm" | "reject" | "restore";
   externalId: string | null;
   idempotent: boolean;
 }> {
@@ -148,6 +150,14 @@ export async function decideArtistMapping(
     });
     if (!review) throw new ArtistMappingReviewNotFoundError();
     const now = new Date();
+    if (input.decision === "restore") {
+      const idempotent = review.status === "pending";
+      await tx
+        .update(artistMappingReviews)
+        .set({ decidedAt: null, status: "pending", updatedAt: now })
+        .where(eq(artistMappingReviews.id, review.id));
+      return { artistId: review.artistId, decision: "restore", externalId: null, idempotent };
+    }
     if (input.decision === "reject") {
       const idempotent = review.status === "rejected";
       await tx
@@ -272,6 +282,40 @@ export interface ArtistMappingReviewPage {
       provider: ProviderName;
       url: string | null;
     }>;
+    candidateEvidence?: {
+      activityDate: string | null;
+      appleArtistName: string;
+      artistUrl: string | null;
+      artworkUrl: string | null;
+      autoConfirmEligible: boolean;
+      collaborators: string[];
+      contradictions: string[];
+      eliminationSafe: boolean;
+      exactLinkSource: string | null;
+      genres: string[];
+      labels: string[];
+      rank: number;
+      rankingReasons: string[];
+      resourceStatus: string;
+      score: string;
+      source: string;
+      titleOverlaps: Array<{
+        distinctive: boolean;
+        leftTitle: string;
+        rightTitle: string;
+        weight: number;
+      }>;
+      topReleases: Array<{
+        artworkUrl?: string;
+        releaseDate?: string;
+        title: string;
+      }>;
+      topSongs: Array<{
+        artworkUrl?: string;
+        releaseDate?: string;
+        title: string;
+      }>;
+    };
   }>;
 }
 
@@ -292,9 +336,11 @@ export async function listArtistMappingReviewArtistsPage(
 ): Promise<ArtistMappingReviewArtistPage> {
   const limit = Math.max(5, Math.min(Math.trunc(options.limit ?? 20), 50));
   const cursor = options.cursor ? decodeArtistCursor(options.cursor) : null;
-  const pending = and(
+  const unresolved = and(
     eq(artistMappingReviews.provider, options.provider),
-    eq(artistMappingReviews.status, "pending"),
+    inArray(artistMappingReviews.status, ["pending", "rejected"]),
+    eq(artistProviderIdentityStatuses.provider, options.provider),
+    eq(artistProviderIdentityStatuses.status, "requires_manual_decision"),
     ...(cursor
       ? [
           or(
@@ -308,7 +354,14 @@ export async function listArtistMappingReviewArtistsPage(
     .select({ artistId: artists.id, artistName: artists.name })
     .from(artistMappingReviews)
     .innerJoin(artists, eq(artists.id, artistMappingReviews.artistId))
-    .where(pending)
+    .innerJoin(
+      artistProviderIdentityStatuses,
+      and(
+        eq(artistProviderIdentityStatuses.artistId, artistMappingReviews.artistId),
+        eq(artistProviderIdentityStatuses.provider, artistMappingReviews.provider),
+      ),
+    )
+    .where(unresolved)
     .groupBy(artists.id, artists.name)
     .orderBy(asc(artists.name), asc(artists.id))
     .limit(limit + 1);
@@ -329,18 +382,52 @@ export async function listArtistMappingReviewArtistsPage(
           reasons: artistMappingReviews.matchReasons,
           status: artistMappingReviews.status,
           updatedAt: artistMappingReviews.updatedAt,
+          candidateCatalog: appleIdentityCandidateCatalogs.catalog,
+          candidateResourceStatus: appleIdentityCandidateCatalogs.resourceStatus,
+          candidateSource: appleIdentityCandidateCatalogs.source,
+          candidateAutoConfirmEligible: appleIdentityCandidateRankings.autoConfirmEligible,
+          candidateContradictions: appleIdentityCandidateRankings.contradictions,
+          candidateEliminationSafe: appleIdentityCandidateRankings.eliminationSafe,
+          candidateExactLinkSource: appleIdentityCandidateRankings.exactLinkSource,
+          candidateRank: appleIdentityCandidateRankings.rank,
+          candidateRankingReasons: appleIdentityCandidateRankings.reasons,
+          candidateScore: appleIdentityCandidateRankings.score,
+          candidateTitleOverlaps: appleIdentityCandidateRankings.titleOverlaps,
         })
         .from(artistMappingReviews)
         .innerJoin(artists, eq(artists.id, artistMappingReviews.artistId))
+        .innerJoin(
+          artistProviderIdentityStatuses,
+          and(
+            eq(artistProviderIdentityStatuses.artistId, artistMappingReviews.artistId),
+            eq(artistProviderIdentityStatuses.provider, artistMappingReviews.provider),
+          ),
+        )
+        .leftJoin(
+          appleIdentityCandidateRankings,
+          and(
+            eq(appleIdentityCandidateRankings.artistId, artistMappingReviews.artistId),
+            eq(
+              appleIdentityCandidateRankings.appleArtistId,
+              artistMappingReviews.proposedExternalId,
+            ),
+          ),
+        )
+        .leftJoin(
+          appleIdentityCandidateCatalogs,
+          eq(appleIdentityCandidateCatalogs.appleArtistId, artistMappingReviews.proposedExternalId),
+        )
         .where(
           and(
             eq(artistMappingReviews.provider, options.provider),
-            eq(artistMappingReviews.status, "pending"),
+            inArray(artistMappingReviews.status, ["pending", "rejected"]),
+            eq(artistProviderIdentityStatuses.status, "requires_manual_decision"),
             inArray(artistMappingReviews.artistId, artistIds),
           ),
         )
         .orderBy(
           asc(artists.name),
+          asc(appleIdentityCandidateRankings.rank),
           desc(artistMappingReviews.matchScore),
           asc(artistMappingReviews.id),
         )
@@ -359,6 +446,7 @@ export async function listArtistMappingReviewArtistsPage(
           and(
             inArray(artistExternalIds.artistId, artistIds),
             eq(artistExternalIds.confirmed, true),
+            ne(artistExternalIds.provider, "spotify"),
           ),
         )
         .orderBy(asc(artistExternalIds.provider))
@@ -369,10 +457,9 @@ export async function listArtistMappingReviewArtistsPage(
     current.push(row);
     evidenceByArtist.set(row.artistId, current);
   }
-  const [summary] = await db
+  const [candidateSummary] = await db
     .select({
       pendingCandidates: count(artistMappingReviews.id),
-      unresolvedArtists: countDistinct(artistMappingReviews.artistId),
     })
     .from(artistMappingReviews)
     .where(
@@ -381,12 +468,39 @@ export async function listArtistMappingReviewArtistsPage(
         eq(artistMappingReviews.status, "pending"),
       ),
     );
+  const [artistSummary] = await db
+    .select({ unresolvedArtists: countDistinct(artistProviderIdentityStatuses.artistId) })
+    .from(artistProviderIdentityStatuses)
+    .where(
+      and(
+        eq(artistProviderIdentityStatuses.provider, options.provider),
+        eq(artistProviderIdentityStatuses.status, "requires_manual_decision"),
+      ),
+    );
   const last = selectedArtists.at(-1);
   return {
     hasMore,
     nextCursor: hasMore && last ? encodeArtistCursor(last.artistName, last.artistId) : null,
     reviews: rows.map((row) => ({
-      ...row,
+      artistId: row.artistId,
+      artistName: row.artistName,
+      confidence: row.confidence,
+      createdAt: row.createdAt,
+      id: row.id,
+      name: row.name,
+      proposedExternalId: row.proposedExternalId,
+      provider: row.provider,
+      reasons: row.reasons,
+      status: row.status,
+      updatedAt: row.updatedAt,
+      ...(row.candidateCatalog && row.candidateRank && row.candidateScore
+        ? {
+            candidateEvidence: candidateEvidence({
+              ...row,
+              candidateCatalog: row.candidateCatalog,
+            }),
+          }
+        : {}),
       confirmedEvidence: (evidenceByArtist.get(row.artistId) ?? []).map(
         ({ externalId, mappingSource, provider, url }) => ({
           externalId,
@@ -397,9 +511,67 @@ export async function listArtistMappingReviewArtistsPage(
       ),
     })),
     summary: {
-      pendingCandidates: Number(summary?.pendingCandidates ?? 0),
-      unresolvedArtists: Number(summary?.unresolvedArtists ?? 0),
+      pendingCandidates: Number(candidateSummary?.pendingCandidates ?? 0),
+      unresolvedArtists: Number(artistSummary?.unresolvedArtists ?? 0),
     },
+  };
+}
+
+function candidateEvidence(row: {
+  candidateAutoConfirmEligible: boolean | null;
+  candidateCatalog: AppleIdentityCandidateCatalog;
+  candidateContradictions: string[] | null;
+  candidateEliminationSafe: boolean | null;
+  candidateExactLinkSource: string | null;
+  candidateRank: number | null;
+  candidateRankingReasons: string[] | null;
+  candidateResourceStatus: string | null;
+  candidateScore: string | null;
+  candidateSource: string | null;
+  candidateTitleOverlaps: Array<{
+    distinctive: boolean;
+    leftTitle: string;
+    rightTitle: string;
+    weight: number;
+  }> | null;
+}) {
+  const catalog = row.candidateCatalog;
+  const activityDates = [...catalog.releases, ...catalog.songs]
+    .map((item) => item.releaseDate)
+    .filter((value): value is string => Boolean(value))
+    .sort();
+  return {
+    activityDate: activityDates.at(-1) ?? null,
+    appleArtistName: catalog.artistName,
+    artistUrl: catalog.artistUrl ?? null,
+    artworkUrl: catalog.artworkUrl ?? null,
+    autoConfirmEligible: row.candidateAutoConfirmEligible ?? false,
+    collaborators: [
+      ...new Set(
+        catalog.songs.map((song) => song.artistName).filter((name) => name !== catalog.artistName),
+      ),
+    ].slice(0, 8),
+    contradictions: row.candidateContradictions ?? [],
+    eliminationSafe: row.candidateEliminationSafe ?? false,
+    exactLinkSource: row.candidateExactLinkSource,
+    genres: catalog.genres,
+    labels: catalog.labels,
+    rank: row.candidateRank ?? 0,
+    rankingReasons: row.candidateRankingReasons ?? [],
+    resourceStatus: row.candidateResourceStatus ?? catalog.resourceStatus,
+    score: row.candidateScore ?? "0.000",
+    source: row.candidateSource ?? catalog.source,
+    titleOverlaps: row.candidateTitleOverlaps ?? [],
+    topReleases: catalog.releases.slice(0, 5).map((release) => ({
+      ...(release.artworkUrl ? { artworkUrl: release.artworkUrl } : {}),
+      ...(release.releaseDate ? { releaseDate: release.releaseDate } : {}),
+      title: release.title,
+    })),
+    topSongs: catalog.songs.slice(0, 5).map((song) => ({
+      ...(song.artworkUrl ? { artworkUrl: song.artworkUrl } : {}),
+      ...(song.releaseDate ? { releaseDate: song.releaseDate } : {}),
+      title: song.title,
+    })),
   };
 }
 
@@ -407,9 +579,15 @@ export async function decideArtistProviderIdentityStatus(
   db: RadarDatabase,
   input: {
     artistId: string;
+    externalIds?: string[];
     linkedArtistId?: string;
     provider: "apple_music" | "spotify";
-    status: "alias_or_duplicate" | "confirmed_unavailable" | "intentionally_excluded";
+    status:
+      | "alias_or_duplicate"
+      | "confirmed_unavailable"
+      | "intentionally_deferred"
+      | "intentionally_excluded"
+      | "split_profile";
   },
 ): Promise<{ artistId: string; idempotent: boolean; status: typeof input.status }> {
   if (input.status === "alias_or_duplicate" && !input.linkedArtistId) {
@@ -417,6 +595,17 @@ export async function decideArtistProviderIdentityStatus(
   }
   if (input.linkedArtistId === input.artistId) {
     throw new Error("An artist cannot be linked to itself.");
+  }
+  const externalIds = [...new Set(input.externalIds ?? [])];
+  if (input.status === "split_profile") {
+    if (input.provider !== "apple_music" || externalIds.length < 2) {
+      throw new Error("A split profile requires at least two Apple artist IDs.");
+    }
+    if (externalIds.some((id) => !/^\d{1,32}$/.test(id))) {
+      throw new Error("Split-profile Apple artist IDs are invalid.");
+    }
+  } else if (externalIds.length) {
+    throw new Error("Only split-profile decisions may include provider artist IDs.");
   }
   return db.transaction(async (tx) => {
     const current = await tx.query.artistProviderIdentityStatuses.findFirst({
@@ -427,9 +616,39 @@ export async function decideArtistProviderIdentityStatus(
     });
     const idempotent =
       current?.status === input.status &&
-      (current.linkedArtistId ?? null) === (input.linkedArtistId ?? null);
+      (current.linkedArtistId ?? null) === (input.linkedArtistId ?? null) &&
+      sameIdentityIds(current.externalIds, externalIds);
     const now = new Date();
     const reason = identityDecisionReason(input.status);
+    if (input.status === "split_profile") {
+      const [candidateRows, catalogRows] = await Promise.all([
+        tx
+          .select({ appleArtistId: artistMappingReviews.proposedExternalId })
+          .from(artistMappingReviews)
+          .where(
+            and(
+              eq(artistMappingReviews.artistId, input.artistId),
+              eq(artistMappingReviews.provider, "apple_music"),
+              inArray(artistMappingReviews.proposedExternalId, externalIds),
+            ),
+          ),
+        tx
+          .select({ appleArtistId: appleIdentityCandidateCatalogs.appleArtistId })
+          .from(appleIdentityCandidateCatalogs)
+          .where(
+            and(
+              inArray(appleIdentityCandidateCatalogs.appleArtistId, externalIds),
+              eq(appleIdentityCandidateCatalogs.resourceStatus, "valid"),
+            ),
+          ),
+      ]);
+      if (
+        new Set(candidateRows.map((row) => row.appleArtistId)).size !== externalIds.length ||
+        new Set(catalogRows.map((row) => row.appleArtistId)).size !== externalIds.length
+      ) {
+        throw new Error("Split profiles require selected, validated Apple candidates.");
+      }
+    }
     await tx
       .insert(artistProviderIdentityStatuses)
       .values({
@@ -437,7 +656,7 @@ export async function decideArtistProviderIdentityStatus(
         decidedAt: current?.decidedAt ?? now,
         decidedBy: "user",
         evidence: [reason],
-        externalIds: [],
+        externalIds,
         linkedArtistId: input.linkedArtistId,
         provider: input.provider,
         reason,
@@ -450,7 +669,7 @@ export async function decideArtistProviderIdentityStatus(
           decidedBy: "user",
           evidence: [reason],
           externalId: null,
-          externalIds: [],
+          externalIds,
           linkedArtistId: input.linkedArtistId ?? null,
           reason,
           status: input.status,
@@ -584,7 +803,12 @@ function decodeArtistCursor(value: string): { artistId: string; artistName: stri
 }
 
 function identityDecisionReason(
-  status: "alias_or_duplicate" | "confirmed_unavailable" | "intentionally_excluded",
+  status:
+    | "alias_or_duplicate"
+    | "confirmed_unavailable"
+    | "intentionally_deferred"
+    | "intentionally_excluded"
+    | "split_profile",
 ): string {
   if (status === "confirmed_unavailable") {
     return "User confirmed that no provider identity is available.";
@@ -592,7 +816,20 @@ function identityDecisionReason(
   if (status === "alias_or_duplicate") {
     return "User linked this provider identity state to another canonical artist.";
   }
+  if (status === "intentionally_deferred") {
+    return "User intentionally deferred this provider identity decision.";
+  }
+  if (status === "split_profile") {
+    return "User confirmed that the provider catalog is split across multiple artist profiles.";
+  }
   return "User intentionally excluded this artist from the provider.";
+}
+
+function sameIdentityIds(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  const sortedLeft = [...left].sort();
+  const sortedRight = [...right].sort();
+  return sortedLeft.every((value, index) => value === sortedRight[index]);
 }
 
 function isCursor(value: unknown): value is { id: string; updatedAt: string } {

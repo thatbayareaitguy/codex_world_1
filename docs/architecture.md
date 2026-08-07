@@ -38,6 +38,15 @@ Interrupted `running` rows become retryable on compatible resume, completed arti
 and request or runtime budget stops preserve the batch. Valid Apple candidates enter the existing
 canonical matching, appearance, evidence, artwork, and feed pathways, so no Apple-only feed exists.
 
+Apple identity ranking is a separate bounded workflow. It begins with retained numeric Apple
+candidate IDs and independently confirmed MusicBrainz IDs, never with Spotify-derived query terms or
+metadata. Candidate IDs are looked up directly through an Apple-family API, validated catalogs are
+persisted for reuse, and the resolver scores only Apple-side name agreement, catalog activity,
+genres, labels, titles, and direct co-credits. Those soft signals rank review cards but cannot cross
+the automatic threshold. Only one validated direct MusicBrainz or MusicBrainz-linked Wikidata Apple
+artist ID can automatically confirm a mapping. Multiple exact IDs remain a split-profile conflict.
+See [Apple Artist Identity Ranking](apple-identity-ranking.md).
+
 ## Runtime
 
 - `apps/web`: Next.js UI and server-only OAuth, import, mapping, Reddit source, status, and playlist routes.
@@ -53,7 +62,7 @@ Drizzle is used because it keeps the schema and SQL migrations explicit, has a s
 
 1. A user manually creates a canonical artist or explicitly approves a Spotify import preview.
 2. Provider IDs are attached to that canonical artist with provenance, confidence, and confirmation state.
-3. A provider-specific identity status records whether the mapping was automatic, manually confirmed, confirmed unavailable, an alias or duplicate, intentionally excluded, or still requires a manual decision. Review candidates are grouped by canonical artist and provider, and remain evidence rather than mappings until explicitly confirmed.
+3. A provider-specific identity status records whether the mapping was automatic, manually confirmed, confirmed unavailable, split across profiles, intentionally deferred, an alias or duplicate, intentionally excluded, or still requires a manual decision. Review candidates are grouped by canonical artist and provider, and remain evidence rather than mappings until explicitly confirmed.
 4. The scanner loads only confirmed mappings and invokes providers independently. Apple Music mapping candidates that are not confirmed remain in review and cannot scan automatically.
 5. Typed provider candidates are matched to canonical tracks independently from canonical releases.
 6. A transaction preserves provider IDs, source evidence, upcoming history, feed state, availability, match reasons, and the provenance-backed release-to-track appearance.

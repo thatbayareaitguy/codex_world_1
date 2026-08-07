@@ -9,7 +9,10 @@ import { z } from "zod";
 import { createProviderDatabaseServerContext } from "../../../../../lib/provider-database-server";
 import { assertSameOrigin, enforceRateLimit } from "../../../../../lib/request-security";
 
-const bodySchema = z.object({ decision: z.enum(["confirm", "reject"]), reviewId: z.uuid() });
+const bodySchema = z.object({
+  decision: z.enum(["confirm", "reject", "restore"]),
+  reviewId: z.uuid(),
+});
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {

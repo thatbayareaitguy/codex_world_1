@@ -14,7 +14,10 @@ import {
 } from "@radar/db";
 import {
   AppleDeveloperTokenManager,
+  type AppleIdentityCatalogClient,
+  ITunesIdentityClient,
   AppleMusicClient,
+  AppleMusicIdentityCatalogClient,
   loadProviderConfiguration,
   MusicBrainzClient,
   type AppleMusicArtist,
@@ -34,8 +37,9 @@ import {
 } from "./apple-music-musicbrainz-resolution";
 import { loadLocalEnvironment } from "./local-env";
 import { exportDirectory } from "./paths";
+import { runAppleIdentityResolution } from "./apple-identity-resolution-runner";
 
-type Command = "apply" | "export" | "musicbrainz-pass" | "preview" | "verify";
+type Command = "apply" | "export" | "musicbrainz-pass" | "preview" | "resolve-pass" | "verify";
 
 interface Options {
   command: Command;
@@ -43,6 +47,8 @@ interface Options {
   file?: string;
   limit: number;
   maxCandidates: number;
+  maxRequests: number;
+  minRequestIntervalMs: number;
   output?: string;
 }
 
@@ -97,6 +103,32 @@ async function execute(
   if (!options.confirmLive) {
     throw new Error("Live Apple Music verification requires --confirm-live.");
   }
+  if (options.command === "resolve-pass") {
+    const rows = await listAppleIdentityResolutionBatch(db, options.limit);
+    return withAppleFamilyIdentityClient(
+      db,
+      configuration,
+      rows.length,
+      options,
+      async (client) => {
+        const musicBrainzClient =
+          configuration.musicbrainz.configured && configuration.musicbrainz.contactEmail
+            ? new MusicBrainzClient({
+                contactEmail: configuration.musicbrainz.contactEmail,
+                requestGate: createMusicBrainzRequestGate(db),
+              })
+            : undefined;
+        return runAppleIdentityResolution({
+          artistLimit: options.limit,
+          catalogClient: client,
+          db,
+          maxCatalogs: options.maxRequests,
+          ...(musicBrainzClient ? { musicBrainzClient } : {}),
+          rows,
+        });
+      },
+    );
+  }
   const fileRows = options.file ? await readAppleIdentityCsv(options.file) : [];
   if (options.command === "preview" || options.command === "apply") {
     return withAppleClient(
@@ -147,6 +179,123 @@ async function execute(
       });
     },
   );
+}
+
+async function withAppleFamilyIdentityClient<T>(
+  db: RadarDatabase,
+  configuration: ProviderConfiguration,
+  totalArtists: number,
+  options: Pick<Options, "maxRequests" | "minRequestIntervalMs">,
+  operation: (client: AppleIdentityCatalogClient) => Promise<T>,
+): Promise<T> {
+  const operational = await getAppleMusicOperationalStatus(db);
+  if (operational.cooldownActive) throw new Error("Apple Music cooldown is active.");
+  if (operational.leaseActive) throw new Error("Apple Music request lease is active.");
+  const now = new Date();
+  const [run] = await db
+    .insert(scanRuns)
+    .values({
+      detailedExpiresAt: new Date(
+        now.getTime() + configuration.scanDetailRetentionDays * 86_400_000,
+      ),
+      metadata: {
+        artifactPolicy:
+          "Historical iTunes name-search candidates are untrusted inventory and are not identity evidence.",
+        compliantEvidenceSources: [
+          "itunes_numeric_artist_id_lookup",
+          "musicbrainz_exact_url_relationship",
+          "wikidata_p2850_from_musicbrainz",
+        ],
+        maxRequestsPerRun: options.maxRequests,
+        minRequestIntervalMs: options.minRequestIntervalMs,
+      },
+      provider: "apple_music",
+      providersRequested: ["apple_music"],
+      startedAt: now,
+      triggerType: "apple_identity_apple_only_ranking",
+    })
+    .returning({ id: scanRuns.id });
+  if (!run) throw new Error("Apple-family identity scan run could not be created.");
+  const [batch] = await db
+    .insert(appleMusicScanBatches)
+    .values({
+      scanRunId: run.id,
+      startedAt: now,
+      status: "running",
+      totalArtists,
+      windowDays: 30,
+    })
+    .returning({ id: appleMusicScanBatches.id });
+  if (!batch) throw new Error("Apple-family identity request batch could not be created.");
+  const persistence = createAppleMusicRequestPersistence(db, {
+    batchId: batch.id,
+    scanRunId: run.id,
+  });
+  const client: AppleIdentityCatalogClient = hasAppleCredentials(configuration)
+    ? new AppleMusicIdentityCatalogClient(
+        new AppleMusicClient({
+          enabled: true,
+          maxRequestsPerRun: options.maxRequests,
+          maximumRuntimeMs: configuration.appleMusic.maxRuntimeMs,
+          minRequestIntervalMs: options.minRequestIntervalMs,
+          persistence,
+          requestTimeoutMs: configuration.appleMusic.requestTimeoutMs,
+          runId: run.id,
+          storefront: configuration.appleMusic.storefront,
+          tokenProvider: new AppleDeveloperTokenManager({
+            keyId: configuration.appleMusic.keyId!,
+            privateKeyPath: configuration.appleMusic.privateKeyPath!,
+            teamId: configuration.appleMusic.teamId!,
+            tokenLifetimeSeconds: configuration.appleMusic.tokenLifetimeSeconds,
+          }),
+        }),
+      )
+    : new ITunesIdentityClient({
+        maxRequestsPerRun: options.maxRequests,
+        minRequestIntervalMs: options.minRequestIntervalMs,
+        persistence,
+        requestTimeoutMs: configuration.appleMusic.requestTimeoutMs,
+        runId: run.id,
+      });
+  try {
+    const result = await operation(client);
+    const finishedAt = new Date();
+    await db
+      .update(appleMusicScanBatches)
+      .set({
+        completedArtists: totalArtists,
+        finishedAt,
+        status: "completed",
+        updatedAt: finishedAt,
+      })
+      .where(eq(appleMusicScanBatches.id, batch.id));
+    await db
+      .update(scanRuns)
+      .set({
+        artistsProcessedCount: totalArtists,
+        completedAt: finishedAt,
+        providersCompleted: ["apple_music"],
+        status: "completed",
+      })
+      .where(eq(scanRuns.id, run.id));
+    return result;
+  } catch (error) {
+    const finishedAt = new Date();
+    await db
+      .update(appleMusicScanBatches)
+      .set({ failedArtists: totalArtists, finishedAt, status: "failed", updatedAt: finishedAt })
+      .where(eq(appleMusicScanBatches.id, batch.id));
+    await db
+      .update(scanRuns)
+      .set({
+        completedAt: finishedAt,
+        errors: [{ message: safeError(error) }],
+        providersFailed: ["apple_music"],
+        status: "failed",
+      })
+      .where(eq(scanRuns.id, run.id));
+    throw error;
+  }
 }
 
 function hasAppleCredentials(configuration: ProviderConfiguration): boolean {
@@ -294,21 +443,36 @@ function summarizePreview(preview: Awaited<ReturnType<typeof previewAppleIdentit
 
 function parseOptions(args: string[]): Options {
   const command = args[0] as Command | undefined;
-  if (!command || !["apply", "export", "musicbrainz-pass", "preview", "verify"].includes(command)) {
+  if (
+    !command ||
+    !["apply", "export", "musicbrainz-pass", "preview", "resolve-pass", "verify"].includes(command)
+  ) {
     throw new Error(
-      "Usage: apple-music:identities <export|preview|apply|verify|musicbrainz-pass> [options]",
+      "Usage: apple-music:identities <export|preview|apply|verify|musicbrainz-pass|resolve-pass> [options]",
     );
   }
   const value = (flag: string) => {
     const index = args.indexOf(flag);
     return index >= 0 ? args[index + 1] : undefined;
   };
-  const limit = parseBoundedInteger(value("--limit") ?? "100", 1, 100, "limit");
+  const limit = parseBoundedInteger(
+    value("--limit") ?? "100",
+    1,
+    command === "resolve-pass" ? 500 : 100,
+    "limit",
+  );
   const maxCandidates = parseBoundedInteger(
     value("--max-candidates") ?? "3",
     1,
     5,
     "max candidates",
+  );
+  const maxRequests = parseBoundedInteger(value("--max-requests") ?? "150", 1, 500, "max requests");
+  const minRequestIntervalMs = parseBoundedInteger(
+    value("--min-request-interval-ms") ?? "3200",
+    3000,
+    60_000,
+    "minimum request interval",
   );
   const file = value("--file");
   if ((command === "preview" || command === "apply") && !file) {
@@ -320,6 +484,8 @@ function parseOptions(args: string[]): Options {
     ...(file ? { file: resolve(file) } : {}),
     limit,
     maxCandidates,
+    maxRequests,
+    minRequestIntervalMs,
     ...(value("--output") ? { output: resolve(value("--output")!) } : {}),
   };
 }

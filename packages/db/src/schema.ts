@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import type { AppleIdentityCandidateCatalog, AppleIdentityCandidateRanking } from "@radar/core";
 import {
   bigint,
   boolean,
@@ -485,6 +486,61 @@ export const artistProviderIdentityStatuses = pgTable(
       table.updatedAt,
       table.artistId,
     ),
+  ],
+);
+
+export const appleIdentityCandidateCatalogs = pgTable(
+  "apple_identity_candidate_catalogs",
+  {
+    appleArtistId: text("apple_artist_id").primaryKey(),
+    catalog: jsonb("catalog").$type<AppleIdentityCandidateCatalog>().notNull(),
+    errorClassification: text("error_classification"),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
+    requestIdentity: text("request_identity").notNull(),
+    responseHash: text("response_hash").notNull(),
+    resourceStatus: text("resource_status").notNull(),
+    source: text("source").notNull(),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    index("apple_identity_candidate_catalog_status_idx").on(table.resourceStatus, table.updatedAt),
+  ],
+);
+
+export const appleIdentityCandidateRankings = pgTable(
+  "apple_identity_candidate_rankings",
+  {
+    artistId: uuid("artist_id")
+      .notNull()
+      .references(() => artists.id, { onDelete: "cascade" }),
+    appleArtistId: text("apple_artist_id").notNull(),
+    rank: integer("rank").notNull(),
+    score: numeric("score", { precision: 4, scale: 3 }).notNull(),
+    autoConfirmEligible: boolean("auto_confirm_eligible").notNull().default(false),
+    eliminationSafe: boolean("elimination_safe").notNull().default(false),
+    exactLinkSource: text("exact_link_source"),
+    reasons: text("reasons")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    contradictions: text("contradictions")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    signals: jsonb("signals").$type<AppleIdentityCandidateRanking["signals"]>().notNull(),
+    titleOverlaps: jsonb("title_overlaps")
+      .$type<AppleIdentityCandidateRanking["titleOverlaps"]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    calibrationVersion: text("calibration_version").notNull(),
+    rankedAt: timestamp("ranked_at", { withTimezone: true }).notNull(),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    primaryKey({ columns: [table.artistId, table.appleArtistId] }),
+    index("apple_identity_candidate_rankings_artist_rank_idx").on(table.artistId, table.rank),
   ],
 );
 

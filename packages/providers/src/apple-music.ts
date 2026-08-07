@@ -88,11 +88,13 @@ const albumResourceSchema = z.object({
         .optional(),
       artistName: z.string().min(1),
       contentRating: z.enum(["clean", "explicit"]).optional(),
+      copyright: z.string().optional(),
       genreNames: z.array(z.string()).default([]),
       isCompilation: z.boolean().optional(),
       isComplete: z.boolean().optional(),
       isSingle: z.boolean().optional(),
       name: z.string().min(1),
+      recordLabel: z.string().optional(),
       releaseDate: z.string().optional(),
       trackCount: z.number().int().nonnegative().optional(),
       upc: z.string().optional(),
@@ -202,6 +204,7 @@ export interface AppleMusicAlbum {
   artistIds: string[];
   artistName: string;
   contentRating?: "clean" | "explicit";
+  copyright?: string;
   evidenceUrl?: string;
   genreNames: string[];
   isCompilation?: boolean;
@@ -210,6 +213,7 @@ export interface AppleMusicAlbum {
   paginationPath: string;
   pageNumber: number;
   releaseDate?: string;
+  recordLabel?: string;
   sourceStorefront: string;
   sourceView: AppleMusicArtistView | "album";
   title: string;
@@ -488,6 +492,10 @@ export class AppleMusicClient {
   private readonly startedAt: number;
   private readonly storefront: string;
   private issuedRequests = 0;
+
+  get requestCount(): number {
+    return this.issuedRequests;
+  }
 
   constructor(private readonly options: AppleMusicClientOptions) {
     this.fetchImpl = options.fetchImpl ?? fetch;
@@ -1604,11 +1612,13 @@ function sanitizeAlbumResource(
       artistName: album.artistName,
       ...(album.artwork ? { artwork: album.artwork } : {}),
       ...(album.contentRating ? { contentRating: album.contentRating } : {}),
+      ...(album.copyright ? { copyright: album.copyright } : {}),
       genreNames: album.genreNames,
       ...(album.isCompilation === undefined ? {} : { isCompilation: album.isCompilation }),
       ...(album.isComplete === undefined ? {} : { isComplete: album.isComplete }),
       ...(album.isSingle === undefined ? {} : { isSingle: album.isSingle }),
       name: album.title,
+      ...(album.recordLabel ? { recordLabel: album.recordLabel } : {}),
       ...(album.releaseDate ? { releaseDate: album.releaseDate } : {}),
       ...(album.trackCount === undefined ? {} : { trackCount: album.trackCount }),
       ...(album.upc ? { upc: album.upc } : {}),
@@ -1717,6 +1727,7 @@ function normalizeAlbum(
     ...(resource.attributes.contentRating
       ? { contentRating: resource.attributes.contentRating }
       : {}),
+    ...(resource.attributes.copyright ? { copyright: resource.attributes.copyright } : {}),
     genreNames: resource.attributes.genreNames,
     ...(resource.attributes.isCompilation === undefined
       ? {}
@@ -1730,6 +1741,7 @@ function normalizeAlbum(
     paginationPath,
     pageNumber,
     ...(resource.attributes.releaseDate ? { releaseDate: resource.attributes.releaseDate } : {}),
+    ...(resource.attributes.recordLabel ? { recordLabel: resource.attributes.recordLabel } : {}),
     sourceStorefront: storefront,
     sourceView,
     title: resource.attributes.name,

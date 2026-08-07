@@ -13,7 +13,16 @@ export async function decideMusicBrainzArtistMapping(
   idempotent: boolean;
 }> {
   try {
-    return await decideArtistMapping(db, { ...input, provider: "musicbrainz" });
+    const result = await decideArtistMapping(db, { ...input, provider: "musicbrainz" });
+    if (result.decision === "restore") {
+      throw new Error("MusicBrainz restore decisions are not supported by this route.");
+    }
+    return {
+      artistId: result.artistId,
+      decision: result.decision,
+      externalId: result.externalId,
+      idempotent: result.idempotent,
+    };
   } catch (error) {
     if (error instanceof ArtistMappingReviewNotFoundError) {
       throw new MusicBrainzMappingReviewNotFoundError();

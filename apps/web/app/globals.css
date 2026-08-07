@@ -1748,6 +1748,101 @@ select:focus-visible {
   gap: 4px;
   color: var(--cyan);
 }
+.mapping-candidate-card {
+  align-items: flex-start;
+}
+.mapping-candidate-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.mapping-candidate-artwork {
+  width: 72px;
+  height: 72px;
+  flex: 0 0 72px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.mapping-candidate-artwork img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.mapping-candidate-copy {
+  min-width: 0;
+}
+.mapping-candidate-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+.mapping-candidate-flags span {
+  padding: 2px 5px;
+  color: var(--muted);
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+.mapping-candidate-evidence {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.mapping-candidate-evidence dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 18px;
+  margin: 0;
+}
+.mapping-candidate-evidence dl div {
+  min-width: 0;
+}
+.mapping-candidate-evidence dt {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+.mapping-candidate-evidence dd {
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.mapping-candidate-catalog-list {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.mapping-candidate-catalog-list b {
+  color: var(--ink);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+.mapping-candidate-warning {
+  color: #9b5b00;
+  font-weight: 700;
+}
+.mapping-candidate-actions {
+  flex-direction: column;
+  align-items: stretch;
+}
+.mapping-split-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 10px;
+}
 .review-card .state {
   display: inline-block;
   margin-bottom: 10px;
@@ -2100,6 +2195,20 @@ select:focus-visible {
   }
   .review-actions {
     flex-wrap: wrap;
+  }
+  .mapping-candidate-body {
+    gap: 10px;
+  }
+  .mapping-candidate-artwork {
+    width: 56px;
+    height: 56px;
+    flex-basis: 56px;
+  }
+  .mapping-candidate-evidence dl {
+    grid-template-columns: 1fr;
+  }
+  .mapping-candidate-actions {
+    align-items: flex-start;
   }
 }
 

@@ -66,6 +66,21 @@ const releaseSchema = z
     title: z.string(),
   })
   .passthrough();
+const artistUrlRelationshipsSchema = z
+  .object({
+    id: mbid,
+    relations: z
+      .array(
+        z
+          .object({
+            type: z.string(),
+            url: z.object({ resource: z.string().url() }).passthrough(),
+          })
+          .passthrough(),
+      )
+      .default([]),
+  })
+  .passthrough();
 
 export const musicbrainzArtistSearchSchema = z.object({
   artists: z.array(
@@ -114,6 +129,9 @@ export type MusicBrainzArtistResult = z.infer<
 >["artists"][number];
 export type MusicBrainzRelease = z.infer<typeof releaseSchema>;
 export type MusicBrainzReleaseGroup = z.infer<typeof releaseGroupSchema>;
+export type MusicBrainzArtistUrlRelationship = z.infer<
+  typeof artistUrlRelationshipsSchema
+>["relations"][number];
 
 export class MusicBrainzHttpError extends Error {
   constructor(
@@ -245,6 +263,17 @@ export class MusicBrainzClient {
       musicbrainzReleaseGroupsSchema,
       signal,
     ).then((response) => response["release-groups"]);
+  }
+
+  lookupArtistUrlRelationships(
+    artistMbid: string,
+    signal?: AbortSignal,
+  ): Promise<MusicBrainzArtistUrlRelationship[]> {
+    return this.get(
+      `/artist/${encodeURIComponent(artistMbid)}?inc=url-rels&fmt=json`,
+      artistUrlRelationshipsSchema,
+      signal,
+    ).then((response) => response.relations);
   }
 
   browseReleases(

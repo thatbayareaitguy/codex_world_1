@@ -34,11 +34,14 @@ The owner's Spotify Premium subscription and explicitly approved Apple Developer
 
 ## Apple Music Verification
 
-Verified 2026-08-04 against current official Apple documentation:
+Verified 2026-08-06 against current official Apple documentation:
 
 - [MusicKit and Apple Music API](https://developer.apple.com/musickit/): Apple documents public catalog access for songs, albums, artists, playlists, music videos, stations, and charts. This implementation uses only artist and album catalog resources.
 - [MusicKit framework overview](https://developer.apple.com/documentation/musickit): Apple Music API is the catalog web service. Playback and subscriber capabilities exist in MusicKit but are not implemented here.
 - [Album attributes](https://developer.apple.com/documentation/applemusicapi/albums/attributes-data.dictionary): `isComplete` identifies albums that contain all final tracks, and prerelease `releaseDate` values may be future expected dates. The scanner preserves announced song titles, suppresses unresolved `Track N` placeholders on incomplete or future releases, and marks future candidates as upcoming.
+- [Artist relationship views](https://developer.apple.com/documentation/applemusicapi/artists/views-data.dictionary): artists expose catalog views including singles, full albums, latest releases, top songs, similar artists, and appears-on albums. Candidate enrichment uses only views reached from a retained numeric Apple artist ID.
+- [Resource relationships](https://developer.apple.com/documentation/applemusicapi/handling-resource-representation-and-relationships): relationship resources and pagination may be fetched directly. The resolver persists bounded Apple-side releases, songs, and artist credits for reuse.
+- [iTunes Search API lookup examples](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/LookupExamples.html): Apple's archived documentation describes direct iTunes ID lookup and notes that ID lookups produce fewer false positives than text search. The fallback resolver uses only a supplied numeric Apple candidate ID and never submits a name.
 - [Create a media identifier and private key](https://developer.apple.com/help/account/capabilities/create-a-media-identifier-and-private-key): a Media ID and Media Services private key sign developer tokens. The private key remains server-only and outside source control.
 - [User authentication for MusicKit](https://developer.apple.com/documentation/applemusicapi/user-authentication-for-musickit): a Music User Token is required for subscriber-specific data. This implementation does not request one and therefore has no personal library, recommendation, playback, favorite, or playlist capability.
 - [Apple Developer Program membership](https://developer.apple.com/programs/whats-included/): membership is currently 99 USD per year or local equivalent. The user explicitly accepted this paid prerequisite for Apple catalog discovery.
@@ -46,6 +49,14 @@ Verified 2026-08-04 against current official Apple documentation:
 Authentication uses a short-lived ES256 developer token containing only the Apple team and key identifiers. Public catalog reads do not require an Apple Music consumer subscription under the documented user-token boundary. Apple does not publish a numeric Apple Music API request limit in the cited documentation, so the application makes no quota claim. It serializes requests through a PostgreSQL gate at a verified minimum of 1100 ms, honors `Retry-After`, and persists a global cooldown after 429.
 
 Production scope is first-page `singles` and `full-albums` views for confirmed mapped artists, a 30-day or last-success window, and targeted album-track retrieval. Missing optional views are treated as empty only when another view or a direct artist lookup proves the artist exists. Catalog 400/404 and invalid record failures remain safe telemetry and do not stop unrelated artists. Apple artwork is stored as a validated provider URL only, displayed only with Apple evidence, and linked to the corresponding Apple release.
+
+Identity-resolution scope is narrower than discovery. Numeric candidate IDs may be enriched with
+Apple artist views or Apple's iTunes lookup endpoint. Apple genres, labels, activity, titles, and
+direct co-credits are supporting ranking evidence only. They cannot automatically confirm a
+mapping. Automatic confirmation requires one unique validated Apple ID from a direct relationship
+on an independently confirmed MusicBrainz identity or its linked Wikidata item. See
+[Apple Artist Identity Ranking](apple-identity-ranking.md). MusicBrainz documents a dedicated
+[Apple Music artist URL relationship](https://musicbrainz.org/relationships/artist-url).
 
 Policy uncertainty remains. The Apple Developer Program License Agreement and MusicKit terms govern use, and this repository does not claim Apple review or approval. The application does not redistribute catalog payloads, proxy media, play audio, or expose personal Apple Music data.
 

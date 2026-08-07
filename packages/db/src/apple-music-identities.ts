@@ -33,7 +33,7 @@ export async function listAppleIdentityResolutionBatch(
   db: RadarDatabase,
   limit = 100,
 ): Promise<AppleIdentityResolutionBatchRow[]> {
-  const boundedLimit = Math.max(1, Math.min(Math.trunc(limit), 100));
+  const boundedLimit = Math.max(1, Math.min(Math.trunc(limit), 500));
   const unresolved = await db
     .select({
       artistId: artists.id,
@@ -276,6 +276,7 @@ export async function confirmAppleIdentityFromMusicBrainzEvidence(
     appleArtistName: string;
     artistId: string;
     evidence: string[];
+    exactLinkSource?: "musicbrainz_url" | "wikidata_property";
   },
 ): Promise<{ idempotent: boolean }> {
   return db.transaction(async (tx) => {
@@ -308,7 +309,12 @@ export async function confirmAppleIdentityFromMusicBrainzEvidence(
         confirmed: true,
         confirmedAt: now,
         externalId: input.appleArtistId,
-        mappingSource: "musicbrainz_catalog_evidence",
+        mappingSource:
+          input.exactLinkSource === "wikidata_property"
+            ? "musicbrainz_wikidata_apple_id"
+            : input.exactLinkSource === "musicbrainz_url"
+              ? "musicbrainz_exact_apple_url"
+              : "musicbrainz_catalog_evidence",
         matchReasons: input.evidence,
         matchScore: "1.000",
         provider: "apple_music",
@@ -320,7 +326,12 @@ export async function confirmAppleIdentityFromMusicBrainzEvidence(
           confirmed: true,
           confirmedAt: current?.confirmedAt ?? now,
           externalId: input.appleArtistId,
-          mappingSource: "musicbrainz_catalog_evidence",
+          mappingSource:
+            input.exactLinkSource === "wikidata_property"
+              ? "musicbrainz_wikidata_apple_id"
+              : input.exactLinkSource === "musicbrainz_url"
+                ? "musicbrainz_exact_apple_url"
+                : "musicbrainz_catalog_evidence",
           matchReasons: input.evidence,
           matchScore: "1.000",
           providerUrl: url,
@@ -337,7 +348,9 @@ export async function confirmAppleIdentityFromMusicBrainzEvidence(
         externalId: input.appleArtistId,
         externalIds: [input.appleArtistId],
         provider: "apple_music",
-        reason: "Independent MusicBrainz catalog evidence uniquely confirmed the Apple identity.",
+        reason: input.exactLinkSource
+          ? "An exact independent MusicBrainz link uniquely confirmed the Apple identity."
+          : "Independent MusicBrainz catalog evidence uniquely confirmed the Apple identity.",
         status: "automatically_confirmed",
       })
       .onConflictDoUpdate({
@@ -349,7 +362,9 @@ export async function confirmAppleIdentityFromMusicBrainzEvidence(
           externalId: input.appleArtistId,
           externalIds: [input.appleArtistId],
           linkedArtistId: null,
-          reason: "Independent MusicBrainz catalog evidence uniquely confirmed the Apple identity.",
+          reason: input.exactLinkSource
+            ? "An exact independent MusicBrainz link uniquely confirmed the Apple identity."
+            : "Independent MusicBrainz catalog evidence uniquely confirmed the Apple identity.",
           status: "automatically_confirmed",
           updatedAt: now,
           userNote: null,
@@ -366,6 +381,68 @@ export async function confirmAppleIdentityFromMusicBrainzEvidence(
         ),
       );
     return { idempotent: false };
+  });
+}
+
+export async function preserveAppleIdentityExactLinkConflict(
+  db: RadarDatabase,
+  input: {
+    artistId: string;
+    candidates: Array<{
+      appleArtistId: string;
+      appleArtistName: string;
+      evidence: string[];
+    }>;
+    reason: string;
+  },
+): Promise<void> {
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    for (const candidate of input.candidates) {
+      await tx
+        .insert(artistMappingReviews)
+        .values({
+          artistId: input.artistId,
+          matchReasons: [...candidate.evidence, input.reason],
+          matchScore: "1.000",
+          proposedExternalId: candidate.appleArtistId,
+          provider: "apple_music",
+          providerName: candidate.appleArtistName,
+        })
+        .onConflictDoUpdate({
+          target: [
+            artistMappingReviews.artistId,
+            artistMappingReviews.provider,
+            artistMappingReviews.proposedExternalId,
+          ],
+          set: {
+            decidedAt: null,
+            matchReasons: [...candidate.evidence, input.reason],
+            matchScore: "1.000",
+            providerName: candidate.appleArtistName,
+            status: "pending",
+            updatedAt: now,
+          },
+        });
+    }
+    await tx
+      .insert(artistProviderIdentityStatuses)
+      .values({
+        artistId: input.artistId,
+        evidence: input.candidates.flatMap((candidate) => candidate.evidence),
+        provider: "apple_music",
+        reason: input.reason,
+        status: "requires_manual_decision",
+      })
+      .onConflictDoUpdate({
+        target: [artistProviderIdentityStatuses.artistId, artistProviderIdentityStatuses.provider],
+        set: {
+          evidence: input.candidates.flatMap((candidate) => candidate.evidence),
+          reason: input.reason,
+          status: "requires_manual_decision",
+          updatedAt: now,
+        },
+      });
   });
 }
 

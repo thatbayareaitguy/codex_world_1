@@ -1,6 +1,7 @@
 export * from "./client";
 export * from "./apple-music-production";
 export * from "./apple-music-identities";
+export * from "./apple-identity-ranking";
 export * from "./repositories";
 export * from "./feed-preferences";
 export * from "./review-decisions";
