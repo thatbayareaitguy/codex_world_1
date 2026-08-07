@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-08-06 17:38 PDT (UTC-07:00)
+Updated: 2026-08-06 18:07 PDT (UTC-07:00)
 
 Canonical implementation and operational snapshot. Credentials, tokens, private keys, personal
 provider data, authorization headers, and raw provider payloads are excluded.
@@ -23,9 +23,9 @@ provider data, authorization headers, and raw provider payloads are excluded.
   catalog snapshots, rankings, request gates, cooldowns, OAuth data, and export ledgers.
 - Twenty-two forward migrations are applied. Migration 0021 adds
   `apple_identity_candidate_catalogs` and `apple_identity_candidate_rankings`.
-- Current Apple identity state: 349 confirmed mappings, consisting of 320 automatic and 29 manual;
-  244 artists remain unresolved with 1,208 pending candidates.
-- Persisted Apple ranking state: 150 catalog snapshots and 505 ranking rows across 100 unresolved
+- Current Apple identity state: 358 confirmed mappings, consisting of 320 automatic and 38 manual;
+  235 artists remain unresolved with 1,157 pending candidates.
+- Persisted Apple ranking state: 154 catalog snapshots and 505 ranking rows across 100 unresolved
   artists.
 
 ## Verified
@@ -61,8 +61,9 @@ provider data, authorization headers, and raw provider payloads are excluded.
 - Automatic results: zero title-overlap resolutions, zero collaboration-only resolutions, zero
   candidate eliminations, and zero automatic confirmations. The pass reduced review effort through
   ranking and enrichment, not by weakening confirmation safety.
-- Three additional user decisions were saved after the pass, moving the live database from 346 to
-  349 confirmed mappings and from 247 to 244 unresolved artists.
+- User-supplied exact URLs for Amplify `254880393`, Anki `1437953776`, Anto `1846210772`, and Arya
+  `1563427828` were verified through four gated numeric Apple lookups with zero failures and applied
+  transactionally. All four names agreed after normalization and their pending reviews were closed.
 
 ## Automated Validation
 
@@ -94,7 +95,7 @@ provider data, authorization headers, and raw provider payloads are excluded.
 
 ## Known Risks
 
-- 244 Apple identities remain unresolved. Most have only ambiguous Apple-family catalog evidence.
+- 235 Apple identities remain unresolved. Most have only ambiguous Apple-family catalog evidence.
 - Only 10 unresolved review groups currently have both persisted catalog enrichment and rankings;
   the bounded request budget was intentionally consumed first by calibration and exact-link safety.
 - Apple/iTunes search agreement is not independent identity proof because both are Apple catalogs.
