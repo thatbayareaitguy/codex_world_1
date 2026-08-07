@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-08-06 19:56 PDT (UTC-07:00)
+Updated: 2026-08-06 19:58 PDT (UTC-07:00)
 
 Canonical implementation and operational snapshot. Credentials, tokens, private keys, personal
 provider data, authorization headers, and raw provider payloads are excluded.
@@ -8,7 +8,7 @@ provider data, authorization headers, and raw provider payloads are excluded.
 ## Repository State
 
 - Branch: `codex/release-radar-hardening`, tracking the matching GitHub branch.
-- Starting commit for this milestone: `65135f392d7528a0f7a41ab67ba0b2f4ebeac2fb`.
+- Starting commit for this milestone: `254d7afe54340fd7befd6037c95258ee2e39ec92`.
 - Current milestone commit: the commit containing this document.
 - Worktree contains this handoff update and the intentionally untracked `outputs/` directory. The
   generated CSV output is excluded from the documentation commit. Ignored `.env`, runtime logs, and
@@ -23,7 +23,7 @@ provider data, authorization headers, and raw provider payloads are excluded.
   catalog snapshots, rankings, request gates, cooldowns, OAuth data, and export ledgers.
 - Twenty-two forward migrations are applied. Migration 0021 adds
   `apple_identity_candidate_catalogs` and `apple_identity_candidate_rankings`.
-- The active canonical watchlist contains 587 artists. Recent user-directed removals deactivate
+- The active canonical watchlist contains 586 artists. Recent user-directed removals deactivate
   follow rows while preserving canonical artists and provider history.
 - Current Apple identity state: 568 confirmed mappings, consisting of 320 automatic and 248 manual;
   25 identity statuses remain unresolved. Pending review contains 142 candidates across 24 of
@@ -169,7 +169,8 @@ provider data, authorization headers, and raw provider payloads are excluded.
   `995980004`, Moceans `1734437070`, Myro `4111929`, NVADRZ & ALIAS `1783723679`, and OUTRAGE
   `1519299808` were verified through eight gated numeric Apple lookups with zero failures and applied
   transactionally. Exact normalized names agreed and their pending reviews were closed. Lama was
-  removed from the active watchlist without deleting canonical or provider history.
+  removed from the active watchlist without deleting canonical or provider history. OCTANE was
+  subsequently removed using the same non-destructive follow deactivation.
 
 ## Automated Validation
 
