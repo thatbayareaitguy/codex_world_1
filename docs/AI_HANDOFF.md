@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-08-06 18:11 PDT (UTC-07:00)
+Updated: 2026-08-06 18:15 PDT (UTC-07:00)
 
 Canonical implementation and operational snapshot. Credentials, tokens, private keys, personal
 provider data, authorization headers, and raw provider payloads are excluded.
@@ -23,9 +23,9 @@ provider data, authorization headers, and raw provider payloads are excluded.
   catalog snapshots, rankings, request gates, cooldowns, OAuth data, and export ledgers.
 - Twenty-two forward migrations are applied. Migration 0021 adds
   `apple_identity_candidate_catalogs` and `apple_identity_candidate_rankings`.
-- Current Apple identity state: 361 confirmed mappings, consisting of 320 automatic and 41 manual;
-  232 artists remain unresolved with 1,144 pending candidates.
-- Persisted Apple ranking state: 157 catalog snapshots and 505 ranking rows across 100 unresolved
+- Current Apple identity state: 368 confirmed mappings, consisting of 320 automatic and 48 manual;
+  225 artists remain unresolved with 1,091 pending candidates.
+- Persisted Apple ranking state: 163 catalog snapshots and 505 ranking rows across 100 unresolved
   artists.
 
 ## Verified
@@ -67,6 +67,10 @@ provider data, authorization headers, and raw provider payloads are excluded.
 - User-supplied exact URLs for Avance `41527586`, BAGG `1552540536`, and BLUPRNT `1524891295`
   were verified through three gated numeric Apple lookups with zero failures and applied
   transactionally. All three names agreed after normalization and their pending reviews were closed.
+- User-supplied exact URLs for BLVD. `1464139239`, BRANDON `1493109644`, BRONSON `1506713189`,
+  BVRNOUT `1087920245`, Blaize `411174046`, Blossom `147379525`, and Bossfight `1370818923` were
+  verified through six gated numeric Apple lookups plus one catalog cache hit, with zero failures,
+  and applied transactionally. Their pending reviews were closed.
 
 ## Automated Validation
 
@@ -98,7 +102,7 @@ provider data, authorization headers, and raw provider payloads are excluded.
 
 ## Known Risks
 
-- 232 Apple identities remain unresolved. Most have only ambiguous Apple-family catalog evidence.
+- 225 Apple identities remain unresolved. Most have only ambiguous Apple-family catalog evidence.
 - Only 10 unresolved review groups currently have both persisted catalog enrichment and rankings;
   the bounded request budget was intentionally consumed first by calibration and exact-link safety.
 - Apple/iTunes search agreement is not independent identity proof because both are Apple catalogs.
