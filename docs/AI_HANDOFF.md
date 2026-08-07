@@ -5,10 +5,11 @@ Updated: 2026-08-07 12:55 PDT
 ## Repository State
 
 - Branch: `codex/release-radar-hardening`
-- HEAD and upstream: `1d18c73aa9d4295c4beea95a5ce2951c611693dd`; local and origin match
+- Latest commit: this handoff-only checkpoint on `codex/release-radar-hardening`; it directly follows
+  pushed implementation checkpoint `8ff1845495342536db677d1587bcbb8b966f828d`
+- Upstream: local and origin match after this handoff checkpoint
 - Milestone: Apple-first discovery with independent Spotify reconciliation
-- Worktree: milestone implementation and live-validation documentation are uncommitted; unrelated
-  untracked `outputs/` remains excluded
+- Worktree: clean except unrelated untracked `outputs/`; ignored `.env` remains local
 - Database: PostgreSQL healthy; all 23 forward migrations applied idempotently
 - Apple Team ID, Key ID, and protected private-key path are restored in ignored `.env`; values are
   not documented or staged
