@@ -50,6 +50,18 @@ afterAll(async () => {
 });
 
 describe("Spotify global request gate", () => {
+  it("attributes requests to one discovery reconciliation campaign", async () => {
+    const campaignId = randomUUID();
+    const gate = createSpotifyRequestGate(db, 10_000, undefined, campaignId);
+    const permit = await gate.acquire({ endpointCategory: "artist_albums", method: "GET" });
+    await gate.complete(permit, { status: 200 });
+
+    const event = await db.query.spotifyRequestEvents.findFirst({
+      where: eq(spotifyRequestEvents.id, permit.eventId),
+    });
+    expect(event).toMatchObject({ discoveryReconciliationCampaignId: campaignId, status: 200 });
+  });
+
   it("binds deferred JavaScript dates as UTC and preserves them across connections", async () => {
     const now = new Date("2026-07-18T02:00:00.123-07:00");
     const deferredUntil = await deferSpotifyRequests(db, 5_000, now);

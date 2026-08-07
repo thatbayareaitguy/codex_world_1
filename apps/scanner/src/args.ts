@@ -3,6 +3,11 @@ import { providerNames, type ProviderName } from "@radar/core";
 export interface ScannerOptions {
   dryRun: boolean;
   artistId?: string;
+  artistIds?: readonly string[];
+  providerArtistIdentities?: readonly {
+    artistId: string;
+    providerArtistId: string;
+  }[];
   full: boolean;
   provider?: ProviderName;
   musicbrainzBatchId?: string;
@@ -12,6 +17,7 @@ export interface ScannerOptions {
   spotifyMaxPages?: number;
   spotifyMode?: "initial" | "daily" | "reconciliation";
   spotifyNewReconciliationCycle?: boolean;
+  spotifyRequestCampaignId?: string;
   since?: string;
 }
 

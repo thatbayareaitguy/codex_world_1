@@ -64,6 +64,26 @@ See [Apple Artist Identity Ranking](apple-identity-ranking.md).
 
 Drizzle is used because it keeps the schema and SQL migrations explicit, has a small runtime surface, and permits conflict-safe PostgreSQL writes without generating a separate client.
 
+## Apple-first orchestration
+
+`pnpm sync:apple-first` snapshots the active watchlist's confirmed Apple Music and Spotify artist
+IDs in a durable campaign. Apple discovery must finish first. Spotify then processes bounded
+cohorts: recent Apple discoveries receive priority, while a rotating allocation covers artists
+without a recent Apple result. Spotify calls use only the snapshotted Spotify artist ID and the
+bounded Artist Albums catalog path. Spotify Browse New Releases is not used.
+
+Provider ingestion remains independent. Only after both provider records are in PostgreSQL does the
+core reconciliation engine compare canonical artist ownership, normalized titles, release types,
+dates, track counts, positions, and canonical track or release identities. Material contradictions
+and comparable alternatives are persisted as uncertain rather than forced. Campaign tables retain
+provider batches, per-artist state, retry eligibility, request and rate-limit telemetry, coverage
+counts, and the final read-only playlist preview. Repeated runs resume incomplete work and replace
+derived reconciliation rows transactionally.
+
+The preview runtime can read only `SPOTIFY_ALLOWED_PLAYLIST_ID` and constructs a Spotify client with
+writes disabled. A live playlist export remains a separate explicit command and approval boundary.
+See [Apple-First Discovery And Spotify Reconciliation](apple-first-sync.md).
+
 ## Data Flow
 
 1. A user manually creates a canonical artist or explicitly approves a Spotify import preview.

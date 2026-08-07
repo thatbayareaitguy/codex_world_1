@@ -177,6 +177,7 @@ export async function runScan(options: ScannerOptions): Promise<ScanSummary> {
     lockKey: "scan:global",
     metadata: {
       artistId: options.artistId ?? null,
+      artistCount: options.artistIds?.length ?? (options.artistId ? 1 : null),
       dryRun: options.dryRun,
       provider: options.provider ?? "all",
       source: options.source ?? null,
@@ -186,6 +187,7 @@ export async function runScan(options: ScannerOptions): Promise<ScanSummary> {
   const controller = new AbortController();
   const progressMetadata: Record<string, unknown> = {
     artistId: options.artistId ?? null,
+    artistCount: options.artistIds?.length ?? (options.artistId ? 1 : null),
     completedUnits: 0,
     currentProvider: null,
     dryRun: options.dryRun,
@@ -424,6 +426,7 @@ export async function runScanUnlocked(
       db,
       selected,
       configuration,
+      options,
       spotifyWork,
       musicBrainzWork,
       runtime
@@ -1071,6 +1074,7 @@ async function buildProviders(
   db: RadarDatabase,
   selected: Array<"mock" | "spotify" | "musicbrainz">,
   configuration: ReturnType<typeof loadProviderConfiguration>,
+  options: ScannerOptions,
   spotifyWork?: PreparedSpotifyWork,
   musicBrainzWork?: PreparedMusicBrainzWork,
   onSpotifyTelemetry?: (telemetry: SpotifyRequestTelemetry) => Promise<void>,
@@ -1099,6 +1103,7 @@ async function buildProviders(
         db,
         configuration.spotify.minRequestIntervalMs,
         runtime?.schedulerContext,
+        options.spotifyRequestCampaignId,
       );
       const requestGate = runtime?.requestGateWrapper
         ? runtime.requestGateWrapper(
@@ -1246,7 +1251,11 @@ async function recordProviderFailure(
     providersRequested: [provider],
     providersFailed: status === "failed" ? [provider] : [],
     triggerType: options.provider ? "provider_manual" : "manual",
-    ...(options.artistId ? { artistFilter: options.artistId } : {}),
+    ...(options.artistId
+      ? { artistFilter: options.artistId }
+      : options.artistIds?.length
+        ? { artistFilter: `cohort:${options.artistIds.length}` }
+        : {}),
     completedAt: new Date(),
     errors: [errorEvidence],
     ...(summary?.dryRunReport ? { metadata: { dryRunReport: summary.dryRunReport } } : {}),
@@ -1707,7 +1716,11 @@ async function createProviderScanRun(
           ? "provider_manual"
           : "manual",
       metadata: scanRunMetadata(provider, providerMetrics),
-      ...(options.artistId ? { artistFilter: options.artistId } : {}),
+      ...(options.artistId
+        ? { artistFilter: options.artistId }
+        : options.artistIds?.length
+          ? { artistFilter: `cohort:${options.artistIds.length}` }
+          : {}),
     })
     .returning({ id: scanRuns.id });
   if (!run) throw new Error("Failed to create scan run");

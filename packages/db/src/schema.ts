@@ -875,6 +875,7 @@ export const spotifyRequestEvents = pgTable(
     providerReasonToken: text("provider_reason_token"),
     rateLimitClassification: text("rate_limit_classification"),
     responseClassification: text("response_classification"),
+    discoveryReconciliationCampaignId: uuid("discovery_reconciliation_campaign_id"),
     schedulerWorkId: uuid("scheduler_work_id"),
     schedulerWorkType: spotifySchedulerWorkTypeEnum("scheduler_work_type"),
     createdAt,
@@ -887,6 +888,10 @@ export const spotifyRequestEvents = pgTable(
       table.startedAt,
     ),
     index("spotify_request_events_scheduler_idx").on(table.schedulerWorkType, table.startedAt),
+    index("spotify_request_events_discovery_campaign_idx").on(
+      table.discoveryReconciliationCampaignId,
+      table.startedAt,
+    ),
   ],
 );
 
@@ -1437,6 +1442,178 @@ export const spotifyPageScans = pgTable(
       table.spotifyOffset,
     ),
     index("spotify_page_scans_cycle_idx").on(table.artistId, table.reconciliationCycleId),
+  ],
+);
+
+export const discoveryReconciliationCampaigns = pgTable(
+  "discovery_reconciliation_campaigns",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    campaignKey: text("campaign_key").notNull(),
+    status: text("status").notNull().default("planned"),
+    stage: text("stage").notNull().default("apple_discovery"),
+    windowStart: date("window_start").notNull(),
+    windowEnd: date("window_end").notNull(),
+    totalArtists: integer("total_artists").notNull(),
+    spotifyCohortSize: integer("spotify_cohort_size").notNull(),
+    spotifyRotationSize: integer("spotify_rotation_size").notNull(),
+    spotifyPageLimit: integer("spotify_page_limit").notNull(),
+    appleArtistsScanned: integer("apple_artists_scanned").notNull().default(0),
+    spotifyArtistsScanned: integer("spotify_artists_scanned").notNull().default(0),
+    matchedReleaseCount: integer("matched_release_count").notNull().default(0),
+    appleOnlyReleaseCount: integer("apple_only_release_count").notNull().default(0),
+    spotifyOnlyReleaseCount: integer("spotify_only_release_count").notNull().default(0),
+    uncertainReleaseCount: integer("uncertain_release_count").notNull().default(0),
+    missingSpotifyTrackCount: integer("missing_spotify_track_count").notNull().default(0),
+    playlistEligibleTrackCount: integer("playlist_eligible_track_count").notNull().default(0),
+    appleRequestCount: integer("apple_request_count").notNull().default(0),
+    spotifyRequestCount: integer("spotify_request_count").notNull().default(0),
+    appleRateLimitCount: integer("apple_rate_limit_count").notNull().default(0),
+    spotifyRateLimitCount: integer("spotify_rate_limit_count").notNull().default(0),
+    appleRetryCount: integer("apple_retry_count").notNull().default(0),
+    spotifyRetryCount: integer("spotify_retry_count").notNull().default(0),
+    retryCount: integer("retry_count").notNull().default(0),
+    appleBatchId: uuid("apple_batch_id").references(() => appleMusicScanBatches.id, {
+      onDelete: "set null",
+    }),
+    playlistPreview: jsonb("playlist_preview"),
+    providerCooldowns: jsonb("provider_cooldowns")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    effectiveConfiguration: jsonb("effective_configuration").notNull(),
+    errorClassification: text("error_classification"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("discovery_reconciliation_campaign_key_unique").on(table.campaignKey),
+    index("discovery_reconciliation_campaign_status_idx").on(table.status, table.createdAt),
+    check(
+      "discovery_reconciliation_campaign_status_check",
+      sql`${table.status} in ('planned', 'running', 'paused', 'completed', 'failed', 'cancelled')`,
+    ),
+    check(
+      "discovery_reconciliation_campaign_stage_check",
+      sql`${table.stage} in ('apple_discovery', 'spotify_reconciliation', 'internal_reconciliation', 'playlist_preview', 'completed')`,
+    ),
+    check(
+      "discovery_reconciliation_campaign_configuration_check",
+      sql`${table.totalArtists} > 0 and ${table.spotifyCohortSize} > 0 and ${table.spotifyRotationSize} >= 0 and ${table.spotifyRotationSize} <= ${table.spotifyCohortSize} and ${table.spotifyPageLimit} > 0`,
+    ),
+  ],
+);
+
+export const discoveryReconciliationArtists = pgTable(
+  "discovery_reconciliation_artists",
+  {
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => discoveryReconciliationCampaigns.id, { onDelete: "cascade" }),
+    artistId: uuid("artist_id")
+      .notNull()
+      .references(() => artists.id, { onDelete: "restrict" }),
+    appleArtistId: text("apple_artist_id").notNull(),
+    spotifyArtistId: text("spotify_artist_id").notNull(),
+    position: integer("position").notNull(),
+    priorityReason: text("priority_reason").notNull().default("rotating_fallback"),
+    appleStatus: text("apple_status").notNull().default("pending"),
+    appleRetryEligibleAt: timestamp("apple_retry_eligible_at", { withTimezone: true }),
+    appleBatchId: uuid("apple_batch_id").references(() => appleMusicScanBatches.id, {
+      onDelete: "set null",
+    }),
+    appleRequestCount: integer("apple_request_count").notNull().default(0),
+    appleReleaseCount: integer("apple_release_count").notNull().default(0),
+    appleCandidateCount: integer("apple_candidate_count").notNull().default(0),
+    appleRecentDiscovery: boolean("apple_recent_discovery").notNull().default(false),
+    latestAppleReleaseDate: date("latest_apple_release_date"),
+    spotifyStatus: text("spotify_status").notNull().default("pending"),
+    spotifyRetryEligibleAt: timestamp("spotify_retry_eligible_at", { withTimezone: true }),
+    spotifyBatchId: uuid("spotify_batch_id").references(() => spotifyScanBatches.id, {
+      onDelete: "set null",
+    }),
+    spotifyRequestCount: integer("spotify_request_count").notNull().default(0),
+    spotifyReleaseCount: integer("spotify_release_count").notNull().default(0),
+    spotifyCandidateCount: integer("spotify_candidate_count").notNull().default(0),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    lastErrorClassification: text("last_error_classification"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    primaryKey({ columns: [table.campaignId, table.artistId] }),
+    uniqueIndex("discovery_reconciliation_artist_position_unique").on(
+      table.campaignId,
+      table.position,
+    ),
+    index("discovery_reconciliation_artist_stage_idx").on(
+      table.campaignId,
+      table.spotifyStatus,
+      table.position,
+    ),
+    check(
+      "discovery_reconciliation_artist_apple_status_check",
+      sql`${table.appleStatus} in ('pending', 'completed', 'retryable', 'terminal', 'failed')`,
+    ),
+    check(
+      "discovery_reconciliation_artist_spotify_status_check",
+      sql`${table.spotifyStatus} in ('pending', 'selected', 'completed', 'partial', 'rate_limited', 'failed', 'skipped')`,
+    ),
+  ],
+);
+
+export const releaseProviderReconciliations = pgTable(
+  "release_provider_reconciliations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => discoveryReconciliationCampaigns.id, { onDelete: "cascade" }),
+    artistId: uuid("artist_id")
+      .notNull()
+      .references(() => artists.id, { onDelete: "restrict" }),
+    reconciliationKey: text("reconciliation_key").notNull(),
+    status: text("status").notNull(),
+    title: text("title").notNull(),
+    releaseDate: date("release_date").notNull(),
+    releaseType: text("release_type").notNull(),
+    appleProviderReleaseId: text("apple_provider_release_id"),
+    spotifyProviderReleaseId: text("spotify_provider_release_id"),
+    appleCanonicalReleaseId: uuid("apple_canonical_release_id").references(() => releases.id, {
+      onDelete: "set null",
+    }),
+    spotifyCanonicalReleaseId: uuid("spotify_canonical_release_id").references(() => releases.id, {
+      onDelete: "set null",
+    }),
+    confidence: numeric("confidence", { precision: 4, scale: 3 }).notNull(),
+    reasons: text("reasons").array().notNull(),
+    appleTrackCount: integer("apple_track_count").notNull().default(0),
+    spotifyTrackCount: integer("spotify_track_count").notNull().default(0),
+    matchedTrackCount: integer("matched_track_count").notNull().default(0),
+    missingSpotifyTrackCount: integer("missing_spotify_track_count").notNull().default(0),
+    playlistEligibleTrackCount: integer("playlist_eligible_track_count").notNull().default(0),
+    playlistEligible: boolean("playlist_eligible").notNull().default(false),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("release_provider_reconciliation_identity_unique").on(
+      table.campaignId,
+      table.artistId,
+      table.reconciliationKey,
+    ),
+    index("release_provider_reconciliation_status_idx").on(table.campaignId, table.status),
+    check(
+      "release_provider_reconciliation_status_check",
+      sql`${table.status} in ('matched', 'apple_only', 'spotify_only', 'uncertain', 'missing_spotify_track')`,
+    ),
+    check(
+      "release_provider_reconciliation_provider_check",
+      sql`${table.appleProviderReleaseId} is not null or ${table.spotifyProviderReleaseId} is not null`,
+    ),
   ],
 );
 

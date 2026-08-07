@@ -18,6 +18,7 @@ import {
 import type { ProviderConfiguration, SpotifyArtistMapping } from "@radar/providers";
 import { desc, eq, inArray } from "drizzle-orm";
 import type { ScannerOptions } from "./args";
+import { providerIdentityOverrides } from "./provider-identity-overrides";
 
 export interface PreparedSpotifyWork {
   batchId: string;
@@ -51,20 +52,37 @@ export async function prepareSpotifyWork(
   const knownReleaseIds = await loadKnownSpotifyReleaseIds(db);
   const releaseTrackResume = await loadSpotifyReleaseTrackResume(db);
   const incompleteReleaseIds = new Set(releaseTrackResume.keys());
-  if (options.artistId) {
-    const mapping = mappings.find((entry) => entry.artistId === options.artistId);
-    if (!mapping) throw new Error("The requested artist has no confirmed Spotify mapping.");
+  const requestedArtistIds = options.artistId ? [options.artistId] : (options.artistIds ?? []);
+  if (options.artistId && options.artistIds?.length) {
+    throw new Error("Choose either one Spotify artist or an internal artist cohort, not both.");
+  }
+  if (requestedArtistIds.length) {
+    const identityOverrides = providerIdentityOverrides(options, requestedArtistIds);
+    const requestedMappings = requestedArtistIds
+      .map((artistId) => {
+        const mapping = mappings.find((entry) => entry.artistId === artistId);
+        return mapping && identityOverrides.has(artistId)
+          ? { ...mapping, spotifyArtistId: identityOverrides.get(artistId)! }
+          : mapping;
+      })
+      .filter((mapping): mapping is SpotifyArtistMapping => Boolean(mapping));
+    if (requestedMappings.length !== new Set(requestedArtistIds).size) {
+      throw new Error("A requested artist has no confirmed Spotify mapping.");
+    }
     const mode = options.spotifyMode ?? "daily";
     const maxPagesPerArtist = pageLimit(configuration, mode, options.spotifyMaxPages);
     const batchId = await createSpotifyScanBatch(db, {
-      artists: [{ artistId: mapping.artistId, spotifyArtistId: mapping.spotifyArtistId }],
+      artists: requestedMappings.map((mapping) => ({
+        artistId: mapping.artistId,
+        spotifyArtistId: mapping.spotifyArtistId,
+      })),
       confirmationRequired: false,
-      estimatedRequests: estimateRequests(1, maxPagesPerArtist),
+      estimatedRequests: estimateRequests(requestedMappings.length, maxPagesPerArtist),
       mode,
       pageLimit: maxPagesPerArtist,
     });
     const coverage = await prepareSpotifyCoverage(db, {
-      artistIds: [mapping.artistId],
+      artistIds: requestedMappings.map((mapping) => mapping.artistId),
       cycleDays: configuration.spotify.reconciliationCycleDays,
       mode,
       newCycle: options.spotifyNewReconciliationCycle ?? false,
@@ -75,7 +93,7 @@ export async function prepareSpotifyWork(
       knownReleaseIds,
       knownReleaseSummaries: await loadSpotifyCatalogSummaries(db),
       incompleteReleaseIds,
-      mappings: [mapping],
+      mappings: requestedMappings,
       maxPagesPerArtist,
       maxRequestsPerRun: configuration.spotify.maxRequestsPerRun,
       mode,

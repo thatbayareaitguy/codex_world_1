@@ -27,6 +27,7 @@ import {
 import { and, asc, eq } from "drizzle-orm";
 import seedArtifact from "./apple-music-full-watchlist-identity-seeds-v1.json";
 import type { ScannerOptions } from "./args";
+import { providerIdentityOverrides } from "./provider-identity-overrides";
 
 export interface AppleMusicScanSummary {
   discovered: number;
@@ -83,10 +84,22 @@ export async function runAppleMusicScan(
   }
 
   const availableMappings = await loadAppleMusicMappings(db);
-  const mappings = options.artistId
-    ? availableMappings.filter((mapping) => mapping.canonicalArtistId === options.artistId)
+  const requestedArtistIds = scannerArtistIds(options);
+  const requestedArtistIdSet = new Set(requestedArtistIds);
+  const identityOverrides = providerIdentityOverrides(options, requestedArtistIds);
+  const mappings = requestedArtistIds.length
+    ? requestedArtistIds
+        .map((artistId) => {
+          const mapping = availableMappings.find(
+            (candidate) => candidate.canonicalArtistId === artistId,
+          );
+          return mapping && identityOverrides.has(artistId)
+            ? { ...mapping, appleArtistId: identityOverrides.get(artistId)! }
+            : mapping;
+        })
+        .filter((mapping): mapping is (typeof availableMappings)[number] => Boolean(mapping))
     : availableMappings;
-  if (options.artistId && mappings.length === 0) {
+  if (requestedArtistIds.length && mappings.length !== requestedArtistIdSet.size) {
     throw new Error("The selected artist does not have a confirmed Apple Music mapping.");
   }
   if (mappings.length === 0) {
@@ -103,7 +116,9 @@ export async function runAppleMusicScan(
   const [run] = await db
     .insert(scanRuns)
     .values({
-      artistFilter: options.artistId ?? null,
+      artistFilter:
+        options.artistId ??
+        (options.artistIds?.length ? `cohort:${options.artistIds.length}` : null),
       detailedExpiresAt: new Date(Date.now() + configuration.scanDetailRetentionDays * 86_400_000),
       dryRun: false,
       metadata: {
@@ -119,7 +134,11 @@ export async function runAppleMusicScan(
       },
       provider: "apple_music",
       providersRequested: ["apple_music"],
-      triggerType: options.artistId ? "provider_single_artist" : "provider_manual",
+      triggerType: options.artistId
+        ? "provider_single_artist"
+        : options.artistIds?.length
+          ? "provider_cohort"
+          : "provider_manual",
     })
     .returning({ id: scanRuns.id });
   if (!run) throw new Error("Apple Music scan run creation failed.");
@@ -286,6 +305,13 @@ export async function runAppleMusicScan(
       apple_music: { discovered: cumulative.discovered, inserted: cumulative.inserted },
     },
   };
+}
+
+function scannerArtistIds(options: ScannerOptions): readonly string[] {
+  if (options.artistId && options.artistIds?.length) {
+    throw new Error("Choose either one artist or an internal artist cohort, not both.");
+  }
+  return options.artistId ? [options.artistId] : (options.artistIds ?? []);
 }
 
 async function loadAppleMusicMappings(db: RadarDatabase) {

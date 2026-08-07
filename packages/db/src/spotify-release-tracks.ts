@@ -194,6 +194,8 @@ export async function recordSpotifyReleaseTrackPage(
         .values(
           uniqueItems.map((item) => ({
             discNumber: item.discNumber,
+            firstObservedAt: input.finishedAt,
+            lastObservedAt: input.finishedAt,
             pageOffset: input.offset,
             providerTrackId: item.providerTrackId,
             retrievalId: retrieval.id,

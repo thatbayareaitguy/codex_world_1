@@ -57,6 +57,22 @@ pnpm spotify:playlist-export -- --live --max-additions 3
 pnpm spotify:playlist-export -- --live
 ```
 
+### Normal Apple-first discovery
+
+The normal cross-provider workflow is `pnpm sync:apple-first`. It runs Apple Music discovery first,
+then checks a bounded Spotify cohort by confirmed Spotify artist ID, reconciles only the separately
+persisted provider records, and produces a read-only preview of the configured Spotify playlist.
+It does not use Spotify Browse New Releases and cannot write to a playlist.
+
+```powershell
+pnpm sync:apple-first -- status
+pnpm sync:apple-first -- run --confirm-live-providers --max-cohorts 1
+```
+
+Repeat the run command to resume the durable campaign. See
+[Apple-First Discovery And Spotify Reconciliation](apple-first-sync.md) for canary, full-campaign,
+status, retry, and policy-boundary details.
+
 ### Bulk Apple Music identity resolution
 
 Export the next prioritized unresolved batch outside the repository:

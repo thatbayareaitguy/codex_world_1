@@ -6,5 +6,6 @@ export * from "./normalize";
 export * from "./retry";
 export * from "./soundcloud-links";
 export * from "./provider-urls";
+export * from "./provider-reconciliation";
 export * from "./spotify-artwork";
 export * from "./types";

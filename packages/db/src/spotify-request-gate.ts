@@ -70,12 +70,20 @@ export function createSpotifyRequestGate(
     workId: string;
     workType: "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation";
   },
+  discoveryReconciliationCampaignId?: string,
 ): SpotifyRequestGate {
   if (!Number.isInteger(minRequestIntervalMs) || minRequestIntervalMs < 10_000) {
     throw new Error("Spotify request interval must be at least 10000 milliseconds.");
   }
   return {
-    acquire: (input) => acquireSpotifyPermit(db, minRequestIntervalMs, input, schedulerContext),
+    acquire: (input) =>
+      acquireSpotifyPermit(
+        db,
+        minRequestIntervalMs,
+        input,
+        schedulerContext,
+        discoveryReconciliationCampaignId,
+      ),
     complete: (permit, result) => completeSpotifyRequest(db, permit, result),
   };
 }
@@ -218,6 +226,7 @@ async function acquireSpotifyPermit(
     workId: string;
     workType: "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation";
   },
+  discoveryReconciliationCampaignId?: string,
 ): Promise<SpotifyRequestPermit> {
   await ensureSpotifyState(db);
   await db
@@ -280,6 +289,7 @@ async function acquireSpotifyPermit(
       const eventId = randomUUID();
       const queueWaitMs = Math.max(0, startedAt.getTime() - queuedAt);
       await db.insert(spotifyRequestEvents).values({
+        ...(discoveryReconciliationCampaignId ? { discoveryReconciliationCampaignId } : {}),
         id: eventId,
         endpointCategory: input.endpointCategory,
         method: input.method,
