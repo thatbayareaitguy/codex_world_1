@@ -47,7 +47,7 @@ const environmentSchema = z.object({
   DATABASE_URL: z.string().min(1).optional(),
   INITIAL_BACKFILL_DAYS: z.coerce.number().int().min(1).max(3650).default(60),
   MUSICBRAINZ_CONTACT_EMAIL: z.email().optional(),
-  MUSICBRAINZ_ENABLED: booleanFlag(true),
+  MUSICBRAINZ_ENABLED: booleanFlag(false),
   REDDIT_ACCESS_APPROVED: booleanFlag(false),
   REDDIT_CLIENT_ID: z.string().min(1).optional(),
   REDDIT_CLIENT_SECRET: z.string().min(1).optional(),

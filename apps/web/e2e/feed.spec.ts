@@ -647,45 +647,27 @@ test("defaults scan history to the meaningful batch and inspects other run types
   await expect(selector.locator(`option[value="${olderRunId}"]`)).toHaveCount(1);
 });
 
-test("loads MusicBrainz mapping reviews in bounded pages", async ({ page }) => {
-  const firstReview = {
-    artistId: "40000000-0000-4000-8000-000000000001",
-    artistName: "First Review Artist",
-    confidence: "0.500",
-    createdAt: "2026-07-21T12:00:00.000Z",
-    id: "50000000-0000-4000-8000-000000000001",
-    name: "First Candidate",
-    proposedExternalId: "60000000-0000-4000-8000-000000000001",
-    reasons: ["Synthetic first review"],
-    status: "pending",
-    updatedAt: "2026-07-21T12:00:00.000Z",
-  };
-  const secondReview = {
-    ...firstReview,
-    artistId: "40000000-0000-4000-8000-000000000002",
-    artistName: "Older Review Artist",
-    id: "50000000-0000-4000-8000-000000000002",
-    name: "Older Candidate",
-    proposedExternalId: "60000000-0000-4000-8000-000000000002",
-  };
-  await page.route("**/api/musicbrainz/mappings?*", async (route) => {
-    const olderPage = new URL(route.request().url()).searchParams.has("cursor");
-    await route.fulfill({
-      json: {
-        hasMore: !olderPage,
-        mappings: [],
-        nextCursor: olderPage ? null : "older-review-page",
-        reviews: olderPage ? [secondReview] : [firstReview],
-      },
-    });
+test("hides dormant MusicBrainz controls and does not request its review API", async ({ page }) => {
+  let musicBrainzRequests = 0;
+  await page.route("**/api/musicbrainz/**", async (route) => {
+    musicBrainzRequests += 1;
+    await route.fulfill({ json: { error: "unexpected request" }, status: 500 });
   });
 
   await page.goto("/#review");
-  await expect(page.getByRole("heading", { name: "First Review Artist" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Older Review Artist" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Load older mapping reviews" }).click();
-  await expect(page.getByRole("heading", { name: "Older Review Artist" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Load older mapping reviews" })).toHaveCount(0);
+  await expect(page.getByRole("option", { name: "MusicBrainz mappings" })).toHaveCount(0);
+  await expect(page.getByText(/MusicBrainz configured|MusicBrainz not configured/)).toHaveCount(0);
+
+  await page.goto("/#artists");
+  await expect(page.getByRole("button", { name: /MusicBrainz mapping/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /MusicBrainz scan/ })).toHaveCount(0);
+
+  await page.goto("/#settings");
+  await expect(page.getByText("MusicBrainz", { exact: true })).toHaveCount(0);
+
+  await page.goto("/#status");
+  await expect(page.getByText("MusicBrainz", { exact: true })).toHaveCount(0);
+  expect(musicBrainzRequests).toBe(0);
 });
 
 test("runs a mock scan, opens evidence, changes status, and filters the feed", async ({ page }) => {
@@ -1013,9 +995,14 @@ test("shows a confirmed Spotify import from the persisted watchlist response", a
   await expect(page.getByRole("status")).toContainText("Spotify import persisted 1 active artists");
 });
 
-test("persists and displays a confirmed MusicBrainz mapping before replacement", async ({
+test("hides MusicBrainz mapping by default and preserves advanced mapping coverage", async ({
   page,
 }) => {
+  if (process.env.MUSICBRAINZ_ENABLED !== "true") {
+    await page.goto("/#artists");
+    await expect(page.getByRole("button", { name: /MusicBrainz mapping/ })).toHaveCount(0);
+    return;
+  }
   const importRunId = "00000000-0000-4000-8000-000000000111";
   const candidateId = "00000000-0000-4000-8000-000000000112";
   const artistId = "00000000-0000-4000-8000-000000000113";
@@ -1709,10 +1696,10 @@ test("controls persisted Spotify batches without bypassing cooldown state", asyn
   await page.reload();
   await expect(page.getByRole("button", { name: "Resume" })).toBeDisabled();
   const musicBrainzOnlyUpdate = page.locator(".last-scan-metric").getByRole("button");
-  await expect(musicBrainzOnlyUpdate).toBeEnabled();
+  await expect(musicBrainzOnlyUpdate).toBeDisabled();
   await expect(musicBrainzOnlyUpdate).toHaveAttribute(
     "title",
-    "Run MusicBrainz-only update while Spotify is cooling down",
+    "Provider scan disabled during Spotify cooldown",
   );
 
   batchStatus = "completed";

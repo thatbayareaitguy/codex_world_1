@@ -90,12 +90,16 @@ export async function GET(request?: NextRequest): Promise<NextResponse> {
         ...(historyQuery.historyCursor ? { cursor: historyQuery.historyCursor } : {}),
         limit: historyQuery.historyLimit,
       }),
-      connection.db.query.musicbrainzProviderState.findFirst({
-        where: eq(musicbrainzProviderState.id, "global"),
-      }),
-      connection.db.query.musicbrainzScanBatches.findFirst({
-        orderBy: [desc(musicbrainzScanBatches.createdAt)],
-      }),
+      configuration.musicbrainz.enabled
+        ? connection.db.query.musicbrainzProviderState.findFirst({
+            where: eq(musicbrainzProviderState.id, "global"),
+          })
+        : Promise.resolve(undefined),
+      configuration.musicbrainz.enabled
+        ? connection.db.query.musicbrainzScanBatches.findFirst({
+            orderBy: [desc(musicbrainzScanBatches.createdAt)],
+          })
+        : Promise.resolve(undefined),
       spotifyCoverageSummary(connection.db),
       getSpotifySchedulerStatus(connection.db),
       getAppleMusicOperationalStatus(connection.db),
@@ -110,14 +114,21 @@ export async function GET(request?: NextRequest): Promise<NextResponse> {
           .where(eq(appleMusicArtistScans.batchId, appleMusicBatch.id))
           .orderBy(asc(appleMusicArtistScans.position))
       : [];
-    const musicbrainzArtistRows = musicbrainzBatch
-      ? await connection.db
-          .select()
-          .from(musicbrainzArtistScans)
-          .where(eq(musicbrainzArtistScans.batchId, musicbrainzBatch.id))
-          .orderBy(asc(musicbrainzArtistScans.position))
-      : [];
-    const defaultHistory = selectDefaultScanHistoryEntry(history.entries);
+    const musicbrainzArtistRows =
+      configuration.musicbrainz.enabled && musicbrainzBatch
+        ? await connection.db
+            .select()
+            .from(musicbrainzArtistScans)
+            .where(eq(musicbrainzArtistScans.batchId, musicbrainzBatch.id))
+            .orderBy(asc(musicbrainzArtistScans.position))
+        : [];
+    const visibleRuns = configuration.musicbrainz.enabled
+      ? runs
+      : runs.filter((run) => run.provider !== "musicbrainz");
+    const visibleHistory = configuration.musicbrainz.enabled
+      ? history.entries
+      : history.entries.filter((entry) => entry.provider !== "musicbrainz");
+    const defaultHistory = selectDefaultScanHistoryEntry(visibleHistory);
     const requestedProviders = configuredScanProviders(configuration, activeScanLock?.metadata);
     return NextResponse.json(
       {
@@ -126,26 +137,30 @@ export async function GET(request?: NextRequest): Promise<NextResponse> {
           operational: appleMusicOperational,
         },
         active: activeScanLock
-          ? describeActiveScan(activeScanLock, runs, requestedProviders)
+          ? describeActiveScan(activeScanLock, visibleRuns, requestedProviders)
           : null,
         defaultHistoryId: defaultHistory?.id ?? null,
-        history: history.entries,
+        history: visibleHistory,
         historyHasMore: history.hasMore,
         historyNextCursor: history.nextCursor,
-        latest: runs[0] ?? null,
-        musicbrainz: {
-          batch: musicbrainzBatch
-            ? { ...musicbrainzBatch, artistScans: musicbrainzArtistRows }
-            : null,
-          operational: {
-            lastRequestStartedAt: musicbrainzState?.lastRequestStartedAt ?? null,
-            nextRequestAt: musicbrainzState?.nextRequestAt ?? null,
-            queueDepth: musicbrainzState?.queueDepth ?? 0,
-            requestCount: musicbrainzState?.requestCount ?? 0,
-          },
-        },
+        latest: visibleRuns[0] ?? null,
+        ...(configuration.musicbrainz.enabled
+          ? {
+              musicbrainz: {
+                batch: musicbrainzBatch
+                  ? { ...musicbrainzBatch, artistScans: musicbrainzArtistRows }
+                  : null,
+                operational: {
+                  lastRequestStartedAt: musicbrainzState?.lastRequestStartedAt ?? null,
+                  nextRequestAt: musicbrainzState?.nextRequestAt ?? null,
+                  queueDepth: musicbrainzState?.queueDepth ?? 0,
+                  requestCount: musicbrainzState?.requestCount ?? 0,
+                },
+              },
+            }
+          : {}),
         running: Boolean(activeScanLock),
-        runs,
+        runs: visibleRuns,
         spotify: {
           batch: spotifyBatch,
           coverage: spotifyCoverage,
@@ -305,6 +320,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
     const configuration = loadProviderConfiguration();
+    if (
+      (body.provider === "musicbrainz" || body.musicbrainzBatchId) &&
+      !configuration.musicbrainz.enabled
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "MusicBrainz is disabled. Set MUSICBRAINZ_ENABLED=true only for separately validated advanced use.",
+        },
+        { status: 403 },
+      );
+    }
     if (!configuration.databaseUrl) {
       return NextResponse.json({ error: "Database is not configured" }, { status: 503 });
     }

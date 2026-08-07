@@ -152,9 +152,24 @@ export interface PersistRunContext {
 }
 
 const scanHeartbeatTtlMs = 30_000;
+export const musicBrainzDisabledMessage =
+  "MusicBrainz is disabled. Set MUSICBRAINZ_ENABLED=true only for separately validated advanced use.";
+
+function assertMusicBrainzScanEnabled(
+  options: ScannerOptions,
+  configuration: ReturnType<typeof loadProviderConfiguration>,
+): void {
+  if (
+    (options.provider === "musicbrainz" || options.musicbrainzBatchId) &&
+    !configuration.musicbrainz.enabled
+  ) {
+    throw new Error(musicBrainzDisabledMessage);
+  }
+}
 
 export async function runScan(options: ScannerOptions): Promise<ScanSummary> {
   const configuration = loadProviderConfiguration();
+  assertMusicBrainzScanEnabled(options, configuration);
   if (!configuration.databaseUrl) return runScanUnlocked(options, configuration);
   const lockDatabase = createDatabase(configuration.databaseUrl);
   await expireDetailedScanData(lockDatabase.db);
@@ -250,6 +265,7 @@ export async function runScanUnlocked(
   configuration: ReturnType<typeof loadProviderConfiguration>,
   runtime?: ScanRuntime,
 ): Promise<ScanSummary> {
+  assertMusicBrainzScanEnabled(options, configuration);
   const requested = options.provider;
   if (
     requested &&

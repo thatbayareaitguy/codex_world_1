@@ -2,7 +2,7 @@
 
 ## Objective
 
-TS New Music Scanner is a private, single-user, non-commercial release tracker. It maintains a provider-neutral watchlist, scans Spotify, Apple Music, and MusicBrainz, can parse approved Reddit evidence when explicitly enabled, preserves evidence, and presents one chronological feed. MockProvider supports local development and automated tests.
+TS New Music Scanner is a private, single-user, non-commercial release tracker. It maintains a provider-neutral watchlist, scans Spotify and Apple Music, can parse approved Reddit evidence when explicitly enabled, preserves evidence, and presents one chronological feed. MockProvider supports local development and automated tests. The preserved MusicBrainz adapter is dormant and disabled by default.
 
 The product optimizes for recall but never guarantees completeness. It has no audio playback, previews, players, embeds, public signup, advertising, or mixed-service queue.
 
@@ -16,7 +16,7 @@ The product optimizes for recall but never guarantees completeness. It has no au
 - Discover recent Apple Music singles, EPs, and albums from shallow public-catalog views, then retrieve tracks only for releases inside the 30-day or last-success window.
 - Display validated Apple Music artwork only for Apple-backed evidence and link it to the corresponding Apple Music release. Store URLs and dimensions only.
 - Display validated Spotify album or single artwork for Spotify-backed discoveries, linked to the corresponding Spotify album. Store only provider URLs and dimensions; do not download, proxy, transform, or reuse the image for another provider.
-- Discover primary releases, album tracks, featured appearances, compilations, and future MusicBrainz dates.
+- Discover primary releases, album tracks, featured appearances, compilations, and provider-supported future dates.
 - Match by same-provider ID, ISRC, MusicBrainz IDs, then strict metadata.
 - Keep Reddit disabled until explicit Data API approval exists; exact canonical artist and title corroboration may attach evidence, while every other Reddit candidate enters review.
 - Send ambiguous artist, recording, and version matches to review.

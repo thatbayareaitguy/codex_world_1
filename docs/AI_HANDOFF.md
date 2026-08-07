@@ -1,235 +1,69 @@
 # AI Handoff
 
-Updated: 2026-08-06 20:23 PDT (UTC-07:00)
-
-Canonical implementation and operational snapshot. Credentials, tokens, private keys, personal
-provider data, authorization headers, and raw provider payloads are excluded.
+Updated: 2026-08-06 21:25 PDT
 
 ## Repository State
 
-- Branch: `codex/release-radar-hardening`, tracking the matching GitHub branch.
-- Starting commit for this milestone: `249632f4f41564c9fb0a2836abd51b48b39a8f61`.
-- Current milestone commit: the commit containing this document.
-- Worktree contains this handoff update and the intentionally untracked `outputs/` directory. The
-  generated CSV output is excluded from the documentation commit. Ignored `.env`, runtime logs, and
-  test artifacts are excluded.
-- Milestone: complete the active Apple identity review queue from exact user-supplied URLs.
+- Branch: `codex/release-radar-hardening`
+- Starting commit: `c509edf` (`docs: record completed Apple identity queue`)
+- Milestone: MusicBrainz production disablement, verified and pending commit/push
+- Upstream: `origin/codex/release-radar-hardening`; synchronized before this milestone
+- Worktree: milestone files modified; unrelated untracked `outputs/` is excluded
+- Database: PostgreSQL healthy with 22 migrations applied; no migration is required for this change
 
-## Architecture And Database
+## Architecture
 
-- TypeScript pnpm monorepo: Next.js web/API, Node scanner CLIs, provider-neutral core,
-  Drizzle/PostgreSQL, Zod, Vitest, and Playwright.
-- PostgreSQL remains authoritative for canonical records, provider identities, review decisions,
-  catalog snapshots, rankings, request gates, cooldowns, OAuth data, and export ledgers.
-- Twenty-two forward migrations are applied. Migration 0021 adds
-  `apple_identity_candidate_catalogs` and `apple_identity_candidate_rankings`.
-- The active canonical watchlist contains 583 artists. Recent user-directed removals deactivate
-  follow rows while preserving canonical artists and provider history.
-- Current Apple identity state: 583 confirmed mappings, consisting of 320 automatic and 263 manual.
-  The active Apple and MusicBrainz review queues are empty. The integrity verifier retains nine
-  unresolved inactive identity statuses and 53 historical candidates; these are excluded from queue
-  rows and provider status counts rather than deleted.
-- Persisted Apple ranking state: 359 catalog snapshots. Of 505 total ranking rows, 26 rows across
-  four inactive artists still belong to unresolved identities.
+- Next.js web/API, separate Node scanner, PostgreSQL with Drizzle, provider packages, and shared
+  PostgreSQL-backed provider request gates remain unchanged.
+- Active normal providers are Spotify, Apple Music, and MockProvider. Reddit remains approval-gated.
+- MusicBrainz code, schema, mappings, evidence, and scan history are preserved but dormant.
+  `MUSICBRAINZ_ENABLED` now defaults to `false`.
+- Scanner, Apple identity CLI, web scan launcher, mapping APIs, status APIs, review UI, artist UI,
+  settings, and source status all enforce or reflect the MusicBrainz feature boundary.
 
-## Verified
+## Verified Working
 
-- Apple Music and MusicBrainz review queries, summaries, explicit artist lookups, and system status
-  counts require an active follow. Removing an artist therefore hides it from Review Queue without
-  deleting canonical, provider, or decision history. The running application excludes blackbear,
-  CLEMS, Dogma, Everything Must Go, Klutch, Lama, OCTANE, Riptyde, Taylor Sherman, and Tidez from
-  both provider review endpoints.
+- Disabled explicit MusicBrainz scanner calls fail before database mutation or network access.
+- Generic scans do not select MusicBrainz while disabled.
+- Mapping routes return HTTP 403 while disabled; explicitly enabled advanced paths remain covered.
+- Normal GUI omits MusicBrainz controls, reviews, settings, source state, system state, and history.
+- Doctor reports disabled MusicBrainz as `OPTIONAL_PROVIDER_DISABLED` and remains `READY`.
+- Existing canonical feed data is unchanged: 974 feed rows before and after the disabled command.
+- Preserved MusicBrainz data is unchanged: 6 artist IDs, 20 mapping reviews, 4 evidence rows,
+  11 scan runs, 8 scan batches, 13 artist scans, and 77 request events before and after.
+- No live Spotify, Apple Music, MusicBrainz, Reddit, or SoundCloud request occurred in this milestone.
 
-- The historical iTunes seed artifact has canonical SHA-256
-  `0243f3d28d6cb51ec0474da7486f8d73c66fd13398d17601d021c876ee0f8660` but is not sanctioned as
-  production identity evidence because its title-overlap ground truth came from Spotify. It is
-  retained only as untrusted candidate inventory and never contributes to scores or confirmation.
-- Candidate enrichment uses numeric Apple artist IDs only. The live fallback queried Apple's iTunes
-  lookup API without names, Spotify IDs, Spotify URLs, ISRCs, UPCs, or Spotify catalog metadata.
-- MusicBrainz direct Apple URLs and MusicBrainz-linked Wikidata P2850 values are treated as exact
-  independent evidence only after validating the Apple resource. Multiple exact IDs and already
-  claimed IDs remain conflicts instead of being forced.
-- Apple-only activity, genre, label, release, and confirmed Apple co-credit signals rank candidates
-  but cannot automatically confirm them. Soft scores are capped below the exact-evidence threshold.
-- Rejection is reversible. Split-profile confirmation requires at least two validated Apple IDs.
-- The grouped review UI displays rank, advisory score, artwork, Apple URL, genres, labels, activity,
-  collaborators, releases, explanations, and Confirm, Reject/Restore, Split Profile, Not on Apple,
-  and Defer actions. Spotify identity evidence is excluded from the Apple review payload.
-- Fresh production-build browser QA against PostgreSQL verified enriched and unenriched candidate
-  states, accessible actions, reversible rejected candidates, and MusicBrainz-only confirmed
-  evidence.
+## Validation
 
-## Live Validation
+- Format: passed
+- Lint: passed
+- TypeScript: passed in 6 workspaces
+- Unit tests: 394 passed across 54 files
+- PostgreSQL integration: 103 passed across 20 files; clean test database applied all 22 migrations
+- Production build: passed with 27 routes/pages
+- Playwright: 29 passed, including disabled MusicBrainz GUI, system status, and zero-request coverage
+- Database migration: idempotent, 22 applied
+- `git diff --check`: passed
 
-- Bounded pass: 100 unresolved artists, 150 Apple-family requests, 150 catalogs fetched, zero
-  request failures, zero cooldown, and zero Spotify requests.
-- Calibration truth set: 25 reconstructable groups and 97 unique candidates. Top-1 accuracy was
-  25/25 and top-3 accuracy was 25/25. False confirmations and true-candidate eliminations were both
-  zero. This is a small calibration sample, not universal proof.
-- Exact-link results: zero unique direct MusicBrainz confirmations, zero Wikidata confirmations, one
-  exact-link split-profile conflict, and one Wikidata request.
-- Automatic results: zero title-overlap resolutions, zero collaboration-only resolutions, zero
-  candidate eliminations, and zero automatic confirmations. The pass reduced review effort through
-  ranking and enrichment, not by weakening confirmation safety.
-- User-supplied exact URLs for Amplify `254880393`, Anki `1437953776`, Anto `1846210772`, and Arya
-  `1563427828` were verified through four gated numeric Apple lookups with zero failures and applied
-  transactionally. All four names agreed after normalization and their pending reviews were closed.
-- User-supplied exact URLs for Avance `41527586`, BAGG `1552540536`, and BLUPRNT `1524891295`
-  were verified through three gated numeric Apple lookups with zero failures and applied
-  transactionally. All three names agreed after normalization and their pending reviews were closed.
-- User-supplied exact URLs for BLVD. `1464139239`, BRANDON `1493109644`, BRONSON `1506713189`,
-  BVRNOUT `1087920245`, Blaize `411174046`, Blossom `147379525`, and Bossfight `1370818923` were
-  verified through six gated numeric Apple lookups plus one catalog cache hit, with zero failures,
-  and applied transactionally. Their pending reviews were closed.
-- User-supplied exact URLs for Brooks `1101797127`, Buku `455303856`, Chime `25272873`, Circadian
-  `575770726`, and Code: Pandorum `865392478` were verified through four gated numeric Apple lookups
-  plus one catalog cache hit, with zero failures, and applied transactionally. Exact normalized names
-  agreed and their pending reviews were closed.
-- The user-supplied exact URL for Control Freak `53615786` was verified through one gated numeric
-  Apple lookup with zero failures and applied transactionally. The exact normalized name agreed and
-  its pending reviews were closed.
-- User-supplied exact URLs for Convex `542698006`, Cyclops `198189262`, DJ Snake `125742557`, Dabin
-  `489858182`, Daily Bread `1516625785`, Danny Olson `1197861060`, Disciple `1395522107`, Disclosure
-  `520848228`, and Doctor P `337725870` were verified through nine gated numeric Apple lookups with
-  zero failures and applied transactionally. Exact normalized names agreed and their pending reviews
-  were closed. The supplied DJ Snake HTTP URL was normalized to HTTPS before persistence.
-- User-supplied exact URLs for Dom Dolla `555348065`, Dropgun `63194057`, Edison Cole `1335080924`,
-  FETISH `1528146813`, FREAKY `1642995405`, Fairlane `332465235`, Famous Spear `1048638889`, Far Out
-  `1473958133`, and Farrah `44214442` were verified through eight gated numeric Apple lookups plus one
-  catalog cache hit, with zero failures, and applied transactionally. Exact normalized names agreed
-  and their pending reviews were closed.
-- User-supplied exact URLs for Fitch `4274951`, Friction `744244447`, G Jones `526152`, GRiZ
-  `980722716`, and Gareth Emery `78422058` were verified through five gated numeric Apple lookups with
-  zero failures and applied transactionally. Exact normalized names agreed and their pending reviews
-  were closed.
-- User-supplied exact URLs for Getter `419185194`, Ghastly `701313804`, God's Warrior `496903551`,
-  Gorillowz `1312660633`, Grafix `133390150`, Grey `324853`, Gryffin `953311187`, and HATO
-  `1756770269` were verified through eight gated numeric Apple lookups with zero failures and applied
-  transactionally. Exact normalized names agreed and their pending reviews were closed.
-- User-supplied exact URLs for Heyz `1281037215`, Hubstcy `1275435634`, Hukae `1356608700`, Hybrid
-  Minds `493781098`, ILLENIUM `645420096`, INF1N1TE `664871696`, INFEKT `329193923`, INZO
-  `1316205596`, IVORY `1277948731`, Ironheart `1578656505`, JOYRYDE `408931289`, Jalaya
-  `1331014845`, Jason Ross `129061595`, Jinco `373547544`, and Jon Casey `477268278` were verified
-  through 15 gated numeric Apple lookups with zero failures and applied transactionally. Exact
-  normalized names agreed and their pending reviews were closed.
-- User-supplied exact URLs for Just A Gent `676417641`, K Motionz `581160699`, K-NINE `30837827`,
-  KANJI `1705037926`, KLOUD `1351315768`, KRANE `887378519`, and KRAYT `1311012711` were verified
-  through seven gated numeric Apple lookups with zero failures and applied transactionally. Exact
-  normalized names agreed and their pending reviews were closed.
-- User-supplied exact URLs for [BORDERS] `1632668957`, borne `1614258187`, ellis `1171048408`,
-  goddard. `1668134503`, graves `1127647270`, hayve `1512447146`, Honey & Badger `605390519`, k?d
-  `1141553506`, Kaivon `871892490`, Kanine `1401909308`, Kayzo `661615351`, and Khamsin `374261357`
-  were verified through 12 gated numeric Apple lookups with zero failures and applied transactionally.
-  Exact normalized names agreed and their pending reviews were closed.
-- User-supplied exact URLs for Know Good `1507153145`, Kompany `550429222`, Kotori `1033204051`,
-  Krewella `492328395`, Krimer `675724063`, KTRL `527790626`, KULTIVATE `1484383444`, Kumarion
-  `1460766817`, Kyle Watson `316000386`, Kyral X Banko `1241731177`, LAXX `487839237`, Levity
-  `1505353688`, LICK `1307334531`, LIU KANG `1740540253`, and Lizdek `1208632523` were verified
-  through 14 gated numeric Apple lookups plus one catalog cache hit, with zero failures, and applied
-  transactionally. Exact normalized names agreed and their pending reviews were closed.
-- User-supplied exact URLs for Lookas `851005361`, LYNY `1299141955`, Mako `76061125`, Malaa
-  `1358486460`, Malixe `598962257`, Man Cub `1438900835`, MATT DOE `1354242210`, MEDZ
-  `1490490040`, Megalodon `1373229367`, MEMBA `1108289318`, Michael Sparks `375669303`, Minnesota
-  `25198137`, MitiS `476609914`, Morgan Page `6955705`, MPH `465495678`, and Mport `1244831715`
-  were verified through 16 gated numeric Apple lookups with zero failures and applied transactionally.
-  Exact normalized names agreed and their pending reviews were closed.
-- User-supplied exact URLs for msft `1445042019`, MUERTE `864118080`, MUZZ `1471063703`, MVRDA
-  `1434939342`, Nasko `1176983327`, NERVO `315216021`, Nico Falla `1489838428`, NITTI `266758200`,
-  and Noisia `103804740` were verified through nine gated numeric Apple lookups with zero failures
-  and applied transactionally. Exact normalized names agreed and their pending reviews were closed.
-- User-supplied exact URLs for Of The Trees `587967131`, Oliverse `1040447357`, Original Sin
-  `203545625`, Oski `256872311`, Paper Skies `1186943430`, Party Favor `646638705`, PEEKABOO
-  `1254616353`, and PhaseOne `293699062` were verified through eight gated numeric Apple lookups with
-  zero failures and applied transactionally. Exact normalized names agreed and their pending reviews
-  were closed.
-- User-supplied exact URLs for PIERCE `1403516802`, Pixel Terror `1159114651`, Prismo `718727168`,
-  QUIX `944465851`, R!PT!DE `1661526208`, RageMode `1086722189`, RANKZ `1131004051`, REAPER
-  `1296993709`, Rebel Scum `1337564511`, Rendah `1667504377`, RetroVision `531288445`, Rezz
-  `1046759940`, RIOT `437755921`, Rival `60376564`, Rova `1601680475`, rSUN `1437328848`, Rueben
-  `1592550904`, and Runnit `1314608577` were verified through 18 gated numeric Apple lookups with
-  zero failures and applied transactionally. Exact normalized names agreed and their pending reviews
-  were closed.
-- User-supplied exact URLs for Saturna `1594363475`, SAYMYNAME `1024251357`, Sharks `1437682271`,
-  SHARPS `271347456`, Ship Wrek `983320067`, Shöckface `1243083858`, SIDEPIECE `1479083020`, Simula
-  `388536791`, Skepsis `1196462981`, Skism `155667435`, SLANDER `1051421487`, Slippy `275589180`,
-  and SLUMBERJACK `957991038` were verified through 13 gated numeric Apple lookups with zero failures
-  and applied transactionally. Exact normalized names agreed and their pending reviews were closed.
-- User-supplied exact URLs for smle `1080592795`, smol `1443045405`, SNAILS `484634071`, So Dope
-  `1211488871`, Soltan `335181604`, SOTA `1389875801`, Space Jesus `580567775`, Spock `129207940`,
-  STAR SEED `1478647091`, Staysick `1026859557`, Storyboard `189566903`, Stratus `1475576223`, Sub
-  Focus `152742627`, Sub Zero `82834253`, SubDocta `1107693743`, Sully `1190007829`, SWARM
-  `1259376931`, Teddy Killerz `544601407`, The Sponges `1450865504`, THIEVES `1445737404`, and
-  Throttle `1017064918` were verified through 21 gated numeric Apple lookups with zero failures and
-  applied transactionally. The duplicate The Sponges URL was deduplicated before lookup. Exact
-  normalized names agreed and their pending reviews were closed.
-- User-supplied exact URLs for Tokyo Machine `1134525290`, Trampa `472971541`, Tritonal `283453767`,
-  TroyBoi `688290482`, Tryple `914255089`, Tsimba `1095061996`, TYNAN `281474719`, Vincent
-  `1437293109`, Wavedash `984643315`, Whales `1402680235`, Wiguez `1150043658`, Wilkinson
-  `3075647`, WINK `1701175698`, Wooli `1182247394`, YDG `956701098`, YULA `1475865036`, Zedd
-  `368433979`, Zingara `1554855886`, and Zomboy `459440652` were verified through 19 gated numeric
-  Apple lookups with zero failures and applied transactionally. Exact normalized names agreed and
-  their pending reviews were closed.
-- The user-supplied exact URL for eugene `1464464219` was verified through one gated numeric Apple
-  lookup with zero failures and applied transactionally. The exact normalized name agreed and its
-  pending reviews were closed.
-- User-supplied exact URLs for Kngpn `1391387553`, KRITIKAL `1607746846`, Lokal `451299557`, Maze
-  `995980004`, Moceans `1734437070`, Myro `4111929`, NVADRZ & ALIAS `1783723679`, and OUTRAGE
-  `1519299808` were verified through eight gated numeric Apple lookups with zero failures and applied
-  transactionally. Exact normalized names agreed and their pending reviews were closed. Lama was
-  removed from the active watchlist without deleting canonical or provider history. OCTANE was
-  subsequently removed using the same non-destructive follow deactivation.
-- User-supplied exact URLs for Primate `154097185`, PURGE `131745500`, Result `397231669`, Saint
-  Miller `1459100369`, Sam Norris `1080634222`, Sentient `219344492`, SKVNK `1509307307`, SMG
-  `1615405882`, SPAG/Spag Heddy `441478812`, Subsonic `20161026`, Tails `282019388`, TALONS
-  `1471944151`, Tyraz `1478012312`, INVOLVER `1706336289`, and The Arc `1479112799` were validated
-  through ten gated numeric Apple lookups plus five cache hits, with zero failures. All 15 mappings
-  were applied transactionally. The expected SPAG/Spag Heddy name disagreement was preserved in the
-  audit evidence. Riptyde, Tidez, and Taylor Sherman were removed through non-destructive follow
-  deactivation.
+## Risks And Decisions
 
-## Automated Validation
+- The ignored local `.env` currently explicitly opts in with `MUSICBRAINZ_ENABLED=true`. Repository
+  rules prohibit modifying `.env`; the user must set it to `false` and restart local processes to
+  apply the new default locally. Source-controlled defaults and production guidance are false.
+- Re-enabling MusicBrainz is implemented but was not live-tested in this milestone. Treat it as an
+  advanced, separate validation session, not a production capability.
+- No historical MusicBrainz row was deleted, rewritten, or hidden from direct database inspection.
+- Spotify cross-service policy uncertainty remains. Provider-specific data must stay namespaced.
 
-- Formatting: passed.
-- Lint: passed with zero warnings.
-- Strict TypeScript: passed across six workspaces.
-- Unit tests: 388 passed in 52 files.
-- PostgreSQL integration tests: 103 passed in 20 files, including active-follow review filtering
-  and a clean 22-migration test database.
-- Production build: passed with 27 generated routes/pages.
-- Playwright: 29 passed.
-- `pnpm db:migrate`: passed and idempotent with 22 applied migrations.
-- `pnpm doctor`: READY; no stale operation lock and no provider cooldown.
-- `git diff --check`: passed.
+## Next Action
 
-## Implemented But Not Live-Verified
-
-- Rich Apple Music API artist-view enrichment is implemented and mock-tested. Live validation used
-  numeric iTunes lookup because Apple developer-token configuration is disabled locally.
-- Unique direct MusicBrainz/Wikidata automatic confirmation is unit and integration tested, but the
-  live sample produced no unique exact winner.
-
-## Provider, Security, And Policy State
-
-- Spotify remains connected but was not called. No Spotify mapping or playlist was read or changed.
-- Spotify-derived data is excluded from Apple external requests, identity scores, persisted ranking
-  evidence, and the Apple review API response.
-- Apple Music developer-token configuration is disabled. No Apple cooldown or request lease exists.
-- MusicBrainz is configured. Reddit remains approval-gated. SoundCloud automation remains excluded.
-
-## Known Risks
-
-- No active Apple identity remains unresolved. Nine inactive historical statuses and 53 candidate
-  rows remain preserved for audit and can reappear only if those artists are followed again.
-- Apple/iTunes search agreement is not independent identity proof because both are Apple catalogs.
-- Split-profile conflicts are preserved for review but multi-profile scanning remains unsupported.
-
-## Immediate Next Step
-
-Begin a bounded Apple discovery canary only after configuring Apple developer-token settings. The
-identity queue itself needs no further manual work for the active watchlist.
+1. Finish final credential-free verification, commit, and push this milestone.
+2. Set the ignored local `MUSICBRAINZ_ENABLED=false`, restart the app, and confirm `pnpm doctor` is
+   `READY` with `OPTIONAL_PROVIDER_DISABLED`.
+3. Begin the planned Apple-first Spotify reconciliation review without using MusicBrainz.
 
 ## Deferred
 
-- Soft-signal-only automatic confirmation, split-profile scanning, Music User Tokens, Apple personal
-  library access, Spotify-derived Apple matching, scheduler activation, additional providers, mixed
-  playback, and playlist reordering.
+- MusicBrainz advanced-mode live validation and any deletion of MusicBrainz code, schema, or data
+- Apple-first Spotify reconciliation implementation
+- Reddit activation, SoundCloud automation, and additional providers

@@ -9,6 +9,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createMusicBrainzServerContext } from "../../../../lib/musicbrainz-server";
+import { musicBrainzDisabledResponse } from "../../../../lib/musicbrainz-feature";
 import { enforceRateLimit } from "../../../../lib/request-security";
 
 const querySchema = z.object({
@@ -18,6 +19,8 @@ const querySchema = z.object({
 });
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const disabled = musicBrainzDisabledResponse();
+  if (disabled) return disabled;
   try {
     enforceRateLimit(request, 60);
     const { artistId, cursor, limit } = querySchema.parse(

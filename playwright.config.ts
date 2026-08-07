@@ -13,7 +13,7 @@ export default defineConfig({
       APP_ENCRYPTION_KEY: "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
       DATABASE_URL: "postgres://radar:radar@127.0.0.1:5433/radar_test",
       MUSICBRAINZ_CONTACT_EMAIL: "e2e@example.com",
-      MUSICBRAINZ_ENABLED: "true",
+      MUSICBRAINZ_ENABLED: "false",
       NEXT_DIST_DIR: ".next-e2e",
       RADAR_E2E_MOCK_MODE: "true",
       SPOTIFY_CLIENT_ID: "e2e-client-id",

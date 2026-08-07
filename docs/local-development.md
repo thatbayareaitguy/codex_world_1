@@ -41,7 +41,6 @@ pnpm scan -- --provider spotify
 pnpm scan -- --provider spotify --artist <internal-artist-id> --dry-run --spotify-max-pages 1
 pnpm scan -- --provider spotify --spotify-mode daily
 pnpm scan -- --provider spotify --spotify-mode reconciliation --confirm-spotify-batch
-pnpm scan -- --provider musicbrainz
 pnpm scan -- --provider apple_music
 pnpm scan -- --provider apple_music --artist <internal-artist-id>
 pnpm scan -- --provider reddit
@@ -84,16 +83,9 @@ missing artists, duplicate assignments, and mapping conflicts block the entire a
 disagreements are reported as warnings and never cause candidate substitution. Apply repeats the
 preview and persists the complete file in one transaction.
 
-Run the bounded independent MusicBrainz evidence pass with:
-
-```powershell
-pnpm apple-music:identities musicbrainz-pass --limit 10 --max-candidates 3 --confirm-live
-```
-
-This pass starts only from confirmed MusicBrainz identities and existing Apple candidates. It does
-not search Apple by Spotify or canonical names and never sends Spotify metadata to Apple. Without
-Apple developer-token credentials it inventories bounded MusicBrainz evidence, resolves nothing,
-and reports Apple verification as blocked.
+The preserved `musicbrainz-pass` command is not part of normal development or production use. It
+fails closed while `MUSICBRAINZ_ENABLED=false`. Re-enable it only as a separately reviewed advanced
+operation with a configured contact email, then repeat provider, integration, and live validation.
 
 Run the calibrated Apple-family candidate enrichment and exact-link pass with:
 
@@ -102,8 +94,8 @@ pnpm doctor
 pnpm apple-music:identities resolve-pass --confirm-live --limit 100 --max-requests 150 --min-request-interval-ms 3200
 ```
 
-`resolve-pass` accepts only retained numeric Apple candidate IDs and independently confirmed
-MusicBrainz IDs. It never submits Spotify-derived query terms or metadata. When Apple Music
+`resolve-pass` accepts only retained numeric Apple candidate IDs. The dormant MusicBrainz input is
+omitted while its provider flag is false. It never submits Spotify-derived query terms or metadata. When Apple Music
 developer-token configuration is available, it reads artist relationship views. Otherwise it uses
 Apple's numeric-ID iTunes lookup endpoint. Catalogs and rankings are persisted and reused. Soft
 Apple-only signals rank review candidates but never confirm them automatically. See

@@ -11,7 +11,7 @@ describe("provider configuration", () => {
       playlistWritesEnabled: false,
     });
     expect(config.spotify.allowedPlaylistId).toBeUndefined();
-    expect(config.musicbrainz).toMatchObject({ enabled: true, configured: false });
+    expect(config.musicbrainz).toMatchObject({ enabled: false, configured: false });
     expect(config.soundcloudManualLinksEnabled).toBe(false);
     expect(config.reddit).toMatchObject({
       accessApproved: false,
@@ -51,6 +51,15 @@ describe("provider configuration", () => {
     expect(config.spotify).toMatchObject({ enabled: false, configured: false });
     expect(config.musicbrainz).toMatchObject({ enabled: false, configured: false });
     expect(config.soundcloudManualLinksEnabled).toBe(true);
+  });
+
+  it("requires an explicit flag and contact email to configure MusicBrainz", () => {
+    const config = loadProviderConfiguration({
+      MUSICBRAINZ_CONTACT_EMAIL: "owner@example.test",
+      MUSICBRAINZ_ENABLED: "true",
+    });
+
+    expect(config.musicbrainz).toMatchObject({ enabled: true, configured: true });
   });
 
   it("requires approval, credentials, and a descriptive Reddit User-Agent", () => {

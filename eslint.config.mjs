@@ -8,6 +8,7 @@ export default tseslint.config(
       "**/.next-e2e/**",
       "**/dist/**",
       "**/coverage/**",
+      "outputs/**",
       "playwright-report/**",
     ],
   },

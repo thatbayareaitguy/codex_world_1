@@ -15,7 +15,6 @@ describe("doctor", () => {
       {
         APP_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
         DATABASE_URL: "postgresql://secret:secret@127.0.0.1:5432/radar",
-        MUSICBRAINZ_ENABLED: "false",
         REDDIT_ENABLED: "false",
         SOUNDCLOUD_MANUAL_LINKS_ENABLED: "false",
         SPOTIFY_ENABLED: "false",

@@ -1,12 +1,12 @@
 # TS New Music Scanner
 
-TS New Music Scanner is a private, single-user Release Inbox for a provider-neutral artist watchlist. It discovers releases through Spotify, Apple Music, MusicBrainz, approved Reddit evidence, or deterministic mock fixtures; preserves source evidence; routes uncertain matches to review; and prepares exact or confirmed Spotify tracks for restricted export to one private playlist. It has no playback.
+TS New Music Scanner is a private, single-user Release Inbox for a provider-neutral artist watchlist. It discovers releases through Spotify, Apple Music, or deterministic mock fixtures; preserves source evidence; routes uncertain matches to review; and prepares exact or confirmed Spotify tracks for restricted export to one private playlist. It has no playback.
 
 ## Current Scope
 
 - Spotify: followed-artist import, bounded daily discovery, resumable reconciliation, exact track availability, read-only configured-playlist inspection, and prepared but default-disabled add-only export.
 - Apple Music: confirmed-artist public-catalog discovery, shallow recent singles and albums, release tracks, source evidence, and provider-specific artwork. No user library, playback, or playlist access.
-- MusicBrainz: artist mapping, release and release-group discovery, and upcoming release dates.
+- MusicBrainz: preserved dormant adapter and historical evidence, disabled by default and absent from normal operation.
 - Reddit: configurable evidence sources and deterministic parsing, disabled until Reddit grants explicit API approval.
 - MockProvider: credential-free local scanning and tests.
 - SoundCloud: optional manual outbound links only, disabled by default. No API, OAuth, player, metadata request, or hosted playlist.
@@ -39,7 +39,7 @@ Run `pnpm doctor` after editing `.env`. It checks versions, database connectivit
 1. Register a Spotify Development Mode app with `http://127.0.0.1:3000/api/auth/spotify/callback` exactly, then set the Spotify variables and `SPOTIFY_ENABLED=true`.
 2. Open Settings, connect Spotify in the browser, inspect the setup checklist, and import followed artists through the preview.
 3. Add artists that are not followed on Spotify from Followed artists.
-4. Use the MusicBrainz and Apple Music mapping controls to confirm exact identities and leave ambiguous identities in review.
+4. Use Apple Music mapping controls to confirm exact identities and leave ambiguous identities in review.
 5. Run `pnpm scan -- --provider mock` for a credential-free check. Run providers explicitly for normal operation so the intended boundary is visible.
 6. Review Needs review items. Only exact or manually confirmed Spotify matches are eligible for export.
 7. Playlist writes are initially disabled. For read-only use, leave both playlist environment values at their defaults. If add-only export is enabled later, create one private playlist directly in Spotify and configure its ID server-side. The application has no picker and cannot create or alter playlists.
@@ -50,9 +50,11 @@ Run `pnpm doctor` after editing `.env`. It checks versions, database connectivit
 pnpm doctor
 pnpm scan -- --provider spotify
 pnpm scan -- --provider apple_music
-pnpm scan -- --provider musicbrainz
 pnpm scan:status
 ```
+
+MusicBrainz is not part of daily operation. Its preserved advanced command rejects execution unless
+`MUSICBRAINZ_ENABLED=true` is set for a separate validation session.
 
 Useful diagnostics and recovery:
 

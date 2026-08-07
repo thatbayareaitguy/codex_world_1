@@ -1,5 +1,13 @@
 # Implementation Plan
 
+## Current: dormant MusicBrainz production boundary
+
+MusicBrainz is preserved as an advanced adapter but defaults off. Normal scans, direct identity
+commands, web APIs, review workflows, settings, source status, system status, and scan history omit
+MusicBrainz unless `MUSICBRAINZ_ENABLED=true` is explicitly set for a separately validated session.
+Historical mappings, evidence, scan telemetry, and schema remain intact. The next product milestone
+is Apple-first Spotify reconciliation; deleting MusicBrainz code or data is explicitly deferred.
+
 ## Current: bounded initial Spotify synchronization
 
 The rolling scheduler is implemented and bounded-live validated. Migration `0015` adds the minimal

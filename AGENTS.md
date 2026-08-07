@@ -3,7 +3,7 @@
 - Preserve the canonical model, matching engine, source evidence, watchlist, feed, scanner, provider interfaces, and MockProvider.
 - Before implementing a real provider, verify current official account, payment, authentication, functionality, terms, and policy constraints. Record unresolved policy language and never claim provider approval.
 - Apple Music public-catalog access through the owner's paid Apple Developer Program membership is an explicitly approved exception to the former no-paid-provider rule. Do not add any other provider that requires paid developer access, membership, API subscription, or a commercial plan without a new explicit decision.
-- Active providers are Spotify, Apple Music, MusicBrainz, MockProvider, and the approval-gated Reddit evidence adapter. Reddit must remain disabled until explicit API approval is received and recorded. Do not add YouTube, SoundCloud API, or TIDAL adapters in this milestone.
+- Active providers are Spotify, Apple Music, and MockProvider. MusicBrainz is dormant and must default off. Reddit remains approval-gated and disabled until explicit API approval is received and recorded. Do not add YouTube, SoundCloud API, or TIDAL adapters in this milestone.
 - Never add SoundCloud credentials, OAuth, API requests, account import, search requests, monitoring, metadata, artwork, HTML fetching, scraping, browser automation, playback, oEmbed, or playlist writing.
 - SoundCloud is limited to the existing safe manual outbound-link feature and must be hidden by default behind `SOUNDCLOUD_MANUAL_LINKS_ENABLED=false`.
 - Accept SoundCloud field URLs only from `soundcloud.com` or its subdomains over HTTPS. Reject unsafe schemes, embedded credentials, lookalike domains, and non-track paths for track fields.
@@ -32,6 +32,7 @@
 - Keep TypeScript strict and avoid `any`. Run formatting, lint, type checking, unit tests, integration tests, build, and Playwright before handoff.
 - Update `docs/provider-capabilities.md` with official links and a new verification date before any real adapter work.
 - All MusicBrainz HTTP paths, including mapping previews and scanner discovery, must use the database-backed global request gate with at least 1000 ms between request starts.
+- Every MusicBrainz network, scan, mapping, API, and UI entry point must also require `MUSICBRAINZ_ENABLED=true`. Normal operation keeps it false and omits MusicBrainz controls and status. Re-enabling is an advanced, separately validated operation.
 - MusicBrainz scans must persist release-group, primary-release, and track-appearance stages incrementally. Cancellation preserves completed stages and uses `CANCELLED`, not `FAILED`.
 - Never use a raw Spotify response to build a MusicBrainz request. MusicBrainz discovery starts only from a confirmed canonical artist mapping.
 - A MusicBrainz release-group ID alone is not sufficient to merge tracks. Require the same disc, track position, and normalized title unless the recording ID is exact.

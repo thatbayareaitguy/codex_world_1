@@ -986,12 +986,8 @@ export function RadarShell({
       setSyncing(true);
       setNotice(null);
       try {
-        const spotifyCooldown = Boolean(scanStatus?.spotify.operational.cooldownActive);
         const musicbrainzOnly =
-          scanRequest?.provider === "musicbrainz" ||
-          (spotifyCooldown &&
-            providerConfiguration.musicbrainz.configured &&
-            !providerConfiguration.appleMusic.configured);
+          providerConfiguration.musicbrainz.enabled && scanRequest?.provider === "musicbrainz";
         const response = await fetch("/api/scans", {
           ...(musicbrainzOnly
             ? {
@@ -1009,7 +1005,7 @@ export function RadarShell({
           setNotice(
             musicbrainzOnly
               ? "MusicBrainz-only release update started. Spotify remains untouched."
-              : "Release update started. Spotify and MusicBrainz will continue independently.",
+              : "Release update started. Configured providers will continue independently.",
           );
         }
 
@@ -1152,13 +1148,17 @@ export function RadarShell({
                 : "Spotify not configured",
               connected: false,
             },
-            {
-              provider: "musicbrainz",
-              label: providerConfiguration.musicbrainz.configured
-                ? "MusicBrainz configured"
-                : "MusicBrainz not configured",
-              connected: providerConfiguration.musicbrainz.configured,
-            },
+            ...(providerConfiguration.musicbrainz.enabled
+              ? [
+                  {
+                    provider: "musicbrainz",
+                    label: providerConfiguration.musicbrainz.configured
+                      ? "MusicBrainz configured"
+                      : "MusicBrainz not configured",
+                    connected: providerConfiguration.musicbrainz.configured,
+                  },
+                ]
+              : []),
           ].map(({ provider, label, connected }) => (
             <div className="provider-line" key={provider}>
               <span className={`provider-dot ${provider}`} /> {label}
@@ -1260,6 +1260,7 @@ export function RadarShell({
                 : (scanStatus?.latest?.insertedCount ?? 0)
             }
             musicbrainzConfigured={providerConfiguration.musicbrainz.configured}
+            musicbrainzEnabled={providerConfiguration.musicbrainz.enabled}
             soundCloudLinks={soundCloudLinks}
             onFilterChange={setActiveFilter}
             onAdvancedFiltersChange={setAdvancedFilters}
@@ -1310,6 +1311,7 @@ export function RadarShell({
             onSaveProfile={saveArtistProfile}
             onScanArtist={(artistId) => void runFeedScan({ artistId, provider: "musicbrainz" })}
             musicbrainzConfigured={providerConfiguration.musicbrainz.configured}
+            musicbrainzEnabled={providerConfiguration.musicbrainz.enabled}
             soundCloudManualLinksEnabled={providerConfiguration.soundcloudManualLinksEnabled}
             watchlistMode={activeWatchlistMode}
           />
@@ -1328,6 +1330,7 @@ export function RadarShell({
         {activeView === "review" && (
           <ReviewView
             items={reviewItems}
+            musicbrainzEnabled={providerConfiguration.musicbrainz.enabled}
             onDecision={(item, decision) => void resolveReviewItem(item, decision)}
             pendingItemIds={pendingReviewActions}
             query={query}
@@ -1466,6 +1469,7 @@ interface FeedViewProps {
   items: FeedFixtureItem[];
   lastScanInsertedCount: number;
   musicbrainzConfigured: boolean;
+  musicbrainzEnabled: boolean;
   soundCloudLinks: Record<string, SoundCloudLinkRecord>;
   onFilterChange: (state: FeedState | "all") => void;
   onAdvancedFiltersChange: (filters: FeedAdvancedFilters) => void;
@@ -1510,6 +1514,7 @@ function FeedView({
   items,
   lastScanInsertedCount,
   musicbrainzConfigured,
+  musicbrainzEnabled,
   soundCloudLinks,
   onFilterChange,
   onAdvancedFiltersChange,
@@ -1550,7 +1555,7 @@ function FeedView({
   const spotifyOperational = scanStatus?.spotify.operational;
   const spotifyScheduler = scanStatus?.spotify.scheduler;
   const spotifyBatch = scanStatus?.spotify.batch;
-  const musicbrainzBatch = scanStatus?.musicbrainz.batch;
+  const musicbrainzBatch = musicbrainzEnabled ? scanStatus?.musicbrainz?.batch : undefined;
   const spotifyCooldown = Boolean(spotifyOperational?.cooldownActive);
   const scanHistory = scanStatus?.history ?? [];
   const selectedHistoryRun =
@@ -1711,7 +1716,7 @@ function FeedView({
                 feedMode === "mock"
                   ? "Run mock scan"
                   : spotifyCooldown
-                    ? musicbrainzConfigured
+                    ? musicbrainzEnabled && musicbrainzConfigured
                       ? "Run MusicBrainz-only update while Spotify is cooling down"
                       : "Provider scan disabled during Spotify cooldown"
                     : scanStatus?.running
@@ -1966,6 +1971,7 @@ function FeedView({
       )}
 
       {feedMode === "database" &&
+        musicbrainzEnabled &&
         musicbrainzBatch &&
         (scanStatus?.running ||
           (["paused", "cancelled", "failed"].includes(musicbrainzBatch.status) &&
@@ -2622,6 +2628,7 @@ function ArtistsView({
   onSaveProfile,
   onScanArtist,
   musicbrainzConfigured,
+  musicbrainzEnabled,
   soundCloudManualLinksEnabled,
   watchlistMode,
 }: {
@@ -2636,6 +2643,7 @@ function ArtistsView({
   onSaveProfile: (id: string, url: string) => void;
   onScanArtist: (id: string) => void;
   musicbrainzConfigured: boolean;
+  musicbrainzEnabled: boolean;
   soundCloudManualLinksEnabled: boolean;
   watchlistMode: "database" | "error" | "mock";
 }) {
@@ -2932,7 +2940,7 @@ function ArtistsView({
         </form>
       )}
 
-      {mappingArtist && (
+      {musicbrainzEnabled && mappingArtist && (
         <section className="add-artist-form" aria-label="MusicBrainz mapping candidates">
           <strong>MusicBrainz mapping for {mappingArtist.name}</strong>
           {mappingBusy && (
@@ -3096,14 +3104,18 @@ function ArtistsView({
               </small>
             </div>
             <div className="source-stack">
-              {artist.providers.length === 0 ? (
+              {artist.providers.filter(
+                (provider) => musicbrainzEnabled || provider !== "musicbrainz",
+              ).length === 0 ? (
                 <span className="provider-tag">No provider IDs</span>
               ) : (
-                artist.providers.map((provider) => (
-                  <span className="provider-tag" key={provider}>
-                    {provider}
-                  </span>
-                ))
+                artist.providers
+                  .filter((provider) => musicbrainzEnabled || provider !== "musicbrainz")
+                  .map((provider) => (
+                    <span className="provider-tag" key={provider}>
+                      {provider}
+                    </span>
+                  ))
               )}
               {artist.providers.includes("spotify") && (
                 <span
@@ -3131,34 +3143,38 @@ function ArtistsView({
               {!artist.active ? "Paused" : artist.manuallyAdded ? "Pending mapping" : "Mapped"}
             </span>
             <div className="row-actions">
-              <button
-                aria-label={`${
-                  artist.providers.includes("musicbrainz") ? "View" : "Map"
-                } ${artist.name} MusicBrainz mapping`}
-                className="icon-button small"
-                disabled={
-                  !musicbrainzConfigured ||
-                  watchlistMode !== "database" ||
-                  !z.string().uuid().safeParse(artist.id).success
-                }
-                onClick={() => void openMusicBrainzMapping(artist)}
-                title="View MusicBrainz mapping"
-              >
-                <Link2 size={15} />
-              </button>
-              <button
-                aria-label={`Run MusicBrainz scan for ${artist.name}`}
-                className="icon-button small"
-                disabled={
-                  !musicbrainzConfigured ||
-                  !artist.providers.includes("musicbrainz") ||
-                  watchlistMode !== "database"
-                }
-                onClick={() => onScanArtist(artist.id)}
-                title="Scan this artist with MusicBrainz"
-              >
-                <RefreshCw size={15} />
-              </button>
+              {musicbrainzEnabled && (
+                <>
+                  <button
+                    aria-label={`${
+                      artist.providers.includes("musicbrainz") ? "View" : "Map"
+                    } ${artist.name} MusicBrainz mapping`}
+                    className="icon-button small"
+                    disabled={
+                      !musicbrainzConfigured ||
+                      watchlistMode !== "database" ||
+                      !z.string().uuid().safeParse(artist.id).success
+                    }
+                    onClick={() => void openMusicBrainzMapping(artist)}
+                    title="View MusicBrainz mapping"
+                  >
+                    <Link2 size={15} />
+                  </button>
+                  <button
+                    aria-label={`Run MusicBrainz scan for ${artist.name}`}
+                    className="icon-button small"
+                    disabled={
+                      !musicbrainzConfigured ||
+                      !artist.providers.includes("musicbrainz") ||
+                      watchlistMode !== "database"
+                    }
+                    onClick={() => onScanArtist(artist.id)}
+                    title="Scan this artist with MusicBrainz"
+                  >
+                    <RefreshCw size={15} />
+                  </button>
+                </>
+              )}
               <button
                 aria-label={`Edit ${artist.name}`}
                 className="icon-button small"
@@ -3661,11 +3677,13 @@ interface AppleMappingCandidateEvidence {
 
 function ReviewView({
   items,
+  musicbrainzEnabled,
   onDecision,
   pendingItemIds,
   query,
 }: {
   items: FeedFixtureItem[];
+  musicbrainzEnabled: boolean;
   onDecision: (item: FeedFixtureItem, decision: "confirm" | "separate") => void;
   pendingItemIds: string[];
   query: string;
@@ -3719,7 +3737,9 @@ function ReviewView({
   const loadMappingReviews = useCallback(async () => {
     setMappingReviewState("loading");
     try {
-      const providers = ["musicbrainz", "apple_music"] as const;
+      const providers = musicbrainzEnabled
+        ? (["musicbrainz", "apple_music"] as const)
+        : (["apple_music"] as const);
       const loaded = await Promise.all(
         providers.map(async (provider) => {
           try {
@@ -3769,7 +3789,7 @@ function ReviewView({
     } catch {
       setMappingReviewState("error");
     }
-  }, []);
+  }, [musicbrainzEnabled]);
 
   useEffect(() => {
     void loadMappingReviews();
@@ -3912,7 +3932,7 @@ function ReviewView({
         >
           <option value="all">All reviews</option>
           <option value="matches">Release matches</option>
-          <option value="musicbrainz_mappings">MusicBrainz mappings</option>
+          {musicbrainzEnabled && <option value="musicbrainz_mappings">MusicBrainz mappings</option>}
           <option value="apple_music_mappings">Apple Music mappings</option>
         </select>
       </label>
@@ -4196,7 +4216,10 @@ function ReviewView({
             );
           })}
         {reviewFilter !== "matches" &&
-          (["musicbrainz", "apple_music"] as const).map((provider) =>
+          (musicbrainzEnabled
+            ? (["musicbrainz", "apple_music"] as const)
+            : (["apple_music"] as const)
+          ).map((provider) =>
             mappingReviewHasMore[provider] &&
             (reviewFilter === "all" || reviewFilter === `${provider}_mappings`) ? (
               <button
@@ -4358,15 +4381,17 @@ const systemStatusSchema = z.object({
     state: z.string().optional(),
   }),
   generatedAt: z.string(),
-  musicbrainz: z.object({
-    configured: z.boolean(),
-    enabled: z.boolean(),
-    lastError: z.string().nullable().optional(),
-    lastRateLimitWaitMs: z.number().nullable().optional(),
-    lastSuccessfulScanAt: z.string().nullable().optional(),
-    mappingReviewCount: z.number().optional(),
-    userAgentConfigured: z.boolean(),
-  }),
+  musicbrainz: z
+    .object({
+      configured: z.boolean(),
+      enabled: z.boolean(),
+      lastError: z.string().nullable().optional(),
+      lastRateLimitWaitMs: z.number().nullable().optional(),
+      lastSuccessfulScanAt: z.string().nullable().optional(),
+      mappingReviewCount: z.number().optional(),
+      userAgentConfigured: z.boolean(),
+    })
+    .optional(),
   reddit: z.object({
     approvalRecorded: z.boolean(),
     configured: z.boolean(),
@@ -4517,18 +4542,20 @@ function SystemStatusView() {
               status.spotify.enabled && status.spotify.configured && status.spotify.connected,
             )}
           />
-          <StatusSection
-            details={[
-              ["Enabled", yesNo(status.musicbrainz.enabled)],
-              ["User-Agent configured", yesNo(status.musicbrainz.userAgentConfigured)],
-              ["Last scan", formatStatusDate(status.musicbrainz.lastSuccessfulScanAt)],
-              ["Last rate-limit wait", `${status.musicbrainz.lastRateLimitWaitMs ?? 0} ms`],
-              ["Mapping reviews", String(status.musicbrainz.mappingReviewCount ?? 0)],
-            ]}
-            error={status.musicbrainz.lastError}
-            name="MusicBrainz"
-            ready={status.musicbrainz.enabled && status.musicbrainz.configured}
-          />
+          {status.musicbrainz && (
+            <StatusSection
+              details={[
+                ["Enabled", yesNo(status.musicbrainz.enabled)],
+                ["User-Agent configured", yesNo(status.musicbrainz.userAgentConfigured)],
+                ["Last scan", formatStatusDate(status.musicbrainz.lastSuccessfulScanAt)],
+                ["Last rate-limit wait", `${status.musicbrainz.lastRateLimitWaitMs ?? 0} ms`],
+                ["Mapping reviews", String(status.musicbrainz.mappingReviewCount ?? 0)],
+              ]}
+              error={status.musicbrainz.lastError}
+              name="MusicBrainz"
+              ready={status.musicbrainz.enabled && status.musicbrainz.configured}
+            />
+          )}
           <StatusSection
             details={[
               ["Enabled", yesNo(status.reddit.enabled)],
@@ -4684,11 +4711,13 @@ function SettingsView({
               : "Writes disabled"}
           </span>
         </div>
-        <ProviderSetting
-          configured={providerConfiguration.musicbrainz.configured}
-          enabled={providerConfiguration.musicbrainz.enabled}
-          name="MusicBrainz"
-        />
+        {providerConfiguration.musicbrainz.enabled && (
+          <ProviderSetting
+            configured={providerConfiguration.musicbrainz.configured}
+            enabled={providerConfiguration.musicbrainz.enabled}
+            name="MusicBrainz"
+          />
+        )}
         <RedditSourceSettings databaseConfigured={providerConfiguration.databaseConfigured} />
         <div className="setting-row">
           <div>

@@ -1,6 +1,12 @@
 # Architecture
 
-## MusicBrainz execution boundary
+## Dormant MusicBrainz execution boundary
+
+MusicBrainz is preserved for possible advanced use but defaults off with
+`MUSICBRAINZ_ENABLED=false`. Normal provider selection excludes it. The GUI omits its source,
+status, scan, mapping, and review controls. Its API and CLI entry points reject disabled requests
+before acquiring operational work. Existing database records remain available to canonical feed
+and evidence queries and are not rewritten or deleted.
 
 Every MusicBrainz caller uses one PostgreSQL-backed lease in `musicbrainz_provider_state`.
 The lease enforces a minimum of 1000 ms between request starts across the web process,

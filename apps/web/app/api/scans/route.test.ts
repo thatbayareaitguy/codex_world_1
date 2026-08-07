@@ -11,11 +11,29 @@ const {
   launchScanNow,
   latestSpotifyBatch,
   listScanHistoryPage,
+  providerConfiguration,
   requestOperationCancellation,
   select,
   selectDefaultScanHistoryEntry,
   spotifyCoverageSummary,
 } = vi.hoisted(() => {
+  const providerConfiguration = {
+    appleMusic: { configured: false },
+    databaseUrl: "postgres://synthetic",
+    musicbrainz: { configured: false, enabled: false },
+    spotify: {
+      artistsPerBatch: 15,
+      batchPauseSeconds: 60,
+      configured: true,
+      distributionHours: 24,
+      minRequestIntervalMs: 10000,
+      maxRequestsPerRun: 150,
+      reconciliationArtistsPerBatch: 15,
+      reconciliationCycleDays: 30,
+      reconciliationMaxPagesPerRun: 2,
+      scanDistributionHours: 24,
+    },
+  };
   const history = [
     {
       artistCount: 50,
@@ -35,6 +53,26 @@ const {
       startedAt: new Date("2026-07-21T04:04:55.085Z"),
       status: "completed",
       triggerType: "provider_manual",
+      updatedCount: 0,
+    },
+    {
+      artistCount: 1,
+      artistFilter: "33333333-3333-4333-8333-333333333333",
+      batchId: null,
+      batchMode: null,
+      completedAt: new Date("2026-07-20T04:13:51.904Z"),
+      createdCount: 0,
+      dryRun: false,
+      failureCount: 0,
+      id: "44444444-4444-4444-8444-444444444444",
+      partialArtistCount: 0,
+      provider: "musicbrainz",
+      providersRequested: ["musicbrainz"],
+      requestCount: 1,
+      reviewCount: 0,
+      startedAt: new Date("2026-07-20T04:12:51.904Z"),
+      status: "completed",
+      triggerType: "artist_manual",
       updatedCount: 0,
     },
   ];
@@ -73,6 +111,7 @@ const {
     listScanHistoryPage: vi.fn(() =>
       Promise.resolve({ entries: history, hasMore: false, nextCursor: null }),
     ),
+    providerConfiguration,
     requestOperationCancellation: vi.fn(() => Promise.resolve(true)),
     select: vi.fn(() => ({
       from: vi.fn(() => ({
@@ -125,6 +164,7 @@ vi.mock("@radar/db", () => ({
   getSpotifySchedulerStatus,
   latestSpotifyBatch,
   listScanHistoryPage,
+  providerConfiguration,
   musicbrainzArtistScans: {},
   musicbrainzProviderState: {},
   musicbrainzScanBatches: {},
@@ -135,23 +175,7 @@ vi.mock("@radar/db", () => ({
   spotifyCoverageSummary,
 }));
 vi.mock("@radar/providers", () => ({
-  loadProviderConfiguration: vi.fn(() => ({
-    appleMusic: { configured: false },
-    databaseUrl: "postgres://synthetic",
-    musicbrainz: { configured: false },
-    spotify: {
-      artistsPerBatch: 15,
-      batchPauseSeconds: 60,
-      configured: true,
-      distributionHours: 24,
-      minRequestIntervalMs: 10000,
-      maxRequestsPerRun: 150,
-      reconciliationArtistsPerBatch: 15,
-      reconciliationCycleDays: 30,
-      reconciliationMaxPagesPerRun: 2,
-      scanDistributionHours: 24,
-    },
-  })),
+  loadProviderConfiguration: vi.fn(() => providerConfiguration),
 }));
 vi.mock("../../../lib/request-security", () => ({
   assertSameOrigin: vi.fn(),
@@ -177,6 +201,8 @@ const jsonRequest = (body: unknown) =>
 beforeEach(() => {
   vi.clearAllMocks();
   findFirst.mockResolvedValue(undefined);
+  providerConfiguration.musicbrainz.configured = false;
+  providerConfiguration.musicbrainz.enabled = false;
 });
 
 describe("on-demand scan route", () => {
@@ -204,7 +230,7 @@ describe("on-demand scan route", () => {
     });
     expect(listScanHistoryPage).toHaveBeenCalledOnce();
     expect(getSpotifySchedulerStatus).toHaveBeenCalledOnce();
-    expect(selectDefaultScanHistoryEntry).toHaveBeenCalledWith(history);
+    expect(selectDefaultScanHistoryEntry).toHaveBeenCalledWith([history[0]]);
   });
 
   it("launches one background scan", async () => {
@@ -216,7 +242,18 @@ describe("on-demand scan route", () => {
     expect(end).toHaveBeenCalledOnce();
   });
 
-  it("launches an isolated one-artist MusicBrainz scan", async () => {
+  it("rejects a MusicBrainz scan without launching work when disabled", async () => {
+    const artistId = "11111111-1111-4111-8111-111111111111";
+    const response = await POST(jsonRequest({ artistId, provider: "musicbrainz" }));
+
+    expect(response.status).toBe(403);
+    expect(launchScanNow).not.toHaveBeenCalled();
+    expect(findFirst).not.toHaveBeenCalled();
+  });
+
+  it("preserves explicitly re-enabled isolated MusicBrainz scans", async () => {
+    providerConfiguration.musicbrainz.configured = true;
+    providerConfiguration.musicbrainz.enabled = true;
     const artistId = "11111111-1111-4111-8111-111111111111";
     const response = await POST(jsonRequest({ artistId, provider: "musicbrainz" }));
 

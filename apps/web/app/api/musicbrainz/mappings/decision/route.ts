@@ -3,11 +3,14 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createMusicBrainzServerContext } from "../../../../../lib/musicbrainz-server";
+import { musicBrainzDisabledResponse } from "../../../../../lib/musicbrainz-feature";
 import { assertSameOrigin, enforceRateLimit } from "../../../../../lib/request-security";
 
 const bodySchema = z.object({ decision: z.enum(["confirm", "reject"]), reviewId: z.uuid() });
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const disabled = musicBrainzDisabledResponse();
+  if (disabled) return disabled;
   try {
     assertSameOrigin(request);
     enforceRateLimit(request, 20);

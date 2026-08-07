@@ -32,11 +32,15 @@ export async function GET(): Promise<NextResponse> {
     backup: { lastCompletedAt: lastBackupTime() },
     database: { configured: Boolean(configuration.databaseUrl) },
     generatedAt: new Date().toISOString(),
-    musicbrainz: {
-      configured: configuration.musicbrainz.configured,
-      enabled: configuration.musicbrainz.enabled,
-      userAgentConfigured: Boolean(configuration.musicbrainz.contactEmail),
-    },
+    ...(configuration.musicbrainz.enabled
+      ? {
+          musicbrainz: {
+            configured: configuration.musicbrainz.configured,
+            enabled: true,
+            userAgentConfigured: Boolean(configuration.musicbrainz.contactEmail),
+          },
+        }
+      : {}),
     reddit: {
       approvalRecorded: configuration.reddit.accessApproved,
       configured: configuration.reddit.configured,
@@ -80,7 +84,7 @@ export async function GET(): Promise<NextResponse> {
       account,
       playlist,
       spotifyImport,
-      mappingReview,
+      musicbrainzMappingReview,
       redditReview,
       reconcile,
       spotifyScheduler,
@@ -104,17 +108,19 @@ export async function GET(): Promise<NextResponse> {
         where: inArray(artistImportRuns.status, ["completed", "partial"]),
         orderBy: desc(artistImportRuns.createdAt),
       }),
-      connection.db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(artistMappingReviews)
-        .innerJoin(artistFollows, eq(artistFollows.artistId, artistMappingReviews.artistId))
-        .where(
-          and(
-            eq(artistMappingReviews.provider, "musicbrainz"),
-            eq(artistMappingReviews.status, "pending"),
-            eq(artistFollows.active, true),
-          ),
-        ),
+      configuration.musicbrainz.enabled
+        ? connection.db
+            .select({ count: sql<number>`count(*)::int` })
+            .from(artistMappingReviews)
+            .innerJoin(artistFollows, eq(artistFollows.artistId, artistMappingReviews.artistId))
+            .where(
+              and(
+                eq(artistMappingReviews.provider, "musicbrainz"),
+                eq(artistMappingReviews.status, "pending"),
+                eq(artistFollows.active, true),
+              ),
+            )
+        : Promise.resolve([{ count: 0 }]),
       connection.db
         .select({ count: sql<number>`count(*)::int` })
         .from(redditCandidateMatches)
@@ -147,7 +153,7 @@ export async function GET(): Promise<NextResponse> {
     const staleLocks = locks.filter((lock) => lock.expiresAt.getTime() <= now);
     const spotifyLatest = latest("spotify");
     const appleMusicLatest = latest("apple_music");
-    const musicBrainzLatest = latest("musicbrainz");
+    const musicBrainzLatest = configuration.musicbrainz.enabled ? latest("musicbrainz") : undefined;
     const redditLatest = latest("reddit");
     const running = recentRuns.find((run) => run.status === "running");
     const lastCompleted = recentRuns.find((run) => run.completedAt);
@@ -172,13 +178,17 @@ export async function GET(): Promise<NextResponse> {
         migrationCurrent: (migrationRows[0]?.count ?? 0) >= expectedMigrationCount(),
         state: "connected",
       },
-      musicbrainz: {
-        ...base.musicbrainz,
-        lastError: scanError(musicBrainzLatest?.errors),
-        lastRateLimitWaitMs: metricNumber(musicBrainzLatest?.metadata, "waitMs"),
-        lastSuccessfulScanAt: successful("musicbrainz")?.completedAt ?? null,
-        mappingReviewCount: mappingReview[0]?.count ?? 0,
-      },
+      ...(configuration.musicbrainz.enabled && base.musicbrainz
+        ? {
+            musicbrainz: {
+              ...base.musicbrainz,
+              lastError: scanError(musicBrainzLatest?.errors),
+              lastRateLimitWaitMs: metricNumber(musicBrainzLatest?.metadata, "waitMs"),
+              lastSuccessfulScanAt: successful("musicbrainz")?.completedAt ?? null,
+              mappingReviewCount: musicbrainzMappingReview[0]?.count ?? 0,
+            },
+          }
+        : {}),
       reddit: {
         ...base.reddit,
         lastDeletionReconciliationAt: reconcile[0]?.completedAt ?? null,

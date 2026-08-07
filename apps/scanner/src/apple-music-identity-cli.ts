@@ -57,6 +57,11 @@ loadLocalEnvironment();
 try {
   const options = parseOptions(process.argv.slice(2));
   const configuration = loadProviderConfiguration();
+  if (options.command === "musicbrainz-pass" && !configuration.musicbrainz.enabled) {
+    throw new Error(
+      "MusicBrainz is disabled. Set MUSICBRAINZ_ENABLED=true only for separately validated advanced use.",
+    );
+  }
   if (!configuration.databaseUrl) throw new Error("DATABASE_URL is required.");
   const connection = createDatabase(configuration.databaseUrl);
   try {
