@@ -10,12 +10,17 @@ import {
   markSpotifyReleaseDetailsFetched,
   markSpotifyReleaseTrackInterrupted,
   oauthAccounts,
+  reconcileCampaignProviderReleases,
   recordSpotifyReleaseTrackPage,
+  recordCampaignSpotifyBatch,
   spotifyCatalogReleases,
+  spotifyArtistScans,
   spotifyReleaseTrackRetrievals,
+  spotifyScanBatches,
   startSpotifyReleaseTrackRetrieval,
   SpotifyTokenManager,
   queueSpotifyCampaignReleaseTrackWork,
+  queueSpotifyReleaseTrackWork,
   type SpotifySchedulerClaim,
   type SpotifySchedulerLimits,
 } from "@radar/db";
@@ -28,7 +33,7 @@ import {
   type ProviderConfiguration,
   type SpotifyArtistMapping,
 } from "@radar/providers";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, gte } from "drizzle-orm";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { loadLocalEnvironment } from "./local-env";
@@ -182,32 +187,45 @@ async function executeProductionWork(
       reconciliationMaxPagesPerRun: 1,
     },
   };
-  await runScanUnlocked(
-    {
-      artistId: work.artistId,
-      dryRun: false,
-      full: work.workType === "artist_reconciliation",
-      provider: "spotify",
-      source: "spotify_scheduler",
-      spotifyConfirmBatch: false,
-      spotifyMaxPages: 1,
-      spotifyMode: work.workType === "artist_reconciliation" ? "reconciliation" : "daily",
-      spotifyNewReconciliationCycle: false,
-    },
-    adjustedConfiguration,
-    {
-      deadlineAt: context.deadlineAt,
-      deferSpotifyReleaseDetails: true,
-      reportProgress: () => Promise.resolve(),
-      requestGateWrapper: context.wrapRequestGate,
-      schedulerContext: {
-        ...(campaignContext(work) ?? {}),
-        workId: work.id,
-        workType: work.workType,
+  const startedAt = new Date();
+  try {
+    await runScanUnlocked(
+      {
+        artistId: work.artistId,
+        dryRun: false,
+        full: work.workType === "artist_reconciliation",
+        provider: "spotify",
+        source: "spotify_scheduler",
+        spotifyConfirmBatch: false,
+        spotifyMaxPages: 1,
+        spotifyMode: work.workType === "artist_reconciliation" ? "reconciliation" : "daily",
+        spotifyNewReconciliationCycle: false,
       },
-      signal: context.signal,
-    },
-  );
+      adjustedConfiguration,
+      {
+        deadlineAt: context.deadlineAt,
+        deferSpotifyReleaseDetails: true,
+        reportProgress: () => Promise.resolve(),
+        requestGateWrapper: context.wrapRequestGate,
+        schedulerContext: {
+          ...(campaignContext(work) ?? {}),
+          ...(work.discoveryReconciliationCampaignId
+            ? {
+                discoveryReconciliationCampaignId: work.discoveryReconciliationCampaignId,
+              }
+            : {}),
+          source: work.source,
+          workId: work.id,
+          workType: work.workType,
+        },
+        signal: context.signal,
+      },
+    );
+  } catch (error) {
+    await recordDiscoveryCampaignScan(db, work, startedAt, false);
+    throw error;
+  }
+  await recordDiscoveryCampaignScan(db, work, startedAt, true);
 }
 
 async function executeReleaseDetailWork(
@@ -298,15 +316,23 @@ async function executeReleaseDetailWork(
     });
   } finally {
     const campaign = campaignContext(work);
-    if (campaign) {
-      const retrieval = await db.query.spotifyReleaseTrackRetrievals.findFirst({
-        where: eq(spotifyReleaseTrackRetrievals.spotifyAlbumId, work.spotifyAlbumId),
-      });
-      if (retrieval && retrieval.status !== "completed") {
+    const retrieval = await db.query.spotifyReleaseTrackRetrievals.findFirst({
+      where: eq(spotifyReleaseTrackRetrievals.spotifyAlbumId, work.spotifyAlbumId),
+    });
+    if (retrieval && retrieval.status !== "completed") {
+      if (campaign) {
         await queueSpotifyCampaignReleaseTrackWork(db, {
           campaignId: campaign.campaignId,
           campaignMemberId: campaign.campaignMemberId,
           releaseTrackRetrievalId: retrieval.id,
+          ...(work.source === "apple_priority" ? { source: "apple_priority" as const } : {}),
+          spotifyAlbumId: work.spotifyAlbumId,
+        });
+      } else if (work.discoveryReconciliationCampaignId) {
+        await queueSpotifyReleaseTrackWork(db, {
+          discoveryReconciliationCampaignId: work.discoveryReconciliationCampaignId,
+          releaseTrackRetrievalId: retrieval.id,
+          source: work.source,
           spotifyAlbumId: work.spotifyAlbumId,
         });
       }
@@ -322,10 +348,15 @@ async function createSchedulerSpotifyClient(
 ): Promise<SpotifyClient> {
   const userId = await ensureLocalOwner(db);
   const gate = context.wrapRequestGate(
-    createSpotifyRequestGate(db, configuration.spotify.minRequestIntervalMs, {
-      workId: work.id,
-      workType: work.workType,
-    }),
+    createSpotifyRequestGate(
+      db,
+      configuration.spotify.minRequestIntervalMs,
+      {
+        workId: work.id,
+        workType: work.workType,
+      },
+      work.discoveryReconciliationCampaignId ?? undefined,
+    ),
   );
   const oauth = new SpotifyOAuthClient({
     clientId: configuration.spotify.clientId!,
@@ -339,6 +370,41 @@ async function createSchedulerSpotifyClient(
     onUnauthorized: () => tokens.refresh().then(() => undefined),
     requestGate: gate,
   });
+}
+
+async function recordDiscoveryCampaignScan(
+  db: ReturnType<typeof createDatabase>["db"],
+  work: SpotifySchedulerClaim,
+  startedAt: Date,
+  required: boolean,
+): Promise<void> {
+  if (!work.discoveryReconciliationCampaignId || !work.artistId) return;
+  const [batch] = await db
+    .select({ id: spotifyScanBatches.id })
+    .from(spotifyArtistScans)
+    .innerJoin(spotifyScanBatches, eq(spotifyArtistScans.batchId, spotifyScanBatches.id))
+    .where(
+      and(
+        eq(spotifyArtistScans.artistId, work.artistId),
+        gte(spotifyScanBatches.updatedAt, startedAt),
+      ),
+    )
+    .orderBy(desc(spotifyScanBatches.updatedAt))
+    .limit(1);
+  if (!batch) {
+    if (required) throw new Error("Spotify priority work completed without a persisted batch.");
+    return;
+  }
+  const recorded = await recordCampaignSpotifyBatch(
+    db,
+    work.discoveryReconciliationCampaignId,
+    batch.id,
+  );
+  if (recorded.reconciliableArtistIds.includes(work.artistId)) {
+    await reconcileCampaignProviderReleases(db, work.discoveryReconciliationCampaignId, [
+      work.artistId,
+    ]);
+  }
 }
 
 async function executeReleaseTrackWork(
@@ -375,13 +441,10 @@ function campaignContext(work: SpotifySchedulerClaim): {
   campaignId: string;
   campaignMemberId: string | null;
 } | null {
-  if (!("campaignId" in work) || typeof work.campaignId !== "string") return null;
+  if (typeof work.campaignId !== "string") return null;
   return {
     campaignId: work.campaignId,
-    campaignMemberId:
-      "campaignMemberId" in work && typeof work.campaignMemberId === "string"
-        ? work.campaignMemberId
-        : null,
+    campaignMemberId: work.campaignMemberId,
   };
 }
 

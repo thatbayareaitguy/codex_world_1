@@ -10,12 +10,14 @@ import {
 import {
   artistFollows,
   artists,
+  discoveryReconciliationCampaigns,
   feedItems,
   manualMatchDecisions,
   oauthAccounts,
   playlistExports,
   playlistTargets,
   releaseCandidates,
+  releaseProviderReconciliations,
   releases,
   releaseTrackAppearances,
   spotifyPlaylistExportOperations,
@@ -188,6 +190,61 @@ describe.sequential("Spotify canonical playlist export", () => {
     });
     expect(failed).toMatchObject({ attemptCount: 1, errorCode: "playlist_item_add_failed" });
   });
+
+  it("exports only campaign-eligible tracks at the top and persists the ordering policy", async () => {
+    const fixture = await createFixture({ writeScope: true });
+    const campaignId = crypto.randomUUID();
+    await db.insert(discoveryReconciliationCampaigns).values({
+      campaignKey: `playlist-inbox-${campaignId}`,
+      effectiveConfiguration: {},
+      id: campaignId,
+      spotifyCohortSize: 1,
+      spotifyPageLimit: 1,
+      spotifyRotationSize: 0,
+      totalArtists: 1,
+      windowEnd: "2026-08-07",
+      windowStart: "2026-07-08",
+    });
+    await db.insert(releaseProviderReconciliations).values({
+      artistId: fixture.exactArtistId,
+      campaignId,
+      confidence: "1.000",
+      playlistEligible: true,
+      playlistEligibleTrackCount: 1,
+      reconciliationKey: `eligible-${campaignId}`,
+      releaseDate: "2026-08-01",
+      releaseType: "single",
+      reasons: ["Exact campaign-scoped playlist fixture"],
+      spotifyCanonicalReleaseId: fixture.exactReleaseId,
+      spotifyProviderReleaseId: `release-${fixture.exactProviderTrackId}`,
+      status: "spotify_only",
+      title: "Exact track Release",
+    });
+    const userTrack = "9999999999999999999999";
+    const client = new FakePlaylistClient([userTrack]);
+
+    const result = await executeSpotifyPlaylistExport(db, fixture.userId, client, {
+      discoveryReconciliationCampaignId: campaignId,
+      orderingPolicy: "discovery_inbox",
+      playlistId,
+      policy: { allowedPlaylistId: playlistId, enabled: true },
+    });
+
+    expect(result.plan.desired.map((item) => item.providerTrackId)).toEqual([
+      fixture.exactProviderTrackId,
+    ]);
+    expect(client.addCalls).toEqual([{ position: 0, trackIds: [fixture.exactProviderTrackId] }]);
+    expect(client.items).toEqual([fixture.exactProviderTrackId, userTrack]);
+    expect(
+      await db.query.spotifyPlaylistExportRuns.findFirst({
+        where: eq(spotifyPlaylistExportRuns.id, result.run.id),
+      }),
+    ).toMatchObject({
+      discoveryReconciliationCampaignId: campaignId,
+      orderingPolicy: "discovery_inbox",
+      status: "completed",
+    });
+  });
 });
 
 class FakePlaylistClient implements SpotifyPlaylistExportClient {
@@ -343,7 +400,9 @@ async function createFixture(input: {
   }
   return {
     confirmedProviderTrackId: confirmed.providerTrackId,
+    exactArtistId: exact.artistId,
     exactProviderTrackId: exact.providerTrackId,
+    exactReleaseId: exact.releaseId,
     thirdProviderTrackId,
     userId: user.id,
   };
@@ -428,6 +487,7 @@ async function createFeedTrack(
     userId,
   });
   return {
+    artistId: artist.id,
     appearanceId: appearance.id,
     candidateId: candidate.id,
     providerTrackId: input.providerTrackId,

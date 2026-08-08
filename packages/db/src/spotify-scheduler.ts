@@ -7,6 +7,7 @@ import {
   releaseCandidates,
   spotifyArtistCoverage,
   spotifyCatalogReleases,
+  discoveryScheduleState,
   spotifyArtistScans,
   spotifyProviderState,
   spotifyReleaseTrackRetrievals,
@@ -41,13 +42,16 @@ export interface SpotifySchedulerLimits {
 export interface SpotifySchedulerClaim {
   artistId: string | null;
   attemptCount: number;
+  campaignId: string | null;
+  campaignMemberId: string | null;
+  discoveryReconciliationCampaignId: string | null;
   dueAt: Date;
   expectedSpotifyArtistId: string | null;
   id: string;
   leaseExpiresAt: Date;
   leaseOwner: string;
   releaseTrackRetrievalId: string | null;
-  source: "initial" | "recurring" | "validation" | "repair";
+  source: "initial" | "recurring" | "validation" | "repair" | "apple_priority";
   spotifyAlbumId: string | null;
   workType: SpotifySchedulerWorkType;
 }
@@ -61,6 +65,7 @@ export interface SpotifySchedulerStatus {
   } | null;
   artistsCheckedLast24Hours: number;
   artistsCheckedLastHour: number;
+  applePriorityCount: number;
   backlog: Record<SpotifySchedulerWorkType, number>;
   blockedCount: number;
   blockedReasons: string[];
@@ -262,8 +267,10 @@ export async function queueSpotifyReleaseDetailWork(
     artistId: string;
     campaignId?: string | null;
     campaignMemberId?: string | null;
+    discoveryReconciliationCampaignId?: string | null;
     dueAt?: Date;
     spotifyAlbumId: string;
+    source?: "initial" | "recurring" | "validation" | "repair" | "apple_priority";
   },
 ): Promise<void> {
   await insertSpotifyReleaseDetailWork(db, {
@@ -296,8 +303,10 @@ async function insertSpotifyReleaseDetailWork(
     artistId: string;
     campaignId?: string | null;
     campaignMemberId?: string | null;
+    discoveryReconciliationCampaignId?: string | null;
     dueAt: Date;
     spotifyAlbumId: string;
+    source?: "initial" | "recurring" | "validation" | "repair" | "apple_priority";
   },
 ): Promise<void> {
   await db
@@ -306,12 +315,38 @@ async function insertSpotifyReleaseDetailWork(
       artistId: input.artistId,
       campaignId: input.campaignId ?? null,
       campaignMemberId: input.campaignMemberId ?? null,
+      discoveryReconciliationCampaignId: input.discoveryReconciliationCampaignId ?? null,
       dueAt: input.dueAt,
       priority: 30,
-      source: "recurring",
+      source: input.source ?? "recurring",
       spotifyAlbumId: input.spotifyAlbumId,
       workKey: `release_detail:${input.artistId}:${input.spotifyAlbumId}`,
       workType: "release_detail",
+    })
+    .onConflictDoNothing();
+}
+
+export async function queueSpotifyReleaseTrackWork(
+  db: RadarDatabase,
+  input: {
+    discoveryReconciliationCampaignId?: string | null;
+    dueAt?: Date;
+    releaseTrackRetrievalId: string;
+    source?: "initial" | "recurring" | "validation" | "repair" | "apple_priority";
+    spotifyAlbumId: string;
+  },
+): Promise<void> {
+  await db
+    .insert(spotifySchedulerWork)
+    .values({
+      discoveryReconciliationCampaignId: input.discoveryReconciliationCampaignId ?? null,
+      dueAt: input.dueAt ?? new Date(),
+      priority: 20,
+      releaseTrackRetrievalId: input.releaseTrackRetrievalId,
+      source: input.source ?? "repair",
+      spotifyAlbumId: input.spotifyAlbumId,
+      workKey: `release_tracks:${input.releaseTrackRetrievalId}`,
+      workType: "release_tracks",
     })
     .onConflictDoNothing();
 }
@@ -366,6 +401,7 @@ export async function claimSpotifySchedulerWork(
       return null;
     }
 
+    await advanceDiscoverySchedulePhaseIfDrained(tx, now);
     const candidate = await selectSpotifySchedulerCandidate(tx, now, true, state.mode);
     if (!candidate) return null;
     const leaseOwner = randomUUID();
@@ -427,7 +463,11 @@ export async function finishSpotifySchedulerWork(
       leaseOwner: null,
       notBefore: outcome.status === "retry" ? new Date(now.getTime() + retryDelayMs) : null,
       ...(outcome.status === "completed" && claim.workType === "base_artist"
-        ? { dueAt: new Date(now.getTime() + spotifySchedulerWindowMs), status: "queued" as const }
+        ? {
+            discoveryReconciliationCampaignId: null,
+            dueAt: new Date(now.getTime() + spotifySchedulerWindowMs),
+            status: "queued" as const,
+          }
         : { status: nextStatus }),
       updatedAt: now,
     })
@@ -559,6 +599,9 @@ export async function getSpotifySchedulerStatus(
       : null,
     artistsCheckedLast24Hours: completedLast24.length,
     artistsCheckedLastHour: completedLastHour.length,
+    applePriorityCount: work.filter(
+      (item) => item.source === "apple_priority" && ["queued", "leased"].includes(item.status),
+    ).length,
     backlog: {
       artist_reconciliation: work.filter(
         (item) => item.workType === "artist_reconciliation" && item.status === "queued",
@@ -622,12 +665,26 @@ async function selectSpotifySchedulerCandidate(
   const state = await db.query.spotifySchedulerState.findFirst({
     where: eq(spotifySchedulerState.id, spotifySchedulerStateId),
   });
+  const discoveryState = await db.query.discoveryScheduleState.findFirst({
+    where: eq(discoveryScheduleState.id, "global"),
+  });
+  if (
+    discoveryState &&
+    ["cooldown_wait", "playlist_inbox", "weekly_apple"].includes(discoveryState.phase)
+  ) {
+    return null;
+  }
   const baseSlotOpen = !state?.nextBaseSlotAt || state.nextBaseSlotAt <= now;
   const conditions = [
     eq(spotifySchedulerWork.status, "queued"),
     lte(spotifySchedulerWork.dueAt, now),
     or(isNull(spotifySchedulerWork.notBefore), lte(spotifySchedulerWork.notBefore, now)),
     mode === "validation" ? eq(spotifySchedulerWork.source, "validation") : undefined,
+    discoveryState?.phase === "apple_priority"
+      ? eq(spotifySchedulerWork.source, "apple_priority")
+      : discoveryState?.phase === "broad_spotify"
+        ? sql`${spotifySchedulerWork.source} <> 'apple_priority'`
+        : undefined,
     baseSlotOpen ? undefined : sql`${spotifySchedulerWork.workType} <> 'base_artist'`,
   ].filter((condition) => condition !== undefined);
   let query = db
@@ -637,11 +694,14 @@ async function selectSpotifySchedulerCandidate(
     .orderBy(
       asc(
         sql`case
-          when ${spotifySchedulerWork.workType} = 'base_artist' and ${baseSlotOpen} then 0
-          when ${spotifySchedulerWork.workType} = 'release_tracks' then 1
-          when ${spotifySchedulerWork.workType} = 'release_detail' then 2
-          when ${spotifySchedulerWork.workType} = 'base_artist' then 3
-          else 4 end`,
+          when ${spotifySchedulerWork.source} = 'apple_priority' and ${spotifySchedulerWork.workType} = 'release_tracks' then 0
+          when ${spotifySchedulerWork.source} = 'apple_priority' and ${spotifySchedulerWork.workType} = 'release_detail' then 1
+          when ${spotifySchedulerWork.source} = 'apple_priority' then 2
+          when ${spotifySchedulerWork.workType} = 'base_artist' and ${baseSlotOpen} then 3
+          when ${spotifySchedulerWork.workType} = 'release_tracks' then 4
+          when ${spotifySchedulerWork.workType} = 'release_detail' then 5
+          when ${spotifySchedulerWork.workType} = 'base_artist' then 6
+          else 7 end`,
       ),
       asc(spotifySchedulerWork.dueAt),
       asc(spotifySchedulerWork.priority),
@@ -652,7 +712,7 @@ async function selectSpotifySchedulerCandidate(
   if (lock) query = query.for("update", { skipLocked: true }) as typeof query;
   const [row] = await query;
   if (!row) return null;
-  if (row.workType === "artist_reconciliation") {
+  if (row.workType === "artist_reconciliation" && row.source !== "apple_priority") {
     const urgent = await db
       .select({ count: count() })
       .from(spotifySchedulerWork)
@@ -724,6 +784,9 @@ function toClaim(row: typeof spotifySchedulerWork.$inferSelect): SpotifySchedule
   return {
     artistId: row.artistId,
     attemptCount: row.attemptCount,
+    campaignId: row.campaignId,
+    campaignMemberId: row.campaignMemberId,
+    discoveryReconciliationCampaignId: row.discoveryReconciliationCampaignId,
     dueAt: row.dueAt,
     expectedSpotifyArtistId: row.expectedSpotifyArtistId,
     id: row.id,
@@ -734,6 +797,41 @@ function toClaim(row: typeof spotifySchedulerWork.$inferSelect): SpotifySchedule
     spotifyAlbumId: row.spotifyAlbumId,
     workType: row.workType,
   };
+}
+
+async function advanceDiscoverySchedulePhaseIfDrained(
+  db: SchedulerDatabase,
+  now: Date,
+): Promise<void> {
+  const state = await db.query.discoveryScheduleState.findFirst({
+    where: eq(discoveryScheduleState.id, "global"),
+  });
+  if (state?.phase !== "apple_priority") return;
+  const active = await db
+    .select({ count: count() })
+    .from(spotifySchedulerWork)
+    .where(
+      and(
+        eq(spotifySchedulerWork.source, "apple_priority"),
+        eq(
+          spotifySchedulerWork.discoveryReconciliationCampaignId,
+          state.activeCampaignId ?? "00000000-0000-0000-0000-000000000000",
+        ),
+        inArray(spotifySchedulerWork.status, ["queued", "leased"]),
+      ),
+    );
+  const activeCount = active[0]?.count ?? 0;
+  if (activeCount > 0) {
+    await db
+      .update(discoveryScheduleState)
+      .set({ applePriorityQueuedCount: activeCount, updatedAt: now })
+      .where(eq(discoveryScheduleState.id, "global"));
+    return;
+  }
+  await db
+    .update(discoveryScheduleState)
+    .set({ applePriorityQueuedCount: 0, phase: "broad_spotify", updatedAt: now })
+    .where(eq(discoveryScheduleState.id, "global"));
 }
 
 function retryDelay(attemptCount: number): number {

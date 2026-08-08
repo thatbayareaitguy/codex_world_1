@@ -24,6 +24,7 @@ import {
   playlistTargets,
   releaseCandidates,
   releaseExternalIds,
+  releaseProviderReconciliations,
   releases,
   releaseTrackAppearances,
   spotifyPlaylistExportOperations,
@@ -81,6 +82,10 @@ export async function previewSpotifyPlaylistExport(
   userId: string,
   client: SpotifyPlaylistExportClient,
   configuredPlaylistId: string,
+  options: {
+    discoveryReconciliationCampaignId?: string;
+    orderingPolicy?: "canonical" | "discovery_inbox";
+  } = {},
 ): Promise<SpotifyPlaylistExportPreview> {
   const playlistId = spotifyPlaylistIdSchema.parse(configuredPlaylistId);
   const profile = await client.getCurrentUser();
@@ -88,7 +93,7 @@ export async function previewSpotifyPlaylistExport(
   assertPlaylistIdentity(playlistId, playlist.id);
   assertOwnedPrivateSpotifyPlaylist(playlist, profile);
   const playlistItems = await client.getPlaylistItems(playlistId);
-  return buildPreview(db, userId, playlistId, playlist, profile.id, playlistItems);
+  return buildPreview(db, userId, playlistId, playlist, profile.id, playlistItems, options);
 }
 
 export async function executeSpotifyPlaylistExport(
@@ -97,6 +102,8 @@ export async function executeSpotifyPlaylistExport(
   client: SpotifyPlaylistExportClient,
   input: {
     maxAdditions?: number;
+    discoveryReconciliationCampaignId?: string;
+    orderingPolicy?: "canonical" | "discovery_inbox";
     playlistId: string;
     policy: SpotifyPlaylistWritePolicy;
   },
@@ -118,12 +125,26 @@ export async function executeSpotifyPlaylistExport(
   assertPlaylistIdentity(playlistId, playlist.id);
   assertOwnedPrivateSpotifyPlaylist(playlist, profile);
   const playlistItems = await client.getPlaylistItems(playlistId);
-  const preview = await buildPreview(db, userId, playlistId, playlist, profile.id, playlistItems);
+  const preview = await buildPreview(db, userId, playlistId, playlist, profile.id, playlistItems, {
+    ...(input.discoveryReconciliationCampaignId
+      ? { discoveryReconciliationCampaignId: input.discoveryReconciliationCampaignId }
+      : {}),
+    orderingPolicy: input.orderingPolicy ?? "canonical",
+  });
   const target = await upsertPlaylistTarget(db, userId, playlistId, playlist.name);
-  let run = await loadResumableRun(db, target.id, playlistId);
+  let run = await loadResumableRun(
+    db,
+    target.id,
+    playlistId,
+    input.discoveryReconciliationCampaignId ?? null,
+    input.orderingPolicy ?? "canonical",
+  );
   const resumed = Boolean(run);
   if (!run) {
-    run = await createExportRun(db, target.id, preview);
+    run = await createExportRun(db, target.id, preview, {
+      discoveryReconciliationCampaignId: input.discoveryReconciliationCampaignId ?? null,
+      orderingPolicy: input.orderingPolicy ?? "canonical",
+    });
   } else {
     await db
       .update(spotifyPlaylistExportRuns)
@@ -234,8 +255,18 @@ async function buildPreview(
   playlist: Awaited<ReturnType<SpotifyPlaylistExportClient["getPlaylist"]>>,
   ownerId: string,
   playlistItems: Awaited<ReturnType<SpotifyPlaylistExportClient["getPlaylistItems"]>>,
+  options: {
+    discoveryReconciliationCampaignId?: string;
+    orderingPolicy?: "canonical" | "discovery_inbox";
+  } = {},
 ): Promise<SpotifyPlaylistExportPreview> {
-  const candidates = await loadCanonicalExportCandidates(db, userId);
+  const candidates = options.discoveryReconciliationCampaignId
+    ? await loadCampaignPlaylistExportCandidates(
+        db,
+        userId,
+        options.discoveryReconciliationCampaignId,
+      )
+    : await loadCanonicalExportCandidates(db, userId);
   const managedRows = await db
     .select({ providerTrackId: playlistExports.providerTrackId })
     .from(playlistExports)
@@ -254,6 +285,7 @@ async function buildPreview(
       candidates,
       playlistItems,
       new Set(managedRows.map((row) => row.providerTrackId)),
+      { additionsAtTop: options.orderingPolicy === "discovery_inbox" },
     ),
     target: {
       collaborative: false,
@@ -265,6 +297,58 @@ async function buildPreview(
       snapshotId: playlist.snapshot_id,
     },
   };
+}
+
+export async function loadCampaignPlaylistExportCandidates(
+  db: RadarDatabase,
+  userId: string,
+  campaignId: string,
+): Promise<SpotifyPlaylistExportCandidate[]> {
+  const eligible = await db
+    .select({
+      providerReleaseId: releaseProviderReconciliations.spotifyProviderReleaseId,
+      releaseId: releaseProviderReconciliations.spotifyCanonicalReleaseId,
+    })
+    .from(releaseProviderReconciliations)
+    .where(
+      and(
+        eq(releaseProviderReconciliations.campaignId, campaignId),
+        eq(releaseProviderReconciliations.playlistEligible, true),
+      ),
+    );
+  const releaseIds = new Set(eligible.flatMap((row) => (row.releaseId ? [row.releaseId] : [])));
+  const providerReleaseIds = new Set(
+    eligible.flatMap((row) => (row.providerReleaseId ? [row.providerReleaseId] : [])),
+  );
+  if (releaseIds.size === 0 || providerReleaseIds.size === 0) return [];
+  const exactTracks = await db
+    .select({
+      confidence: releaseCandidates.matchConfidence,
+      matchRule: releaseCandidates.matchRule,
+      providerReleaseId: releaseCandidates.providerReleaseId,
+      providerTrackId: releaseCandidates.providerTrackId,
+    })
+    .from(releaseCandidates)
+    .where(
+      and(
+        eq(releaseCandidates.provider, "spotify"),
+        inArray(releaseCandidates.providerReleaseId, [...providerReleaseIds]),
+      ),
+    );
+  const eligibleTrackIds = new Set(
+    exactTracks
+      .filter(
+        (track) =>
+          isExactSpotifyIdentity(track.matchRule, Number(track.confidence)) &&
+          providerReleaseIds.has(track.providerReleaseId),
+      )
+      .map((track) => track.providerTrackId),
+  );
+  return (await loadCanonicalExportCandidates(db, userId)).filter(
+    (candidate) =>
+      releaseIds.has(candidate.releaseId) &&
+      Boolean(candidate.providerTrackId && eligibleTrackIds.has(candidate.providerTrackId)),
+  );
 }
 
 export async function loadCanonicalExportCandidates(
@@ -440,12 +524,22 @@ async function upsertPlaylistTarget(
   return target;
 }
 
-async function loadResumableRun(db: RadarDatabase, targetId: string, playlistId: string) {
+async function loadResumableRun(
+  db: RadarDatabase,
+  targetId: string,
+  playlistId: string,
+  campaignId: string | null,
+  orderingPolicy: "canonical" | "discovery_inbox",
+) {
   return db.query.spotifyPlaylistExportRuns.findFirst({
     orderBy: [desc(spotifyPlaylistExportRuns.createdAt)],
     where: and(
       eq(spotifyPlaylistExportRuns.playlistTargetId, targetId),
       eq(spotifyPlaylistExportRuns.targetPlaylistId, playlistId),
+      campaignId
+        ? eq(spotifyPlaylistExportRuns.discoveryReconciliationCampaignId, campaignId)
+        : isNull(spotifyPlaylistExportRuns.discoveryReconciliationCampaignId),
+      eq(spotifyPlaylistExportRuns.orderingPolicy, orderingPolicy),
       inArray(spotifyPlaylistExportRuns.status, ["planned", "running", "partial"]),
     ),
   });
@@ -455,6 +549,10 @@ async function createExportRun(
   db: RadarDatabase,
   targetId: string,
   preview: SpotifyPlaylistExportPreview,
+  options: {
+    discoveryReconciliationCampaignId: string | null;
+    orderingPolicy: "canonical" | "discovery_inbox";
+  },
 ) {
   return db.transaction(async (tx) => {
     const [run] = await tx
@@ -463,7 +561,9 @@ async function createExportRun(
         additionCount: preview.plan.additions.length,
         alreadyPresentCount: preview.plan.alreadyPresent.length,
         eligibleCount: preview.plan.desired.length,
+        discoveryReconciliationCampaignId: options.discoveryReconciliationCampaignId,
         mode: "live",
+        orderingPolicy: options.orderingPolicy,
         orderingConflictCount: preview.plan.orderingConflicts.length,
         playlistName: preview.target.name,
         playlistTargetId: targetId,

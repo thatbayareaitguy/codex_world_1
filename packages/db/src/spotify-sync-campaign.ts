@@ -834,6 +834,7 @@ export async function queueSpotifyCampaignReleaseTrackWork(
     campaignMemberId?: string | null;
     dueAt?: Date;
     releaseTrackRetrievalId: string;
+    source?: "initial" | "recurring" | "validation" | "repair" | "apple_priority";
     spotifyAlbumId: string;
   },
 ): Promise<void> {
@@ -845,7 +846,7 @@ export async function queueSpotifyCampaignReleaseTrackWork(
       dueAt: input.dueAt ?? new Date(),
       priority: 20,
       releaseTrackRetrievalId: input.releaseTrackRetrievalId,
-      source: "initial",
+      source: input.source ?? "initial",
       spotifyAlbumId: input.spotifyAlbumId,
       workKey: `release_tracks:${input.releaseTrackRetrievalId}`,
       workType: "release_tracks",
@@ -1081,6 +1082,7 @@ function toCampaignClaim(
     attemptCount: row.attemptCount,
     campaignId,
     campaignMemberId: row.campaignMemberId,
+    discoveryReconciliationCampaignId: null,
     dueAt: row.dueAt,
     expectedSpotifyArtistId: row.expectedSpotifyArtistId,
     id: row.id,

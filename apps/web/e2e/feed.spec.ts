@@ -554,6 +554,7 @@ test("defaults scan history to the meaningful batch and inspects other run types
             activeLease: null,
             artistsCheckedLast24Hours: 101,
             artistsCheckedLastHour: 2,
+            applePriorityCount: 4,
             backlog: {
               artist_reconciliation: 101,
               base_artist: 593,

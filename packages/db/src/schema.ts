@@ -125,6 +125,7 @@ export const spotifySchedulerWorkSourceEnum = pgEnum("spotify_scheduler_work_sou
   "recurring",
   "validation",
   "repair",
+  "apple_priority",
 ]);
 export const spotifySyncCampaignStatusEnum = pgEnum("spotify_sync_campaign_status", [
   "planned",
@@ -1313,6 +1314,10 @@ export const spotifySchedulerWork = pgTable(
       onDelete: "set null",
     }),
     campaignMemberId: uuid("campaign_member_id"),
+    discoveryReconciliationCampaignId: uuid("discovery_reconciliation_campaign_id").references(
+      () => discoveryReconciliationCampaigns.id,
+      { onDelete: "set null" },
+    ),
     priority: integer("priority").notNull().default(100),
     dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
     notBefore: timestamp("not_before", { withTimezone: true }),
@@ -1342,6 +1347,12 @@ export const spotifySchedulerWork = pgTable(
       table.campaignId,
       table.status,
       table.workType,
+      table.dueAt,
+    ),
+    index("spotify_scheduler_work_discovery_campaign_idx").on(
+      table.discoveryReconciliationCampaignId,
+      table.status,
+      table.source,
       table.dueAt,
     ),
     check(
@@ -1476,6 +1487,10 @@ export const discoveryReconciliationCampaigns = pgTable(
     appleBatchId: uuid("apple_batch_id").references(() => appleMusicScanBatches.id, {
       onDelete: "set null",
     }),
+    bootstrapWeeklyAppleScan: boolean("bootstrap_weekly_apple_scan").notNull().default(false),
+    deferredSpotifyArtistCount: integer("deferred_spotify_artist_count").notNull().default(0),
+    nextAppleScanAt: timestamp("next_apple_scan_at", { withTimezone: true }),
+    spotifyDeferredAt: timestamp("spotify_deferred_at", { withTimezone: true }),
     playlistPreview: jsonb("playlist_preview"),
     providerCooldowns: jsonb("provider_cooldowns")
       .notNull()
@@ -1492,7 +1507,7 @@ export const discoveryReconciliationCampaigns = pgTable(
     index("discovery_reconciliation_campaign_status_idx").on(table.status, table.createdAt),
     check(
       "discovery_reconciliation_campaign_status_check",
-      sql`${table.status} in ('planned', 'running', 'paused', 'completed', 'failed', 'cancelled')`,
+      sql`${table.status} in ('planned', 'running', 'paused', 'completed', 'completed_with_spotify_deferred', 'failed', 'cancelled')`,
     ),
     check(
       "discovery_reconciliation_campaign_stage_check",
@@ -1501,6 +1516,46 @@ export const discoveryReconciliationCampaigns = pgTable(
     check(
       "discovery_reconciliation_campaign_configuration_check",
       sql`${table.totalArtists} > 0 and ${table.spotifyCohortSize} > 0 and ${table.spotifyRotationSize} >= 0 and ${table.spotifyRotationSize} <= ${table.spotifyCohortSize} and ${table.spotifyPageLimit} > 0`,
+    ),
+  ],
+);
+
+export const discoveryScheduleState = pgTable(
+  "discovery_schedule_state",
+  {
+    id: text("id").primaryKey(),
+    phase: text("phase").notNull().default("idle"),
+    timezone: text("timezone").notNull().default("America/Los_Angeles"),
+    activeCampaignId: uuid("active_campaign_id").references(
+      () => discoveryReconciliationCampaigns.id,
+      { onDelete: "set null" },
+    ),
+    lastAppleCampaignId: uuid("last_apple_campaign_id").references(
+      () => discoveryReconciliationCampaigns.id,
+      { onDelete: "set null" },
+    ),
+    lastAppleScanCompletedAt: timestamp("last_apple_scan_completed_at", { withTimezone: true }),
+    nextAppleScanAt: timestamp("next_apple_scan_at", { withTimezone: true }),
+    playlistInboxStatus: text("playlist_inbox_status").notNull().default("pending"),
+    playlistInboxExportRunId: uuid("playlist_inbox_export_run_id"),
+    applePriorityQueuedCount: integer("apple_priority_queued_count").notNull().default(0),
+    broadSpotifyQueuedCount: integer("broad_spotify_queued_count").notNull().default(0),
+    transitionedAt: timestamp("transitioned_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    check(
+      "discovery_schedule_state_phase_check",
+      sql`${table.phase} in ('idle', 'cooldown_wait', 'playlist_inbox', 'apple_priority', 'broad_spotify', 'weekly_apple')`,
+    ),
+    check(
+      "discovery_schedule_state_playlist_status_check",
+      sql`${table.playlistInboxStatus} in ('pending', 'ready', 'exporting', 'partial', 'completed', 'failed')`,
+    ),
+    check(
+      "discovery_schedule_state_counts_check",
+      sql`${table.applePriorityQueuedCount} >= 0 and ${table.broadSpotifyQueuedCount} >= 0`,
     ),
   ],
 );
@@ -1911,6 +1966,11 @@ export const spotifyPlaylistExportRuns = pgTable(
     playlistTargetId: uuid("playlist_target_id")
       .notNull()
       .references(() => playlistTargets.id, { onDelete: "cascade" }),
+    discoveryReconciliationCampaignId: uuid("discovery_reconciliation_campaign_id").references(
+      () => discoveryReconciliationCampaigns.id,
+      { onDelete: "set null" },
+    ),
+    orderingPolicy: text("ordering_policy").notNull().default("canonical"),
     mode: text("mode").notNull().default("live"),
     status: spotifyPlaylistExportRunStatusEnum("status").notNull().default("planned"),
     targetPlaylistId: text("target_playlist_id").notNull(),

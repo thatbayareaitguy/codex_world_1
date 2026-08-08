@@ -12,6 +12,9 @@ import {
 const claim: SpotifySchedulerClaim = {
   artistId: "00000000-0000-4000-8000-000000000001",
   attemptCount: 1,
+  campaignId: null,
+  campaignMemberId: null,
+  discoveryReconciliationCampaignId: null,
   dueAt: new Date("2026-07-22T00:00:00.000Z"),
   expectedSpotifyArtistId: "spotify-artist",
   id: "00000000-0000-4000-8000-000000000002",
@@ -27,6 +30,7 @@ const status: SpotifySchedulerStatus = {
   activeLease: null,
   artistsCheckedLast24Hours: 0,
   artistsCheckedLastHour: 0,
+  applePriorityCount: 0,
   backlog: {
     artist_reconciliation: 0,
     base_artist: 1,

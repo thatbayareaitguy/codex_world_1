@@ -1,96 +1,90 @@
 # AI Handoff
 
-Updated: 2026-08-07 12:55 PDT
+Updated: 2026-08-07 17:20 PDT
 
-## Repository State
+## Repository
 
 - Branch: `codex/release-radar-hardening`
-- Latest commit: this handoff-only checkpoint on `codex/release-radar-hardening`; it directly follows
-  pushed implementation checkpoint `8ff1845495342536db677d1587bcbb8b966f828d`
-- Upstream: local and origin match after this handoff checkpoint
-- Milestone: Apple-first discovery with independent Spotify reconciliation
-- Worktree: clean except unrelated untracked `outputs/`; ignored `.env` remains local
-- Database: PostgreSQL healthy; all 23 forward migrations applied idempotently
-- Apple Team ID, Key ID, and protected private-key path are restored in ignored `.env`; values are
-  not documented or staged
+- Latest commit: this commit, `feat: bootstrap recurring Apple-first discovery schedule`; parent
+  `49e6664792270ac9e80e30caa8cca0318adbe851`
+- Upstream: local and origin match after this commit is pushed normally
+- Worktree: clean except unrelated untracked `outputs/`
+- Milestone: first-week Apple bootstrap and recurring Spotify discovery schedule transition
+- PostgreSQL: healthy; 25 forward migrations applied
 
-## Architecture
+## Current Operational State
 
-- `pnpm sync:apple-first` snapshots active artists with independently confirmed Apple and Spotify
-  identities, runs Apple discovery first, then bounded Spotify Artist Albums cohorts, and reconciles
-  only persisted provider-native observations inside PostgreSQL.
-- Durable campaign, per-artist, and release-reconciliation rows preserve provider progress, retry
-  state, request attribution, cross-provider outcomes, playlist eligibility, and coverage totals.
-- Apple discoveries prioritize Spotify cohorts. A rotating fallback covers artists without recent
-  Apple discoveries. Intermediate cohorts pause without rereading the playlist.
-- Playlist export is dry-run only and targets the one configured Spotify playlist after the final
-  cohort. MusicBrainz, Reddit, SoundCloud, and the Spotify scheduler remain disabled for this flow.
+- Campaign `5f462e9e-c3db-451c-b77c-378ab21e8a94` is durably finalized as
+  `completed_with_spotify_deferred`.
+- Apple is complete for 583 of 583 artists. Those discoveries are the initial weekly Apple scan and
+  were not rerun, discarded, or superseded.
+- Spotify completed or partially processed 95 artists. The other 488 remain unfinished and were not
+  marked complete.
+- The transition queued 134 Apple-priority artists and retained 488 unfinished artists in the broad
+  rolling backlog.
+- The campaign has exactly 265 unique playlist-eligible Spotify tracks after exact campaign-evidence
+  filtering. The playlist inbox is ready but has not run.
+- Spotify cooldown remains stored until `2026-08-08T18:32:23.020Z`, or August 8 at 11:32:23 AM PDT.
+  No Spotify request was made during this milestone.
+- The next full Apple scan is stored for Thursday, August 13, 2026 at 9:00 PM PDT
+  (`2026-08-14T04:00:00.000Z`).
 
-## Verified
+## Implemented And Verified
 
-- Five-artist canary `e4131c54-2f25-4913-a340-6da5966fe436` completed: 5 Apple and 5 Spotify
-  artists, 10 Apple and 25 Spotify requests, 0 provider failures, 0 retries, and 0 rate limits.
-- Canary reconciliation: 0 matched, 0 Apple-only, 3 Spotify-only, 0 uncertain, 0 missing Spotify
-  track matches, and 2 playlist-eligible tracks.
-- Re-running the completed canary by campaign ID made no provider request; counters remained 10 and 25. The status command now awaits its report before closing PostgreSQL, with integration coverage.
-- Playlist dry run: 810 eligible and already present, 0 additions, 0 duplicate tracks, 0 release-date
-  ordering conflicts, 3 historical group-contiguity conflicts, and 1 preserved unrelated user track.
-  No playlist write occurred.
-- Full campaign `5f462e9e-c3db-451c-b77c-378ab21e8a94` snapshotted 583 active dual-provider
-  identities. Apple completed all 583 with 1,314 requests and 0 failures or rate limits.
-- Spotify persisted 95 artists before stopping correctly on a 429: 94 partial, 1 complete, 1
-  rate-limited retry point, and 487 pending. Current partial reconciliation totals are 98 matched,
-  16 Apple-only, 65 Spotify-only, 3 uncertain, 5 missing Spotify track matches, and 265
-  playlist-eligible tracks. No operation lock or provider lease remains.
-- A PostgreSQL/application clock-skew defect in completed album-page counting was corrected by
-  persisting the page completion time as the track observation time. Interrupted retrievals now
-  retain both their completed-track count and resume cursor.
-- Browser smoke passed against the running database feed: the default New tab, provider evidence,
-  persisted rate-limited batch history, and campaign progress load without browser console errors.
+- Database-only campaign transition is idempotent and preserves every Apple result and existing
+  reconciliation record.
+- Scheduler phases enforce cooldown, playlist inbox, Apple-priority work, broad Spotify work, then
+  weekly Apple work.
+- Apple-priority and broad work are persisted separately. Broad work cannot consume capacity until
+  the campaign priority queue is drained.
+- Campaign-scoped playlist planning selects only exact eligible Spotify track IDs, inserts at
+  position zero in newest-first release order, keeps album tracks together, and remains add-only.
+- Playlist export and scheduler activation both fail closed during a provider cooldown.
+- Scheduler activation also requires a completed playlist inbox and never makes a provider request.
 
-## Partially Verified Or Blocked
+## Implemented But Not Live-Verified
 
-- The full campaign is paused in Spotify reconciliation after `429 QUOTA_EXCEEDED` on
-  `artist_albums`. Raw and parsed `Retry-After` are 82,274 seconds.
-- Spotify cooldown is active until `2026-08-08T18:32:23.020Z`, or 2026-08-08 11:32:23 PDT. Do not
-  probe, clear, or bypass it.
-- Final cross-provider coverage counts and final playlist preview are unavailable until the remaining
-  488 Spotify artist states complete.
+- The 265-track campaign inbox export is waiting for the Spotify cooldown to expire.
+- Apple-priority processing and broad rolling reconciliation are waiting for the inbox export and
+  scheduler activation.
+- Automatic weekly Apple execution is not enabled. Only the next required Thursday timestamp and
+  phase boundary are persisted.
 
 ## Validation
 
-- Current credential-free verification: formatting, lint, strict TypeScript in 6 workspaces, 406
-  unit tests across 57 files, 110 PostgreSQL integration tests across 22 files, 29 Playwright tests,
-  production build with 27 routes, all 23 migrations, browser smoke, and `git diff --check` passed.
-- Doctor after the live stop: database, migrations, locks, Apple state, album completeness, and app
-  are healthy; only the persisted Spotify cooldown requires action.
+- Formatting and lint passed.
+- Strict TypeScript passed in 6 workspaces.
+- Unit tests: 411 passed across 59 files.
+- PostgreSQL integration tests: 113 passed across 23 files.
+- All 25 migrations were applied to the development database.
+- Production build passed with 27 routes, and 29 Playwright tests passed.
+- Doctor reports the database, migrations, locks, album completeness, app, and configuration ready;
+  the expected Spotify cooldown remains action-required.
+- `git diff --check` passed.
 
-## Risks
+## Risks And Policy Boundaries
 
-- Spotify quota behavior remains unpublished. The full campaign must resume only after the stored
-  cooldown and continue through the same global 10-second request gate.
-- The three historical noncontiguous release groups cannot be repaired under the add-only playlist
-  boundary without reordering existing tracks. They and the unrelated user track remain unchanged.
-- Provider requests and evidence remain namespaced. No Apple metadata is sent to Spotify and no
-  Spotify metadata is sent to Apple.
+- Spotify quota behavior is unpublished. Never probe, clear, or bypass the stored cooldown.
+- Playlist operations remain limited to the configured owned private playlist and add-only exact or
+  manually confirmed tracks. No other playlist operation is available.
+- Apple and Spotify evidence remain provider-namespaced. No cross-provider request construction was
+  added.
+- Scheduler production capability remains disabled by default and must be enabled only after the
+  inbox export completes.
 
 ## Next Action
 
-After 2026-08-08 11:32:23 PDT, run `pnpm doctor`. If the cooldown is expired and no lock exists,
-resume only campaign `5f462e9e-c3db-451c-b77c-378ab21e8a94`:
+After August 8, 2026 at 11:32:23 AM PDT:
 
-```powershell
-$env:APPLE_MUSIC_ENABLED='true'
-$env:MUSICBRAINZ_ENABLED='false'
-$env:REDDIT_ENABLED='false'
-pnpm sync:apple-first -- run --confirm-live-providers --campaign 5f462e9e-c3db-451c-b77c-378ab21e8a94 --max-cohorts 10000
-```
-
-Then prove completed-campaign idempotency, run the full validation suite, update this handoff, commit,
-and push. Do not create a new campaign.
+1. Run `pnpm run doctor` and stop if a cooldown or lock remains.
+2. Run `pnpm spotify:playlist-export -- --live --campaign 5f462e9e-c3db-451c-b77c-378ab21e8a94 --discovery-inbox`.
+3. Verify readback, ordering, deduplication, and preservation of user-added tracks.
+4. Run `pnpm discovery:bootstrap activate --campaign 5f462e9e-c3db-451c-b77c-378ab21e8a94`.
+5. Drain Apple-priority Spotify work and export newly playable matches before allowing broad work.
 
 ## Deferred
 
-- Any live Spotify playlist write or repair reorder
-- MusicBrainz production reactivation
-- Reddit activation, SoundCloud automation, and new providers
+- Broad Saturday target enforcement while Apple-priority work remains
+- The remaining full watchlist scan
+- Automatic Thursday Apple task registration
+- MusicBrainz production reactivation, Reddit activation, SoundCloud automation, and new providers

@@ -15,6 +15,8 @@ import {
   artistExternalIds,
   artistFollows,
   artists,
+  discoveryReconciliationCampaigns,
+  discoveryScheduleState,
   spotifyProviderState,
   spotifyArtistCoverage,
   spotifyCatalogReleases,
@@ -47,7 +49,9 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+  await db.delete(discoveryScheduleState);
   await db.delete(spotifySchedulerWork);
+  await db.delete(discoveryReconciliationCampaigns);
   await db.delete(spotifyRequestEvents);
   await db.delete(spotifyProviderState);
   await db.delete(artistFollows);
@@ -225,6 +229,77 @@ describe("Spotify rolling scheduler persistence", () => {
     expect(work).toHaveLength(1);
     expect(work[0]).toMatchObject({ attemptCount: 1, status: "queued" });
     expect(work[0]!.dueAt).toEqual(new Date(now.getTime() + spotifySchedulerWindowMs));
+  });
+
+  it("blocks broad work until the playlist inbox and Apple-priority queue are drained", async () => {
+    const now = new Date("2026-07-22T18:00:00.000Z");
+    const broadArtist = await createArtist("Broad", true, true);
+    const priorityArtist = await createArtist("Apple priority", true, true);
+    const campaignId = randomUUID();
+    await reconcileSpotifySchedulerWork(db, now);
+    await db.insert(discoveryReconciliationCampaigns).values({
+      appleArtistsScanned: 2,
+      campaignKey: `scheduler-priority-${campaignId}`,
+      effectiveConfiguration: {},
+      id: campaignId,
+      spotifyCohortSize: 1,
+      spotifyPageLimit: 1,
+      spotifyRotationSize: 1,
+      totalArtists: 2,
+      windowEnd: "2026-07-22",
+      windowStart: "2026-06-22",
+    });
+    await db.insert(discoveryScheduleState).values({
+      activeCampaignId: campaignId,
+      applePriorityQueuedCount: 1,
+      broadSpotifyQueuedCount: 1,
+      id: "global",
+      phase: "playlist_inbox",
+      playlistInboxStatus: "ready",
+    });
+    await db.insert(spotifySchedulerWork).values({
+      artistId: priorityArtist,
+      discoveryReconciliationCampaignId: campaignId,
+      dueAt: now,
+      expectedSpotifyArtistId: `spotify-${priorityArtist}`,
+      priority: -100,
+      source: "apple_priority",
+      workKey: `priority:${priorityArtist}`,
+      workType: "artist_reconciliation",
+    });
+    await db
+      .update(spotifySchedulerWork)
+      .set({ discoveryReconciliationCampaignId: campaignId, dueAt: now })
+      .where(eq(spotifySchedulerWork.artistId, broadArtist));
+    await setSpotifySchedulerMode(db, "automatic", now);
+
+    expect(await claimSpotifySchedulerWork(db, now)).toBeNull();
+    await db
+      .update(discoveryScheduleState)
+      .set({ phase: "apple_priority", playlistInboxStatus: "completed" })
+      .where(eq(discoveryScheduleState.id, "global"));
+    const priority = await claimSpotifySchedulerWork(db, now);
+    expect(priority).toMatchObject({ artistId: priorityArtist, source: "apple_priority" });
+    await finishSpotifySchedulerWork(db, priority!, { status: "completed" }, now);
+
+    const broad = await claimSpotifySchedulerWork(db, new Date(now.getTime() + 1));
+    expect(broad).toMatchObject({ workType: "base_artist" });
+    await finishSpotifySchedulerWork(
+      db,
+      broad!,
+      { status: "completed" },
+      new Date(now.getTime() + 1),
+    );
+    expect(
+      await db.query.spotifySchedulerWork.findFirst({
+        where: eq(spotifySchedulerWork.id, broad!.id),
+      }),
+    ).toMatchObject({ discoveryReconciliationCampaignId: null });
+    expect(
+      await db.query.discoveryScheduleState.findFirst({
+        where: eq(discoveryScheduleState.id, "global"),
+      }),
+    ).toMatchObject({ phase: "broad_spotify" });
   });
 
   it("simulates 593 artists across a rolling day without starving base work", async () => {

@@ -84,6 +84,26 @@ The preview runtime can read only `SPOTIFY_ALLOWED_PLAYLIST_ID` and constructs a
 writes disabled. A live playlist export remains a separate explicit command and approval boundary.
 See [Apple-First Discovery And Spotify Reconciliation](apple-first-sync.md).
 
+### First-week bootstrap into the recurring schedule
+
+The first completed Apple-first campaign becomes the initial weekly Apple scan. It is finalized as
+`completed_with_spotify_deferred`, so completed Apple discoveries remain authoritative while
+unfinished Spotify artist work moves into the rolling scheduler. The transition does not mark any
+unscanned Spotify artist complete.
+
+One global discovery schedule records the active campaign and enforces this order: provider
+cooldown, campaign playlist inbox, Apple-priority Spotify resolution, broad Spotify reconciliation,
+then the next weekly Apple scan. Apple-only, uncertain, and missing-Spotify-track reconciliation
+rows create dedicated Apple-priority work. Remaining unfinished campaign artists stay in the broad
+rolling backlog. Broad work cannot run while priority work remains.
+
+The campaign playlist inbox uses only exact Spotify track IDs already proven eligible by the
+campaign reconciliation rows. It reads the one configured private playlist efficiently, plans
+batched add-only operations, and inserts first-week discoveries from position zero in newest-first
+release order while keeping album tracks contiguous. It never removes, replaces, or reorders an
+existing playlist item. A guarded activation command can enable automatic priority processing only
+after the inbox is complete and no Spotify cooldown is active.
+
 ## Data Flow
 
 1. A user manually creates a canonical artist or explicitly approves a Spotify import preview.

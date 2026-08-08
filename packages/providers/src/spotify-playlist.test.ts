@@ -234,6 +234,29 @@ describe("Spotify playlist planning", () => {
       100, 100, 5,
     ]);
   });
+
+  it("places a discovery inbox at the top in newest-first batches", () => {
+    const existing = "9999999999999999999999";
+    const plan = planSpotifyPlaylistExport(
+      [
+        candidate("older", "0000000000000000000001", { releaseDate: "2026-08-01" }),
+        candidate("newer", "0000000000000000000002", { releaseDate: "2026-08-07" }),
+      ],
+      [{ position: 0, trackId: existing }],
+      new Set(),
+      { additionsAtTop: true },
+    );
+
+    expect(plan.additions.map((item) => [item.providerTrackId, item.position])).toEqual([
+      ["0000000000000000000002", 0],
+      ["0000000000000000000001", 1],
+    ]);
+    expect(plan.finalTrackIds).toEqual([
+      "0000000000000000000002",
+      "0000000000000000000001",
+      existing,
+    ]);
+  });
 });
 
 function item(providerTrackId: string, matchRule: string, confidence: number) {

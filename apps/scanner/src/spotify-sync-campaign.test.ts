@@ -13,6 +13,7 @@ const claim: SpotifySyncCampaignClaim = {
   attemptCount: 1,
   campaignId: "00000000-0000-4000-8000-000000000002",
   campaignMemberId: "00000000-0000-4000-8000-000000000003",
+  discoveryReconciliationCampaignId: null,
   dueAt: new Date("2026-07-23T00:00:00.000Z"),
   expectedSpotifyArtistId: "spotify-artist",
   id: "00000000-0000-4000-8000-000000000004",

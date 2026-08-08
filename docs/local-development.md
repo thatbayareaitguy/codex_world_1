@@ -73,6 +73,32 @@ Repeat the run command to resume the durable campaign. See
 [Apple-First Discovery And Spotify Reconciliation](apple-first-sync.md) for canary, full-campaign,
 status, retry, and policy-boundary details.
 
+### First-week bootstrap transition
+
+Finalize a completed Apple-first campaign without repeating Apple discovery or falsely completing
+unfinished Spotify artists:
+
+```powershell
+pnpm discovery:bootstrap transition --campaign <campaign-id>
+pnpm discovery:bootstrap status
+```
+
+The transition is database-only and safe to repeat. While Spotify has a stored cooldown, it leaves
+the schedule in `cooldown_wait` and makes no provider request. After the cooldown expires, use this
+order:
+
+```powershell
+pnpm run doctor
+pnpm spotify:playlist-export -- --live --campaign <campaign-id> --discovery-inbox
+pnpm discovery:bootstrap activate --campaign <campaign-id>
+```
+
+The export remains bound to `SPOTIFY_ALLOWED_PLAYLIST_ID`. It adds only campaign-confirmed tracks at
+the top of the discovery inbox and preserves existing playlist items. Activation refuses to run
+until the inbox export is complete and the provider cooldown is clear. Production ticks still
+require the separately configured `SPOTIFY_SCHEDULER_ENABLED=true` capability; do not change `.env`
+as part of credential-free verification.
+
 ### Bulk Apple Music identity resolution
 
 Export the next prioritized unresolved batch outside the repository:

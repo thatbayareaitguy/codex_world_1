@@ -124,6 +124,7 @@ export function planSpotifyPlaylistExport(
   candidates: readonly SpotifyPlaylistExportCandidate[],
   playlistItems: readonly SpotifyPlaylistSnapshotItem[],
   appManagedTrackIds: ReadonlySet<string>,
+  options: { additionsAtTop?: boolean } = {},
 ): SpotifyPlaylistExportPlan {
   const skips: SpotifyPlaylistExportSkip[] = [];
   const eligible = candidates
@@ -260,12 +261,24 @@ export function planSpotifyPlaylistExport(
     .filter((item) => item.trackId === null || !desiredTrackIds.has(item.trackId))
     .map((item) => ({ ...item, reason: "not_in_export_set" as const }));
 
+  const plannedAdditions = options.additionsAtTop
+    ? additions.map((addition, position) => ({ ...addition, position }))
+    : additions;
+  const finalTrackIds = options.additionsAtTop
+    ? [
+        ...plannedAdditions.map((addition) => addition.providerTrackId!),
+        ...playlistItems
+          .slice()
+          .sort((left, right) => left.position - right.position)
+          .map((item) => item.trackId),
+      ]
+    : orderedPlaylist;
   return {
-    additions,
+    additions: plannedAdditions,
     alreadyPresent,
     desired,
     existingDuplicateTrackIds,
-    finalTrackIds: orderedPlaylist,
+    finalTrackIds,
     orderingConflicts,
     releaseGroupingConflicts,
     skips,

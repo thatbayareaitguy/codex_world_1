@@ -6,15 +6,38 @@ import {
 
 describe("Spotify playlist export CLI", () => {
   it("requires one explicit mode and accepts a bounded live canary", () => {
-    expect(parseSpotifyPlaylistExportOptions(["--", "--dry-run"])).toEqual({ live: false });
+    expect(parseSpotifyPlaylistExportOptions(["--", "--dry-run"])).toEqual({
+      discoveryInbox: false,
+      live: false,
+    });
     expect(parseSpotifyPlaylistExportOptions(["--live", "--max-additions", "3"])).toEqual({
+      discoveryInbox: false,
       live: true,
       maxAdditions: 3,
     });
     expect(parseSpotifyPlaylistExportOptions(["--live", "--max-additions=10"])).toEqual({
+      discoveryInbox: false,
       live: true,
       maxAdditions: 10,
     });
+  });
+
+  it("accepts a campaign-scoped discovery inbox without accepting a playlist ID", () => {
+    expect(
+      parseSpotifyPlaylistExportOptions([
+        "--live",
+        "--campaign",
+        "5f462e9e-c3db-451c-b77c-378ab21e8a94",
+        "--discovery-inbox",
+      ]),
+    ).toEqual({
+      campaignId: "5f462e9e-c3db-451c-b77c-378ab21e8a94",
+      discoveryInbox: true,
+      live: true,
+    });
+    expect(() => parseSpotifyPlaylistExportOptions(["--live", "--discovery-inbox"])).toThrow(
+      "requires --campaign",
+    );
   });
 
   it("rejects ambiguous, unsafe, and browser-supplied target options", () => {

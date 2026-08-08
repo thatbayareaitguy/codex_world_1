@@ -25,6 +25,7 @@
     "scan": "tsx apps/scanner/src/cli.ts",
     "apple-music:identities": "tsx apps/scanner/src/apple-music-identity-cli.ts",
     "sync:apple-first": "tsx apps/scanner/src/apple-first-sync-cli.ts",
+    "discovery:bootstrap": "tsx apps/scanner/src/discovery-bootstrap-cli.ts",
     "scan:reconcile": "tsx apps/scanner/src/cli.ts --full",
     "scan:status": "tsx apps/scanner/src/scan-status.ts status",
     "scan:unlock-stale": "tsx apps/scanner/src/scan-status.ts unlock-stale",

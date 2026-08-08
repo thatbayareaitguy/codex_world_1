@@ -391,7 +391,7 @@ export async function recordCampaignSpotifyBatch(
         spotifyRateLimitCount: Number(requestTelemetry[0]?.rateLimits ?? 0),
         spotifyRequestCount: Number(requestTelemetry[0]?.requests ?? 0),
         spotifyRetryCount,
-        stage: "internal_reconciliation",
+        stage: sql`case when ${discoveryReconciliationCampaigns.status} = 'completed_with_spotify_deferred' then ${discoveryReconciliationCampaigns.stage} else 'internal_reconciliation' end`,
         updatedAt: new Date(),
       })
       .where(eq(discoveryReconciliationCampaigns.id, campaignId));

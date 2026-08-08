@@ -258,6 +258,7 @@ interface SpotifySchedulerStatus {
   } | null;
   artistsCheckedLast24Hours: number;
   artistsCheckedLastHour: number;
+  applePriorityCount: number;
   backlog: Record<
     "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation",
     number
@@ -1898,6 +1899,10 @@ function FeedView({
                 <div>
                   <dt>Base backlog</dt>
                   <dd>{spotifyScheduler.backlog.base_artist}</dd>
+                </div>
+                <div>
+                  <dt>Apple-priority queue</dt>
+                  <dd>{spotifyScheduler.applePriorityCount}</dd>
                 </div>
                 <div>
                   <dt>Release detail / tracks</dt>
@@ -5807,6 +5812,7 @@ const spotifySchedulerStatusSchema = z.object({
     .nullable(),
   artistsCheckedLast24Hours: z.number().int().nonnegative(),
   artistsCheckedLastHour: z.number().int().nonnegative(),
+  applePriorityCount: z.number().int().nonnegative(),
   backlog: z.object({
     artist_reconciliation: z.number().int().nonnegative(),
     base_artist: z.number().int().nonnegative(),

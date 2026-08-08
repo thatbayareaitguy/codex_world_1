@@ -138,6 +138,8 @@ export interface ScanRuntime {
   schedulerContext?: {
     campaignId?: string;
     campaignMemberId?: string | null;
+    discoveryReconciliationCampaignId?: string;
+    source?: "initial" | "recurring" | "validation" | "repair" | "apple_priority";
     workId: string;
     workType: "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation";
   };
@@ -593,7 +595,16 @@ export async function runScanUnlocked(
                               campaignMemberId: runtime.schedulerContext.campaignMemberId ?? null,
                             }
                           : {}),
+                        ...(runtime.schedulerContext?.discoveryReconciliationCampaignId
+                          ? {
+                              discoveryReconciliationCampaignId:
+                                runtime.schedulerContext.discoveryReconciliationCampaignId,
+                            }
+                          : {}),
                         dueAt: page.finishedAt,
+                        ...(runtime.schedulerContext?.source === "apple_priority"
+                          ? { source: "apple_priority" as const }
+                          : {}),
                         spotifyAlbumId: release.externalReleaseId,
                       });
                     }
@@ -1103,7 +1114,8 @@ async function buildProviders(
         db,
         configuration.spotify.minRequestIntervalMs,
         runtime?.schedulerContext,
-        options.spotifyRequestCampaignId,
+        options.spotifyRequestCampaignId ??
+          runtime?.schedulerContext?.discoveryReconciliationCampaignId,
       );
       const requestGate = runtime?.requestGateWrapper
         ? runtime.requestGateWrapper(

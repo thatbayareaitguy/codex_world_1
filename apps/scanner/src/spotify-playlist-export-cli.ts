@@ -3,6 +3,8 @@ import {
   createSpotifyRequestGate,
   ensureLocalOwner,
   executeSpotifyPlaylistExport,
+  markDiscoveryPlaylistInboxStatus,
+  prepareDiscoveryPlaylistInboxExport,
   previewSpotifyPlaylistExport,
   SpotifyTokenManager,
 } from "@radar/db";
@@ -19,6 +21,8 @@ import { loadLocalEnvironment } from "./local-env";
 loadLocalEnvironment();
 
 export interface SpotifyPlaylistExportCliOptions {
+  campaignId?: string;
+  discoveryInbox: boolean;
   live: boolean;
   maxAdditions?: number;
 }
@@ -27,6 +31,8 @@ export function parseSpotifyPlaylistExportOptions(args: string[]): SpotifyPlayli
   const values = args.filter((value) => value !== "--");
   let live: boolean | undefined;
   let maxAdditions: number | undefined;
+  let campaignId: string | undefined;
+  let discoveryInbox = false;
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index]!;
     if (value === "--dry-run") {
@@ -37,6 +43,15 @@ export function parseSpotifyPlaylistExportOptions(args: string[]): SpotifyPlayli
     if (value === "--live") {
       if (live !== undefined) throw new Error("Choose exactly one of --dry-run or --live.");
       live = true;
+      continue;
+    }
+    if (value === "--campaign") {
+      campaignId = requiredValue(values[index + 1], "--campaign");
+      index += 1;
+      continue;
+    }
+    if (value === "--discovery-inbox") {
+      discoveryInbox = true;
       continue;
     }
     if (value === "--max-additions") {
@@ -54,7 +69,15 @@ export function parseSpotifyPlaylistExportOptions(args: string[]): SpotifyPlayli
   if (!live && maxAdditions !== undefined) {
     throw new Error("--max-additions is available only with --live.");
   }
-  return { live, ...(maxAdditions === undefined ? {} : { maxAdditions }) };
+  if (discoveryInbox && !campaignId) {
+    throw new Error("--discovery-inbox requires --campaign <campaign-id>.");
+  }
+  return {
+    discoveryInbox,
+    live,
+    ...(campaignId ? { campaignId } : {}),
+    ...(maxAdditions === undefined ? {} : { maxAdditions }),
+  };
 }
 
 export function sanitizedSpotifyPlaylistExportOutput(input: {
@@ -172,21 +195,51 @@ async function main(): Promise<void> {
         configuration.spotify.minRequestIntervalMs,
       ),
     });
-    const result = options.live
-      ? await executeSpotifyPlaylistExport(connection.db, userId, client, {
+    if (options.live && options.discoveryInbox) {
+      await prepareDiscoveryPlaylistInboxExport(connection.db, options.campaignId!);
+    }
+    let result:
+      | Awaited<ReturnType<typeof executeSpotifyPlaylistExport>>
+      | Awaited<ReturnType<typeof previewSpotifyPlaylistExport>>;
+    try {
+      if (options.live) {
+        const execution = await executeSpotifyPlaylistExport(connection.db, userId, client, {
+          ...(options.campaignId ? { discoveryReconciliationCampaignId: options.campaignId } : {}),
           ...(options.maxAdditions === undefined ? {} : { maxAdditions: options.maxAdditions }),
+          orderingPolicy: options.discoveryInbox ? "discovery_inbox" : "canonical",
           playlistId: configuration.spotify.allowedPlaylistId,
           policy: {
             allowedPlaylistId: configuration.spotify.allowedPlaylistId,
             enabled: configuration.spotify.playlistWritesEnabled,
           },
-        })
-      : await previewSpotifyPlaylistExport(
+        });
+        result = execution;
+        if (options.discoveryInbox) {
+          await markDiscoveryPlaylistInboxStatus(connection.db, {
+            exportRunId: execution.run.id,
+            status: execution.run.status === "completed" ? "completed" : "partial",
+          });
+        }
+      } else {
+        result = await previewSpotifyPlaylistExport(
           connection.db,
           userId,
           client,
           configuration.spotify.allowedPlaylistId,
+          {
+            ...(options.campaignId
+              ? { discoveryReconciliationCampaignId: options.campaignId }
+              : {}),
+            orderingPolicy: options.discoveryInbox ? "discovery_inbox" : "canonical",
+          },
         );
+      }
+    } catch (error) {
+      if (options.live && options.discoveryInbox) {
+        await markDiscoveryPlaylistInboxStatus(connection.db, { status: "failed" });
+      }
+      throw error;
+    }
     process.stdout.write(
       `${JSON.stringify(sanitizedSpotifyPlaylistExportOutput(result), null, 2)}\n`,
     );
@@ -201,6 +254,11 @@ function parsePositiveInteger(value: string | undefined): number {
     throw new Error("--max-additions must be a positive integer.");
   }
   return parsed;
+}
+
+function requiredValue(value: string | undefined, option: string): string {
+  if (!value || value.startsWith("--")) throw new Error(`${option} requires a value.`);
+  return value;
 }
 
 if (
