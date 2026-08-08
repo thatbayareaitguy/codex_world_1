@@ -66,6 +66,7 @@ const status: SpotifySchedulerStatus = {
       priorityReserve: 20,
       priorityUsed: 0,
       remaining: 80,
+      reserveRemaining: 20,
       reserveReleased: false,
     },
     playlist: { reads: 0, writes: 0 },

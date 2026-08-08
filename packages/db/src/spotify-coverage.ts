@@ -34,6 +34,46 @@ export interface SpotifyCoverageWork {
   startOffset: number;
 }
 
+export async function recordSpotifyCatalogReleaseSummaries(
+  db: RadarDatabase,
+  input: {
+    artistId: string;
+    observedAt: Date;
+    releases: Array<Omit<SpotifyCatalogReleaseSummary, "detailsFetched">>;
+  },
+): Promise<void> {
+  for (const release of input.releases) {
+    const summaryHash = spotifyCatalogSummaryHash({ ...release, detailsFetched: false });
+    await db
+      .insert(spotifyCatalogReleases)
+      .values({
+        artistId: input.artistId,
+        detailsFetchedAt: null,
+        externalReleaseId: release.externalReleaseId,
+        lastObservedAt: input.observedAt,
+        releaseDate: release.releaseDate,
+        releaseDatePrecision: release.releaseDatePrecision,
+        releaseType: release.releaseType,
+        summaryHash,
+        title: release.title,
+        totalTracks: release.totalTracks,
+      })
+      .onConflictDoUpdate({
+        target: [spotifyCatalogReleases.artistId, spotifyCatalogReleases.externalReleaseId],
+        set: {
+          lastObservedAt: input.observedAt,
+          releaseDate: release.releaseDate,
+          releaseDatePrecision: release.releaseDatePrecision,
+          releaseType: release.releaseType,
+          summaryHash,
+          title: release.title,
+          totalTracks: release.totalTracks,
+          updatedAt: input.observedAt,
+        },
+      });
+  }
+}
+
 export async function prepareSpotifyCoverage(
   db: RadarDatabase,
   input: {

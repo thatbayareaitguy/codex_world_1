@@ -701,6 +701,7 @@ test("defaults scan history to the meaningful batch and inspects other run types
                 priorityReserve: 20,
                 priorityUsed: 4,
                 remaining: 64,
+                reserveRemaining: 16,
                 reserveReleased: false,
               },
               playlist: { reads: 2, writes: 1 },
@@ -793,6 +794,7 @@ test("defaults scan history to the meaningful batch and inspects other run types
   await expect(scheduler).toContainText("Friday catch-up priority");
   await expect(scheduler).toContainText("Artist Albums budget");
   await expect(scheduler).toContainText("16 / 80");
+  await expect(scheduler).toContainText("16 / 20 remaining");
   await expect(scheduler).toContainText("2 reads / 1 writes");
   await scheduler
     .getByRole("button", { name: "Collapse Spotify rolling scheduler status" })

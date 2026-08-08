@@ -216,10 +216,10 @@ action item because the durable playlist-inbox phase cannot advance. Enabling wr
 the scheduler permission to select, create, rename, remove from, reorder, or change another
 playlist. The server-configured allowed playlist remains the only valid target.
 
-The unified recurring order is: due Apple scan, automatic add-only export, Apple-priority Spotify
-resolution, a second automatic export for newly resolved tracks, then Saturday-Wednesday broad
-Spotify rotation. The Friday catch-up follows the same export, priority, export sequence. Thursday
-and Friday never run broad Spotify work.
+The unified recurring order is: drain any previously pending export, run the due Apple scan,
+process its Apple-priority Spotify resolution, automatically export the newly eligible tracks, then
+allow Saturday-Wednesday broad Spotify rotation. Friday catch-up follows the same priority-then-
+export sequence. Thursday and Friday never run broad Spotify work.
 
 Cron example:
 

@@ -5,6 +5,7 @@ import { createDatabase, type RadarDatabase } from "./client";
 import {
   pauseSpotifyArtistForBudget,
   prepareSpotifyCoverage,
+  recordSpotifyCatalogReleaseSummaries,
   recordSpotifyPage,
   spotifyCoverageSummary,
 } from "./spotify-coverage";
@@ -238,6 +239,40 @@ describe("Spotify resumable catalog coverage", () => {
         .from(spotifyCatalogReleases)
         .where(eq(spotifyCatalogReleases.artistId, artistId)),
     ).toHaveLength(1);
+  });
+
+  it("persists simplified catalog summaries independently of page completion", async () => {
+    const artistId = await createArtist("Summary persistence");
+    const observedAt = new Date("2026-08-08T12:00:00.000Z");
+    const release = {
+      externalReleaseId: `summary-${randomUUID()}`,
+      releaseDate: "2026-08-08",
+      releaseDatePrecision: "day",
+      releaseType: "single",
+      title: "Durable Summary",
+      totalTracks: 1,
+    };
+
+    await recordSpotifyCatalogReleaseSummaries(db, {
+      artistId,
+      observedAt,
+      releases: [release],
+    });
+
+    const restarted = createDatabase(databaseUrl);
+    try {
+      const persisted = await restarted.db.query.spotifyCatalogReleases.findFirst({
+        where: eq(spotifyCatalogReleases.externalReleaseId, release.externalReleaseId),
+      });
+      expect(persisted).toMatchObject({
+        artistId,
+        detailsFetchedAt: null,
+        lastObservedAt: observedAt,
+        title: "Durable Summary",
+      });
+    } finally {
+      await restarted.client.end();
+    }
   });
 
   it("reports partial, queued, and completed provider coverage", async () => {

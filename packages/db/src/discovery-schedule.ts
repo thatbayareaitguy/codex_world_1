@@ -323,7 +323,7 @@ export async function claimAutomaticDiscoveryPlaylistInboxExport(
     if (
       !state ||
       state.phase !== "playlist_inbox" ||
-      !["ready", "partial", "failed"].includes(state.playlistInboxStatus)
+      !["ready", "exporting", "partial", "failed"].includes(state.playlistInboxStatus)
     ) {
       return false;
     }
@@ -343,7 +343,12 @@ export async function claimAutomaticDiscoveryPlaylistInboxExport(
         and(
           eq(discoveryScheduleState.id, discoveryScheduleStateId),
           eq(discoveryScheduleState.phase, "playlist_inbox"),
-          inArray(discoveryScheduleState.playlistInboxStatus, ["ready", "partial", "failed"]),
+          inArray(discoveryScheduleState.playlistInboxStatus, [
+            "ready",
+            "exporting",
+            "partial",
+            "failed",
+          ]),
         ),
       )
       .returning({ id: discoveryScheduleState.id });
@@ -647,13 +652,15 @@ export async function finishDiscoveryScheduleAppleJob(
     const completedAppleJob = input.status === "completed";
     const phase: DiscoverySchedulePhase = cooldownActive
       ? "cooldown_wait"
-      : completedAppleJob || playlistPending
+      : playlistPending
         ? "playlist_inbox"
         : fullPriority > 0
           ? "apple_priority"
           : catchupPriority > 0
             ? "apple_catchup_priority"
-            : "broad_spotify";
+            : completedAppleJob
+              ? "playlist_inbox"
+              : "broad_spotify";
     await tx
       .update(discoveryScheduleState)
       .set({
@@ -663,7 +670,10 @@ export async function finishDiscoveryScheduleAppleJob(
           : {}),
         phase,
         ...(completedAppleJob
-          ? { playlistInboxExportRunId: null, playlistInboxStatus: "ready" }
+          ? {
+              playlistInboxExportRunId: null,
+              playlistInboxStatus: priorityActive > 0 ? "pending" : "ready",
+            }
           : {}),
         updatedAt: now,
       })

@@ -150,8 +150,43 @@ describe.sequential("weekly discovery scheduler persistence", () => {
       status: "completed",
     });
     expect(status).toMatchObject({
+      phase: "apple_catchup_priority",
+      playlistInbox: { pendingCount: 0, status: "pending" },
+    });
+  });
+
+  it("moves a completed Apple job with no priority work directly to automatic export", async () => {
+    const now = new Date("2026-08-07T19:00:00.000Z");
+    await connection.db.insert(discoveryScheduleState).values({
+      id: "global",
+      lastAppleScanCompletedAt: new Date("2026-08-07T18:00:00.000Z"),
+      phase: "broad_spotify",
+    });
+    await reconcileDiscoveryScheduleJobs(connection.db, now);
+    const claim = await claimDiscoveryScheduleAppleJob(connection.db, now);
+    expect(claim?.jobType).toBe("apple_catchup");
+    const [batch] = await connection.db
+      .insert(appleMusicScanBatches)
+      .values({
+        completedArtists: 1,
+        finishedAt: now,
+        startedAt: new Date(now.getTime() - 60_000),
+        status: "completed",
+        totalArtists: 1,
+      })
+      .returning({ id: appleMusicScanBatches.id });
+
+    expect(
+      await finishDiscoveryScheduleAppleJob(
+        connection.db,
+        claim!,
+        { appleMusicBatchId: batch!.id, status: "completed" },
+        now,
+      ),
+    ).toBe(true);
+    expect(await getRecurringDiscoveryScheduleStatus(connection.db, now)).toMatchObject({
       phase: "playlist_inbox",
-      playlistInbox: { pendingCount: 0, status: "ready" },
+      playlistInbox: { status: "ready" },
     });
   });
 });

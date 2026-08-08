@@ -5,11 +5,18 @@ export interface ScanContext {
   filter: ScanFilter;
   onBatch?: (batch: ProviderScanBatch) => Promise<void>;
   onPage?: (page: ProviderScanPage) => Promise<void>;
+  onReleaseSummaries?: (page: ProviderReleaseSummaryPage) => Promise<void>;
   onReleaseTrackError?: (error: ProviderReleaseTrackError) => Promise<void>;
   onReleaseTrackPage?: (page: ProviderReleaseTrackPage) => Promise<void>;
   onReleaseTrackStart?: (release: ProviderReleaseTrackStart) => Promise<void>;
   onUnitStart?: (unit: ProviderScanUnit) => Promise<boolean>;
   signal?: AbortSignal;
+}
+
+export interface ProviderReleaseSummaryPage {
+  currentUnitId: string;
+  observedAt: Date;
+  releases: ProviderReleaseObservation[];
 }
 
 export interface ProviderReleaseTrackStart {

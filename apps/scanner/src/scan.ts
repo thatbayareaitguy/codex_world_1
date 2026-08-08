@@ -57,6 +57,7 @@ import {
   markSpotifyReleaseTrackInterrupted,
   pauseSpotifyArtistForBudget,
   queueSpotifyReleaseDetailWork,
+  recordSpotifyCatalogReleaseSummaries,
   recordSpotifyPage,
   recordSpotifyReleaseTrackPage,
   requestSpotifyBatchPause,
@@ -620,6 +621,21 @@ export async function runScanUnlocked(
                     },
                     true,
                   );
+                },
+                onReleaseSummaries: async (page) => {
+                  if (options.dryRun) return;
+                  await recordSpotifyCatalogReleaseSummaries(db, {
+                    artistId: page.currentUnitId,
+                    observedAt: page.observedAt,
+                    releases: page.releases.map((release) => ({
+                      externalReleaseId: release.externalReleaseId,
+                      releaseDate: release.releaseDate,
+                      releaseDatePrecision: release.releaseDatePrecision,
+                      releaseType: release.releaseType,
+                      title: release.title,
+                      totalTracks: release.totalTracks,
+                    })),
+                  });
                 },
                 onReleaseTrackStart: async (release) => {
                   if (options.dryRun) return;

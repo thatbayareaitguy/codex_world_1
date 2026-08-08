@@ -170,13 +170,21 @@ describe("doctor", () => {
         databaseProbe: () =>
           Promise.resolve({
             ...databaseReady,
+            discoverySchedule: {
+              pendingPlaylistOperations: 3,
+              phase: "playlist_inbox",
+              playlistInboxStatus: "ready",
+            },
             spotifyScheduler: {
               activeLease: false,
               artistAlbumsAllowance: 80,
               artistAlbumsCalls: 60,
               artistAlbumsPriorityReserve: 20,
+              artistAlbumsReserveRemaining: 20,
               blocked: 0,
               mode: "disabled",
+              playlistReads: 2,
+              playlistWrites: 1,
               queued: 694,
             },
           }),
@@ -190,6 +198,15 @@ describe("doctor", () => {
       required: false,
       state: "READY",
     });
+    expect(report.checks.find((check) => check.name === "Spotify scheduler")?.message).toContain(
+      "priority reserve 20/20 remaining",
+    );
+    expect(report.checks.find((check) => check.name === "Spotify scheduler")?.message).toContain(
+      "playlist requests 2 read/1 write",
+    );
+    expect(report.checks.find((check) => check.name === "Automatic playlist inbox")?.message).toBe(
+      "Phase playlist_inbox; status ready; 3 pending operation(s).",
+    );
   });
 
   it("reports bounded Spotify 429 classifications without raw response content", async () => {

@@ -75,6 +75,7 @@ describe("Spotify global request gate", () => {
       calls: 60,
       priorityReserve: 20,
       remaining: 20,
+      reserveRemaining: 20,
       reserveReleased: false,
     });
 
@@ -120,6 +121,7 @@ describe("Spotify global request gate", () => {
       calls: 80,
       priorityRemaining: 0,
       remaining: 0,
+      reserveRemaining: 0,
     });
   });
 

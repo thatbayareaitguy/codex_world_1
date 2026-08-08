@@ -21,6 +21,26 @@ export function parseDiscoverySchedulerCommand(args: string[]): "status" | "tick
   return values[0] as "status" | "tick";
 }
 
+export function discoverySchedulerRoute(input: {
+  phase: string;
+  playlistInboxStatus: string;
+}): "playlist_export" | "spotify_priority" | "apple_or_spotify" {
+  if (
+    input.phase === "playlist_inbox" &&
+    ["ready", "exporting", "partial", "failed"].includes(input.playlistInboxStatus)
+  ) {
+    return "playlist_export";
+  }
+  if (
+    input.phase === "apple_priority" ||
+    input.phase === "apple_catchup_priority" ||
+    input.phase === "cooldown_wait"
+  ) {
+    return "spotify_priority";
+  }
+  return "apple_or_spotify";
+}
+
 async function main(): Promise<void> {
   const command = parseDiscoverySchedulerCommand(process.argv.slice(2));
   const configuration = loadProviderConfiguration();
@@ -49,19 +69,16 @@ async function main(): Promise<void> {
     }
 
     const discoveryStatus = await getRecurringDiscoveryScheduleStatus(connection.db);
-    if (
-      discoveryStatus.phase === "playlist_inbox" &&
-      ["ready", "partial", "failed"].includes(discoveryStatus.playlistInbox.status)
-    ) {
+    const route = discoverySchedulerRoute({
+      phase: discoveryStatus.phase,
+      playlistInboxStatus: discoveryStatus.playlistInbox.status,
+    });
+    if (route === "playlist_export") {
       const playlist = await runAutomaticDiscoveryPlaylistExport(connection.db, configuration);
       process.stdout.write(`${JSON.stringify({ playlist }, null, 2)}\n`);
       return;
     }
-    if (
-      discoveryStatus.phase === "apple_priority" ||
-      discoveryStatus.phase === "apple_catchup_priority" ||
-      discoveryStatus.phase === "cooldown_wait"
-    ) {
+    if (route === "spotify_priority") {
       const spotify = await runSpotifyTick(connection.db, configuration);
       process.stdout.write(`${JSON.stringify({ spotify }, null, 2)}\n`);
       return;

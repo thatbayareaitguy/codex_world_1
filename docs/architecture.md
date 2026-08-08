@@ -114,12 +114,15 @@ are ordered by the oldest successful scan. All work, daily artist claims, Apple 
 cooldowns, and next-run timestamps are persisted in PostgreSQL.
 
 The campaign playlist inbox uses only exact Spotify track IDs already proven eligible by the
-campaign reconciliation rows. When recurring discovery and playlist writes are both explicitly
-enabled, the unified tick automatically runs the existing guarded exporter at each durable playlist
-checkpoint. It reads only the configured owned private playlist, plans batched add-only operations,
+campaign reconciliation rows. A pending export from prior work is drained before a new Apple job.
+After each Thursday or Friday Apple scan, Apple-triggered Spotify resolution runs first and the
+playlist checkpoint becomes ready when that priority queue drains. When recurring discovery and
+playlist writes are both explicitly enabled, the unified tick then runs the existing guarded
+exporter. It reads only the configured owned private playlist, plans batched add-only operations,
 and inserts discoveries from position zero in newest-first release order while keeping album tracks
 contiguous. It never removes, replaces, reorders, renames, or changes the visibility of an existing
-playlist item. A Spotify cooldown blocks the checkpoint without discarding its persisted state.
+playlist item. A Spotify cooldown blocks priority work and export without discarding persisted
+state.
 
 Spotify request telemetry uses durable endpoint buckets: `artist_albums`, `album_detail`,
 `album_tracks`, `playlist_read`, `playlist_write`, and `oauth_or_other`. Artist catalog work has a

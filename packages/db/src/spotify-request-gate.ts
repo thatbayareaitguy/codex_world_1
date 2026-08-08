@@ -41,6 +41,7 @@ export interface SpotifyEndpointBudgetStatus {
     priorityReserve: number;
     priorityUsed: number;
     remaining: number;
+    reserveRemaining: number;
     reserveReleased: boolean;
   };
   playlist: {
@@ -198,6 +199,13 @@ export async function getSpotifyEndpointBudgetStatus(
   );
   const effectiveBroadAllowance = reserveReleased ? validated.limit : broadAllowance;
   const totalRemaining = Math.max(0, validated.limit - artistAlbums.length);
+  const reserveRemaining = Math.max(
+    0,
+    Math.min(
+      validated.priorityReserve - Math.min(priorityUsed, validated.priorityReserve),
+      totalRemaining,
+    ),
+  );
   return {
     artistAlbums: {
       allowance: validated.limit,
@@ -210,6 +218,7 @@ export async function getSpotifyEndpointBudgetStatus(
       priorityReserve: validated.priorityReserve,
       priorityUsed,
       remaining: totalRemaining,
+      reserveRemaining,
       reserveReleased,
     },
     playlist: {

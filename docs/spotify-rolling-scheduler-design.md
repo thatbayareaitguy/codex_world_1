@@ -509,12 +509,13 @@ returns to the playlist inbox before Friday catch-up priority can run. Catch-up 
 its own playlist checkpoint before broad rotation, so newly confirmed playable tracks are exported
 in the approved order.
 
-Each Thursday or Friday Apple job enters the playlist inbox immediately after completion. When the
-two scheduler capabilities and guarded playlist writes are explicitly enabled, the unified tick
-runs the add-only exporter automatically. It then processes the corresponding Apple-priority
-Spotify queue and returns to the playlist inbox for newly confirmed tracks. Playlist reads and
-writes use the same concurrency-one PostgreSQL request gate, but Artist Albums exhaustion does not
-block them.
+Each Thursday or Friday Apple job first queues and drains its Apple-triggered Spotify resolution.
+When that priority queue is empty, the playlist checkpoint becomes ready. With both scheduler
+capabilities and guarded playlist writes explicitly enabled, the unified tick then runs the add-only
+exporter automatically before broad Spotify work may resume. A playlist checkpoint that was already
+pending before the Apple job remains higher priority and is drained first. Playlist reads and writes
+use the same concurrency-one PostgreSQL request gate, but Artist Albums exhaustion does not block
+them.
 
 Endpoint telemetry is persisted as `artist_albums`, `album_detail`, `album_tracks`,
 `playlist_read`, `playlist_write`, or `oauth_or_other`. A catalog request for an unchanged known

@@ -117,6 +117,11 @@ export class SpotifyProvider implements DiscoveryProvider {
             this.incompleteReleaseIds.has(album.id),
           ),
         );
+        await context.onReleaseSummaries?.({
+          currentUnitId: mapping.artistId,
+          observedAt: this.now(),
+          releases,
+        });
         const pageCandidates: TrackCandidate[] = [];
         let albumDetailRequests = 0;
         for (const album of page.items) {

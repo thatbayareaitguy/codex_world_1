@@ -1,6 +1,7 @@
 import {
   createDatabase,
   getAppleMusicOperationalStatus,
+  getRecurringDiscoveryScheduleStatus,
   getSpotify429Telemetry,
   getSpotifyOperationalStatus,
   getSpotifySchedulerStatus,
@@ -37,6 +38,11 @@ export interface DoctorDatabaseStatus {
   appleMusicLeaseActive?: boolean;
   appleMusicRequestCount?: number;
   connected: boolean;
+  discoverySchedule?: {
+    pendingPlaylistOperations: number;
+    phase: string;
+    playlistInboxStatus: string;
+  };
   failedScans: number;
   lastSuccessfulScan?: string;
   migrationCount: number;
@@ -72,8 +78,11 @@ export interface DoctorDatabaseStatus {
     artistAlbumsAllowance: number;
     artistAlbumsCalls: number;
     artistAlbumsPriorityReserve: number;
+    artistAlbumsReserveRemaining: number;
     blocked: number;
     mode: string;
+    playlistReads: number;
+    playlistWrites: number;
     queued: number;
   };
   spotifySyncCampaign?: {
@@ -259,15 +268,25 @@ export async function collectDoctorReport(
           scheduler.activeLease
             ? action(
                 "Spotify scheduler",
-                `Mode ${scheduler.mode}; ${scheduler.queued} queued; ${scheduler.blocked} blocked; Artist Albums ${scheduler.artistAlbumsCalls}/${scheduler.artistAlbumsAllowance} with ${scheduler.artistAlbumsPriorityReserve} reserved; one active lease.`,
+                `Mode ${scheduler.mode}; ${scheduler.queued} queued; ${scheduler.blocked} blocked; Artist Albums ${scheduler.artistAlbumsCalls}/${scheduler.artistAlbumsAllowance}; priority reserve ${scheduler.artistAlbumsReserveRemaining}/${scheduler.artistAlbumsPriorityReserve} remaining; playlist requests ${scheduler.playlistReads} read/${scheduler.playlistWrites} write; one active lease.`,
                 "Confirm the bounded scheduler tick is still running before taking corrective action.",
                 false,
               )
             : ready(
                 "Spotify scheduler",
-                `Mode ${scheduler.mode}; ${scheduler.queued} queued; ${scheduler.blocked} blocked; Artist Albums ${scheduler.artistAlbumsCalls}/${scheduler.artistAlbumsAllowance} with ${scheduler.artistAlbumsPriorityReserve} reserved; no active lease.`,
+                `Mode ${scheduler.mode}; ${scheduler.queued} queued; ${scheduler.blocked} blocked; Artist Albums ${scheduler.artistAlbumsCalls}/${scheduler.artistAlbumsAllowance}; priority reserve ${scheduler.artistAlbumsReserveRemaining}/${scheduler.artistAlbumsPriorityReserve} remaining; playlist requests ${scheduler.playlistReads} read/${scheduler.playlistWrites} write; no active lease.`,
                 false,
               ),
+        );
+      }
+      if (databaseStatus.discoverySchedule) {
+        const schedule = databaseStatus.discoverySchedule;
+        checks.push(
+          ready(
+            "Automatic playlist inbox",
+            `Phase ${schedule.phase}; status ${schedule.playlistInboxStatus}; ${schedule.pendingPlaylistOperations} pending operation(s).`,
+            false,
+          ),
         );
       }
       if (databaseStatus.spotifySyncCampaign) {
@@ -425,6 +444,7 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
     let staleLocks = 0;
     let spotifyCooldownActive = false;
     let spotifyCooldownUntil: string | undefined;
+    let discoverySchedule: DoctorDatabaseStatus["discoverySchedule"];
     let spotifyGrantedScopes: string[] | undefined;
     let spotifyReleaseTracks: DoctorDatabaseStatus["spotifyReleaseTracks"];
     let spotifyRateLimits: DoctorDatabaseStatus["spotifyRateLimits"];
@@ -481,13 +501,22 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
           : null,
       };
       const scheduler = await getSpotifySchedulerStatus(db);
+      const recurringSchedule = await getRecurringDiscoveryScheduleStatus(db);
+      discoverySchedule = {
+        pendingPlaylistOperations: recurringSchedule.playlistInbox.pendingCount,
+        phase: recurringSchedule.phase,
+        playlistInboxStatus: recurringSchedule.playlistInbox.status,
+      };
       spotifyScheduler = {
         activeLease: Boolean(scheduler.activeLease),
         artistAlbumsAllowance: scheduler.endpointBudget.artistAlbums.allowance,
         artistAlbumsCalls: scheduler.endpointBudget.artistAlbums.calls,
         artistAlbumsPriorityReserve: scheduler.endpointBudget.artistAlbums.priorityReserve,
+        artistAlbumsReserveRemaining: scheduler.endpointBudget.artistAlbums.reserveRemaining,
         blocked: scheduler.blockedCount,
         mode: scheduler.mode,
+        playlistReads: scheduler.endpointBudget.playlist.reads,
+        playlistWrites: scheduler.endpointBudget.playlist.writes,
         queued: Object.values(scheduler.backlog).reduce((total, value) => total + value, 0),
       };
       const campaign = await db.query.spotifySyncCampaigns.findFirst({
@@ -513,6 +542,7 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
     }
     return {
       connected: true,
+      ...(discoverySchedule ? { discoverySchedule } : {}),
       ...(appleMusicStatus
         ? {
             appleMusicCooldownActive: appleMusicStatus.cooldownActive,

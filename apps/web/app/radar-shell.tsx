@@ -329,6 +329,7 @@ interface SpotifySchedulerStatus {
       priorityReserve: number;
       priorityUsed: number;
       remaining: number;
+      reserveRemaining: number;
       reserveReleased: boolean;
     };
     playlist: { reads: number; writes: number };
@@ -2101,7 +2102,8 @@ function FeedView({
                 <div>
                   <dt>Artist Albums reserve</dt>
                   <dd>
-                    {spotifyScheduler.endpointBudget.artistAlbums.priorityReserve} reserved |{" "}
+                    {spotifyScheduler.endpointBudget.artistAlbums.reserveRemaining} /{" "}
+                    {spotifyScheduler.endpointBudget.artistAlbums.priorityReserve} remaining |{" "}
                     {spotifyScheduler.endpointBudget.artistAlbums.reserveReleased
                       ? "Released cautiously"
                       : "Held for priority"}
@@ -6070,6 +6072,7 @@ const spotifySchedulerStatusSchema = z.object({
       priorityReserve: z.number().int().nonnegative(),
       priorityUsed: z.number().int().nonnegative(),
       remaining: z.number().int().nonnegative(),
+      reserveRemaining: z.number().int().nonnegative(),
       reserveReleased: z.boolean(),
     }),
     playlist: z.object({

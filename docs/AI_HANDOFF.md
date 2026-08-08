@@ -1,15 +1,16 @@
 # AI Handoff
 
-Updated: 2026-08-08 01:53 PDT
+Updated: 2026-08-08 02:22 PDT
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`
-- Current checkpoint: `HEAD` (`feat: add endpoint-budgeted recurring playlist delivery`)
-- Current milestone: endpoint-budgeted recurring discovery with automatic guarded playlist inbox
-  delivery, credential-free verification complete
-- Upstream: `origin/codex/release-radar-hardening` matches this checkpoint
-- Worktree: clean except unrelated untracked `outputs/`, which remains excluded
+- Current checkpoint: `HEAD` contains the completed recurring scheduler audit
+- Current milestone: endpoint-budgeted Thursday/Friday Apple-priority resolution and automatic
+  playlist delivery are implementation- and credential-free verified
+- Upstream: intended to match `origin/codex/release-radar-hardening` after the final audit commit
+- Worktree: intended clean after the final audit commit except unrelated untracked `outputs/`, which
+  remains excluded
 - PostgreSQL: healthy with 28 forward migrations after applying `0027`, which adds Spotify request
   quota lanes and an endpoint-window index.
 
@@ -21,9 +22,9 @@ Updated: 2026-08-08 01:53 PDT
   `America/Los_Angeles`, with a 24-hour bounded startup-recovery window.
 - Verified: broad Spotify work is blocked Thursday and Friday. Saturday-Wednesday broad work is
   capped at 75 distinct artists and 300 request starts per local day.
-- Implemented recurring order: Apple scan, guarded automatic playlist export, Apple-priority
-  Spotify resolution, second export, then Saturday-Wednesday broad rotation. Friday catch-up uses
-  the same export, priority, export sequence. Priority work preempts broad work.
+- Implemented recurring order: drain a previously pending export, Apple scan, Apple-priority Spotify
+  resolution, guarded automatic export, then Saturday-Wednesday broad rotation. Friday catch-up uses
+  the same priority-then-export sequence. Priority work preempts broad work.
 - Verified: an expired Spotify cooldown restores the persisted playlist or priority phase instead
   of skipping bootstrap work.
 - Implemented: the 1,200-request rolling ceiling retains 200 requests for priority work and 20 for
@@ -32,6 +33,8 @@ Updated: 2026-08-08 01:53 PDT
 - Implemented: endpoint telemetry distinguishes Artist Albums, album details, album tracks,
   playlist reads, playlist writes, and OAuth or other requests. Playlist work is not blocked by an
   exhausted Artist Albums bucket.
+- Verified: simplified Artist Albums summaries persist before any album-detail request. A detail
+  failure or restart therefore retains the release observation and later work remains resumable.
 - Verified by unit and focused PostgreSQL tests: every Spotify request uses the shared gate at
   concurrency one and at least ten seconds between starts; an unchanged known release makes one
   Artist Albums request and no album-detail or track request.
@@ -62,12 +65,15 @@ Updated: 2026-08-08 01:53 PDT
 ## Validation
 
 - Passed: formatting, lint, strict TypeScript across 6 workspaces, and the 27-route production build.
-- Passed: 423 unit tests across 60 files, 124 PostgreSQL integration tests across 24 files, and 30
+- Passed: 432 unit tests across 60 files, 129 PostgreSQL integration tests across 25 files, and 30
   Playwright tests.
-- Passed: migration application, read-only scheduler status, and `git diff --check`.
+- Passed: migration application, read-only scheduler status, live local UI smoke inspection, and
+  `git diff --check`.
 - Doctor: PostgreSQL is healthy with 28 migrations, no stale locks, valid playlist boundaries, and
   both required Spotify playlist scopes. It correctly reports the provider-directed Spotify
-  cooldown as an action item until `2026-08-08T18:32:23.020Z`.
+  cooldown as an action item until `2026-08-08T18:32:23.020Z`. Artist Albums has 101 trailing
+  24-hour calls against the local 80-call ceiling, so no Artist Albums work is eligible before
+  capacity returns; playlist request accounting remains separate at 0 reads and 0 writes.
 
 ## Risks And Known Limits
 

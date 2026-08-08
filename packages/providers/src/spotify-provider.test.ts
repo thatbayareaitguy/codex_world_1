@@ -144,6 +144,43 @@ describe("SpotifyProvider incremental scanning", () => {
     );
   });
 
+  it("reports simplified release summaries before fetching release details", async () => {
+    const eligible = albumSummary("summary-first", "Summary First", "2026-07-16");
+    const events: string[] = [];
+    const provider = new SpotifyProvider({
+      client: {
+        getAlbum: vi.fn().mockImplementation(() => {
+          events.push("details");
+          return Promise.resolve(albumWithTrack(eligible));
+        }),
+        getArtistAlbumsPage: vi.fn().mockResolvedValue({
+          items: [eligible],
+          nextOffset: null,
+          offset: 0,
+          total: 1,
+        }),
+        metrics: { failures: 0, rateLimitWaitMs: 0, requests: 2 },
+      } as unknown as SpotifyClient,
+      mappings: [{ artistId: "artist-1", name: "Artist", spotifyArtistId: "spotify-1" }],
+    });
+
+    await provider.scan({
+      filter: { provider: "spotify", since: "2026-05-19" },
+      onReleaseSummaries: (page) => {
+        events.push("summaries");
+        expect(page).toEqual(
+          expect.objectContaining({
+            currentUnitId: "artist-1",
+            releases: [expect.objectContaining({ externalReleaseId: "summary-first" })],
+          }),
+        );
+        return Promise.resolve();
+      },
+    });
+
+    expect(events).toEqual(["summaries", "details"]);
+  });
+
   it("attaches the same validated Spotify album artwork to every track candidate", async () => {
     const summary = albumSummary("album-art", "Artwork Release", "2026-07-16");
     const album = albumWithTrack(summary);
