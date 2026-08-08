@@ -126,6 +126,18 @@ export const spotifySchedulerWorkSourceEnum = pgEnum("spotify_scheduler_work_sou
   "validation",
   "repair",
   "apple_priority",
+  "apple_catchup",
+]);
+export const discoveryScheduleJobTypeEnum = pgEnum("discovery_schedule_job_type", [
+  "apple_full",
+  "apple_catchup",
+]);
+export const discoveryScheduleJobStatusEnum = pgEnum("discovery_schedule_job_status", [
+  "scheduled",
+  "leased",
+  "completed",
+  "failed",
+  "expired",
 ]);
 export const spotifySyncCampaignStatusEnum = pgEnum("spotify_sync_campaign_status", [
   "planned",
@@ -1547,7 +1559,7 @@ export const discoveryScheduleState = pgTable(
   (table) => [
     check(
       "discovery_schedule_state_phase_check",
-      sql`${table.phase} in ('idle', 'cooldown_wait', 'playlist_inbox', 'apple_priority', 'broad_spotify', 'weekly_apple')`,
+      sql`${table.phase} in ('idle', 'cooldown_wait', 'playlist_inbox', 'apple_priority', 'apple_catchup_priority', 'broad_spotify', 'weekly_apple')`,
     ),
     check(
       "discovery_schedule_state_playlist_status_check",
@@ -1557,6 +1569,65 @@ export const discoveryScheduleState = pgTable(
       "discovery_schedule_state_counts_check",
       sql`${table.applePriorityQueuedCount} >= 0 and ${table.broadSpotifyQueuedCount} >= 0`,
     ),
+  ],
+);
+
+export const discoveryScheduleJobs = pgTable(
+  "discovery_schedule_jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    jobKey: text("job_key").notNull(),
+    jobType: discoveryScheduleJobTypeEnum("job_type").notNull(),
+    status: discoveryScheduleJobStatusEnum("status").notNull().default("scheduled"),
+    scheduledFor: timestamp("scheduled_for", { withTimezone: true }).notNull(),
+    recoveryDeadline: timestamp("recovery_deadline", { withTimezone: true }).notNull(),
+    appleMusicBatchId: uuid("apple_music_batch_id").references(() => appleMusicScanBatches.id, {
+      onDelete: "set null",
+    }),
+    scanRunId: uuid("scan_run_id").references(() => scanRuns.id, { onDelete: "set null" }),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    errorClassification: text("error_classification"),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("discovery_schedule_jobs_key_unique").on(table.jobKey),
+    index("discovery_schedule_jobs_due_idx").on(
+      table.status,
+      table.scheduledFor,
+      table.recoveryDeadline,
+    ),
+    index("discovery_schedule_jobs_lease_idx").on(table.leaseExpiresAt),
+    check(
+      "discovery_schedule_jobs_window_check",
+      sql`${table.recoveryDeadline} > ${table.scheduledFor}`,
+    ),
+    check(
+      "discovery_schedule_jobs_lease_check",
+      sql`(${table.status} = 'leased' and ${table.leaseOwner} is not null and ${table.leaseExpiresAt} is not null) or (${table.status} <> 'leased' and ${table.leaseOwner} is null and ${table.leaseExpiresAt} is null)`,
+    ),
+  ],
+);
+
+export const spotifySchedulerDailyArtists = pgTable(
+  "spotify_scheduler_daily_artists",
+  {
+    localDate: date("local_date").notNull(),
+    artistId: uuid("artist_id")
+      .notNull()
+      .references(() => artists.id, { onDelete: "cascade" }),
+    schedulerWorkId: uuid("scheduler_work_id")
+      .notNull()
+      .references(() => spotifySchedulerWork.id, { onDelete: "cascade" }),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    createdAt,
+  },
+  (table) => [
+    primaryKey({ columns: [table.localDate, table.artistId] }),
+    index("spotify_scheduler_daily_artists_started_idx").on(table.localDate, table.startedAt),
   ],
 );
 

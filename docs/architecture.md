@@ -97,6 +97,22 @@ then the next weekly Apple scan. Apple-only, uncertain, and missing-Spotify-trac
 rows create dedicated Apple-priority work. Remaining unfinished campaign artists stay in the broad
 rolling backlog. Broad work cannot run while priority work remains.
 
+Recurring operation uses durable local-time jobs. The full Apple watchlist scan is due Thursday at
+9:00 PM and the bounded catch-up scan is due Friday at 9:00 AM in
+`America/Los_Angeles`. Either job may be recovered for 24 hours after startup; older missed jobs are
+expired instead of stacked. Broad Spotify work is blocked on Thursday and Friday and runs only
+Saturday through Wednesday. Apple-derived priority work may still use Spotify after provider
+readiness checks because it preempts broad rotation. Full-scan priority and Friday catch-up priority
+are separate durable phases with an add-only playlist checkpoint between them. When a persisted
+Spotify cooldown expires, the scheduler restores the waiting playlist or priority phase instead of
+advancing past it.
+
+Broad Spotify claims are limited to 75 distinct artists and 300 request starts per local day. The
+rolling 24-hour ceiling retains separate reserves of 200 requests for Apple-priority resolution and
+20 for playlist operations. Never-scanned artists precede recurring artists, then recurring artists
+are ordered by the oldest successful scan. All work, daily artist claims, Apple jobs, leases,
+cooldowns, and next-run timestamps are persisted in PostgreSQL.
+
 The campaign playlist inbox uses only exact Spotify track IDs already proven eligible by the
 campaign reconciliation rows. It reads the one configured private playlist efficiently, plans
 batched add-only operations, and inserts first-week discoveries from position zero in newest-first

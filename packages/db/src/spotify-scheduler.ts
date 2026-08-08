@@ -1,4 +1,18 @@
-import { and, asc, count, eq, gt, inArray, isNull, lte, notInArray, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNull,
+  lt,
+  lte,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { RadarDatabase } from "./client";
 import {
@@ -12,6 +26,7 @@ import {
   spotifyProviderState,
   spotifyReleaseTrackRetrievals,
   spotifyRequestEvents,
+  spotifySchedulerDailyArtists,
   spotifySchedulerState,
   spotifySchedulerWork,
 } from "./schema";
@@ -30,12 +45,16 @@ export type SpotifySchedulerWorkStatus =
   "queued" | "leased" | "blocked" | "completed" | "cancelled";
 
 export interface SpotifySchedulerLimits {
+  maxBroadArtistsPerLocalDay: number;
+  maxBroadRequestsPerLocalDay: number;
   maxArtistsPerTick: 1;
   maxRequestsPerTick: number;
   maxRuntimeMs: number;
   minRequestIntervalMs: number;
   rolling24HourLimit: number;
   rolling30MinuteLimit: number;
+  playlistRequestReserve: number;
+  priorityRequestReserve: number;
   windowHours: 24;
 }
 
@@ -51,7 +70,7 @@ export interface SpotifySchedulerClaim {
   leaseExpiresAt: Date;
   leaseOwner: string;
   releaseTrackRetrievalId: string | null;
-  source: "initial" | "recurring" | "validation" | "repair" | "apple_priority";
+  source: "initial" | "recurring" | "validation" | "repair" | "apple_priority" | "apple_catchup";
   spotifyAlbumId: string | null;
   workType: SpotifySchedulerWorkType;
 }
@@ -66,11 +85,21 @@ export interface SpotifySchedulerStatus {
   artistsCheckedLast24Hours: number;
   artistsCheckedLastHour: number;
   applePriorityCount: number;
+  appleCatchupPriorityCount: number;
   backlog: Record<SpotifySchedulerWorkType, number>;
   blockedCount: number;
   blockedReasons: string[];
   cooldownActive: boolean;
   cooldownUntil: Date | null;
+  dailyBudget: {
+    broadArtistsLimit: number;
+    broadArtistsUsed: number;
+    broadRequestsLimit: number;
+    broadRequestsUsed: number;
+    localDate: string;
+    playlistRequestReserve: number;
+    priorityRequestReserve: number;
+  };
   dueArtistCount: number;
   eligibleArtistCount: number;
   estimatedCompletion: {
@@ -107,26 +136,19 @@ export async function reconcileSpotifySchedulerWork(
     .values({ id: spotifySchedulerStateId })
     .onConflictDoNothing();
   const eligible = await loadEligibleSpotifyArtists(db);
-  const neverScanned = eligible.filter((artist) => artist.lastSuccessfulAt === null);
-  const neverDueAt = new Map(
-    staggerSpotifyArtistsAcrossWindow(neverScanned, now).map((artist) => [
-      artist.artistId,
-      artist.dueAt,
-    ]),
-  );
 
   await db.transaction(async (tx) => {
     for (const artist of eligible) {
       const dueAt = artist.lastSuccessfulAt
         ? new Date(artist.lastSuccessfulAt.getTime() + spotifySchedulerWindowMs)
-        : (neverDueAt.get(artist.artistId) ?? now);
+        : now;
       await tx
         .insert(spotifySchedulerWork)
         .values({
           artistId: artist.artistId,
           dueAt,
           expectedSpotifyArtistId: artist.spotifyArtistId,
-          priority: 10,
+          priority: artist.lastSuccessfulAt ? 10 : 0,
           source: artist.lastSuccessfulAt ? "recurring" : "initial",
           status: "queued",
           workKey: `base_artist:${artist.artistId}`,
@@ -270,7 +292,7 @@ export async function queueSpotifyReleaseDetailWork(
     discoveryReconciliationCampaignId?: string | null;
     dueAt?: Date;
     spotifyAlbumId: string;
-    source?: "initial" | "recurring" | "validation" | "repair" | "apple_priority";
+    source?: "initial" | "recurring" | "validation" | "repair" | "apple_priority" | "apple_catchup";
   },
 ): Promise<void> {
   await insertSpotifyReleaseDetailWork(db, {
@@ -306,7 +328,7 @@ async function insertSpotifyReleaseDetailWork(
     discoveryReconciliationCampaignId?: string | null;
     dueAt: Date;
     spotifyAlbumId: string;
-    source?: "initial" | "recurring" | "validation" | "repair" | "apple_priority";
+    source?: "initial" | "recurring" | "validation" | "repair" | "apple_priority" | "apple_catchup";
   },
 ): Promise<void> {
   await db
@@ -332,7 +354,7 @@ export async function queueSpotifyReleaseTrackWork(
     discoveryReconciliationCampaignId?: string | null;
     dueAt?: Date;
     releaseTrackRetrievalId: string;
-    source?: "initial" | "recurring" | "validation" | "repair" | "apple_priority";
+    source?: "initial" | "recurring" | "validation" | "repair" | "apple_priority" | "apple_catchup";
     spotifyAlbumId: string;
   },
 ): Promise<void> {
@@ -401,9 +423,37 @@ export async function claimSpotifySchedulerWork(
       return null;
     }
 
+    await resumeDiscoveryScheduleAfterCooldown(tx, now);
     await advanceDiscoverySchedulePhaseIfDrained(tx, now);
     const candidate = await selectSpotifySchedulerCandidate(tx, now, true, state.mode);
     if (!candidate) return null;
+    const localDay = spotifySchedulerLocalDayWindow(now);
+    if (isBroadSpotifyWork(candidate.source)) {
+      if (!isBroadSpotifyDay(localDay.weekday)) return null;
+      const [broadRequests, broadArtists] = await Promise.all([
+        countBroadSpotifyRequests(tx, localDay.start, localDay.end),
+        countBroadSpotifyArtists(tx, localDay.localDate),
+      ]);
+      if (
+        broadRequests + limits.maxRequestsPerTick > limits.maxBroadRequestsPerLocalDay ||
+        rolling24 + limits.maxRequestsPerTick >
+          limits.rolling24HourLimit - limits.priorityRequestReserve - limits.playlistRequestReserve
+      ) {
+        return null;
+      }
+      if (
+        candidate.workType === "base_artist" &&
+        candidate.artistId &&
+        broadArtists >= limits.maxBroadArtistsPerLocalDay &&
+        !(await hasBroadArtistStarted(tx, localDay.localDate, candidate.artistId))
+      ) {
+        await tx
+          .update(spotifySchedulerState)
+          .set({ nextBaseSlotAt: localDay.end, updatedAt: now })
+          .where(eq(spotifySchedulerState.id, spotifySchedulerStateId));
+        return null;
+      }
+    }
     const leaseOwner = randomUUID();
     const leaseExpiresAt = new Date(now.getTime() + leaseMs);
     const [claimed] = await tx
@@ -421,6 +471,21 @@ export async function claimSpotifySchedulerWork(
       )
       .returning();
     if (!claimed) return null;
+    if (
+      claimed.workType === "base_artist" &&
+      claimed.artistId &&
+      isBroadSpotifyWork(claimed.source)
+    ) {
+      await tx
+        .insert(spotifySchedulerDailyArtists)
+        .values({
+          artistId: claimed.artistId,
+          localDate: localDay.localDate,
+          schedulerWorkId: claimed.id,
+          startedAt: now,
+        })
+        .onConflictDoNothing();
+    }
     if (claimed.workType === "base_artist") {
       const target = Math.max(1, state.cycleTargetArtists);
       const slotMs = spotifySchedulerWindowMs / target;
@@ -534,6 +599,8 @@ export async function getSpotifySchedulerStatus(
   const state = await db.query.spotifySchedulerState.findFirst({
     where: eq(spotifySchedulerState.id, spotifySchedulerStateId),
   });
+  const limits = schedulerLimits(state?.effectiveConfiguration);
+  const localDay = spotifySchedulerLocalDayWindow(now);
   const provider = await db.query.spotifyProviderState.findFirst({
     where: eq(spotifyProviderState.id, "global"),
   });
@@ -547,6 +614,10 @@ export async function getSpotifySchedulerStatus(
     })
     .from(spotifyRequestEvents)
     .where(gt(spotifyRequestEvents.startedAt, new Date(now.getTime() - spotifySchedulerWindowMs)));
+  const [broadArtistsUsed, broadRequestsUsed] = await Promise.all([
+    countBroadSpotifyArtists(db, localDay.localDate),
+    countBroadSpotifyRequests(db, localDay.start, localDay.end),
+  ]);
   const last30 = requests.filter(
     (request) => request.startedAt > new Date(now.getTime() - 30 * 60_000),
   );
@@ -602,6 +673,9 @@ export async function getSpotifySchedulerStatus(
     applePriorityCount: work.filter(
       (item) => item.source === "apple_priority" && ["queued", "leased"].includes(item.status),
     ).length,
+    appleCatchupPriorityCount: work.filter(
+      (item) => item.source === "apple_catchup" && ["queued", "leased"].includes(item.status),
+    ).length,
     backlog: {
       artist_reconciliation: work.filter(
         (item) => item.workType === "artist_reconciliation" && item.status === "queued",
@@ -624,6 +698,15 @@ export async function getSpotifySchedulerStatus(
     ].sort(),
     cooldownActive,
     cooldownUntil: provider?.cooldownUntil ?? null,
+    dailyBudget: {
+      broadArtistsLimit: limits.maxBroadArtistsPerLocalDay,
+      broadArtistsUsed,
+      broadRequestsLimit: limits.maxBroadRequestsPerLocalDay,
+      broadRequestsUsed,
+      localDate: localDay.localDate,
+      playlistRequestReserve: limits.playlistRequestReserve,
+      priorityRequestReserve: limits.priorityRequestReserve,
+    },
     dueArtistCount: dueBase.length,
     eligibleArtistCount: eligible.length,
     estimatedCompletion: {
@@ -675,16 +758,22 @@ async function selectSpotifySchedulerCandidate(
     return null;
   }
   const baseSlotOpen = !state?.nextBaseSlotAt || state.nextBaseSlotAt <= now;
+  const broadDay = isBroadSpotifyDay(spotifySchedulerLocalDayWindow(now).weekday);
   const conditions = [
     eq(spotifySchedulerWork.status, "queued"),
     lte(spotifySchedulerWork.dueAt, now),
     or(isNull(spotifySchedulerWork.notBefore), lte(spotifySchedulerWork.notBefore, now)),
     mode === "validation" ? eq(spotifySchedulerWork.source, "validation") : undefined,
+    broadDay
+      ? undefined
+      : inArray(spotifySchedulerWork.source, ["apple_priority", "apple_catchup", "validation"]),
     discoveryState?.phase === "apple_priority"
       ? eq(spotifySchedulerWork.source, "apple_priority")
-      : discoveryState?.phase === "broad_spotify"
-        ? sql`${spotifySchedulerWork.source} <> 'apple_priority'`
-        : undefined,
+      : discoveryState?.phase === "apple_catchup_priority"
+        ? eq(spotifySchedulerWork.source, "apple_catchup")
+        : discoveryState?.phase === "broad_spotify"
+          ? notInArray(spotifySchedulerWork.source, ["apple_priority", "apple_catchup"])
+          : undefined,
     baseSlotOpen ? undefined : sql`${spotifySchedulerWork.workType} <> 'base_artist'`,
   ].filter((condition) => condition !== undefined);
   let query = db
@@ -697,11 +786,15 @@ async function selectSpotifySchedulerCandidate(
           when ${spotifySchedulerWork.source} = 'apple_priority' and ${spotifySchedulerWork.workType} = 'release_tracks' then 0
           when ${spotifySchedulerWork.source} = 'apple_priority' and ${spotifySchedulerWork.workType} = 'release_detail' then 1
           when ${spotifySchedulerWork.source} = 'apple_priority' then 2
-          when ${spotifySchedulerWork.workType} = 'base_artist' and ${baseSlotOpen} then 3
-          when ${spotifySchedulerWork.workType} = 'release_tracks' then 4
-          when ${spotifySchedulerWork.workType} = 'release_detail' then 5
-          when ${spotifySchedulerWork.workType} = 'base_artist' then 6
-          else 7 end`,
+          when ${spotifySchedulerWork.source} = 'apple_catchup' and ${spotifySchedulerWork.workType} = 'release_tracks' then 3
+          when ${spotifySchedulerWork.source} = 'apple_catchup' and ${spotifySchedulerWork.workType} = 'release_detail' then 4
+          when ${spotifySchedulerWork.source} = 'apple_catchup' then 5
+          when ${spotifySchedulerWork.source} = 'initial' and ${spotifySchedulerWork.workType} = 'base_artist' and ${baseSlotOpen} then 6
+          when ${spotifySchedulerWork.source} = 'recurring' and ${spotifySchedulerWork.workType} = 'base_artist' and ${baseSlotOpen} then 7
+          when ${spotifySchedulerWork.workType} = 'release_tracks' and ${spotifySchedulerWork.source} <> 'repair' then 8
+          when ${spotifySchedulerWork.workType} = 'release_detail' and ${spotifySchedulerWork.source} <> 'repair' then 9
+          when ${spotifySchedulerWork.workType} = 'base_artist' then 10
+          else 11 end`,
       ),
       asc(spotifySchedulerWork.dueAt),
       asc(spotifySchedulerWork.priority),
@@ -712,23 +805,6 @@ async function selectSpotifySchedulerCandidate(
   if (lock) query = query.for("update", { skipLocked: true }) as typeof query;
   const [row] = await query;
   if (!row) return null;
-  if (row.workType === "artist_reconciliation" && row.source !== "apple_priority") {
-    const urgent = await db
-      .select({ count: count() })
-      .from(spotifySchedulerWork)
-      .where(
-        and(
-          eq(spotifySchedulerWork.status, "queued"),
-          inArray(spotifySchedulerWork.workType, [
-            "base_artist",
-            "release_detail",
-            "release_tracks",
-          ]),
-          lte(spotifySchedulerWork.dueAt, now),
-        ),
-      );
-    if ((urgent[0]?.count ?? 0) > 0) return null;
-  }
   return toClaim({
     ...row,
     leaseExpiresAt: row.leaseExpiresAt ?? new Date(0),
@@ -779,6 +855,123 @@ async function countSpotifyRequests(db: SchedulerDatabase, since: Date): Promise
   return rows[0]?.count ?? 0;
 }
 
+async function countBroadSpotifyRequests(
+  db: SchedulerDatabase,
+  start: Date,
+  end: Date,
+): Promise<number> {
+  const rows = await db
+    .select({ count: count() })
+    .from(spotifyRequestEvents)
+    .innerJoin(
+      spotifySchedulerWork,
+      eq(spotifySchedulerWork.id, spotifyRequestEvents.schedulerWorkId),
+    )
+    .where(
+      and(
+        gte(spotifyRequestEvents.startedAt, start),
+        lt(spotifyRequestEvents.startedAt, end),
+        inArray(spotifySchedulerWork.source, ["initial", "recurring", "repair"]),
+      ),
+    );
+  return rows[0]?.count ?? 0;
+}
+
+async function countBroadSpotifyArtists(db: SchedulerDatabase, localDate: string): Promise<number> {
+  const rows = await db
+    .select({ count: count() })
+    .from(spotifySchedulerDailyArtists)
+    .where(eq(spotifySchedulerDailyArtists.localDate, localDate));
+  return rows[0]?.count ?? 0;
+}
+
+async function hasBroadArtistStarted(
+  db: SchedulerDatabase,
+  localDate: string,
+  artistId: string,
+): Promise<boolean> {
+  const rows = await db
+    .select({ artistId: spotifySchedulerDailyArtists.artistId })
+    .from(spotifySchedulerDailyArtists)
+    .where(
+      and(
+        eq(spotifySchedulerDailyArtists.localDate, localDate),
+        eq(spotifySchedulerDailyArtists.artistId, artistId),
+      ),
+    )
+    .limit(1);
+  return rows.length === 1;
+}
+
+function isBroadSpotifyWork(source: SpotifySchedulerClaim["source"]): boolean {
+  return ["initial", "recurring", "repair"].includes(source);
+}
+
+function isBroadSpotifyDay(weekday: number): boolean {
+  return weekday !== 4 && weekday !== 5;
+}
+
+function spotifySchedulerLocalDayWindow(now: Date) {
+  const parts = zonedDateParts(now, "America/Los_Angeles");
+  const startLocal = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  const endLocal = new Date(startLocal);
+  endLocal.setUTCDate(endLocal.getUTCDate() + 1);
+  return {
+    end: localTimeToUtc(endLocal, "America/Los_Angeles"),
+    localDate: `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`,
+    start: localTimeToUtc(startLocal, "America/Los_Angeles"),
+    weekday: parts.weekday,
+  };
+}
+
+function zonedDateParts(date: Date, timezone: string) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    day: "numeric",
+    month: "numeric",
+    timeZone: timezone,
+    weekday: "short",
+    year: "numeric",
+  });
+  const values = Object.fromEntries(
+    formatter.formatToParts(date).map((part) => [part.type, part.value]),
+  );
+  return {
+    day: Number(values.day),
+    month: Number(values.month),
+    weekday: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(values.weekday ?? ""),
+    year: Number(values.year),
+  };
+}
+
+function localTimeToUtc(localAsUtc: Date, timezone: string): Date {
+  let guess = new Date(localAsUtc);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      day: "2-digit",
+      hour: "2-digit",
+      hour12: false,
+      minute: "2-digit",
+      month: "2-digit",
+      second: "2-digit",
+      timeZone: timezone,
+      year: "numeric",
+    });
+    const values = Object.fromEntries(
+      formatter.formatToParts(guess).map((part) => [part.type, part.value]),
+    );
+    const represented = Date.UTC(
+      Number(values.year),
+      Number(values.month) - 1,
+      Number(values.day),
+      Number(values.hour) % 24,
+      Number(values.minute),
+      Number(values.second),
+    );
+    guess = new Date(guess.getTime() + localAsUtc.getTime() - represented);
+  }
+  return guess;
+}
+
 function toClaim(row: typeof spotifySchedulerWork.$inferSelect): SpotifySchedulerClaim {
   if (!row.leaseExpiresAt) throw new Error("Scheduler claim is missing a lease expiration.");
   return {
@@ -806,17 +999,15 @@ async function advanceDiscoverySchedulePhaseIfDrained(
   const state = await db.query.discoveryScheduleState.findFirst({
     where: eq(discoveryScheduleState.id, "global"),
   });
-  if (state?.phase !== "apple_priority") return;
+  if (!state || !["apple_priority", "apple_catchup_priority"].includes(state.phase)) return;
+  const activeSource =
+    state.phase === "apple_catchup_priority" ? "apple_catchup" : "apple_priority";
   const active = await db
     .select({ count: count() })
     .from(spotifySchedulerWork)
     .where(
       and(
-        eq(spotifySchedulerWork.source, "apple_priority"),
-        eq(
-          spotifySchedulerWork.discoveryReconciliationCampaignId,
-          state.activeCampaignId ?? "00000000-0000-0000-0000-000000000000",
-        ),
+        eq(spotifySchedulerWork.source, activeSource),
         inArray(spotifySchedulerWork.status, ["queued", "leased"]),
       ),
     );
@@ -828,10 +1019,72 @@ async function advanceDiscoverySchedulePhaseIfDrained(
       .where(eq(discoveryScheduleState.id, "global"));
     return;
   }
+  const remaining = await db
+    .select({ count: count() })
+    .from(spotifySchedulerWork)
+    .where(
+      and(
+        inArray(spotifySchedulerWork.source, ["apple_priority", "apple_catchup"]),
+        inArray(spotifySchedulerWork.status, ["queued", "leased"]),
+      ),
+    );
   await db
     .update(discoveryScheduleState)
-    .set({ applePriorityQueuedCount: 0, phase: "broad_spotify", updatedAt: now })
+    .set({
+      applePriorityQueuedCount: remaining[0]?.count ?? 0,
+      phase: "playlist_inbox",
+      playlistInboxStatus: "ready",
+      updatedAt: now,
+    })
     .where(eq(discoveryScheduleState.id, "global"));
+}
+
+async function resumeDiscoveryScheduleAfterCooldown(
+  db: SchedulerDatabase,
+  now: Date,
+): Promise<void> {
+  const state = await db.query.discoveryScheduleState.findFirst({
+    where: eq(discoveryScheduleState.id, "global"),
+  });
+  if (state?.phase !== "cooldown_wait") return;
+  const [fullPriority, catchupPriority] = await Promise.all([
+    countActivePrioritySource(db, "apple_priority"),
+    countActivePrioritySource(db, "apple_catchup"),
+  ]);
+  const playlistPending = ["ready", "exporting", "partial", "failed"].includes(
+    state.playlistInboxStatus,
+  );
+  const phase = playlistPending
+    ? "playlist_inbox"
+    : fullPriority > 0
+      ? "apple_priority"
+      : catchupPriority > 0
+        ? "apple_catchup_priority"
+        : "broad_spotify";
+  await db
+    .update(discoveryScheduleState)
+    .set({
+      applePriorityQueuedCount: fullPriority + catchupPriority,
+      phase,
+      updatedAt: now,
+    })
+    .where(eq(discoveryScheduleState.id, "global"));
+}
+
+async function countActivePrioritySource(
+  db: SchedulerDatabase,
+  source: "apple_priority" | "apple_catchup",
+): Promise<number> {
+  const rows = await db
+    .select({ count: count() })
+    .from(spotifySchedulerWork)
+    .where(
+      and(
+        eq(spotifySchedulerWork.source, source),
+        inArray(spotifySchedulerWork.status, ["queued", "leased"]),
+      ),
+    );
+  return rows[0]?.count ?? 0;
 }
 
 function retryDelay(attemptCount: number): number {
@@ -842,12 +1095,16 @@ function retryDelay(attemptCount: number): number {
 
 export function defaultSchedulerLimits(): SpotifySchedulerLimits {
   return {
+    maxBroadArtistsPerLocalDay: 75,
+    maxBroadRequestsPerLocalDay: 300,
     maxArtistsPerTick: 1,
     maxRequestsPerTick: 6,
     maxRuntimeMs: 90_000,
     minRequestIntervalMs: 10_000,
     rolling24HourLimit: 1_200,
     rolling30MinuteLimit: 30,
+    playlistRequestReserve: 20,
+    priorityRequestReserve: 200,
     windowHours: 24,
   };
 }
@@ -873,12 +1130,16 @@ function schedulerLimits(value: unknown): SpotifySchedulerLimits {
   if (!value || typeof value !== "object") return defaultSchedulerLimits();
   const limits = value as Partial<SpotifySchedulerLimits>;
   return {
+    maxBroadArtistsPerLocalDay: boundedInteger(limits.maxBroadArtistsPerLocalDay, 1, 75, 75),
+    maxBroadRequestsPerLocalDay: boundedInteger(limits.maxBroadRequestsPerLocalDay, 1, 1_000, 300),
     maxArtistsPerTick: 1,
     maxRequestsPerTick: boundedInteger(limits.maxRequestsPerTick, 1, 6, 6),
     maxRuntimeMs: boundedInteger(limits.maxRuntimeMs, 10_000, 90_000, 90_000),
     minRequestIntervalMs: boundedInteger(limits.minRequestIntervalMs, 10_000, 300_000, 10_000),
     rolling24HourLimit: boundedInteger(limits.rolling24HourLimit, 593, 10_000, 1_200),
     rolling30MinuteLimit: boundedInteger(limits.rolling30MinuteLimit, 1, 1_000, 30),
+    playlistRequestReserve: boundedInteger(limits.playlistRequestReserve, 1, 100, 20),
+    priorityRequestReserve: boundedInteger(limits.priorityRequestReserve, 1, 1_000, 200),
     windowHours: 24,
   };
 }

@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import { eq, inArray, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createDatabase, type RadarDatabase } from "./client";
+import { markDiscoveryPlaylistInboxStatus } from "./discovery-schedule";
 import {
   claimSpotifySchedulerWork,
+  defaultSchedulerLimits,
   finishSpotifySchedulerWork,
   getSpotifySchedulerStatus,
   planSpotifySchedulerTick,
@@ -22,6 +24,7 @@ import {
   spotifyCatalogReleases,
   spotifyReleaseTrackRetrievals,
   spotifyRequestEvents,
+  spotifySchedulerDailyArtists,
   spotifySchedulerState,
   spotifySchedulerWork,
   users,
@@ -50,6 +53,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.delete(discoveryScheduleState);
+  await db.delete(spotifySchedulerDailyArtists);
   await db.delete(spotifySchedulerWork);
   await db.delete(discoveryReconciliationCampaigns);
   await db.delete(spotifyRequestEvents);
@@ -76,7 +80,7 @@ afterAll(async () => {
 });
 
 describe("Spotify rolling scheduler persistence", () => {
-  it("initializes idempotently, staggers never-scanned artists, and excludes ineligible artists", async () => {
+  it("initializes idempotently, prioritizes never-scanned artists, and excludes ineligible artists", async () => {
     const now = new Date("2026-07-22T12:00:00.000Z");
     const eligible = await createArtist("Eligible", true, true);
     const inactive = await createArtist("Inactive", false, true);
@@ -101,10 +105,8 @@ describe("Spotify rolling scheduler persistence", () => {
       where: eq(spotifySchedulerWork.workType, "base_artist"),
       orderBy: (table, { asc }) => [asc(table.dueAt)],
     });
-    expect(refreshed.map((item) => item.artistId)).toEqual([eligible, added]);
-    expect(refreshed[1]!.dueAt.getTime() - refreshed[0]!.dueAt.getTime()).toBeGreaterThanOrEqual(
-      spotifySchedulerWindowMs / 2 - 1_000,
-    );
+    expect(new Set(refreshed.map((item) => item.artistId))).toEqual(new Set([eligible, added]));
+    expect(refreshed.every((item) => item.source === "initial" && item.priority === 0)).toBe(true);
   });
 
   it("claims the most overdue work deterministically and recovers only expired leases", async () => {
@@ -231,10 +233,85 @@ describe("Spotify rolling scheduler persistence", () => {
     expect(work[0]!.dueAt).toEqual(new Date(now.getTime() + spotifySchedulerWindowMs));
   });
 
-  it("blocks broad work until the playlist inbox and Apple-priority queue are drained", async () => {
+  it("blocks broad Spotify work on Thursday and Friday while allowing Apple priority", async () => {
+    const thursday = new Date("2026-08-13T19:00:00.000Z");
+    const broadArtist = await createArtist("Thursday broad", true, true);
+    const priorityArtist = await createArtist("Thursday priority", true, true);
+    await reconcileSpotifySchedulerWork(db, thursday);
+    await setSpotifySchedulerMode(db, "automatic", thursday);
+
+    expect(await claimSpotifySchedulerWork(db, thursday)).toBeNull();
+    await db.insert(spotifySchedulerWork).values({
+      artistId: priorityArtist,
+      dueAt: thursday,
+      expectedSpotifyArtistId: `spotify-${priorityArtist}`,
+      priority: -100,
+      source: "apple_priority",
+      workKey: `thursday-priority:${priorityArtist}`,
+      workType: "artist_reconciliation",
+    });
+    const claim = await claimSpotifySchedulerWork(db, thursday);
+    expect(claim).toMatchObject({ artistId: priorityArtist, source: "apple_priority" });
+    expect(claim?.artistId).not.toBe(broadArtist);
+  });
+
+  it("enforces separate local-day broad artist and request ceilings", async () => {
+    const saturday = new Date("2026-08-15T19:00:00.000Z");
+    await createArtist("Saturday first", true, true);
+    await createArtist("Saturday second", true, true);
+    await reconcileSpotifySchedulerWork(db, saturday);
+    await db
+      .update(spotifySchedulerState)
+      .set({
+        effectiveConfiguration: {
+          ...defaultSchedulerLimits(),
+          maxBroadArtistsPerLocalDay: 1,
+          maxBroadRequestsPerLocalDay: 6,
+        },
+        mode: "automatic",
+        nextBaseSlotAt: null,
+      })
+      .where(eq(spotifySchedulerState.id, "global"));
+    const first = await claimSpotifySchedulerWork(db, saturday);
+    expect(first?.workType).toBe("base_artist");
+    await finishSpotifySchedulerWork(db, first!, { status: "completed" }, saturday);
+    await db
+      .update(spotifySchedulerState)
+      .set({ nextBaseSlotAt: null })
+      .where(eq(spotifySchedulerState.id, "global"));
+    expect(await claimSpotifySchedulerWork(db, new Date(saturday.getTime() + 1))).toBeNull();
+
+    const status = await getSpotifySchedulerStatus(db, saturday);
+    expect(status.dailyBudget).toMatchObject({
+      broadArtistsLimit: 1,
+      broadArtistsUsed: 1,
+      broadRequestsLimit: 6,
+      broadRequestsUsed: 0,
+      localDate: "2026-08-15",
+    });
+
+    await db.insert(spotifyRequestEvents).values(
+      Array.from({ length: 6 }, (_, index) => ({
+        endpointCategory: "artist_albums",
+        method: "GET",
+        schedulerWorkId: first!.id,
+        schedulerWorkType: "base_artist" as const,
+        startedAt: new Date(saturday.getTime() + index * 10_000),
+        status: 200,
+      })),
+    );
+    const requestLimited = await getSpotifySchedulerStatus(
+      db,
+      new Date(saturday.getTime() + 60_000),
+    );
+    expect(requestLimited.dailyBudget.broadRequestsUsed).toBe(6);
+  });
+
+  it("checkpoints playlist export between full, catch-up, and broad Spotify work", async () => {
     const now = new Date("2026-07-22T18:00:00.000Z");
     const broadArtist = await createArtist("Broad", true, true);
     const priorityArtist = await createArtist("Apple priority", true, true);
+    const catchupArtist = await createArtist("Apple catch-up", true, true);
     const campaignId = randomUUID();
     await reconcileSpotifySchedulerWork(db, now);
     await db.insert(discoveryReconciliationCampaigns).values({
@@ -251,7 +328,7 @@ describe("Spotify rolling scheduler persistence", () => {
     });
     await db.insert(discoveryScheduleState).values({
       activeCampaignId: campaignId,
-      applePriorityQueuedCount: 1,
+      applePriorityQueuedCount: 2,
       broadSpotifyQueuedCount: 1,
       id: "global",
       phase: "playlist_inbox",
@@ -259,12 +336,20 @@ describe("Spotify rolling scheduler persistence", () => {
     });
     await db.insert(spotifySchedulerWork).values({
       artistId: priorityArtist,
-      discoveryReconciliationCampaignId: campaignId,
       dueAt: now,
       expectedSpotifyArtistId: `spotify-${priorityArtist}`,
       priority: -100,
       source: "apple_priority",
       workKey: `priority:${priorityArtist}`,
+      workType: "artist_reconciliation",
+    });
+    await db.insert(spotifySchedulerWork).values({
+      artistId: catchupArtist,
+      dueAt: now,
+      expectedSpotifyArtistId: `spotify-${catchupArtist}`,
+      priority: -80,
+      source: "apple_catchup",
+      workKey: `catchup:${catchupArtist}`,
       workType: "artist_reconciliation",
     });
     await db
@@ -282,13 +367,48 @@ describe("Spotify rolling scheduler persistence", () => {
     expect(priority).toMatchObject({ artistId: priorityArtist, source: "apple_priority" });
     await finishSpotifySchedulerWork(db, priority!, { status: "completed" }, now);
 
-    const broad = await claimSpotifySchedulerWork(db, new Date(now.getTime() + 1));
+    expect(await claimSpotifySchedulerWork(db, new Date(now.getTime() + 1))).toBeNull();
+    expect(
+      await db.query.discoveryScheduleState.findFirst({
+        where: eq(discoveryScheduleState.id, "global"),
+      }),
+    ).toMatchObject({ phase: "playlist_inbox", playlistInboxStatus: "ready" });
+    await markDiscoveryPlaylistInboxStatus(
+      db,
+      { status: "completed" },
+      new Date(now.getTime() + 2),
+    );
+    expect(
+      await db.query.discoveryScheduleState.findFirst({
+        where: eq(discoveryScheduleState.id, "global"),
+      }),
+    ).toMatchObject({ phase: "apple_catchup_priority" });
+    const catchup = await claimSpotifySchedulerWork(db, new Date(now.getTime() + 3));
+    expect(catchup).toMatchObject({ artistId: catchupArtist, source: "apple_catchup" });
+    await finishSpotifySchedulerWork(
+      db,
+      catchup!,
+      { status: "completed" },
+      new Date(now.getTime() + 3),
+    );
+    expect(await claimSpotifySchedulerWork(db, new Date(now.getTime() + 4))).toBeNull();
+    expect(
+      await db.query.discoveryScheduleState.findFirst({
+        where: eq(discoveryScheduleState.id, "global"),
+      }),
+    ).toMatchObject({ phase: "playlist_inbox", playlistInboxStatus: "ready" });
+    await markDiscoveryPlaylistInboxStatus(
+      db,
+      { status: "completed" },
+      new Date(now.getTime() + 5),
+    );
+    const broad = await claimSpotifySchedulerWork(db, new Date(now.getTime() + 6));
     expect(broad).toMatchObject({ workType: "base_artist" });
     await finishSpotifySchedulerWork(
       db,
       broad!,
       { status: "completed" },
-      new Date(now.getTime() + 1),
+      new Date(now.getTime() + 6),
     );
     expect(
       await db.query.spotifySchedulerWork.findFirst({
@@ -302,9 +422,38 @@ describe("Spotify rolling scheduler persistence", () => {
     ).toMatchObject({ phase: "broad_spotify" });
   });
 
-  it("simulates 593 artists across a rolling day without starving base work", async () => {
-    const now = new Date("2026-07-23T00:00:00.000Z");
-    const artistRows = Array.from({ length: 593 }, (_, index) => ({
+  it("restores the playlist checkpoint after a persisted cooldown expires", async () => {
+    const now = new Date("2026-08-08T19:00:00.000Z");
+    const priorityArtist = await createArtist("Cooldown priority", true, true);
+    await reconcileSpotifySchedulerWork(db, now);
+    await db.insert(discoveryScheduleState).values({
+      applePriorityQueuedCount: 1,
+      id: "global",
+      phase: "cooldown_wait",
+      playlistInboxStatus: "ready",
+    });
+    await db.insert(spotifySchedulerWork).values({
+      artistId: priorityArtist,
+      dueAt: now,
+      expectedSpotifyArtistId: `spotify-${priorityArtist}`,
+      priority: -100,
+      source: "apple_priority",
+      workKey: `cooldown-priority:${priorityArtist}`,
+      workType: "artist_reconciliation",
+    });
+    await setSpotifySchedulerMode(db, "automatic", now);
+
+    expect(await claimSpotifySchedulerWork(db, now)).toBeNull();
+    expect(
+      await db.query.discoveryScheduleState.findFirst({
+        where: eq(discoveryScheduleState.id, "global"),
+      }),
+    ).toMatchObject({ phase: "playlist_inbox", playlistInboxStatus: "ready" });
+  });
+
+  it("caps a large backlog at 75 broad artists per local day without starving detail work", async () => {
+    const now = new Date("2026-07-25T07:00:00.000Z");
+    const artistRows = Array.from({ length: 80 }, (_, index) => ({
       id: randomUUID(),
       name: `Scale artist ${index}`,
       normalizedName: `scale-artist-${index}-${randomUUID()}`,
@@ -379,8 +528,8 @@ describe("Spotify rolling scheduler persistence", () => {
     const allClaims = new Set<string>();
     const requestStarts: number[] = [];
     const workCounts = new Map<string, number>();
-    for (let minute = 0; minute < 24 * 60; minute += 1) {
-      const tickAt = new Date(now.getTime() + minute * 60_000);
+    for (let slot = 0; slot < 144; slot += 1) {
+      const tickAt = new Date(now.getTime() + slot * 10 * 60_000);
       const claim = await claimSpotifySchedulerWork(db, tickAt);
       if (!claim) continue;
       expect(allClaims.has(claim.id)).toBe(false);
@@ -391,15 +540,14 @@ describe("Spotify rolling scheduler persistence", () => {
       await finishSpotifySchedulerWork(db, claim, { status: "completed" }, tickAt);
     }
 
-    expect(baseClaims.size).toBe(593);
+    expect(baseClaims.size).toBe(75);
     expect(workCounts.get("release_detail")).toBe(10);
     expect(workCounts.get("release_tracks")).toBe(10);
-    expect(workCounts.get("artist_reconciliation")).toBeGreaterThan(0);
-    expect(workCounts.get("artist_reconciliation")).toBeLessThan(10);
+    expect(workCounts.get("artist_reconciliation")).toBe(10);
     expect(
       requestStarts.slice(1).every((value, index) => value - requestStarts[index]! >= 10_000),
     ).toBe(true);
-    expect(await db.select().from(spotifySchedulerWork)).toHaveLength(623);
+    expect(await db.select().from(spotifySchedulerWork)).toHaveLength(110);
   }, 120_000);
 });
 

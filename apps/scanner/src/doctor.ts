@@ -329,6 +329,18 @@ export async function collectDoctorReport(
   if (configuration) {
     checks.push(...appleMusicChecks(configuration));
     checks.push(...spotifyChecks(configuration, environment, databaseStatus));
+    checks.push(
+      configuration.discoverySchedulerEnabled
+        ? ready(
+            "Recurring discovery scheduler",
+            "The bounded weekly Apple and Saturday-Wednesday Spotify scheduler is enabled.",
+            false,
+          )
+        : optional(
+            "Recurring discovery scheduler",
+            "Recurring discovery execution is disabled by default.",
+          ),
+    );
     checks.push(...musicBrainzChecks(configuration));
     checks.push(...redditChecks(configuration, environment));
     checks.push(

@@ -1,6 +1,7 @@
 import {
   createDatabase,
   getAppleMusicOperationalStatus,
+  getRecurringDiscoveryScheduleStatus,
   getSpotifyOperationalStatus,
   getSpotifySchedulerStatus,
   latestSpotifyBatch,
@@ -75,6 +76,7 @@ export async function GET(request?: NextRequest): Promise<NextResponse> {
       spotifyScheduler,
       appleMusicOperational,
       appleMusicBatch,
+      discoverySchedule,
     ] = await Promise.all([
       connection.db.select().from(scanRuns).orderBy(desc(scanRuns.startedAt)).limit(20),
       connection.db.query.operationLocks.findFirst({
@@ -106,6 +108,7 @@ export async function GET(request?: NextRequest): Promise<NextResponse> {
       connection.db.query.appleMusicScanBatches.findFirst({
         orderBy: [desc(appleMusicScanBatches.createdAt)],
       }),
+      getRecurringDiscoveryScheduleStatus(connection.db),
     ]);
     const appleMusicArtistRows = appleMusicBatch
       ? await connection.db
@@ -140,6 +143,7 @@ export async function GET(request?: NextRequest): Promise<NextResponse> {
           ? describeActiveScan(activeScanLock, visibleRuns, requestedProviders)
           : null,
         defaultHistoryId: defaultHistory?.id ?? null,
+        discoverySchedule,
         history: visibleHistory,
         historyHasMore: history.hasMore,
         historyNextCursor: history.nextCursor,

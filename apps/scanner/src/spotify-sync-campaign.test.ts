@@ -53,12 +53,16 @@ const status: SpotifySyncCampaignStatusView = {
 };
 
 const limits = {
+  maxBroadArtistsPerLocalDay: 75,
+  maxBroadRequestsPerLocalDay: 300,
   maxArtistsPerTick: 1 as const,
   maxRequestsPerTick: 6,
   maxRuntimeMs: 90_000,
   minRequestIntervalMs: 10_000,
   rolling24HourLimit: 1_200,
   rolling30MinuteLimit: 30,
+  playlistRequestReserve: 20,
+  priorityRequestReserve: 200,
   windowHours: 24 as const,
 };
 

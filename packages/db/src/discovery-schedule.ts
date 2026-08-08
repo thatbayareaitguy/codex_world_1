@@ -1,10 +1,15 @@
-import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import type { RadarDatabase } from "./client";
 import { reconcileSpotifySchedulerWork } from "./spotify-scheduler";
 import {
   discoveryReconciliationArtists,
   discoveryReconciliationCampaigns,
+  discoveryScheduleJobs,
   discoveryScheduleState,
+  appleMusicArtistScans,
+  appleMusicScanBatches,
+  artistExternalIds,
   releaseProviderReconciliations,
   spotifyProviderState,
   spotifySchedulerState,
@@ -13,9 +18,36 @@ import {
 
 export const discoveryScheduleStateId = "global";
 export const discoveryScheduleTimezone = "America/Los_Angeles";
+export const discoveryAppleFullWeekday = 4;
+export const discoveryAppleFullHour = 21;
+export const discoveryAppleCatchupWeekday = 5;
+export const discoveryAppleCatchupHour = 9;
+export const discoveryAppleRecoveryWindowMs = 24 * 60 * 60_000;
+export const discoveryAppleJobLeaseMs = 3 * 60 * 60_000;
+
+export type DiscoveryAppleJobType = "apple_full" | "apple_catchup";
+export type DiscoveryAppleJobStatus = "scheduled" | "leased" | "completed" | "failed" | "expired";
+
+export interface DiscoveryAppleJobClaim {
+  id: string;
+  jobKey: string;
+  jobType: DiscoveryAppleJobType;
+  leaseExpiresAt: Date;
+  leaseOwner: string;
+  recoveryDeadline: Date;
+  scheduledFor: Date;
+}
+
+type DiscoveryScheduleTransaction = Parameters<Parameters<RadarDatabase["transaction"]>[0]>[0];
 
 export type DiscoverySchedulePhase =
-  "idle" | "cooldown_wait" | "playlist_inbox" | "apple_priority" | "broad_spotify" | "weekly_apple";
+  | "idle"
+  | "cooldown_wait"
+  | "playlist_inbox"
+  | "apple_priority"
+  | "apple_catchup_priority"
+  | "broad_spotify"
+  | "weekly_apple";
 
 export interface DiscoveryBootstrapTransitionResult {
   applePriorityQueued: number;
@@ -250,17 +282,30 @@ export async function markDiscoveryPlaylistInboxStatus(
   },
   now = new Date(),
 ): Promise<void> {
-  const phase: DiscoverySchedulePhase =
-    input.status === "completed" ? "apple_priority" : "playlist_inbox";
-  await db
-    .update(discoveryScheduleState)
-    .set({
-      phase,
-      playlistInboxExportRunId: input.exportRunId ?? null,
-      playlistInboxStatus: input.status,
-      updatedAt: now,
-    })
-    .where(eq(discoveryScheduleState.id, discoveryScheduleStateId));
+  await db.transaction(async (tx) => {
+    const [fullPriority, catchupPriority] = await Promise.all([
+      countActiveApplePriority(tx, "apple_priority"),
+      countActiveApplePriority(tx, "apple_catchup"),
+    ]);
+    const phase: DiscoverySchedulePhase =
+      input.status !== "completed"
+        ? "playlist_inbox"
+        : fullPriority > 0
+          ? "apple_priority"
+          : catchupPriority > 0
+            ? "apple_catchup_priority"
+            : "broad_spotify";
+    await tx
+      .update(discoveryScheduleState)
+      .set({
+        applePriorityQueuedCount: fullPriority + catchupPriority,
+        phase,
+        playlistInboxExportRunId: input.exportRunId ?? null,
+        playlistInboxStatus: input.status,
+        updatedAt: now,
+      })
+      .where(eq(discoveryScheduleState.id, discoveryScheduleStateId));
+  });
 }
 
 export async function prepareDiscoveryPlaylistInboxExport(
@@ -349,11 +394,382 @@ export async function activateDiscoverySpotifyPriorityScheduler(
   });
 }
 
+export async function reconcileDiscoveryScheduleJobs(
+  db: RadarDatabase,
+  now = new Date(),
+): Promise<void> {
+  const state = await db.query.discoveryScheduleState.findFirst({
+    where: eq(discoveryScheduleState.id, discoveryScheduleStateId),
+  });
+  const definitions: Array<{ hour: number; jobType: DiscoveryAppleJobType; weekday: number }> = [
+    { hour: discoveryAppleFullHour, jobType: "apple_full", weekday: discoveryAppleFullWeekday },
+    {
+      hour: discoveryAppleCatchupHour,
+      jobType: "apple_catchup",
+      weekday: discoveryAppleCatchupWeekday,
+    },
+  ];
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(discoveryScheduleJobs)
+      .set({
+        leaseExpiresAt: null,
+        leaseOwner: null,
+        status: sql`case when ${discoveryScheduleJobs.recoveryDeadline} >= ${now.toISOString()}::timestamptz then 'scheduled'::discovery_schedule_job_status else 'expired'::discovery_schedule_job_status end`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(discoveryScheduleJobs.status, "leased"),
+          lte(discoveryScheduleJobs.leaseExpiresAt, now),
+        ),
+      );
+    await tx
+      .update(discoveryScheduleJobs)
+      .set({ status: "expired", updatedAt: now })
+      .where(
+        and(
+          eq(discoveryScheduleJobs.status, "scheduled"),
+          lte(discoveryScheduleJobs.recoveryDeadline, now),
+        ),
+      );
+
+    for (const definition of definitions) {
+      const occurrence = weeklyOccurrenceAround(now, definition.weekday, definition.hour);
+      for (const scheduledFor of [occurrence.previous, occurrence.next]) {
+        const recoveryDeadline = new Date(scheduledFor.getTime() + discoveryAppleRecoveryWindowMs);
+        const completedByBootstrap =
+          definition.jobType === "apple_full" &&
+          state?.lastAppleScanCompletedAt &&
+          state.lastAppleScanCompletedAt >= scheduledFor &&
+          state.lastAppleScanCompletedAt < occurrence.next;
+        const status: DiscoveryAppleJobStatus = completedByBootstrap
+          ? "completed"
+          : recoveryDeadline <= now
+            ? "expired"
+            : "scheduled";
+        await tx
+          .insert(discoveryScheduleJobs)
+          .values({
+            ...(completedByBootstrap
+              ? {
+                  completedAt: state.lastAppleScanCompletedAt,
+                }
+              : {}),
+            jobKey: discoveryAppleJobKey(definition.jobType, scheduledFor),
+            jobType: definition.jobType,
+            recoveryDeadline,
+            scheduledFor,
+            status,
+          })
+          .onConflictDoNothing();
+      }
+    }
+
+    const nextFull = weeklyOccurrenceAround(
+      now,
+      discoveryAppleFullWeekday,
+      discoveryAppleFullHour,
+    ).next;
+    await tx
+      .insert(discoveryScheduleState)
+      .values({
+        id: discoveryScheduleStateId,
+        nextAppleScanAt: nextFull,
+        phase: "idle",
+      })
+      .onConflictDoUpdate({
+        target: discoveryScheduleState.id,
+        set: { nextAppleScanAt: nextFull, updatedAt: now },
+      });
+  });
+}
+
+export async function claimDiscoveryScheduleAppleJob(
+  db: RadarDatabase,
+  now = new Date(),
+): Promise<DiscoveryAppleJobClaim | null> {
+  await reconcileDiscoveryScheduleJobs(db, now);
+  return db.transaction(async (tx) => {
+    let query = tx
+      .select()
+      .from(discoveryScheduleJobs)
+      .where(
+        and(
+          eq(discoveryScheduleJobs.status, "scheduled"),
+          lte(discoveryScheduleJobs.scheduledFor, now),
+          gte(discoveryScheduleJobs.recoveryDeadline, now),
+        ),
+      )
+      .orderBy(asc(discoveryScheduleJobs.scheduledFor), asc(discoveryScheduleJobs.id))
+      .limit(1);
+    query = query.for("update", { skipLocked: true }) as typeof query;
+    const [job] = await query;
+    if (!job) return null;
+    const leaseOwner = randomUUID();
+    const leaseExpiresAt = new Date(now.getTime() + discoveryAppleJobLeaseMs);
+    const [claimed] = await tx
+      .update(discoveryScheduleJobs)
+      .set({
+        errorClassification: null,
+        leaseExpiresAt,
+        leaseOwner,
+        startedAt: now,
+        status: "leased",
+        updatedAt: now,
+      })
+      .where(
+        and(eq(discoveryScheduleJobs.id, job.id), eq(discoveryScheduleJobs.status, "scheduled")),
+      )
+      .returning();
+    if (!claimed?.leaseOwner || !claimed.leaseExpiresAt) return null;
+    await tx
+      .update(discoveryScheduleState)
+      .set({ phase: "weekly_apple", updatedAt: now })
+      .where(eq(discoveryScheduleState.id, discoveryScheduleStateId));
+    return {
+      id: claimed.id,
+      jobKey: claimed.jobKey,
+      jobType: claimed.jobType,
+      leaseExpiresAt: claimed.leaseExpiresAt,
+      leaseOwner: claimed.leaseOwner,
+      recoveryDeadline: claimed.recoveryDeadline,
+      scheduledFor: claimed.scheduledFor,
+    };
+  });
+}
+
+export async function finishDiscoveryScheduleAppleJob(
+  db: RadarDatabase,
+  claim: DiscoveryAppleJobClaim,
+  input:
+    | { appleMusicBatchId: string; scanRunId?: string | null; status: "completed" }
+    | { errorClassification: string; status: "failed" },
+  now = new Date(),
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(discoveryScheduleJobs)
+      .set({
+        ...(input.status === "completed"
+          ? {
+              appleMusicBatchId: input.appleMusicBatchId,
+              completedAt: now,
+              errorClassification: null,
+              scanRunId: input.scanRunId ?? null,
+            }
+          : { errorClassification: input.errorClassification.slice(0, 100) }),
+        leaseExpiresAt: null,
+        leaseOwner: null,
+        status: input.status,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(discoveryScheduleJobs.id, claim.id),
+          eq(discoveryScheduleJobs.status, "leased"),
+          eq(discoveryScheduleJobs.leaseOwner, claim.leaseOwner),
+        ),
+      )
+      .returning({ id: discoveryScheduleJobs.id });
+    if (!updated) return false;
+
+    if (input.status === "completed") {
+      await queueAppleBatchSpotifyPriority(tx, {
+        batchId: input.appleMusicBatchId,
+        jobId: claim.id,
+        source: claim.jobType === "apple_catchup" ? "apple_catchup" : "apple_priority",
+        now,
+      });
+    }
+    const [fullPriority, catchupPriority, scheduleState, providerState] = await Promise.all([
+      countActiveApplePriority(tx, "apple_priority"),
+      countActiveApplePriority(tx, "apple_catchup"),
+      tx.query.discoveryScheduleState.findFirst({
+        where: eq(discoveryScheduleState.id, discoveryScheduleStateId),
+      }),
+      tx.query.spotifyProviderState.findFirst({
+        where: eq(spotifyProviderState.id, "global"),
+      }),
+    ]);
+    const priorityActive = fullPriority + catchupPriority;
+    const cooldownActive = Boolean(
+      providerState?.cooldownIndefinite ||
+      (providerState?.cooldownUntil && providerState.cooldownUntil > now),
+    );
+    const playlistPending =
+      scheduleState &&
+      ["ready", "exporting", "partial", "failed"].includes(scheduleState.playlistInboxStatus);
+    const phase: DiscoverySchedulePhase = cooldownActive
+      ? "cooldown_wait"
+      : playlistPending
+        ? "playlist_inbox"
+        : fullPriority > 0
+          ? "apple_priority"
+          : catchupPriority > 0
+            ? "apple_catchup_priority"
+            : "broad_spotify";
+    await tx
+      .update(discoveryScheduleState)
+      .set({
+        applePriorityQueuedCount: priorityActive,
+        ...(input.status === "completed" && claim.jobType === "apple_full"
+          ? { lastAppleScanCompletedAt: now }
+          : {}),
+        phase,
+        updatedAt: now,
+      })
+      .where(eq(discoveryScheduleState.id, discoveryScheduleStateId));
+    return true;
+  });
+}
+
+export async function getRecurringDiscoveryScheduleStatus(db: RadarDatabase, now = new Date()) {
+  await reconcileDiscoveryScheduleJobs(db, now);
+  const [state, jobs] = await Promise.all([
+    db.query.discoveryScheduleState.findFirst({
+      where: eq(discoveryScheduleState.id, discoveryScheduleStateId),
+    }),
+    db
+      .select({
+        appleMusicBatchId: discoveryScheduleJobs.appleMusicBatchId,
+        completedAt: discoveryScheduleJobs.completedAt,
+        errorClassification: discoveryScheduleJobs.errorClassification,
+        jobType: discoveryScheduleJobs.jobType,
+        recoveryDeadline: discoveryScheduleJobs.recoveryDeadline,
+        scheduledFor: discoveryScheduleJobs.scheduledFor,
+        status: discoveryScheduleJobs.status,
+        batchCompletedArtists: appleMusicScanBatches.completedArtists,
+        batchFailedArtists: appleMusicScanBatches.failedArtists,
+        batchTotalArtists: appleMusicScanBatches.totalArtists,
+      })
+      .from(discoveryScheduleJobs)
+      .leftJoin(
+        appleMusicScanBatches,
+        eq(appleMusicScanBatches.id, discoveryScheduleJobs.appleMusicBatchId),
+      )
+      .orderBy(asc(discoveryScheduleJobs.scheduledFor)),
+  ]);
+  const latest = (type: DiscoveryAppleJobType) =>
+    jobs
+      .filter((job) => job.jobType === type && job.scheduledFor <= now)
+      .sort((left, right) => right.scheduledFor.getTime() - left.scheduledFor.getTime())[0] ?? null;
+  const next = (type: DiscoveryAppleJobType) =>
+    jobs
+      .filter((job) => job.jobType === type && job.scheduledFor > now)
+      .sort((left, right) => left.scheduledFor.getTime() - right.scheduledFor.getTime())[0] ?? null;
+  return {
+    catchup: { latest: latest("apple_catchup"), next: next("apple_catchup") },
+    full: { latest: latest("apple_full"), next: next("apple_full") },
+    phase: state ? parseDiscoverySchedulePhase(state.phase) : "idle",
+    timezone: discoveryScheduleTimezone,
+  };
+}
+
 export function nextWeeklyAppleScanAt(now: Date): Date {
+  return weeklyOccurrenceAround(now, discoveryAppleFullWeekday, discoveryAppleFullHour).next;
+}
+
+export function nextAppleCatchupScanAt(now: Date): Date {
+  return weeklyOccurrenceAround(now, discoveryAppleCatchupWeekday, discoveryAppleCatchupHour).next;
+}
+
+async function queueAppleBatchSpotifyPriority(
+  db: DiscoveryScheduleTransaction,
+  input: {
+    batchId: string;
+    jobId: string;
+    now: Date;
+    source: "apple_priority" | "apple_catchup";
+  },
+): Promise<number> {
+  const discoveries = await db
+    .select({
+      artistId: appleMusicArtistScans.artistId,
+      spotifyArtistId: artistExternalIds.externalId,
+    })
+    .from(appleMusicArtistScans)
+    .innerJoin(
+      artistExternalIds,
+      and(
+        eq(artistExternalIds.artistId, appleMusicArtistScans.artistId),
+        eq(artistExternalIds.provider, "spotify"),
+        eq(artistExternalIds.confirmed, true),
+      ),
+    )
+    .where(
+      and(
+        eq(appleMusicArtistScans.batchId, input.batchId),
+        eq(appleMusicArtistScans.status, "completed"),
+        sql`${appleMusicArtistScans.candidateCount} > 0`,
+      ),
+    );
+  let queued = 0;
+  for (const discovery of discoveries) {
+    const inserted = await db
+      .insert(spotifySchedulerWork)
+      .values({
+        artistId: discovery.artistId,
+        dueAt: input.now,
+        expectedSpotifyArtistId: discovery.spotifyArtistId,
+        priority: input.source === "apple_priority" ? -100 : -80,
+        source: input.source,
+        status: "queued",
+        workKey: `${input.source}:${input.jobId}:${discovery.artistId}`,
+        workType: "artist_reconciliation",
+      })
+      .onConflictDoNothing()
+      .returning({ id: spotifySchedulerWork.id });
+    queued += inserted.length;
+  }
+  return queued;
+}
+
+async function countActiveApplePriority(
+  db: DiscoveryScheduleTransaction,
+  source?: "apple_priority" | "apple_catchup",
+): Promise<number> {
+  const rows = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(spotifySchedulerWork)
+    .where(
+      and(
+        source
+          ? eq(spotifySchedulerWork.source, source)
+          : inArray(spotifySchedulerWork.source, ["apple_priority", "apple_catchup"]),
+        inArray(spotifySchedulerWork.status, ["queued", "leased"]),
+      ),
+    );
+  return Number(rows[0]?.count ?? 0);
+}
+
+function discoveryAppleJobKey(jobType: DiscoveryAppleJobType, scheduledFor: Date): string {
+  const parts = zonedParts(scheduledFor, discoveryScheduleTimezone);
+  return `${jobType}:${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
+function weeklyOccurrenceAround(now: Date, weekday: number, hour: number) {
   const parts = zonedParts(now, discoveryScheduleTimezone);
-  const daysUntilThursday = (4 - parts.weekday + 7) % 7 || 7;
-  const target = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + daysUntilThursday, 21));
-  return localTimeToUtc(target, discoveryScheduleTimezone);
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + weekday - parts.weekday));
+  const currentWeekLocal = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), hour),
+  );
+  const currentWeek = localTimeToUtc(currentWeekLocal, discoveryScheduleTimezone);
+  if (currentWeek > now) {
+    const previousLocal = new Date(currentWeekLocal);
+    previousLocal.setUTCDate(previousLocal.getUTCDate() - 7);
+    return {
+      next: currentWeek,
+      previous: localTimeToUtc(previousLocal, discoveryScheduleTimezone),
+    };
+  }
+  const nextLocal = new Date(currentWeekLocal);
+  nextLocal.setUTCDate(nextLocal.getUTCDate() + 7);
+  return {
+    next: localTimeToUtc(nextLocal, discoveryScheduleTimezone),
+    previous: currentWeek,
+  };
 }
 
 function latestDate(left: Date | null, right: Date | null): Date | null {
@@ -368,6 +784,7 @@ function parseDiscoverySchedulePhase(value: string): DiscoverySchedulePhase {
     case "cooldown_wait":
     case "playlist_inbox":
     case "apple_priority":
+    case "apple_catchup_priority":
     case "broad_spotify":
     case "weekly_apple":
       return value;

@@ -488,6 +488,24 @@ integration tests, production build, Playwright, doctor, and `git diff --check` 
 - Decide the preserved Batch 3 treatment from database evidence. Do not delete history.
 - Verify backup and restore, update operations documentation, and create the final checkpoint.
 
+## Approved Recurring Calendar
+
+- Thursday 9:00 PM `America/Los_Angeles`: full mapped-watchlist Apple Music scan.
+- Friday 9:00 AM: bounded Apple Music catch-up scan.
+- Thursday and Friday: no broad Spotify reconciliation.
+- Saturday through Wednesday: broad Spotify rotation after playlist and Apple-priority work.
+- Broad ceiling: 75 distinct artists and 300 request starts per local day.
+- Rolling reserves: 200 Spotify requests for Apple-priority resolution and 20 for add-only playlist
+  operations.
+- Recovery: Apple jobs remain recoverable for 24 hours; missed broad days never accumulate into a
+  burst.
+
+The durable Apple job ledger and Spotify daily-artist ledger survive process and application
+restart. Full-scan Apple priority cannot be displaced by the broad daily target. Its drained queue
+returns to the playlist inbox before Friday catch-up priority can run. Catch-up priority receives
+its own playlist checkpoint before broad rotation, so newly confirmed playable tracks are exported
+in the approved order.
+
 ## Rollback
 
 Set database scheduler mode to `paused` or disable scheduler capability. Disable the external Task

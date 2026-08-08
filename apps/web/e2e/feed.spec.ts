@@ -495,6 +495,51 @@ test("defaults scan history to the meaningful batch and inspects other run types
       json: {
         active: null,
         defaultHistoryId: batchRunId,
+        discoverySchedule: {
+          catchup: {
+            latest: {
+              appleMusicBatchId: null,
+              batchCompletedArtists: null,
+              batchFailedArtists: null,
+              batchTotalArtists: null,
+              completedAt: null,
+              errorClassification: null,
+              jobType: "apple_catchup",
+              recoveryDeadline: "2026-07-25T16:00:00.000Z",
+              scheduledFor: "2026-07-24T16:00:00.000Z",
+              status: "scheduled",
+            },
+            next: null,
+          },
+          full: {
+            latest: {
+              appleMusicBatchId: "77777777-7777-4777-8777-777777777777",
+              batchCompletedArtists: 593,
+              batchFailedArtists: 0,
+              batchTotalArtists: 593,
+              completedAt: "2026-07-24T06:00:00.000Z",
+              errorClassification: null,
+              jobType: "apple_full",
+              recoveryDeadline: "2026-07-25T04:00:00.000Z",
+              scheduledFor: "2026-07-24T04:00:00.000Z",
+              status: "completed",
+            },
+            next: {
+              appleMusicBatchId: null,
+              batchCompletedArtists: null,
+              batchFailedArtists: null,
+              batchTotalArtists: null,
+              completedAt: null,
+              errorClassification: null,
+              jobType: "apple_full",
+              recoveryDeadline: "2026-08-01T04:00:00.000Z",
+              scheduledFor: "2026-07-31T04:00:00.000Z",
+              status: "scheduled",
+            },
+          },
+          phase: "broad_spotify",
+          timezone: "America/Los_Angeles",
+        },
         history: olderPage
           ? [
               {
@@ -554,6 +599,7 @@ test("defaults scan history to the meaningful batch and inspects other run types
             activeLease: null,
             artistsCheckedLast24Hours: 101,
             artistsCheckedLastHour: 2,
+            appleCatchupPriorityCount: 2,
             applePriorityCount: 4,
             backlog: {
               artist_reconciliation: 101,
@@ -565,6 +611,15 @@ test("defaults scan history to the meaningful batch and inspects other run types
             blockedReasons: [],
             cooldownActive: false,
             cooldownUntil: null,
+            dailyBudget: {
+              broadArtistsLimit: 75,
+              broadArtistsUsed: 12,
+              broadRequestsLimit: 300,
+              broadRequestsUsed: 48,
+              localDate: "2026-07-24",
+              playlistRequestReserve: 20,
+              priorityRequestReserve: 200,
+            },
             dueArtistCount: 102,
             eligibleArtistCount: 593,
             estimatedCompletion: {
@@ -633,10 +688,21 @@ test("defaults scan history to the meaningful batch and inspects other run types
     "Cancelled",
     "Paused",
   ]);
+  const appleSchedule = page.getByRole("region", {
+    name: "Apple Music discovery schedule status",
+  });
+  await expect(appleSchedule).toContainText("Thursday full scan");
+  await expect(appleSchedule).toContainText("Friday catch-up");
+  await expect(appleSchedule).toContainText("593/593");
   const scheduler = page.getByRole("region", { name: "Spotify rolling scheduler status" });
   await expect(scheduler).toContainText("Disabled");
   await expect(scheduler).toContainText("Eligible artists");
   await expect(scheduler).toContainText("593");
+  await expect(scheduler).toContainText("Broad artists today");
+  await expect(scheduler).toContainText("12 / 75");
+  await expect(scheduler).toContainText("Broad request budget");
+  await expect(scheduler).toContainText("48 / 300");
+  await expect(scheduler).toContainText("Friday catch-up priority");
   await scheduler
     .getByRole("button", { name: "Collapse Spotify rolling scheduler status" })
     .click();
@@ -1223,7 +1289,7 @@ test("navigates every primary view and resolves manual review", async ({ page })
   await navigation.getByRole("link", { name: "System status" }).click();
   await expect(page.getByRole("heading", { name: "System status" })).toBeVisible();
   await expect(page.getByText("External scheduler required", { exact: true })).toBeVisible();
-  await expect(page.getByText("pnpm spotify:scheduler:tick", { exact: true })).toBeVisible();
+  await expect(page.getByText("pnpm discovery:scheduler:tick", { exact: true })).toBeVisible();
 
   await navigation.getByRole("link", { name: "Settings" }).click();
   await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
@@ -1568,6 +1634,12 @@ test("controls persisted Spotify batches without bypassing cooldown state", asyn
           }
         : null,
     defaultHistoryId: runId,
+    discoverySchedule: {
+      catchup: { latest: null, next: null },
+      full: { latest: null, next: null },
+      phase: "broad_spotify",
+      timezone: "America/Los_Angeles",
+    },
     history: [
       {
         artistCount: 15,

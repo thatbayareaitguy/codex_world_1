@@ -26,6 +26,8 @@
     "apple-music:identities": "tsx apps/scanner/src/apple-music-identity-cli.ts",
     "sync:apple-first": "tsx apps/scanner/src/apple-first-sync-cli.ts",
     "discovery:bootstrap": "tsx apps/scanner/src/discovery-bootstrap-cli.ts",
+    "discovery:scheduler:status": "tsx apps/scanner/src/discovery-scheduler-cli.ts status",
+    "discovery:scheduler:tick": "tsx apps/scanner/src/discovery-scheduler-cli.ts tick",
     "scan:reconcile": "tsx apps/scanner/src/cli.ts --full",
     "scan:status": "tsx apps/scanner/src/scan-status.ts status",
     "scan:unlock-stale": "tsx apps/scanner/src/scan-status.ts unlock-stale",

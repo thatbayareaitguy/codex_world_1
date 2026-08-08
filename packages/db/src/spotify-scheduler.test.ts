@@ -8,12 +8,16 @@ import {
 describe("Spotify rolling scheduler planning", () => {
   it("uses the accepted one-artist, six-request, 90-second limits", () => {
     expect(defaultSchedulerLimits()).toEqual({
+      maxBroadArtistsPerLocalDay: 75,
+      maxBroadRequestsPerLocalDay: 300,
       maxArtistsPerTick: 1,
       maxRequestsPerTick: 6,
       maxRuntimeMs: 90_000,
       minRequestIntervalMs: 10_000,
       rolling24HourLimit: 1_200,
       rolling30MinuteLimit: 30,
+      playlistRequestReserve: 20,
+      priorityRequestReserve: 200,
       windowHours: 24,
     });
   });

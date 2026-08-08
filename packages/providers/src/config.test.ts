@@ -21,6 +21,7 @@ describe("provider configuration", () => {
       internalMaxQpm: 30,
     });
     expect(config.initialBackfillDays).toBe(60);
+    expect(config.discoverySchedulerEnabled).toBe(false);
   });
 
   it("validates the single allowed Spotify playlist boundary", () => {
@@ -40,6 +41,7 @@ describe("provider configuration", () => {
   it("validates typed feature flags", () => {
     const config = loadProviderConfiguration({
       APP_ENCRYPTION_KEY: "test-key",
+      DISCOVERY_SCHEDULER_ENABLED: "true",
       MUSICBRAINZ_CONTACT_EMAIL: "owner@example.test",
       MUSICBRAINZ_ENABLED: "false",
       SOUNDCLOUD_MANUAL_LINKS_ENABLED: "true",
@@ -51,6 +53,7 @@ describe("provider configuration", () => {
     expect(config.spotify).toMatchObject({ enabled: false, configured: false });
     expect(config.musicbrainz).toMatchObject({ enabled: false, configured: false });
     expect(config.soundcloudManualLinksEnabled).toBe(true);
+    expect(config.discoverySchedulerEnabled).toBe(true);
   });
 
   it("requires an explicit flag and contact email to configure MusicBrainz", () => {

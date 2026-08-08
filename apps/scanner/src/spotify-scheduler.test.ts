@@ -30,6 +30,7 @@ const status: SpotifySchedulerStatus = {
   activeLease: null,
   artistsCheckedLast24Hours: 0,
   artistsCheckedLastHour: 0,
+  appleCatchupPriorityCount: 0,
   applePriorityCount: 0,
   backlog: {
     artist_reconciliation: 0,
@@ -41,6 +42,15 @@ const status: SpotifySchedulerStatus = {
   blockedReasons: [],
   cooldownActive: false,
   cooldownUntil: null,
+  dailyBudget: {
+    broadArtistsLimit: 75,
+    broadArtistsUsed: 0,
+    broadRequestsLimit: 300,
+    broadRequestsUsed: 0,
+    localDate: "2026-07-21",
+    playlistRequestReserve: 20,
+    priorityRequestReserve: 200,
+  },
   dueArtistCount: 1,
   eligibleArtistCount: 1,
   estimatedCompletion: { earliest: null, latest: null, state: "available" },
@@ -56,12 +66,16 @@ const status: SpotifySchedulerStatus = {
 };
 
 const limits = {
+  maxBroadArtistsPerLocalDay: 75,
+  maxBroadRequestsPerLocalDay: 300,
   maxArtistsPerTick: 1 as const,
   maxRequestsPerTick: 6,
   maxRuntimeMs: 90_000,
   minRequestIntervalMs: 10_000,
   rolling24HourLimit: 1_200,
   rolling30MinuteLimit: 30,
+  playlistRequestReserve: 20,
+  priorityRequestReserve: 200,
   windowHours: 24 as const,
 };
 

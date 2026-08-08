@@ -45,6 +45,7 @@ const environmentSchema = z.object({
   APP_BASE_URL: z.url().default("http://127.0.0.1:3000"),
   APP_ENCRYPTION_KEY: z.string().min(1).optional(),
   DATABASE_URL: z.string().min(1).optional(),
+  DISCOVERY_SCHEDULER_ENABLED: booleanFlag(false),
   INITIAL_BACKFILL_DAYS: z.coerce.number().int().min(1).max(3650).default(60),
   MUSICBRAINZ_CONTACT_EMAIL: z.email().optional(),
   MUSICBRAINZ_ENABLED: booleanFlag(false),
@@ -101,6 +102,7 @@ export interface ProviderConfiguration {
   appBaseUrl: string;
   appEncryptionKey?: string;
   databaseUrl?: string;
+  discoverySchedulerEnabled: boolean;
   initialBackfillDays: number;
   musicbrainz: {
     configured: boolean;
@@ -196,6 +198,7 @@ export function loadProviderConfiguration(
     appBaseUrl: parsed.APP_BASE_URL,
     ...(parsed.APP_ENCRYPTION_KEY ? { appEncryptionKey: parsed.APP_ENCRYPTION_KEY } : {}),
     ...(parsed.DATABASE_URL ? { databaseUrl: parsed.DATABASE_URL } : {}),
+    discoverySchedulerEnabled: parsed.DISCOVERY_SCHEDULER_ENABLED,
     initialBackfillDays: parsed.INITIAL_BACKFILL_DAYS,
     musicbrainz: {
       configured: Boolean(parsed.MUSICBRAINZ_ENABLED && parsed.MUSICBRAINZ_CONTACT_EMAIL),

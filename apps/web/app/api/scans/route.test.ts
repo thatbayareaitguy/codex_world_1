@@ -5,6 +5,7 @@ const {
   end,
   findFirst,
   getAppleMusicOperationalStatus,
+  getRecurringDiscoveryScheduleStatus,
   getSpotifyOperationalStatus,
   getSpotifySchedulerStatus,
   history,
@@ -92,6 +93,14 @@ const {
       }),
     ),
     getSpotifyOperationalStatus: vi.fn(() => Promise.resolve({ queueDepth: 0 })),
+    getRecurringDiscoveryScheduleStatus: vi.fn(() =>
+      Promise.resolve({
+        catchup: { latest: null, next: null },
+        full: { latest: null, next: null },
+        phase: "idle",
+        timezone: "America/Los_Angeles",
+      }),
+    ),
     getSpotifySchedulerStatus: vi.fn(() =>
       Promise.resolve({
         backlog: {
@@ -160,6 +169,7 @@ vi.mock("@radar/db", () => ({
   appleMusicArtistScans: {},
   appleMusicScanBatches: { createdAt: "createdAt" },
   getAppleMusicOperationalStatus,
+  getRecurringDiscoveryScheduleStatus,
   getSpotifyOperationalStatus,
   getSpotifySchedulerStatus,
   latestSpotifyBatch,

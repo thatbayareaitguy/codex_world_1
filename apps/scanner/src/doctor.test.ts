@@ -32,7 +32,14 @@ describe("doctor", () => {
       report.checks
         .filter((check) => check.state === "OPTIONAL_PROVIDER_DISABLED")
         .map((check) => check.name),
-    ).toEqual(["Apple Music", "Spotify", "MusicBrainz", "Reddit", "SoundCloud manual links"]);
+    ).toEqual([
+      "Apple Music",
+      "Spotify",
+      "Recurring discovery scheduler",
+      "MusicBrainz",
+      "Reddit",
+      "SoundCloud manual links",
+    ]);
   });
 
   it("does not require an encryption key when Spotify is explicitly disabled", async () => {
@@ -75,6 +82,7 @@ describe("doctor", () => {
     const output = formatDoctorReport(report);
     expect(output).toContain("Spotify playlist writes are disabled by default");
     expect(output).toContain("Automatic Spotify scheduler execution is disabled by default");
+    expect(output).toContain("Recurring discovery execution is disabled by default");
     expect(output).not.toContain("1234567890123456789012");
   });
 

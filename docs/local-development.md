@@ -182,13 +182,24 @@ The command requires completed browser OAuth and is read-only. It has no playlis
 
 Windows Task Scheduler should invoke `scripts/run-daily-scan.ps1`. The script changes to the repository, relies on the scanner's ignored `.env` loader, uses the scan lock, writes dated logs under `%LOCALAPPDATA%\TSNewMusicRadar\logs`, and returns the scanner exit code. Do not put secrets in task arguments. Configure Run whether user is logged on or not only when that account can start Docker Desktop, then use Task Scheduler's Run command to test it.
 
-The rolling Spotify scheduler supersedes burst-style daily execution after a separate live-validation and activation milestone. Its credential-free planning command is:
+The recurring scheduler combines weekly Apple jobs and the bounded Spotify worker. Its read-only
+status command is:
 
 ```powershell
-pnpm spotify:scheduler:plan
+pnpm discovery:scheduler:status
 ```
 
-The bounded launcher is `scripts/run-spotify-scheduler-tick.ps1`. It runs exactly one tick and does not register, enable, or start a Windows scheduled task. `SPOTIFY_SCHEDULER_ENABLED` defaults to `false`, and the database scheduler mode also defaults to `disabled`; do not change either during ordinary credential-free verification.
+The bounded launcher is `scripts/run-spotify-scheduler-tick.ps1`. Despite its retained filename, it
+runs `pnpm discovery:scheduler:tick`, claims at most one due Apple job or one bounded Spotify work
+unit, and exits. Register that script with Windows Task Scheduler at a short fixed interval. The
+actual Thursday 9:00 PM Apple scan, Friday 9:00 AM catch-up, Saturday-Wednesday Spotify window,
+recovery deadlines, daily ceilings, and provider cooldowns are enforced from PostgreSQL state in
+`America/Los_Angeles`, not by the Windows trigger time.
+
+`DISCOVERY_SCHEDULER_ENABLED` and `SPOTIFY_SCHEDULER_ENABLED` both default to `false`. The first
+enables the unified tick and the second enables its Spotify executor. Keep both disabled during
+credential-free verification and while an active Spotify cooldown is stored. The status command
+never starts provider work.
 
 Cron example:
 

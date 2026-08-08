@@ -139,7 +139,7 @@ export interface ScanRuntime {
     campaignId?: string;
     campaignMemberId?: string | null;
     discoveryReconciliationCampaignId?: string;
-    source?: "initial" | "recurring" | "validation" | "repair" | "apple_priority";
+    source?: "initial" | "recurring" | "validation" | "repair" | "apple_priority" | "apple_catchup";
     workId: string;
     workType: "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation";
   };
@@ -602,8 +602,9 @@ export async function runScanUnlocked(
                             }
                           : {}),
                         dueAt: page.finishedAt,
-                        ...(runtime.schedulerContext?.source === "apple_priority"
-                          ? { source: "apple_priority" as const }
+                        ...(runtime.schedulerContext?.source === "apple_priority" ||
+                        runtime.schedulerContext?.source === "apple_catchup"
+                          ? { source: runtime.schedulerContext.source }
                           : {}),
                         spotifyAlbumId: release.externalReleaseId,
                       });

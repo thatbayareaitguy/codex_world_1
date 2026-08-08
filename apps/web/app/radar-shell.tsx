@@ -197,6 +197,7 @@ interface ActiveScanStatus {
 interface ScanApiStatus {
   active: ActiveScanStatus | null;
   defaultHistoryId: string | null;
+  discoverySchedule: DiscoveryScheduleStatus;
   history: ScanHistoryEntry[];
   historyHasMore: boolean;
   historyNextCursor: string | null;
@@ -249,6 +250,33 @@ interface ScanApiStatus {
   };
 }
 
+interface DiscoveryScheduleJobStatus {
+  appleMusicBatchId: string | null;
+  batchCompletedArtists: number | null;
+  batchFailedArtists: number | null;
+  batchTotalArtists: number | null;
+  completedAt: string | null;
+  errorClassification: string | null;
+  jobType: "apple_full" | "apple_catchup";
+  recoveryDeadline: string;
+  scheduledFor: string;
+  status: "scheduled" | "leased" | "completed" | "failed" | "expired";
+}
+
+interface DiscoveryScheduleStatus {
+  catchup: { latest: DiscoveryScheduleJobStatus | null; next: DiscoveryScheduleJobStatus | null };
+  full: { latest: DiscoveryScheduleJobStatus | null; next: DiscoveryScheduleJobStatus | null };
+  phase:
+    | "idle"
+    | "cooldown_wait"
+    | "playlist_inbox"
+    | "apple_priority"
+    | "apple_catchup_priority"
+    | "broad_spotify"
+    | "weekly_apple";
+  timezone: "America/Los_Angeles";
+}
+
 interface SpotifySchedulerStatus {
   activeLease: {
     artistId: string | null;
@@ -258,6 +286,7 @@ interface SpotifySchedulerStatus {
   } | null;
   artistsCheckedLast24Hours: number;
   artistsCheckedLastHour: number;
+  appleCatchupPriorityCount: number;
   applePriorityCount: number;
   backlog: Record<
     "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation",
@@ -267,6 +296,15 @@ interface SpotifySchedulerStatus {
   blockedReasons: string[];
   cooldownActive: boolean;
   cooldownUntil: string | null;
+  dailyBudget: {
+    broadArtistsLimit: number;
+    broadArtistsUsed: number;
+    broadRequestsLimit: number;
+    broadRequestsUsed: number;
+    localDate: string;
+    playlistRequestReserve: number;
+    priorityRequestReserve: number;
+  };
   dueArtistCount: number;
   eligibleArtistCount: number;
   estimatedCompletion: {
@@ -1544,6 +1582,7 @@ function FeedView({
   loadingOlderHistory,
 }: FeedViewProps) {
   const [collapsedReleaseGroups, setCollapsedReleaseGroups] = useState<string[]>([]);
+  const [appleSchedulerCollapsed, setAppleSchedulerCollapsed] = useState(false);
   const [spotifySchedulerCollapsed, setSpotifySchedulerCollapsed] = useState(false);
   const [spotifyStatusCollapsed, setSpotifyStatusCollapsed] = useState(false);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
@@ -1555,6 +1594,7 @@ function FeedView({
   const activeScan = scanStatus?.active;
   const spotifyOperational = scanStatus?.spotify.operational;
   const spotifyScheduler = scanStatus?.spotify.scheduler;
+  const discoverySchedule = scanStatus?.discoverySchedule;
   const spotifyBatch = scanStatus?.spotify.batch;
   const musicbrainzBatch = musicbrainzEnabled ? scanStatus?.musicbrainz?.batch : undefined;
   const spotifyCooldown = Boolean(spotifyOperational?.cooldownActive);
@@ -1824,6 +1864,82 @@ function FeedView({
         />
       )}
 
+      {feedMode === "database" && discoverySchedule && (
+        <section
+          className={`spotify-scan-status ${appleSchedulerCollapsed ? "is-collapsed" : ""}`}
+          aria-label="Apple Music discovery schedule status"
+        >
+          <div className="spotify-scan-status-heading">
+            <div className="spotify-scan-status-summary">
+              <button
+                aria-expanded={!appleSchedulerCollapsed}
+                aria-label={`${appleSchedulerCollapsed ? "Expand" : "Collapse"} Apple Music discovery schedule status`}
+                className="feed-item-disclosure"
+                onClick={() => setAppleSchedulerCollapsed((current) => !current)}
+                title={`${appleSchedulerCollapsed ? "Expand" : "Collapse"} Apple Music discovery schedule status`}
+                type="button"
+              >
+                {appleSchedulerCollapsed ? <ChevronRight size={17} /> : <ChevronDown size={17} />}
+              </button>
+              <div>
+                <strong>Apple Music discovery schedule</strong>
+                <span>{titleCase(discoverySchedule.phase)}</span>
+              </div>
+            </div>
+          </div>
+          {!appleSchedulerCollapsed && (
+            <>
+              <dl className="spotify-scan-grid scheduler-status-grid">
+                <div>
+                  <dt>Thursday full scan</dt>
+                  <dd>
+                    {discoverySchedule.full.latest
+                      ? `${titleCase(discoverySchedule.full.latest.status)}${
+                          discoverySchedule.full.latest.batchTotalArtists !== null
+                            ? ` | ${discoverySchedule.full.latest.batchCompletedArtists ?? 0}/${discoverySchedule.full.latest.batchTotalArtists}`
+                            : ""
+                        }`
+                      : "Not recorded"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Next Thursday full scan</dt>
+                  <dd>
+                    {discoverySchedule.full.next
+                      ? new Date(discoverySchedule.full.next.scheduledFor).toLocaleString()
+                      : "Unavailable"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Friday catch-up</dt>
+                  <dd>
+                    {discoverySchedule.catchup.latest
+                      ? `${titleCase(discoverySchedule.catchup.latest.status)}${
+                          discoverySchedule.catchup.latest.batchTotalArtists !== null
+                            ? ` | ${discoverySchedule.catchup.latest.batchCompletedArtists ?? 0}/${discoverySchedule.catchup.latest.batchTotalArtists}`
+                            : ""
+                        }`
+                      : "Not recorded"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Next Friday catch-up</dt>
+                  <dd>
+                    {discoverySchedule.catchup.next
+                      ? new Date(discoverySchedule.catchup.next.scheduledFor).toLocaleString()
+                      : "Unavailable"}
+                  </dd>
+                </div>
+              </dl>
+              <small>
+                Full scan: Thursday 9:00 PM. Catch-up: Friday 9:00 AM. Times use America/Los_Angeles
+                and missed jobs expire after a bounded 24-hour recovery window.
+              </small>
+            </>
+          )}
+        </section>
+      )}
+
       {feedMode === "database" && spotifyScheduler && (
         <section
           className={`spotify-scan-status ${spotifySchedulerCollapsed ? "is-collapsed" : ""}`}
@@ -1897,12 +2013,39 @@ function FeedView({
                   <dd>{spotifyScheduler.artistsCheckedLast24Hours}</dd>
                 </div>
                 <div>
-                  <dt>Base backlog</dt>
-                  <dd>{spotifyScheduler.backlog.base_artist}</dd>
+                  <dt>Broad backlog / coverage</dt>
+                  <dd>
+                    {spotifyScheduler.backlog.base_artist} / {spotifyScheduler.eligibleArtistCount}
+                  </dd>
                 </div>
                 <div>
-                  <dt>Apple-priority queue</dt>
+                  <dt>Apple full-scan priority</dt>
                   <dd>{spotifyScheduler.applePriorityCount}</dd>
+                </div>
+                <div>
+                  <dt>Friday catch-up priority</dt>
+                  <dd>{spotifyScheduler.appleCatchupPriorityCount}</dd>
+                </div>
+                <div>
+                  <dt>Broad artists today</dt>
+                  <dd>
+                    {spotifyScheduler.dailyBudget.broadArtistsUsed} /{" "}
+                    {spotifyScheduler.dailyBudget.broadArtistsLimit}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Broad request budget</dt>
+                  <dd>
+                    {spotifyScheduler.dailyBudget.broadRequestsUsed} /{" "}
+                    {spotifyScheduler.dailyBudget.broadRequestsLimit}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Reserved requests</dt>
+                  <dd>
+                    Priority {spotifyScheduler.dailyBudget.priorityRequestReserve} | Playlist{" "}
+                    {spotifyScheduler.dailyBudget.playlistRequestReserve}
+                  </dd>
                 </div>
                 <div>
                   <dt>Release detail / tracks</dt>
@@ -5812,6 +5955,7 @@ const spotifySchedulerStatusSchema = z.object({
     .nullable(),
   artistsCheckedLast24Hours: z.number().int().nonnegative(),
   artistsCheckedLastHour: z.number().int().nonnegative(),
+  appleCatchupPriorityCount: z.number().int().nonnegative(),
   applePriorityCount: z.number().int().nonnegative(),
   backlog: z.object({
     artist_reconciliation: z.number().int().nonnegative(),
@@ -5823,6 +5967,15 @@ const spotifySchedulerStatusSchema = z.object({
   blockedReasons: z.array(z.string()),
   cooldownActive: z.boolean(),
   cooldownUntil: z.string().datetime().nullable(),
+  dailyBudget: z.object({
+    broadArtistsLimit: z.number().int().positive(),
+    broadArtistsUsed: z.number().int().nonnegative(),
+    broadRequestsLimit: z.number().int().positive(),
+    broadRequestsUsed: z.number().int().nonnegative(),
+    localDate: z.iso.date(),
+    playlistRequestReserve: z.number().int().positive(),
+    priorityRequestReserve: z.number().int().positive(),
+  }),
   dueArtistCount: z.number().int().nonnegative(),
   eligibleArtistCount: z.number().int().nonnegative(),
   estimatedCompletion: z.object({
@@ -5864,6 +6017,40 @@ const spotifySchedulerStatusSchema = z.object({
   targetArtistCount: z.number().int().nonnegative(),
 });
 
+const discoveryScheduleJobSchema = z.object({
+  appleMusicBatchId: z.string().uuid().nullable(),
+  batchCompletedArtists: z.number().int().nonnegative().nullable(),
+  batchFailedArtists: z.number().int().nonnegative().nullable(),
+  batchTotalArtists: z.number().int().nonnegative().nullable(),
+  completedAt: z.string().datetime().nullable(),
+  errorClassification: z.string().nullable(),
+  jobType: z.enum(["apple_full", "apple_catchup"]),
+  recoveryDeadline: z.string().datetime(),
+  scheduledFor: z.string().datetime(),
+  status: z.enum(["scheduled", "leased", "completed", "failed", "expired"]),
+});
+
+const discoveryScheduleStatusSchema = z.object({
+  catchup: z.object({
+    latest: discoveryScheduleJobSchema.nullable(),
+    next: discoveryScheduleJobSchema.nullable(),
+  }),
+  full: z.object({
+    latest: discoveryScheduleJobSchema.nullable(),
+    next: discoveryScheduleJobSchema.nullable(),
+  }),
+  phase: z.enum([
+    "idle",
+    "cooldown_wait",
+    "playlist_inbox",
+    "apple_priority",
+    "apple_catchup_priority",
+    "broad_spotify",
+    "weekly_apple",
+  ]),
+  timezone: z.literal("America/Los_Angeles"),
+});
+
 const scanStatusSchema = z.object({
   active: z
     .object({
@@ -5887,6 +6074,7 @@ const scanStatusSchema = z.object({
     })
     .nullable(),
   defaultHistoryId: z.string().uuid().nullable(),
+  discoverySchedule: discoveryScheduleStatusSchema,
   history: z.array(scanHistoryEntrySchema),
   historyHasMore: z.boolean().default(false),
   historyNextCursor: z.string().nullable().default(null),

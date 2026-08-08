@@ -50,11 +50,12 @@ export async function GET(): Promise<NextResponse> {
       enabled: configuration.reddit.enabled,
     },
     scheduler: {
-      automaticEnabled: configuration.spotify.scheduler.enabled,
-      expectedNextScanAt: expectedNextScan(process.env.DAILY_SCAN_TIME),
+      automaticEnabled: configuration.discoverySchedulerEnabled,
+      expectedNextScanAt: null,
       managedByApplication: false,
-      recommendedCommand: "pnpm spotify:scheduler:tick",
-      schedule: process.env.DAILY_SCAN_TIME ?? null,
+      recommendedCommand: "pnpm discovery:scheduler:tick",
+      schedule:
+        "Apple Thursday 9:00 PM and Friday 9:00 AM; Spotify Saturday-Wednesday (America/Los_Angeles)",
     },
     spotify: {
       allowedPlaylistConfigured: Boolean(configuration.spotify.allowedPlaylistId),
@@ -269,18 +270,6 @@ function lastBackupTime(): string | null {
     return null;
   }
   return null;
-}
-
-function expectedNextScan(schedule: string | undefined): string | null {
-  const match = /^(\d{2}):(\d{2})$/.exec(schedule ?? "");
-  if (!match) return null;
-  const hour = Number(match[1]);
-  const minute = Number(match[2]);
-  if (hour > 23 || minute > 59) return null;
-  const next = new Date();
-  next.setHours(hour, minute, 0, 0);
-  if (next.getTime() <= Date.now()) next.setDate(next.getDate() + 1);
-  return next.toISOString();
 }
 
 function scanError(value: unknown): string | null {
