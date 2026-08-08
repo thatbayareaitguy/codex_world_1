@@ -1,6 +1,13 @@
 import type { TrackCandidate } from "@radar/core";
-import { createDatabase, feedRevisions, sourceEvidence, tracks } from "@radar/db";
-import { eq, sql } from "drizzle-orm";
+import {
+  createDatabase,
+  feedItems,
+  feedRevisions,
+  releaseCandidates,
+  sourceEvidence,
+  tracks,
+} from "@radar/db";
+import { eq, inArray, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { persistCandidates } from "../../scanner/src/scan";
@@ -194,6 +201,67 @@ describe.sequential("database feed pagination", () => {
     const page = await loadDatabaseFeedPage(databaseUrl, { limit: 200, secret: cursorSecret });
     expect(page.items.some((item) => item.links.length === 0)).toBe(true);
     expect(JSON.stringify(page.items)).not.toContain("evil.example");
+  });
+
+  it("does not leak upcoming siblings or an unreleased album group into New", async () => {
+    const releaseId = spotifyId(970);
+    const releasedTrackId = spotifyId(971);
+    const upcomingTrackIds = [spotifyId(972), spotifyId(973)];
+    await persistCandidates(
+      connection.db,
+      [releasedTrackId, ...upcomingTrackIds].map((trackId, index) => ({
+        ...spotifyCandidate(700 + index, {
+          releaseDate: "2026-09-25",
+          releaseId,
+          releaseTitle: "Future Grouped Album",
+          releaseType: "album",
+          trackNumber: index + 1,
+        }),
+        externalTrackId: trackId,
+        title: index === 0 ? "Released Preview Single" : `Unreleased Album Track ${index}`,
+      })),
+      { dryRun: false, full: false, provider: "spotify" },
+    );
+    const rows = await connection.db
+      .select({ feedId: feedItems.id, providerTrackId: releaseCandidates.providerTrackId })
+      .from(feedItems)
+      .innerJoin(releaseCandidates, eq(releaseCandidates.id, feedItems.candidateId))
+      .where(inArray(releaseCandidates.providerTrackId, [releasedTrackId, ...upcomingTrackIds]));
+    await connection.db
+      .update(feedItems)
+      .set({ state: "upcoming" })
+      .where(
+        inArray(
+          feedItems.id,
+          rows.map((row) => row.feedId),
+        ),
+      );
+    await connection.db
+      .update(feedItems)
+      .set({ state: "new" })
+      .where(
+        inArray(
+          feedItems.id,
+          rows.filter((row) => row.providerTrackId === releasedTrackId).map((row) => row.feedId),
+        ),
+      );
+
+    const newPage = await loadDatabaseFeedPage(databaseUrl, {
+      filters: { search: "Future Grouped Album", state: "new" },
+      limit: 25,
+      secret: cursorSecret,
+    });
+    expect(newPage.items.map((item) => item.title)).toEqual(["Released Preview Single"]);
+
+    const upcomingPage = await loadDatabaseFeedPage(databaseUrl, {
+      filters: { search: "Future Grouped Album", state: "upcoming" },
+      limit: 25,
+      secret: cursorSecret,
+    });
+    expect(upcomingPage.items.map((item) => item.title).sort()).toEqual([
+      "Unreleased Album Track 1",
+      "Unreleased Album Track 2",
+    ]);
   });
 });
 

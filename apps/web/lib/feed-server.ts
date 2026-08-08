@@ -6,7 +6,6 @@ import {
 } from "@radar/core";
 import {
   createDatabase,
-  feedItems,
   playlistExports,
   releaseCandidates,
   releaseExternalIds,
@@ -19,7 +18,7 @@ import {
   trackCredits,
   tracks,
 } from "@radar/db";
-import { eq, inArray, or } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 
 import {
   createFeedCursor,
@@ -59,6 +58,7 @@ export interface FeedPageOptions {
 
 interface FeedGroupRow {
   cumulative_count: string | number;
+  feed_ids: string[];
   first_seen_at: Date;
   group_key: string;
   has_more_after: boolean;
@@ -149,7 +149,8 @@ export async function loadDatabaseFeedPage(
       (row, index) => index === 0 || Number(row.cumulative_count) <= limit,
     );
     const groupKeys = selectedGroups.map((row) => row.group_key);
-    const projected = await projectFeedGroups(connection.db, groupKeys);
+    const selectedFeedIds = selectedGroups.flatMap((row) => row.feed_ids);
+    const projected = await projectFeedItems(connection.db, selectedFeedIds);
     const order = new Map(groupKeys.map((key, index) => [key, index]));
     const items = projected.sort(
       (left, right) =>
@@ -296,11 +297,18 @@ async function selectFeedGroups(
         : `("release_date", "release_precision", "first_seen_at", "stable_id") < (${releaseDate}::date, ${releasePrecision}::integer, ${firstSeenAt}::timestamptz, ${stableId}::uuid)`;
   }
   const limitParameter = bind(limit);
+  const splitFutureReleaseGroups =
+    filters.state === "new"
+      ? `COALESCE("release"."release_date", "candidate"."release_date") > current_date`
+      : "FALSE";
   const query = `
     WITH "filtered" AS MATERIALIZED (
       SELECT
         "feed"."id",
-        COALESCE("release"."id"::text, 'feed:' || "feed"."id"::text) AS "group_key",
+        CASE
+          WHEN ${splitFutureReleaseGroups} THEN 'feed:' || "feed"."id"::text
+          ELSE COALESCE("release"."id"::text, 'feed:' || "feed"."id"::text)
+        END AS "group_key",
         COALESCE("release"."release_date", "candidate"."release_date") AS "release_date",
         CASE COALESCE("release"."release_date_precision", 'day')
           WHEN 'day' THEN 3 WHEN 'month' THEN 2 ELSE 1
@@ -321,6 +329,7 @@ async function selectFeedGroups(
         max("release_precision") AS "release_precision",
         max("first_seen_at") AS "first_seen_at",
         min("id"::text)::uuid AS "stable_id",
+        array_agg("id" ORDER BY "first_seen_at" DESC, "id") AS "feed_ids",
         count(*)::integer AS "item_count"
       FROM "filtered"
       GROUP BY "group_key"
@@ -343,37 +352,13 @@ async function selectFeedGroups(
   return client.unsafe<FeedGroupRow[]>(query, parameters);
 }
 
-async function projectFeedGroups(
+async function projectFeedItems(
   db: ReturnType<typeof createDatabase>["db"],
-  groupKeys: string[],
+  feedIds: string[],
 ): Promise<FeedFixtureItem[]> {
-  if (groupKeys.length === 0) return [];
-  const releaseIds = groupKeys.filter((key) => !key.startsWith("feed:"));
-  const singleIds = groupKeys.filter((key) => key.startsWith("feed:")).map((key) => key.slice(5));
-  const selectedFeedIds = await db
-    .select({ id: feedItems.id })
-    .from(feedItems)
-    .leftJoin(releaseTrackAppearances, eq(releaseTrackAppearances.id, feedItems.appearanceId))
-    .leftJoin(tracks, eq(tracks.id, feedItems.trackId))
-    .where(
-      or(
-        ...(releaseIds.length
-          ? [
-              inArray(feedItems.releaseId, releaseIds),
-              inArray(releaseTrackAppearances.releaseId, releaseIds),
-              inArray(tracks.releaseId, releaseIds),
-            ]
-          : []),
-        ...(singleIds.length ? [inArray(feedItems.id, singleIds)] : []),
-      ),
-    );
-  if (selectedFeedIds.length === 0) return [];
+  if (feedIds.length === 0) return [];
   const feedRows = await db.query.feedItems.findMany({
-    where: (feed, operators) =>
-      operators.inArray(
-        feed.id,
-        selectedFeedIds.map((row) => row.id),
-      ),
+    where: (feed, operators) => operators.inArray(feed.id, feedIds),
   });
   if (feedRows.length === 0) return [];
 

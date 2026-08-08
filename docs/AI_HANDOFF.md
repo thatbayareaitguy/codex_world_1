@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-08-07 21:35 PDT
+Updated: 2026-08-08 01:16 PDT
 
 ## Repository
 
@@ -10,7 +10,8 @@ Updated: 2026-08-07 21:35 PDT
 - Current milestone: recurring Thursday/Friday Apple discovery and Saturday-Wednesday Spotify
   reconciliation scheduler, completed
 - Upstream: `origin/codex/release-radar-hardening` matches this checkpoint
-- Worktree: clean except for unrelated untracked `outputs/`
+- Worktree: feed-state correction is uncommitted in the web query, rendering, integration test,
+  browser test, and this handoff; unrelated untracked `outputs/` remains excluded
 - PostgreSQL: healthy with 27 forward migrations. `0025` adds durable Apple jobs and the daily
   Spotify artist ledger; `0026` adds the distinct Friday catch-up priority phase.
 
@@ -34,6 +35,12 @@ Updated: 2026-08-07 21:35 PDT
   cooldowns, and next scheduled jobs survive restart. Missed broad days do not stack.
 - Verified: add-only playlist export inserts at position zero in discovery order and never
   removes, replaces, reorders, or edits user-added tracks.
+- Verified: New projects only feed rows matching the New state. Released preview tracks from an
+  unreleased album remain visible individually, while the future album group and upcoming sibling
+  tracks remain in All and Upcoming.
+- Partially implemented: Thursday and Friday playlist checkpoints are durable priority phases, but
+  the recurring tick does not invoke the live Spotify exporter automatically. Export still requires
+  the separately guarded add-only command.
 
 ## Operational State
 
@@ -52,12 +59,15 @@ Updated: 2026-08-07 21:35 PDT
 - Passed: formatting, lint, strict TypeScript across 6 workspaces, and production build with 27
   routes.
 - Passed: 413 unit tests across 60 files.
-- Passed: 119 PostgreSQL integration tests across 24 files, including restart recovery, bounded
+- Passed: 120 PostgreSQL integration tests across 24 files, including feed-state isolation,
+  restart recovery, bounded
   missed-job handling, cooldown restoration, strict priority checkpoints, Thursday/Friday broad
   blocking, request reserves, and the 75-artist daily ceiling.
-- Passed: 29 Playwright tests.
-- Passed: `pnpm doctor` with overall `READY`; the active provider-directed Spotify cooldown is the
-  expected action-required item. No stale locks exist.
+- Passed: 30 Playwright tests, including future-album exclusion from New.
+- Doctor: `ACTION_REQUIRED` only because the provider-directed Spotify cooldown remains active and
+  the local pnpm launcher could not verify pnpm 11 while its registry lookup was unavailable.
+  PostgreSQL, migrations, locks, album completeness, credentials, playlist boundaries, and the
+  application port are healthy.
 - Passed: scheduler status command and `git diff --check`.
 
 ## Risks And Known Limits
@@ -66,15 +76,18 @@ Updated: 2026-08-07 21:35 PDT
   guarantee that Spotify will not return 429.
 - Automatic execution is credential-free and database-backed verified but has not completed a
   full live recurring week.
+- Playlist checkpoints currently reserve and order export work; they do not automatically add the
+  confirmed Thursday or Friday discoveries to Spotify.
 - The Friday catch-up is an incremental mapped-watchlist Apple scan, not a second historical
   backfill.
 - Windows Task Scheduler must invoke the unified tick. PostgreSQL remains the schedule authority.
 
 ## Immediate Next Step
 
-After the Spotify cooldown expires, run doctor, perform the already-approved playlist checkpoint,
-then enable and observe one bounded unified scheduler tick. Do not enable broad Spotify work before
-the playlist and Apple-priority phases complete.
+After the Spotify cooldown expires, run doctor and perform the already-approved guarded playlist
+export. Then implement or explicitly approve automatic exporter invocation at Thursday and Friday
+playlist checkpoints before calling playlist delivery fully scheduled. Do not enable broad Spotify
+work before the playlist and Apple-priority phases complete.
 
 ## Deferred
 

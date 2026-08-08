@@ -16,6 +16,66 @@ test("opens the discovery feed on New and keeps All as the second tab", async ({
   await expect(page.getByRole("article")).toHaveCount(4);
 });
 
+test("shows released previews individually without exposing their future album in New", async ({
+  page,
+}) => {
+  const futureReleaseId = "71000000-0000-4000-8000-000000000001";
+  const previews = [
+    {
+      ...feedFixtures[0]!,
+      artist: "Future Artist",
+      id: "71000000-0000-4000-8000-000000000002",
+      releaseDate: "2026-07-31",
+      releaseGroupDate: "2026-09-25",
+      releaseId: futureReleaseId,
+      releaseTitle: "Future Album",
+      state: "new" as const,
+      title: "Released Preview One",
+    },
+    {
+      ...feedFixtures[1]!,
+      artist: "Future Artist",
+      id: "71000000-0000-4000-8000-000000000003",
+      releaseDate: "2026-08-01",
+      releaseGroupDate: "2026-09-25",
+      releaseId: futureReleaseId,
+      releaseTitle: "Future Album",
+      state: "new" as const,
+      title: "Released Preview Two",
+    },
+  ];
+  await page.route("**/api/feed**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("mode") === "revision") {
+      await route.fulfill({ json: { count: 2, revision: "future-preview" } });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        count: 2,
+        hasMore: false,
+        items: previews,
+        nextCursor: null,
+        revision: "future-preview",
+        summary: { needsReview: 0, newThisWeek: 2, upcoming: 0 },
+        totalCount: 2,
+      },
+    });
+  });
+
+  await page.goto("/?e2e-scan-status=database#feed");
+  await page.getByRole("button", { name: "Refresh feed" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Future Artist - Released Preview One" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Future Artist - Released Preview Two" }),
+  ).toBeVisible();
+  await expect(
+    page.locator(".release-feed-group-heading").filter({ hasText: "Future Album" }),
+  ).toHaveCount(0);
+});
+
 test("shows externally persisted discoveries without reloading the page", async ({ page }) => {
   let revision = "revision-1";
   let revisionChecks = 0;
@@ -241,6 +301,7 @@ test("includes the artist in grouped release headings", async ({ page }) => {
   });
 
   await page.goto("/?e2e-scan-status=database#feed");
+  await page.getByRole("tab", { name: "All" }).click();
   await page.getByRole("button", { name: "Refresh feed" }).click();
   const group = page.getByRole("region", { name: "Au5 - Inverse Ep" });
   await expect(group.locator(".release-feed-group-title strong")).toHaveText("Au5 - Inverse");

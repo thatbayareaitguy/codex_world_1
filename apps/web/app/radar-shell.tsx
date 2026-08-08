@@ -2498,7 +2498,7 @@ function FeedView({
           </div>
         )}
         {items.length ? (
-          groupFeedItems(items).map((group) => {
+          groupFeedItems(items, activeFilter === "new").map((group) => {
             if (group.items.length === 1) {
               return (
                 <FeedItem
@@ -6538,7 +6538,7 @@ function FeedArtwork({ compact = false, item }: { compact?: boolean; item: FeedF
   );
 }
 
-function groupFeedItems(items: FeedFixtureItem[]) {
+function groupFeedItems(items: FeedFixtureItem[], splitFutureReleases = false) {
   const groups = new Map<
     string,
     {
@@ -6550,10 +6550,13 @@ function groupFeedItems(items: FeedFixtureItem[]) {
       releaseType: FeedFixtureItem["releaseType"];
     }
   >();
+  const today = new Date().toISOString().slice(0, 10);
   for (const item of items) {
+    const groupDate = item.releaseGroupDate ?? item.releaseDate;
     const key =
-      item.releaseId ??
-      `${item.releaseTitle}:${item.releaseGroupDate ?? item.releaseDate}:${item.releaseType}`;
+      splitFutureReleases && groupDate > today
+        ? `feed:${item.id}`
+        : (item.releaseId ?? `${item.releaseTitle}:${groupDate}:${item.releaseType}`);
     const group = groups.get(key);
     if (group) {
       group.items.push(item);
