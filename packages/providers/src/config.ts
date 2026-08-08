@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { spotifyPlaylistIdSchema } from "./spotify-playlist-policy";
+import { spotifyAuthorizedPlaylistId, spotifyPlaylistIdSchema } from "./spotify-playlist-policy";
 
 const booleanFlag = (defaultValue: boolean) =>
   z
@@ -109,6 +109,16 @@ const environmentSchema = z
     SPOTIFY_SCHEDULER_ROLLING_30M_LIMIT: z.coerce.number().int().min(1).max(1000).default(30),
   })
   .superRefine((value, context) => {
+    if (
+      value.SPOTIFY_ALLOWED_PLAYLIST_ID &&
+      value.SPOTIFY_ALLOWED_PLAYLIST_ID !== spotifyAuthorizedPlaylistId
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Spotify playlist access is restricted to the authorized Release Inbox.",
+        path: ["SPOTIFY_ALLOWED_PLAYLIST_ID"],
+      });
+    }
     if (value.SPOTIFY_ARTIST_ALBUMS_PRIORITY_RESERVE >= value.SPOTIFY_ARTIST_ALBUMS_24H_LIMIT) {
       context.addIssue({
         code: "custom",

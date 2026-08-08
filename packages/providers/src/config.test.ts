@@ -29,13 +29,16 @@ describe("provider configuration", () => {
 
   it("validates the single allowed Spotify playlist boundary", () => {
     const config = loadProviderConfiguration({
-      SPOTIFY_ALLOWED_PLAYLIST_ID: "1234567890123456789012",
+      SPOTIFY_ALLOWED_PLAYLIST_ID: "4l6LaMPL6duulmFe3hRR4Y",
       SPOTIFY_PLAYLIST_WRITES_ENABLED: "true",
     });
     expect(config.spotify).toMatchObject({
-      allowedPlaylistId: "1234567890123456789012",
+      allowedPlaylistId: "4l6LaMPL6duulmFe3hRR4Y",
       playlistWritesEnabled: true,
     });
+    expect(() =>
+      loadProviderConfiguration({ SPOTIFY_ALLOWED_PLAYLIST_ID: "1234567890123456789012" }),
+    ).toThrow("authorized Release Inbox");
     expect(() =>
       loadProviderConfiguration({ SPOTIFY_ALLOWED_PLAYLIST_ID: "not-a-playlist-id" }),
     ).toThrow();

@@ -204,8 +204,10 @@ never starts provider work.
 Automatic Thursday and Friday playlist delivery also requires all existing playlist safeguards:
 
 ```dotenv
+DISCOVERY_SCHEDULER_ENABLED=true
+SPOTIFY_SCHEDULER_ENABLED=true
 SPOTIFY_PLAYLIST_WRITES_ENABLED=true
-SPOTIFY_ALLOWED_PLAYLIST_ID=<the one owned private playlist ID>
+SPOTIFY_ALLOWED_PLAYLIST_ID=4l6LaMPL6duulmFe3hRR4Y
 SPOTIFY_ARTIST_ALBUMS_24H_LIMIT=80
 SPOTIFY_ARTIST_ALBUMS_PRIORITY_RESERVE=20
 SPOTIFY_ARTIST_ALBUMS_RESERVE_RELEASE_AFTER_HOURS=20
@@ -218,8 +220,12 @@ playlist. The server-configured allowed playlist remains the only valid target.
 
 The unified recurring order is: drain any previously pending export, run the due Apple scan,
 process its Apple-priority Spotify resolution, automatically export the newly eligible tracks, then
-allow Saturday-Wednesday broad Spotify rotation. Friday catch-up follows the same priority-then-
-export sequence. Thursday and Friday never run broad Spotify work.
+allow Saturday-Wednesday broad Spotify rotation. The final priority resolution and guarded export
+can complete in the same tick; no manual export command or confirmation is part of normal production
+operation. Friday catch-up follows the same priority-then-export sequence. Thursday and Friday never
+run broad Spotify work. If the process exits or a provider cooldown interrupts export, the next tick
+resumes the durable export phase before lower-priority work. The manual dry-run and live commands
+remain available only for diagnostics and explicitly initiated maintenance.
 
 Cron example:
 

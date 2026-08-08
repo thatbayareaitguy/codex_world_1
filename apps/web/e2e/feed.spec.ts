@@ -783,6 +783,7 @@ test("defaults scan history to the meaningful batch and inspects other run types
   await expect(appleSchedule).toContainText("Friday catch-up");
   await expect(appleSchedule).toContainText("593/593");
   await expect(appleSchedule).toContainText("Automatic playlist inbox");
+  await expect(appleSchedule).toContainText("Export complete");
   const scheduler = page.getByRole("region", { name: "Spotify rolling scheduler status" });
   await expect(scheduler).toContainText("Disabled");
   await expect(scheduler).toContainText("Eligible artists");
@@ -1406,14 +1407,14 @@ test("navigates every primary view and resolves manual review", async ({ page })
 });
 
 test("previews and runs the configured add-only Spotify export", async ({ page }) => {
-  const targetId = "1234567890123456789012";
+  const targetId = "4l6LaMPL6duulmFe3hRR4Y";
   let liveRequests = 0;
 
   await page.route("**/api/spotify/playlists", async (route) => {
     await route.fulfill({
       json: {
         allowedPlaylistConfigured: true,
-        playlist: { id: "1234...9012", name: "Release Inbox", private: true },
+        playlist: { id: "4l6L...RR4Y", name: "Release Inbox", private: true },
         writesEnabled: true,
       },
     });
@@ -1434,7 +1435,7 @@ test("previews and runs the configured add-only Spotify export", async ({ page }
           skipCounts: { ambiguous_match: 1, dismissed: 1 },
           target: {
             id: targetId,
-            idAbbreviated: "1234...9012",
+            idAbbreviated: "4l6L...RR4Y",
             name: "Release Inbox",
             private: true,
           },
@@ -1465,7 +1466,7 @@ test("previews and runs the configured add-only Spotify export", async ({ page }
   });
 
   await page.goto("/#exports");
-  await expect(page.getByText("Configured target 1234...9012")).toBeVisible();
+  await expect(page.getByText("Configured target 4l6L...RR4Y")).toBeVisible();
 
   await page.getByRole("button", { name: "Inspect configured playlist" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Owned and private" })).toContainText(

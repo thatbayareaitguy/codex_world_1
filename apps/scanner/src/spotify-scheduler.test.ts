@@ -261,6 +261,25 @@ describe("Spotify scheduler tick", () => {
     );
   });
 
+  it("reconciles again after completed priority work so playlist export can continue", async () => {
+    const dependencies = fakeDependencies();
+    const executor: SpotifySchedulerExecutor = { execute: vi.fn(() => Promise.resolve()) };
+
+    const result = await runSpotifySchedulerTick(fakeDatabase(), {
+      capabilityEnabled: true,
+      dependencies: dependencies as never,
+      executor,
+      limits,
+      mode: "credential_free",
+    });
+
+    expect(result.reason).toBe("completed");
+    expect(dependencies.reconcileWork).toHaveBeenCalledTimes(2);
+    expect(dependencies.finishWork.mock.invocationCallOrder[0]!).toBeLessThan(
+      dependencies.reconcileWork.mock.invocationCallOrder[1]!,
+    );
+  });
+
   it("requeues interrupted release-detail work without claiming another item", async () => {
     const dependencies = fakeDependencies();
     const detailClaim: SpotifySchedulerClaim = {

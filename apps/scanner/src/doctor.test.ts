@@ -68,7 +68,7 @@ describe("doctor", () => {
         DATABASE_URL: "postgresql://secret:secret@127.0.0.1:5432/radar",
         MUSICBRAINZ_ENABLED: "false",
         REDDIT_ENABLED: "false",
-        SPOTIFY_ALLOWED_PLAYLIST_ID: "1234567890123456789012",
+        SPOTIFY_ALLOWED_PLAYLIST_ID: "4l6LaMPL6duulmFe3hRR4Y",
         SPOTIFY_PLAYLIST_WRITES_ENABLED: "false",
       },
       {
@@ -83,7 +83,7 @@ describe("doctor", () => {
     expect(output).toContain("Spotify playlist writes are disabled by default");
     expect(output).toContain("Automatic Spotify scheduler execution is disabled by default");
     expect(output).toContain("Recurring discovery execution is disabled by default");
-    expect(output).not.toContain("1234567890123456789012");
+    expect(output).not.toContain("4l6LaMPL6duulmFe3hRR4Y");
   });
 
   it("requires playlist writes when recurring discovery execution is enabled", async () => {
@@ -120,7 +120,7 @@ describe("doctor", () => {
       DATABASE_URL: "postgresql://secret:secret@127.0.0.1:5432/radar",
       MUSICBRAINZ_ENABLED: "false",
       REDDIT_ENABLED: "false",
-      SPOTIFY_ALLOWED_PLAYLIST_ID: "1234567890123456789012",
+      SPOTIFY_ALLOWED_PLAYLIST_ID: "4l6LaMPL6duulmFe3hRR4Y",
       SPOTIFY_CLIENT_ID: "client-id",
       SPOTIFY_CLIENT_SECRET: "client-secret",
       SPOTIFY_ENABLED: "true",

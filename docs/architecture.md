@@ -116,13 +116,16 @@ cooldowns, and next-run timestamps are persisted in PostgreSQL.
 The campaign playlist inbox uses only exact Spotify track IDs already proven eligible by the
 campaign reconciliation rows. A pending export from prior work is drained before a new Apple job.
 After each Thursday or Friday Apple scan, Apple-triggered Spotify resolution runs first and the
-playlist checkpoint becomes ready when that priority queue drains. When recurring discovery and
-playlist writes are both explicitly enabled, the unified tick then runs the existing guarded
-exporter. It reads only the configured owned private playlist, plans batched add-only operations,
-and inserts discoveries from position zero in newest-first release order while keeping album tracks
-contiguous. It never removes, replaces, reorders, renames, or changes the visibility of an existing
-playlist item. A Spotify cooldown blocks priority work and export without discarding persisted
-state.
+playlist checkpoint becomes ready when that priority queue drains. The successful final resolution
+is reconciled immediately, and the same unified tick invokes the existing guarded exporter without
+an interactive command. A later periodic tick provides restart recovery when the process exits at
+any earlier phase. Automatic execution requires recurring discovery, the Spotify scheduler, and
+playlist writes to be explicitly enabled in ignored local configuration. The exporter reads only
+playlist `4l6LaMPL6duulmFe3hRR4Y`, plans batched add-only operations, and inserts discoveries from
+position zero in newest-first release order while keeping album tracks contiguous. It never removes,
+replaces, reorders, renames, or changes the visibility of an existing playlist item. A Spotify 429
+changes the durable workflow to cooldown wait and preserves the partial export for automatic resume
+before any broad work.
 
 Spotify request telemetry uses durable endpoint buckets: `artist_albums`, `album_detail`,
 `album_tracks`, `playlist_read`, `playlist_write`, and `oauth_or_other`. Artist catalog work has a

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const spotifyAuthorizedPlaylistId = "4l6LaMPL6duulmFe3hRR4Y";
+
 export const spotifyPlaylistIdSchema = z
   .string()
   .trim()

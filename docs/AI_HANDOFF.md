@@ -1,16 +1,15 @@
 # AI Handoff
 
-Updated: 2026-08-08 02:22 PDT
+Updated: 2026-08-08 03:03 PDT
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`
-- Current checkpoint: `HEAD` contains the completed recurring scheduler audit
-- Current milestone: endpoint-budgeted Thursday/Friday Apple-priority resolution and automatic
-  playlist delivery are implementation- and credential-free verified
-- Upstream: intended to match `origin/codex/release-radar-hardening` after the final audit commit
-- Worktree: intended clean after the final audit commit except unrelated untracked `outputs/`, which
-  remains excluded
+- Current checkpoint: `HEAD` (`fix: automate scheduled Spotify playlist delivery`)
+- Current milestone: automatic guarded Thursday/Friday Spotify playlist delivery is implemented and
+  credential-free verified
+- Upstream: pending normal push to `origin/codex/release-radar-hardening`
+- Worktree: clean except unrelated untracked `outputs/`, which remains excluded
 - PostgreSQL: healthy with 28 forward migrations after applying `0027`, which adds Spotify request
   quota lanes and an endpoint-window index.
 
@@ -22,9 +21,10 @@ Updated: 2026-08-08 02:22 PDT
   `America/Los_Angeles`, with a 24-hour bounded startup-recovery window.
 - Verified: broad Spotify work is blocked Thursday and Friday. Saturday-Wednesday broad work is
   capped at 75 distinct artists and 300 request starts per local day.
-- Implemented recurring order: drain a previously pending export, Apple scan, Apple-priority Spotify
-  resolution, guarded automatic export, then Saturday-Wednesday broad rotation. Friday catch-up uses
-  the same priority-then-export sequence. Priority work preempts broad work.
+- Verified recurring order: drain a previously pending export, Apple scan, Apple-priority Spotify
+  resolution, guarded automatic export, then Saturday-Wednesday broad rotation. The final priority
+  resolution reconciles the durable phase and invokes the existing exporter in the same tick.
+  Friday catch-up uses the same sequence, and priority work preempts broad work.
 - Verified: an expired Spotify cooldown restores the persisted playlist or priority phase instead
   of skipping bootstrap work.
 - Implemented: the 1,200-request rolling ceiling retains 200 requests for priority work and 20 for
@@ -45,10 +45,16 @@ Updated: 2026-08-08 02:22 PDT
 - Verified: New projects only feed rows matching the New state. Released preview tracks from an
   unreleased album remain visible individually, while the future album group and upcoming sibling
   tracks remain in All and Upcoming.
-- Implemented but not live-tested as a recurring week: the unified tick invokes the existing
-  single-playlist add-only exporter automatically at durable Thursday and Friday checkpoints. The
-  operation remains disabled unless both scheduler capabilities and guarded playlist writes are
-  explicitly enabled.
+- Implemented and credential-free verified, but not live-tested as a recurring week: the unified
+  tick invokes the existing single-playlist add-only exporter automatically for Thursday and Friday.
+  Restarted ticks resume a pending export before broad work. A Spotify 429 persists cooldown state
+  and keeps the export phase pending until provider readiness returns.
+- Automatic writes require all ignored local production settings:
+  `DISCOVERY_SCHEDULER_ENABLED=true`, `SPOTIFY_SCHEDULER_ENABLED=true`,
+  `SPOTIFY_PLAYLIST_WRITES_ENABLED=true`, and
+  `SPOTIFY_ALLOWED_PLAYLIST_ID=4l6LaMPL6duulmFe3hRR4Y`. Defaults and tests remain write-disabled.
+- The UI distinguishes awaiting Spotify resolution, awaiting playlist export, exporting, cooldown
+  pause, retry, and export-complete states.
 
 ## Operational State
 
@@ -65,10 +71,10 @@ Updated: 2026-08-08 02:22 PDT
 ## Validation
 
 - Passed: formatting, lint, strict TypeScript across 6 workspaces, and the 27-route production build.
-- Passed: 432 unit tests across 60 files, 129 PostgreSQL integration tests across 25 files, and 30
+- Passed: 436 unit tests across 60 files, 133 PostgreSQL integration tests across 25 files, and 30
   Playwright tests.
-- Passed: migration application, read-only scheduler status, live local UI smoke inspection, and
-  `git diff --check`.
+- Passed: migration application, live local UI smoke inspection of the persisted cooldown state,
+  browser console error check, and `git diff --check`.
 - Doctor: PostgreSQL is healthy with 28 migrations, no stale locks, valid playlist boundaries, and
   both required Spotify playlist scopes. It correctly reports the provider-directed Spotify
   cooldown as an action item until `2026-08-08T18:32:23.020Z`. Artist Albums has 101 trailing
@@ -83,8 +89,8 @@ Updated: 2026-08-08 02:22 PDT
   full live recurring week.
 - Spotify's endpoint limits are unpublished. The 80-call Artist Albums allowance is deliberately
   conservative and requires operational review after sustained use.
-- Automatic playlist delivery is code- and test-verified only; it has not completed a live
-  Thursday-Friday transition.
+- Automatic playlist delivery is code-, PostgreSQL-, and browser-test verified only; it has not
+  completed a live Thursday-Friday transition.
 - The Friday catch-up is an incremental mapped-watchlist Apple scan, not a second historical
   backfill.
 - Windows Task Scheduler must invoke the unified tick. PostgreSQL remains the schedule authority.

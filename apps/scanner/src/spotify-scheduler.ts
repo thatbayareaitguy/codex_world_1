@@ -173,6 +173,7 @@ export async function runSpotifySchedulerTick(
         }),
       });
       await dependencies.finishWork(db, selected, { status: "completed" }, now());
+      await dependencies.reconcileWork(db, now(), input.limits);
       await dependencies.recordTick(db, { completedAt: now() });
       return {
         mode: input.mode,

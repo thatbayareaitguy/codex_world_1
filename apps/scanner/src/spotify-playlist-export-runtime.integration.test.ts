@@ -7,6 +7,7 @@ import {
   discoveryScheduleState,
   type executeSpotifyPlaylistExport,
   type SpotifyPlaylistExportExecution,
+  SpotifyCooldownError,
 } from "@radar/db";
 import { loadProviderConfiguration } from "@radar/providers";
 import { eq } from "drizzle-orm";
@@ -140,6 +141,83 @@ describe.sequential("automatic discovery playlist export", () => {
       }),
     ).toMatchObject({ phase: "playlist_inbox", playlistInboxStatus: "exporting" });
   });
+
+  it("leaves scheduled writes disabled in default configuration", async () => {
+    await connection.db.insert(discoveryScheduleState).values({
+      id: "global",
+      phase: "playlist_inbox",
+      playlistInboxStatus: "ready",
+    });
+    const executeExport: typeof executeSpotifyPlaylistExport = vi.fn(() =>
+      Promise.resolve(completedExecution(randomUUID())),
+    );
+
+    await expect(
+      runAutomaticDiscoveryPlaylistExport(connection.db, loadProviderConfiguration({}), {
+        executeExport,
+      }),
+    ).resolves.toEqual({ reason: "capability_disabled" });
+    expect(executeExport).not.toHaveBeenCalled();
+    expect(
+      await connection.db.query.discoveryScheduleState.findFirst({
+        where: eq(discoveryScheduleState.id, "global"),
+      }),
+    ).toMatchObject({ phase: "playlist_inbox", playlistInboxStatus: "ready" });
+  });
+
+  it("rejects every automatic target except the authorized playlist", async () => {
+    const executeExport: typeof executeSpotifyPlaylistExport = vi.fn(() =>
+      Promise.resolve(completedExecution(randomUUID())),
+    );
+    const invalidConfiguration = configuration();
+    invalidConfiguration.spotify.allowedPlaylistId = "1111111111111111111111";
+
+    await expect(
+      runAutomaticDiscoveryPlaylistExport(connection.db, invalidConfiguration, {
+        executeExport,
+      }),
+    ).rejects.toThrow(`restricted to ${playlistId}`);
+    expect(executeExport).not.toHaveBeenCalled();
+  });
+
+  it("preserves a cooldown-paused export for restart-safe resumption", async () => {
+    await connection.db.insert(discoveryScheduleState).values({
+      id: "global",
+      phase: "playlist_inbox",
+      playlistInboxStatus: "ready",
+    });
+    const executeExport: typeof executeSpotifyPlaylistExport = vi.fn(() =>
+      Promise.reject(new SpotifyCooldownError(new Date(Date.now() + 60_000), false)),
+    );
+
+    await expect(
+      runAutomaticDiscoveryPlaylistExport(connection.db, configuration(), { executeExport }),
+    ).rejects.toBeInstanceOf(SpotifyCooldownError);
+    expect(
+      await connection.db.query.discoveryScheduleState.findFirst({
+        where: eq(discoveryScheduleState.id, "global"),
+      }),
+    ).toMatchObject({ phase: "cooldown_wait", playlistInboxStatus: "partial" });
+  });
+
+  it("does not execute a completed inbox twice", async () => {
+    await connection.db.insert(discoveryScheduleState).values({
+      id: "global",
+      phase: "playlist_inbox",
+      playlistInboxStatus: "ready",
+    });
+    const executeExport: typeof executeSpotifyPlaylistExport = vi.fn(() =>
+      Promise.resolve(completedExecution(randomUUID())),
+    );
+
+    await expect(
+      runAutomaticDiscoveryPlaylistExport(connection.db, configuration(), { executeExport }),
+    ).resolves.toMatchObject({ reason: "completed" });
+    await expect(
+      runAutomaticDiscoveryPlaylistExport(connection.db, configuration(), { executeExport }),
+    ).resolves.toEqual({ reason: "not_due" });
+    expect(executeExport).toHaveBeenCalledOnce();
+  });
 });
 
 function configuration() {
@@ -147,12 +225,14 @@ function configuration() {
     APP_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
     MUSICBRAINZ_ENABLED: "false",
     REDDIT_ENABLED: "false",
+    DISCOVERY_SCHEDULER_ENABLED: "true",
     SPOTIFY_ALLOWED_PLAYLIST_ID: playlistId,
     SPOTIFY_CLIENT_ID: "test-client-id",
     SPOTIFY_CLIENT_SECRET: "test-client-secret",
     SPOTIFY_ENABLED: "true",
     SPOTIFY_PLAYLIST_WRITES_ENABLED: "true",
     SPOTIFY_REDIRECT_URI: "http://127.0.0.1:3000/api/auth/spotify/callback",
+    SPOTIFY_SCHEDULER_ENABLED: "true",
   });
 }
 
@@ -182,7 +262,7 @@ function completedExecution(runId: string): SpotifyPlaylistExportExecution {
     target: {
       collaborative: false,
       id: playlistId,
-      idAbbreviated: "4l6L...hRR4",
+      idAbbreviated: "4l6L...RR4Y",
       name: "Release Inbox",
       ownerId: "owner",
       private: true,

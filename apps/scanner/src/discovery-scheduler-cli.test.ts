@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { discoverySchedulerRoute, parseDiscoverySchedulerCommand } from "./discovery-scheduler-cli";
+import type { createDatabase } from "@radar/db";
+import { loadProviderConfiguration } from "@radar/providers";
+import { describe, expect, it, vi } from "vitest";
+import {
+  discoverySchedulerRoute,
+  parseDiscoverySchedulerCommand,
+  runReadyAutomaticPlaylistExport,
+} from "./discovery-scheduler-cli";
 
 describe("discovery scheduler CLI", () => {
   it("parses only the supported commands", () => {
@@ -30,5 +36,37 @@ describe("discovery scheduler CLI", () => {
     expect(
       discoverySchedulerRoute({ phase: "broad_spotify", playlistInboxStatus: "completed" }),
     ).toBe("apple_or_spotify");
+  });
+
+  it.each(["Thursday full scan", "Friday catch-up"])(
+    "continues %s into automatic export without an interactive command",
+    async () => {
+      const runExport = vi.fn(() => Promise.resolve({ reason: "completed" as const }));
+      const db = {} as ReturnType<typeof createDatabase>["db"];
+
+      await expect(
+        runReadyAutomaticPlaylistExport(db, loadProviderConfiguration({}), {
+          getStatus: () =>
+            Promise.resolve({ phase: "playlist_inbox", playlistInbox: { status: "ready" } }),
+          runExport,
+        }),
+      ).resolves.toEqual({ reason: "completed" });
+
+      expect(runExport).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("does not bypass unresolved Apple-priority work", async () => {
+    const runExport = vi.fn(() => Promise.resolve({ reason: "completed" as const }));
+    const db = {} as ReturnType<typeof createDatabase>["db"];
+
+    await expect(
+      runReadyAutomaticPlaylistExport(db, loadProviderConfiguration({}), {
+        getStatus: () =>
+          Promise.resolve({ phase: "apple_priority", playlistInbox: { status: "pending" } }),
+        runExport,
+      }),
+    ).resolves.toBeNull();
+    expect(runExport).not.toHaveBeenCalled();
   });
 });

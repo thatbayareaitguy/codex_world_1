@@ -41,6 +41,31 @@ export function discoverySchedulerRoute(input: {
   return "apple_or_spotify";
 }
 
+export async function runReadyAutomaticPlaylistExport(
+  db: ReturnType<typeof createDatabase>["db"],
+  configuration: ReturnType<typeof loadProviderConfiguration>,
+  dependencies: {
+    getStatus?: (
+      db: ReturnType<typeof createDatabase>["db"],
+    ) => Promise<{ phase: string; playlistInbox: { status: string } }>;
+    runExport?: (
+      db: ReturnType<typeof createDatabase>["db"],
+      configuration: ReturnType<typeof loadProviderConfiguration>,
+    ) => Promise<unknown>;
+  } = {},
+) {
+  const status = await (dependencies.getStatus ?? getRecurringDiscoveryScheduleStatus)(db);
+  if (
+    discoverySchedulerRoute({
+      phase: status.phase,
+      playlistInboxStatus: status.playlistInbox.status,
+    }) !== "playlist_export"
+  ) {
+    return null;
+  }
+  return (dependencies.runExport ?? runAutomaticDiscoveryPlaylistExport)(db, configuration);
+}
+
 async function main(): Promise<void> {
   const command = parseDiscoverySchedulerCommand(process.argv.slice(2));
   const configuration = loadProviderConfiguration();
@@ -80,7 +105,10 @@ async function main(): Promise<void> {
     }
     if (route === "spotify_priority") {
       const spotify = await runSpotifyTick(connection.db, configuration);
-      process.stdout.write(`${JSON.stringify({ spotify }, null, 2)}\n`);
+      const playlist = await runReadyAutomaticPlaylistExport(connection.db, configuration);
+      process.stdout.write(
+        `${JSON.stringify({ spotify, ...(playlist ? { playlist } : {}) }, null, 2)}\n`,
+      );
       return;
     }
 
@@ -110,11 +138,13 @@ async function main(): Promise<void> {
           status: "completed",
         });
         if (!finished) throw new Error("The scheduled Apple Music job lease was lost.");
+        const playlist = await runReadyAutomaticPlaylistExport(connection.db, configuration);
         process.stdout.write(
           `${JSON.stringify({
             appleMusicBatchId: batch.id,
             completedArtists: batch.completedArtists,
             jobType: appleClaim.jobType,
+            ...(playlist ? { playlist } : {}),
             status: "completed",
             totalArtists: batch.totalArtists,
           })}\n`,

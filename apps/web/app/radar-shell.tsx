@@ -1969,8 +1969,8 @@ function FeedView({
                 <div>
                   <dt>Automatic playlist inbox</dt>
                   <dd>
-                    {titleCase(discoverySchedule.playlistInbox.status)} | Pending operations{" "}
-                    {discoverySchedule.playlistInbox.pendingCount}
+                    {discoveryPlaylistStatusLabel(discoverySchedule, spotifyCooldown)} | Pending
+                    operations {discoverySchedule.playlistInbox.pendingCount}
                   </dd>
                 </div>
               </dl>
@@ -6891,6 +6891,33 @@ function versionFromTitle(title: string): string | undefined {
 
 function titleCase(value: string): string {
   return value.replaceAll("_", " ").replace(/^./, (letter) => letter.toLocaleUpperCase("en-US"));
+}
+
+function discoveryPlaylistStatusLabel(
+  schedule: DiscoveryScheduleStatus,
+  spotifyCooldown: boolean,
+): string {
+  if (
+    spotifyCooldown &&
+    ["ready", "exporting", "partial", "failed"].includes(schedule.playlistInbox.status)
+  ) {
+    return "Export paused by cooldown";
+  }
+  switch (schedule.playlistInbox.status) {
+    case "pending":
+      return ["apple_priority", "apple_catchup_priority", "cooldown_wait"].includes(schedule.phase)
+        ? "Awaiting Spotify resolution"
+        : "Awaiting playlist export";
+    case "ready":
+      return "Awaiting playlist export";
+    case "exporting":
+      return "Exporting";
+    case "partial":
+    case "failed":
+      return "Awaiting playlist export retry";
+    case "completed":
+      return "Export complete";
+  }
 }
 
 function formatDate(value: string): string {

@@ -40,7 +40,7 @@ describe("Spotify playlist route boundary", () => {
 
   it("rejects body-free synchronization while writes are disabled", async () => {
     vi.stubEnv("SPOTIFY_PLAYLIST_WRITES_ENABLED", "false");
-    vi.stubEnv("SPOTIFY_ALLOWED_PLAYLIST_ID", "1234567890123456789012");
+    vi.stubEnv("SPOTIFY_ALLOWED_PLAYLIST_ID", "4l6LaMPL6duulmFe3hRR4Y");
     const response = await synchronizePlaylist(request("/api/spotify/playlist-sync"));
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toMatchObject({

@@ -8,9 +8,16 @@ import {
   previewSpotifyPlaylistExport,
   releaseOperationLock,
   SpotifyTokenManager,
+  SpotifyCooldownError,
   type RadarDatabase,
 } from "@radar/db";
-import { SpotifyClient, SpotifyOAuthClient, type ProviderConfiguration } from "@radar/providers";
+import {
+  SpotifyClient,
+  spotifyAuthorizedPlaylistId,
+  SpotifyHttpError,
+  SpotifyOAuthClient,
+  type ProviderConfiguration,
+} from "@radar/providers";
 import { sanitizedSpotifyPlaylistExportOutput } from "./spotify-playlist-export-cli";
 
 export async function runSpotifyPlaylistExportPreview(
@@ -74,16 +81,27 @@ export async function runAutomaticDiscoveryPlaylistExport(
   } = {},
 ) {
   if (
+    !configuration.discoverySchedulerEnabled ||
+    !configuration.spotify.scheduler.enabled ||
+    !configuration.spotify.playlistWritesEnabled
+  ) {
+    return { reason: "capability_disabled" as const };
+  }
+  if (
     !configuration.appEncryptionKey ||
     !configuration.spotify.enabled ||
     !configuration.spotify.configured ||
     !configuration.spotify.clientId ||
     !configuration.spotify.clientSecret ||
-    !configuration.spotify.allowedPlaylistId ||
-    !configuration.spotify.playlistWritesEnabled
+    !configuration.spotify.allowedPlaylistId
   ) {
     throw new Error(
       "Automatic Spotify playlist export requires explicitly enabled writes, encryption, Spotify credentials, and SPOTIFY_ALLOWED_PLAYLIST_ID.",
+    );
+  }
+  if (configuration.spotify.allowedPlaylistId !== spotifyAuthorizedPlaylistId) {
+    throw new Error(
+      `Automatic Spotify playlist export is restricted to ${spotifyAuthorizedPlaylistId}.`,
     );
   }
   const lock = await acquireOperationLock(db, {
@@ -149,9 +167,19 @@ export async function runAutomaticDiscoveryPlaylistExport(
       sanitized: sanitizedSpotifyPlaylistExportOutput(execution),
     };
   } catch (error) {
-    await markDiscoveryPlaylistInboxStatus(db, { status: "failed" });
+    await markDiscoveryPlaylistInboxStatus(db, {
+      pauseForCooldown: isSpotifyCooldown(error),
+      status: isSpotifyCooldown(error) ? "partial" : "failed",
+    });
     throw error;
   } finally {
     await releaseOperationLock(db, lock);
   }
+}
+
+function isSpotifyCooldown(error: unknown): boolean {
+  return (
+    error instanceof SpotifyCooldownError ||
+    (error instanceof SpotifyHttpError && error.status === 429)
+  );
 }

@@ -279,6 +279,7 @@ export async function markDiscoveryPlaylistInboxStatus(
   db: RadarDatabase,
   input: {
     exportRunId?: string | null;
+    pauseForCooldown?: boolean;
     status: "ready" | "exporting" | "partial" | "completed" | "failed";
   },
   now = new Date(),
@@ -290,7 +291,9 @@ export async function markDiscoveryPlaylistInboxStatus(
     ]);
     const phase: DiscoverySchedulePhase =
       input.status !== "completed"
-        ? "playlist_inbox"
+        ? input.pauseForCooldown
+          ? "cooldown_wait"
+          : "playlist_inbox"
         : fullPriority > 0
           ? "apple_priority"
           : catchupPriority > 0
