@@ -8,7 +8,7 @@ Updated: 2026-08-08 16:20 PDT
 - Current implementation checkpoint: this commit (`fix: complete automatic scheduled playlist delivery`)
 - Milestone: automatic guarded Thursday/Friday Spotify playlist delivery and recurring scheduler
   recovery correction
-- Upstream: pending normal push of the current checkpoint
+- Upstream: matches `origin/codex/release-radar-hardening` after the scheduler checkpoint push
 - Worktree: clean except unrelated untracked `outputs/`, which remains excluded
 - PostgreSQL: healthy with 28 forward migrations; no migration was required for this milestone
 
