@@ -4,6 +4,8 @@ import {
   finishDiscoveryScheduleAppleJob,
   getRecurringDiscoveryScheduleStatus,
   getSpotifySchedulerStatus,
+  reconcileDiscoveryScheduleAfterCooldown,
+  type DiscoveryAppleJobClaim,
 } from "@radar/db";
 import { loadProviderConfiguration } from "@radar/providers";
 import { desc, gte } from "drizzle-orm";
@@ -39,6 +41,34 @@ export function discoverySchedulerRoute(input: {
     return "spotify_priority";
   }
   return "apple_or_spotify";
+}
+
+export async function selectDiscoverySchedulerAction(
+  db: ReturnType<typeof createDatabase>["db"],
+  dependencies: {
+    claimAppleJob?: (
+      db: ReturnType<typeof createDatabase>["db"],
+    ) => Promise<DiscoveryAppleJobClaim | null>;
+    getStatus?: (
+      db: ReturnType<typeof createDatabase>["db"],
+    ) => Promise<{ phase: string; playlistInbox: { status: string } }>;
+    reconcileCooldown?: (db: ReturnType<typeof createDatabase>["db"]) => Promise<boolean>;
+  } = {},
+): Promise<
+  | { appleClaim: DiscoveryAppleJobClaim; route: "apple_scan" }
+  | { route: "playlist_export" | "spotify_priority" | "apple_or_spotify" }
+> {
+  const appleClaim = await (dependencies.claimAppleJob ?? claimDiscoveryScheduleAppleJob)(db);
+  if (appleClaim) return { appleClaim, route: "apple_scan" };
+
+  await (dependencies.reconcileCooldown ?? reconcileDiscoveryScheduleAfterCooldown)(db);
+  const status = await (dependencies.getStatus ?? getRecurringDiscoveryScheduleStatus)(db);
+  return {
+    route: discoverySchedulerRoute({
+      phase: status.phase,
+      playlistInboxStatus: status.playlistInbox.status,
+    }),
+  };
 }
 
 export async function runReadyAutomaticPlaylistExport(
@@ -93,11 +123,12 @@ async function main(): Promise<void> {
       );
     }
 
-    const discoveryStatus = await getRecurringDiscoveryScheduleStatus(connection.db);
-    const route = discoverySchedulerRoute({
-      phase: discoveryStatus.phase,
-      playlistInboxStatus: discoveryStatus.playlistInbox.status,
-    });
+    const action = await selectDiscoverySchedulerAction(connection.db);
+    const route = action.route;
+    if (route === "apple_scan") {
+      await runClaimedAppleJob(connection.db, configuration, action.appleClaim);
+      return;
+    }
     if (route === "playlist_export") {
       const playlist = await runAutomaticDiscoveryPlaylistExport(connection.db, configuration);
       process.stdout.write(`${JSON.stringify({ playlist }, null, 2)}\n`);
@@ -112,57 +143,59 @@ async function main(): Promise<void> {
       return;
     }
 
-    const appleClaim = await claimDiscoveryScheduleAppleJob(connection.db);
-    if (appleClaim) {
-      if (!configuration.appleMusic.configured) {
-        await finishDiscoveryScheduleAppleJob(connection.db, appleClaim, {
-          errorClassification: "apple_music_not_configured",
-          status: "failed",
-        });
-        throw new Error("Apple Music is not configured for the scheduled catalog scan.");
-      }
-      const startedAt = new Date();
-      try {
-        const { runScan } = await import("./scan");
-        await runScan({ dryRun: false, full: false, provider: "apple_music" });
-        const batch = await connection.db.query.appleMusicScanBatches.findFirst({
-          where: gte(appleMusicScanBatches.createdAt, startedAt),
-          orderBy: [desc(appleMusicScanBatches.createdAt)],
-        });
-        if (!batch || batch.status !== "completed") {
-          throw new Error("Scheduled Apple Music scan did not produce a completed batch.");
-        }
-        const finished = await finishDiscoveryScheduleAppleJob(connection.db, appleClaim, {
-          appleMusicBatchId: batch.id,
-          scanRunId: batch.scanRunId,
-          status: "completed",
-        });
-        if (!finished) throw new Error("The scheduled Apple Music job lease was lost.");
-        const playlist = await runReadyAutomaticPlaylistExport(connection.db, configuration);
-        process.stdout.write(
-          `${JSON.stringify({
-            appleMusicBatchId: batch.id,
-            completedArtists: batch.completedArtists,
-            jobType: appleClaim.jobType,
-            ...(playlist ? { playlist } : {}),
-            status: "completed",
-            totalArtists: batch.totalArtists,
-          })}\n`,
-        );
-        return;
-      } catch (error) {
-        await finishDiscoveryScheduleAppleJob(connection.db, appleClaim, {
-          errorClassification: safeClassification(error),
-          status: "failed",
-        });
-        throw error;
-      }
-    }
-
     const spotify = await runSpotifyTick(connection.db, configuration);
     process.stdout.write(`${JSON.stringify({ spotify }, null, 2)}\n`);
   } finally {
     await connection.client.end();
+  }
+}
+
+async function runClaimedAppleJob(
+  db: ReturnType<typeof createDatabase>["db"],
+  configuration: ReturnType<typeof loadProviderConfiguration>,
+  appleClaim: DiscoveryAppleJobClaim,
+): Promise<void> {
+  if (!configuration.appleMusic.configured) {
+    await finishDiscoveryScheduleAppleJob(db, appleClaim, {
+      errorClassification: "apple_music_not_configured",
+      status: "failed",
+    });
+    throw new Error("Apple Music is not configured for the scheduled catalog scan.");
+  }
+  const startedAt = new Date();
+  try {
+    const { runScan } = await import("./scan");
+    await runScan({ dryRun: false, full: false, provider: "apple_music" });
+    const batch = await db.query.appleMusicScanBatches.findFirst({
+      where: gte(appleMusicScanBatches.createdAt, startedAt),
+      orderBy: [desc(appleMusicScanBatches.createdAt)],
+    });
+    if (!batch || batch.status !== "completed") {
+      throw new Error("Scheduled Apple Music scan did not produce a completed batch.");
+    }
+    const finished = await finishDiscoveryScheduleAppleJob(db, appleClaim, {
+      appleMusicBatchId: batch.id,
+      scanRunId: batch.scanRunId,
+      status: "completed",
+    });
+    if (!finished) throw new Error("The scheduled Apple Music job lease was lost.");
+    const playlist = await runReadyAutomaticPlaylistExport(db, configuration);
+    process.stdout.write(
+      `${JSON.stringify({
+        appleMusicBatchId: batch.id,
+        completedArtists: batch.completedArtists,
+        jobType: appleClaim.jobType,
+        ...(playlist ? { playlist } : {}),
+        status: "completed",
+        totalArtists: batch.totalArtists,
+      })}\n`,
+    );
+  } catch (error) {
+    await finishDiscoveryScheduleAppleJob(db, appleClaim, {
+      errorClassification: safeClassification(error),
+      status: "failed",
+    });
+    throw error;
   }
 }
 

@@ -7,6 +7,7 @@ import {
   getDiscoveryScheduleStatus,
   markDiscoveryPlaylistInboxStatus,
   prepareDiscoveryPlaylistInboxExport,
+  reconcileDiscoveryScheduleAfterCooldown,
   transitionAppleFirstCampaignToRecurringSchedule,
 } from "./discovery-schedule";
 import {
@@ -160,6 +161,14 @@ describe.sequential("first-week discovery schedule transition", () => {
       phase: "cooldown_wait",
     });
     expect(repeated.nextAppleScanAt).toEqual(first.nextAppleScanAt);
+    await expect(reconcileDiscoveryScheduleAfterCooldown(connection.db, now)).resolves.toBe(false);
+    await expect(
+      reconcileDiscoveryScheduleAfterCooldown(connection.db, new Date(cooldownUntil.getTime() + 1)),
+    ).resolves.toBe(true);
+    expect((await getDiscoveryScheduleStatus(connection.db))?.state).toMatchObject({
+      phase: "playlist_inbox",
+      playlistInboxStatus: "ready",
+    });
     await prepareDiscoveryPlaylistInboxExport(
       connection.db,
       campaignId,

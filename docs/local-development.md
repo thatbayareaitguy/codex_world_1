@@ -99,6 +99,12 @@ until the inbox export is complete and the provider cooldown is clear. Productio
 require the separately configured `SPOTIFY_SCHEDULER_ENABLED=true` capability; do not change `.env`
 as part of credential-free verification.
 
+The unified tick reconciles an expired persisted cooldown before routing Spotify work. A due Friday
+Apple catch-up remains claimable during an active Spotify cooldown and queues its Spotify work
+behind unresolved Thursday priority. If the week's full Apple scan itself completed after Friday at
+9:00 AM Pacific, that full result satisfies the catch-up and the scheduler does not repeat Apple
+discovery.
+
 ### Bulk Apple Music identity resolution
 
 Export the next prioritized unresolved batch outside the repository:

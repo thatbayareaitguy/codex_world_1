@@ -1,109 +1,82 @@
 # AI Handoff
 
-Updated: 2026-08-08 03:03 PDT
+Updated: 2026-08-08 16:20 PDT
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`
-- Current implementation checkpoint: `3aa32b7` (`fix: automate scheduled Spotify playlist delivery`)
-- Current milestone: automatic guarded Thursday/Friday Spotify playlist delivery is implemented and
-  credential-free verified
-- Upstream: matches `origin/codex/release-radar-hardening` after the handoff sync commit
+- Current implementation checkpoint: this commit (`fix: complete automatic scheduled playlist delivery`)
+- Milestone: automatic guarded Thursday/Friday Spotify playlist delivery and recurring scheduler
+  recovery correction
+- Upstream: pending normal push of the current checkpoint
 - Worktree: clean except unrelated untracked `outputs/`, which remains excluded
-- PostgreSQL: healthy with 28 forward migrations after applying `0027`, which adds Spotify request
-  quota lanes and an endpoint-window index.
+- PostgreSQL: healthy with 28 forward migrations; no migration was required for this milestone
 
-## Architecture State
+## Verified Capabilities
 
-- Verified: one short-lived recurring tick claims a due durable Apple job first, otherwise one
-  bounded Spotify work unit. Execution remains behind default-off capability flags.
-- Verified: full Apple scan Thursday at 9:00 PM and catch-up Friday at 9:00 AM in
-  `America/Los_Angeles`, with a 24-hour bounded startup-recovery window.
-- Verified: broad Spotify work is blocked Thursday and Friday. Saturday-Wednesday broad work is
-  capped at 75 distinct artists and 300 request starts per local day.
-- Verified recurring order: drain a previously pending export, Apple scan, Apple-priority Spotify
-  resolution, guarded automatic export, then Saturday-Wednesday broad rotation. The final priority
-  resolution reconciles the durable phase and invokes the existing exporter in the same tick.
-  Friday catch-up uses the same sequence, and priority work preempts broad work.
-- Verified: an expired Spotify cooldown restores the persisted playlist or priority phase instead
-  of skipping bootstrap work.
-- Implemented: the 1,200-request rolling ceiling retains 200 requests for priority work and 20 for
-  playlist operations. Artist Albums has a separate 80-call trailing 24-hour allowance with 20
-  reserved for priority. Unused reserve releases after 20 hours only when priority is empty.
-- Implemented: endpoint telemetry distinguishes Artist Albums, album details, album tracks,
-  playlist reads, playlist writes, and OAuth or other requests. Playlist work is not blocked by an
-  exhausted Artist Albums bucket.
-- Verified: simplified Artist Albums summaries persist before any album-detail request. A detail
-  failure or restart therefore retains the release observation and later work remains resumable.
-- Verified by unit and focused PostgreSQL tests: every Spotify request uses the shared gate at
-  concurrency one and at least ten seconds between starts; an unchanged known release makes one
-  Artist Albums request and no album-detail or track request.
-- Verified: Apple jobs, Spotify work, daily artist claims, leases, cursors, request telemetry,
-  cooldowns, and next scheduled jobs survive restart. Missed broad days do not stack.
-- Verified: add-only playlist export inserts at position zero in discovery order and never
-  removes, replaces, reorders, or edits user-added tracks.
-- Verified: New projects only feed rows matching the New state. Released preview tracks from an
-  unreleased album remain visible individually, while the future album group and upcoming sibling
-  tracks remain in All and Upcoming.
-- Implemented and credential-free verified, but not live-tested as a recurring week: the unified
-  tick invokes the existing single-playlist add-only exporter automatically for Thursday and Friday.
-  Restarted ticks resume a pending export before broad work. A Spotify 429 persists cooldown state
-  and keeps the export phase pending until provider readiness returns.
-- Automatic writes require all ignored local production settings:
+- Thursday 9:00 PM Apple scan and Friday 9:00 AM catch-up are durable local-time jobs in
+  `America/Los_Angeles`. A later full scan satisfies a missed same-week catch-up without a redundant
+  Apple request.
+- A due Apple job is claimable during Spotify cooldown. Its Spotify work waits durably behind
+  unresolved Thursday priority.
+- Thursday and Friday flow automatically from Apple discovery to Apple-priority Spotify resolution
+  and then the existing guarded exporter. No interactive export command is required in enabled local
+  production operation.
+- Export is add-only and restricted to playlist `4l6LaMPL6duulmFe3hRR4Y`. It verifies authentication,
+  exact target identity, ownership, private and non-collaborative state, exact or manually confirmed
+  playable tracks, provider presence, and the durable export ledger.
+- New tracks prepend at position zero in deterministic discovery order. Existing tracks are never
+  removed or reordered, and user-added tracks remain untouched.
+- Restart and expired-cooldown reconciliation restore a pending export or priority phase before broad
+  Spotify work. A valid cooldown is never cleared or probed.
+- Repository defaults remain safe. Automatic writes require process-local production settings:
   `DISCOVERY_SCHEDULER_ENABLED=true`, `SPOTIFY_SCHEDULER_ENABLED=true`,
-  `SPOTIFY_PLAYLIST_WRITES_ENABLED=true`, and
-  `SPOTIFY_ALLOWED_PLAYLIST_ID=4l6LaMPL6duulmFe3hRR4Y`. Defaults and tests remain write-disabled.
-- The UI distinguishes awaiting Spotify resolution, awaiting playlist export, exporting, cooldown
-  pause, retry, and export-complete states.
+  `SPOTIFY_PLAYLIST_WRITES_ENABLED=true`, and the exact allowed playlist ID above.
+- UI status distinguishes Apple resolution, playlist readiness, exporting, cooldown pause, completion,
+  broad backlog, budgets, and next scheduled jobs.
 
 ## Operational State
 
+- Scheduler database mode: `automatic`; local process capabilities still default disabled.
 - Bootstrap campaign `5f462e9e-c3db-451c-b77c-378ab21e8a94` remains
-  `completed_with_spotify_deferred`; its Apple discoveries and reconciliation results are
-  preserved.
-- Thursday bootstrap job is recorded complete. Friday catch-up is durably scheduled for Friday
-  9:00 AM Pacific with bounded recovery.
-- Spotify cooldown is stored until `2026-08-08T18:32:23.020Z`, August 8 at 11:32:23 AM PDT.
-- No live Spotify, Apple, MusicBrainz, Reddit, or SoundCloud request was made during this milestone.
-- Recurring execution and Spotify scheduler execution remain disabled. Read-only status works via
-  `pnpm discovery:scheduler:status`.
+  `completed_with_spotify_deferred`; Apple discoveries and reconciliation evidence are preserved.
+- Live guarded export completed with 934 managed tracks, zero duplicates, and one unrelated user-added
+  track preserved. The final automatic rerun added zero tracks, proving idempotency.
+- Spotify cooldown: none active. Historical cooldown expiration remains preserved.
+- Bounded live Apple-priority validation processed 20 artists and eight release-detail steps, stopped
+  cleanly at the 30-request rolling ceiling, produced no 429, and used no broad capacity.
+- Apple-priority queue: 114 remaining. Broad Spotify work remains blocked behind this queue.
+- Spotify Artist Albums usage: 20 of 80 trailing-24-hour calls; no active lease or stale lock.
+- Next scheduled full Apple job: Thursday, August 13 at 9:00 PM PDT. Next Friday catch-up: August 14
+  at 9:00 AM PDT.
 
 ## Validation
 
 - Passed: formatting, lint, strict TypeScript across 6 workspaces, and the 27-route production build.
-- Passed: 436 unit tests across 60 files, 133 PostgreSQL integration tests across 25 files, and 30
+- Passed: 438 unit tests across 60 files, 133 PostgreSQL integration tests across 25 files, and 30
   Playwright tests.
-- Passed: migration application, live local UI smoke inspection of the persisted cooldown state,
-  browser console error check, and `git diff --check`.
-- Doctor: PostgreSQL is healthy with 28 migrations, no stale locks, valid playlist boundaries, and
-  both required Spotify playlist scopes. It correctly reports the provider-directed Spotify
-  cooldown as an action item until `2026-08-08T18:32:23.020Z`. Artist Albums has 101 trailing
-  24-hour calls against the local 80-call ceiling, so no Artist Albums work is eligible before
-  capacity returns; playlist request accounting remains separate at 0 reads and 0 writes.
+- Passed: migration application, local browser smoke, empty console-error inspection, and
+  `git diff --check` before the final documentation refresh.
+- Doctor: READY with PostgreSQL available, 28 migrations, no active cooldown, no stale locks, no
+  album-completeness discrepancy, and both required Spotify playlist scopes.
 
-## Risks And Known Limits
+## Risks And Blockers
 
-- Spotify's quota remains unpublished. Local ceilings and reserves reduce risk but cannot
-  guarantee that Spotify will not return 429.
-- Automatic execution is credential-free and database-backed verified but has not completed a
-  full live recurring week.
-- Spotify's endpoint limits are unpublished. The 80-call Artist Albums allowance is deliberately
-  conservative and requires operational review after sustained use.
-- Automatic playlist delivery is code-, PostgreSQL-, and browser-test verified only; it has not
-  completed a live Thursday-Friday transition.
-- The Friday catch-up is an incremental mapped-watchlist Apple scan, not a second historical
-  backfill.
-- Windows Task Scheduler must invoke the unified tick. PostgreSQL remains the schedule authority.
+- Spotify quota limits remain unpublished. Local endpoint and rolling ceilings reduce risk but cannot
+  guarantee the absence of future 429 responses.
+- A complete recurring Thursday-Friday-Saturday week has not yet run unattended.
+- The current 114-item Apple-priority queue must drain before the next automatic playlist checkpoint
+  and before broad Spotify reconciliation.
+- Windows Task Scheduler must invoke the unified tick with the ignored local production capability
+  settings. PostgreSQL remains the schedule authority.
 
 ## Immediate Next Step
 
-After the provider cooldown has expired, run doctor and validate one bounded Thursday or Friday
-transition under explicit live approval. Do not enable broad Spotify work before playlist and
-Apple-priority phases complete.
+Continue short-lived unified ticks after rolling request capacity returns. Drain Apple-priority work,
+let the scheduler run the automatic playlist checkpoint, then permit Saturday broad reconciliation.
 
 ## Deferred
 
-- Live validation of a complete Thursday-Friday-Saturday recurring transition
 - Any Spotify pacing or quota increase
-- Broad historical reconciliation beyond the bounded daily rotation
+- Historical deep reconciliation beyond bounded daily rotation
 - MusicBrainz production reactivation, Reddit activation, SoundCloud automation, and new providers

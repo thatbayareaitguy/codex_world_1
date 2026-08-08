@@ -275,6 +275,52 @@ export async function getDiscoveryScheduleStatus(db: RadarDatabase) {
   return { state, queue };
 }
 
+export async function reconcileDiscoveryScheduleAfterCooldown(
+  db: RadarDatabase,
+  now = new Date(),
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const [state] = await tx
+      .select()
+      .from(discoveryScheduleState)
+      .where(eq(discoveryScheduleState.id, discoveryScheduleStateId))
+      .limit(1)
+      .for("update");
+    if (!state || state.phase !== "cooldown_wait") return false;
+
+    const provider = await tx.query.spotifyProviderState.findFirst({
+      where: eq(spotifyProviderState.id, "global"),
+    });
+    if (provider?.cooldownIndefinite || (provider?.cooldownUntil && provider.cooldownUntil > now)) {
+      return false;
+    }
+
+    const [fullPriority, catchupPriority] = await Promise.all([
+      countActiveApplePriority(tx, "apple_priority"),
+      countActiveApplePriority(tx, "apple_catchup"),
+    ]);
+    const playlistPending = ["ready", "exporting", "partial", "failed"].includes(
+      state.playlistInboxStatus,
+    );
+    const phase: DiscoverySchedulePhase = playlistPending
+      ? "playlist_inbox"
+      : fullPriority > 0
+        ? "apple_priority"
+        : catchupPriority > 0
+          ? "apple_catchup_priority"
+          : "broad_spotify";
+    await tx
+      .update(discoveryScheduleState)
+      .set({
+        applePriorityQueuedCount: fullPriority + catchupPriority,
+        phase,
+        updatedAt: now,
+      })
+      .where(eq(discoveryScheduleState.id, discoveryScheduleStateId));
+    return true;
+  });
+}
+
 export async function markDiscoveryPlaylistInboxStatus(
   db: RadarDatabase,
   input: {
@@ -490,11 +536,17 @@ export async function reconcileDiscoveryScheduleJobs(
       const occurrence = weeklyOccurrenceAround(now, definition.weekday, definition.hour);
       for (const scheduledFor of [occurrence.previous, occurrence.next]) {
         const recoveryDeadline = new Date(scheduledFor.getTime() + discoveryAppleRecoveryWindowMs);
-        const completedByBootstrap =
-          definition.jobType === "apple_full" &&
+        const catchupCoveredByFullScan =
+          definition.jobType === "apple_catchup" &&
           state?.lastAppleScanCompletedAt &&
           state.lastAppleScanCompletedAt >= scheduledFor &&
           state.lastAppleScanCompletedAt < occurrence.next;
+        const completedByBootstrap =
+          (definition.jobType === "apple_full" &&
+            state?.lastAppleScanCompletedAt &&
+            state.lastAppleScanCompletedAt >= scheduledFor &&
+            state.lastAppleScanCompletedAt < occurrence.next) ||
+          catchupCoveredByFullScan;
         const status: DiscoveryAppleJobStatus = completedByBootstrap
           ? "completed"
           : recoveryDeadline <= now
@@ -506,6 +558,9 @@ export async function reconcileDiscoveryScheduleJobs(
             ...(completedByBootstrap
               ? {
                   completedAt: state.lastAppleScanCompletedAt,
+                  ...(catchupCoveredByFullScan
+                    ? { errorClassification: "covered_by_later_full_scan" }
+                    : {}),
                 }
               : {}),
             jobKey: discoveryAppleJobKey(definition.jobType, scheduledFor),
@@ -515,6 +570,25 @@ export async function reconcileDiscoveryScheduleJobs(
             status,
           })
           .onConflictDoNothing();
+        if (catchupCoveredByFullScan) {
+          await tx
+            .update(discoveryScheduleJobs)
+            .set({
+              completedAt: state.lastAppleScanCompletedAt,
+              errorClassification: "covered_by_later_full_scan",
+              status: "completed",
+              updatedAt: now,
+            })
+            .where(
+              and(
+                eq(
+                  discoveryScheduleJobs.jobKey,
+                  discoveryAppleJobKey(definition.jobType, scheduledFor),
+                ),
+                eq(discoveryScheduleJobs.status, "scheduled"),
+              ),
+            );
+        }
       }
     }
 

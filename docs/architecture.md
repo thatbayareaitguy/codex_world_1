@@ -81,8 +81,10 @@ counts, and the final read-only playlist preview. Repeated runs resume incomplet
 derived reconciliation rows transactionally.
 
 The preview runtime can read only `SPOTIFY_ALLOWED_PLAYLIST_ID` and constructs a Spotify client with
-writes disabled. A live playlist export remains a separate explicit command and approval boundary.
-See [Apple-First Discovery And Spotify Reconciliation](apple-first-sync.md).
+writes disabled. Manual campaign export remains an explicit command and approval boundary. In the
+explicitly enabled recurring production workflow, Thursday and Friday use the same guarded exporter
+automatically after Apple-triggered Spotify resolution drains; repository defaults remain
+write-disabled. See [Apple-First Discovery And Spotify Reconciliation](apple-first-sync.md).
 
 ### First-week bootstrap into the recurring schedule
 
@@ -105,7 +107,8 @@ Saturday through Wednesday. Apple-derived priority work may still use Spotify af
 readiness checks because it preempts broad rotation. Full-scan priority and Friday catch-up priority
 are separate durable phases with an add-only playlist checkpoint between them. When a persisted
 Spotify cooldown expires, the scheduler restores the waiting playlist or priority phase instead of
-advancing past it.
+advancing past it. A full Apple scan that completes after the current Friday 9:00 AM catch-up time
+satisfies that week's catch-up job, preventing a redundant second Apple scan.
 
 Broad Spotify claims are limited to 75 distinct artists and 300 request starts per local day. The
 rolling 24-hour ceiling retains separate reserves of 200 requests for Apple-priority resolution and
@@ -114,8 +117,10 @@ are ordered by the oldest successful scan. All work, daily artist claims, Apple 
 cooldowns, and next-run timestamps are persisted in PostgreSQL.
 
 The campaign playlist inbox uses only exact Spotify track IDs already proven eligible by the
-campaign reconciliation rows. A pending export from prior work is drained before a new Apple job.
-After each Thursday or Friday Apple scan, Apple-triggered Spotify resolution runs first and the
+campaign reconciliation rows. A due Apple job is independent from Spotify readiness, so Friday
+catch-up may run during a Spotify cooldown; its resulting work is queued behind unresolved
+full-scan priority and the pending export resumes when Spotify is ready. After each Thursday or
+Friday Apple scan, Apple-triggered Spotify resolution runs first and the
 playlist checkpoint becomes ready when that priority queue drains. The successful final resolution
 is reconciled immediately, and the same unified tick invokes the existing guarded exporter without
 an interactive command. A later periodic tick provides restart recovery when the process exits at

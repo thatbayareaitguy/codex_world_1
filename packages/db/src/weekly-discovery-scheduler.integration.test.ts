@@ -44,7 +44,7 @@ describe.sequential("weekly discovery scheduler persistence", () => {
     await connection.client.end();
   });
 
-  it("persists the bootstrap full scan and claims the Friday catch-up after restart", async () => {
+  it("does not duplicate Friday catch-up after a later full scan completed", async () => {
     const now = new Date("2026-08-07T19:00:00.000Z");
     await connection.db.insert(discoveryScheduleState).values({
       id: "global",
@@ -58,15 +58,11 @@ describe.sequential("weekly discovery scheduler persistence", () => {
     expect(afterRestart).toEqual(beforeRestart);
     expect(afterRestart.full.latest).toMatchObject({ status: "completed" });
     expect(afterRestart.catchup.latest).toMatchObject({
+      errorClassification: "covered_by_later_full_scan",
       scheduledFor: new Date("2026-08-07T16:00:00.000Z"),
-      status: "scheduled",
+      status: "completed",
     });
-
-    const claim = await claimDiscoveryScheduleAppleJob(connection.db, now);
-    expect(claim).toMatchObject({ jobType: "apple_catchup" });
-    expect(
-      (await getRecurringDiscoveryScheduleStatus(connection.db, now)).catchup.latest,
-    ).toMatchObject({ status: "leased" });
+    expect(await claimDiscoveryScheduleAppleJob(connection.db, now)).toBeNull();
   });
 
   it("expires missed jobs after 24 hours and never stacks old jobs for execution", async () => {
@@ -104,7 +100,7 @@ describe.sequential("weekly discovery scheduler persistence", () => {
     });
     await connection.db.insert(discoveryScheduleState).values({
       id: "global",
-      lastAppleScanCompletedAt: new Date("2026-08-07T18:00:00.000Z"),
+      lastAppleScanCompletedAt: new Date("2026-08-07T15:00:00.000Z"),
       phase: "broad_spotify",
     });
     await reconcileDiscoveryScheduleJobs(connection.db, now);
@@ -159,7 +155,7 @@ describe.sequential("weekly discovery scheduler persistence", () => {
     const now = new Date("2026-08-07T19:00:00.000Z");
     await connection.db.insert(discoveryScheduleState).values({
       id: "global",
-      lastAppleScanCompletedAt: new Date("2026-08-07T18:00:00.000Z"),
+      lastAppleScanCompletedAt: new Date("2026-08-07T15:00:00.000Z"),
       phase: "broad_spotify",
     });
     await reconcileDiscoveryScheduleJobs(connection.db, now);
