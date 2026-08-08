@@ -5,10 +5,10 @@ Updated: 2026-08-08 03:03 PDT
 ## Repository
 
 - Branch: `codex/release-radar-hardening`
-- Current checkpoint: `HEAD` (`fix: automate scheduled Spotify playlist delivery`)
+- Current implementation checkpoint: `3aa32b7` (`fix: automate scheduled Spotify playlist delivery`)
 - Current milestone: automatic guarded Thursday/Friday Spotify playlist delivery is implemented and
   credential-free verified
-- Upstream: pending normal push to `origin/codex/release-radar-hardening`
+- Upstream: matches `origin/codex/release-radar-hardening` after the handoff sync commit
 - Worktree: clean except unrelated untracked `outputs/`, which remains excluded
 - PostgreSQL: healthy with 28 forward migrations after applying `0027`, which adds Spotify request
   quota lanes and an endpoint-window index.
