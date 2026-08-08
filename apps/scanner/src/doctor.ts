@@ -69,6 +69,9 @@ export interface DoctorDatabaseStatus {
   };
   spotifyScheduler?: {
     activeLease: boolean;
+    artistAlbumsAllowance: number;
+    artistAlbumsCalls: number;
+    artistAlbumsPriorityReserve: number;
     blocked: number;
     mode: string;
     queued: number;
@@ -256,13 +259,13 @@ export async function collectDoctorReport(
           scheduler.activeLease
             ? action(
                 "Spotify scheduler",
-                `Mode ${scheduler.mode}; ${scheduler.queued} queued; ${scheduler.blocked} blocked; one active lease.`,
+                `Mode ${scheduler.mode}; ${scheduler.queued} queued; ${scheduler.blocked} blocked; Artist Albums ${scheduler.artistAlbumsCalls}/${scheduler.artistAlbumsAllowance} with ${scheduler.artistAlbumsPriorityReserve} reserved; one active lease.`,
                 "Confirm the bounded scheduler tick is still running before taking corrective action.",
                 false,
               )
             : ready(
                 "Spotify scheduler",
-                `Mode ${scheduler.mode}; ${scheduler.queued} queued; ${scheduler.blocked} blocked; no active lease.`,
+                `Mode ${scheduler.mode}; ${scheduler.queued} queued; ${scheduler.blocked} blocked; Artist Albums ${scheduler.artistAlbumsCalls}/${scheduler.artistAlbumsAllowance} with ${scheduler.artistAlbumsPriorityReserve} reserved; no active lease.`,
                 false,
               ),
         );
@@ -480,6 +483,9 @@ async function probeDatabase(url: string): Promise<DoctorDatabaseStatus> {
       const scheduler = await getSpotifySchedulerStatus(db);
       spotifyScheduler = {
         activeLease: Boolean(scheduler.activeLease),
+        artistAlbumsAllowance: scheduler.endpointBudget.artistAlbums.allowance,
+        artistAlbumsCalls: scheduler.endpointBudget.artistAlbums.calls,
+        artistAlbumsPriorityReserve: scheduler.endpointBudget.artistAlbums.priorityReserve,
         blocked: scheduler.blockedCount,
         mode: scheduler.mode,
         queued: Object.values(scheduler.backlog).reduce((total, value) => total + value, 0),
@@ -610,6 +616,22 @@ function spotifyChecks(
           "Spotify scheduler capability",
           "Automatic Spotify scheduler execution is disabled by default.",
         ),
+  );
+  if (configuration.discoverySchedulerEnabled && !configuration.spotify.playlistWritesEnabled) {
+    checks.push(
+      action(
+        "Automatic Spotify playlist export",
+        "Recurring discovery is enabled, but Spotify playlist writes are disabled, so the playlist-inbox phase cannot advance.",
+        "Set SPOTIFY_PLAYLIST_WRITES_ENABLED=true only after confirming the single allowed playlist and required scopes, or disable DISCOVERY_SCHEDULER_ENABLED.",
+      ),
+    );
+  }
+  checks.push(
+    ready(
+      "Spotify Artist Albums budget",
+      `Trailing 24-hour limit ${configuration.spotify.artistAlbums24HourLimit}; ${configuration.spotify.artistAlbumsPriorityReserve} calls reserved for Apple-priority work; unused reserve may release after ${configuration.spotify.artistAlbumsReserveReleaseAfterHours} hours.`,
+      false,
+    ),
   );
   if (!configuration.spotify.playlistWritesEnabled) {
     checks.push(

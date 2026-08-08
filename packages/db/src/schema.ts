@@ -891,10 +891,12 @@ export const spotifyRequestEvents = pgTable(
     discoveryReconciliationCampaignId: uuid("discovery_reconciliation_campaign_id"),
     schedulerWorkId: uuid("scheduler_work_id"),
     schedulerWorkType: spotifySchedulerWorkTypeEnum("scheduler_work_type"),
+    quotaLane: text("quota_lane").notNull().default("other"),
     createdAt,
   },
   (table) => [
     index("spotify_request_events_started_idx").on(table.startedAt),
+    index("spotify_request_events_endpoint_window_idx").on(table.endpointCategory, table.startedAt),
     index("spotify_request_events_429_classification_idx").on(
       table.status,
       table.rateLimitClassification,
@@ -904,6 +906,10 @@ export const spotifyRequestEvents = pgTable(
     index("spotify_request_events_discovery_campaign_idx").on(
       table.discoveryReconciliationCampaignId,
       table.startedAt,
+    ),
+    check(
+      "spotify_request_events_quota_lane_check",
+      sql`${table.quotaLane} in ('priority', 'broad', 'playlist', 'other')`,
     ),
   ],
 );

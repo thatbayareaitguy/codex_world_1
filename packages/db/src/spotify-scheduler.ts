@@ -16,6 +16,11 @@ import {
 import { randomUUID } from "node:crypto";
 import type { RadarDatabase } from "./client";
 import {
+  defaultSpotifyArtistAlbumsBudget,
+  getSpotifyEndpointBudgetStatus,
+  type SpotifyEndpointBudgetStatus,
+} from "./spotify-request-gate";
+import {
   artistExternalIds,
   artistFollows,
   releaseCandidates,
@@ -45,6 +50,9 @@ export type SpotifySchedulerWorkStatus =
   "queued" | "leased" | "blocked" | "completed" | "cancelled";
 
 export interface SpotifySchedulerLimits {
+  artistAlbums24HourLimit: number;
+  artistAlbumsPriorityReserve: number;
+  artistAlbumsReserveReleaseAfterHours: number;
   maxBroadArtistsPerLocalDay: number;
   maxBroadRequestsPerLocalDay: number;
   maxArtistsPerTick: 1;
@@ -108,12 +116,27 @@ export interface SpotifySchedulerStatus {
     state: "available" | "blocked";
   };
   http429Last24Hours: number;
+  endpointBudget: SpotifyEndpointBudgetStatus;
+  lastQuotaExceeded: {
+    cooldownUntil: Date | null;
+    endpointCategory: string;
+    observedAt: Date;
+  } | null;
   mode: SpotifySchedulerMode;
   nextBaseSlotAt: Date | null;
   oldestOverdueAgeMs: number | null;
   overdueArtistCount: number;
   partialArtistCount: number;
   requestCounts: {
+    byEndpointCategory: Record<
+      | "artist_albums"
+      | "album_detail"
+      | "album_tracks"
+      | "playlist_read"
+      | "playlist_write"
+      | "oauth_or_other",
+      number
+    >;
     last24Hours: number;
     last30Minutes: number;
     byWorkType: Partial<Record<SpotifySchedulerWorkType, number>>;
@@ -130,12 +153,16 @@ export interface SpotifySchedulerStatus {
 export async function reconcileSpotifySchedulerWork(
   db: RadarDatabase,
   now = new Date(),
+  effectiveLimits?: SpotifySchedulerLimits,
 ): Promise<SpotifySchedulerStatus> {
   await db
     .insert(spotifySchedulerState)
     .values({ id: spotifySchedulerStateId })
     .onConflictDoNothing();
   const eligible = await loadEligibleSpotifyArtists(db);
+  const currentState = await db.query.spotifySchedulerState.findFirst({
+    where: eq(spotifySchedulerState.id, spotifySchedulerStateId),
+  });
 
   await db.transaction(async (tx) => {
     for (const artist of eligible) {
@@ -275,7 +302,9 @@ export async function reconcileSpotifySchedulerWork(
       .update(spotifySchedulerState)
       .set({
         cycleTargetArtists: eligible.length,
-        effectiveConfiguration: defaultSchedulerLimits(),
+        effectiveConfiguration: schedulerLimits(
+          effectiveLimits ?? currentState?.effectiveConfiguration,
+        ),
         updatedAt: now,
       })
       .where(eq(spotifySchedulerState.id, spotifySchedulerStateId));
@@ -427,6 +456,24 @@ export async function claimSpotifySchedulerWork(
     await advanceDiscoverySchedulePhaseIfDrained(tx, now);
     const candidate = await selectSpotifySchedulerCandidate(tx, now, true, state.mode);
     if (!candidate) return null;
+    if (["base_artist", "artist_reconciliation"].includes(candidate.workType)) {
+      const endpointBudget = await getSpotifyEndpointBudgetStatus(
+        tx,
+        {
+          limit: limits.artistAlbums24HourLimit,
+          priorityReserve: limits.artistAlbumsPriorityReserve,
+          reserveReleaseAfterHours: limits.artistAlbumsReserveReleaseAfterHours,
+        },
+        now,
+      );
+      const priorityWork = ["apple_priority", "apple_catchup"].includes(candidate.source);
+      if (
+        endpointBudget.artistAlbums.remaining === 0 ||
+        (!priorityWork && endpointBudget.artistAlbums.broadRemaining === 0)
+      ) {
+        return null;
+      }
+    }
     const localDay = spotifySchedulerLocalDayWindow(now);
     if (isBroadSpotifyWork(candidate.source)) {
       if (!isBroadSpotifyDay(localDay.weekday)) return null;
@@ -608,6 +655,9 @@ export async function getSpotifySchedulerStatus(
   const work = await db.select().from(spotifySchedulerWork);
   const requests = await db
     .select({
+      cooldownUntil: spotifyRequestEvents.cooldownUntil,
+      endpointCategory: spotifyRequestEvents.endpointCategory,
+      rateLimitClassification: spotifyRequestEvents.rateLimitClassification,
       startedAt: spotifyRequestEvents.startedAt,
       status: spotifyRequestEvents.status,
       workType: spotifyRequestEvents.schedulerWorkType,
@@ -618,6 +668,15 @@ export async function getSpotifySchedulerStatus(
     countBroadSpotifyArtists(db, localDay.localDate),
     countBroadSpotifyRequests(db, localDay.start, localDay.end),
   ]);
+  const endpointBudget = await getSpotifyEndpointBudgetStatus(
+    db,
+    {
+      limit: limits.artistAlbums24HourLimit,
+      priorityReserve: limits.artistAlbumsPriorityReserve,
+      reserveReleaseAfterHours: limits.artistAlbumsReserveReleaseAfterHours,
+    },
+    now,
+  );
   const last30 = requests.filter(
     (request) => request.startedAt > new Date(now.getTime() - 30 * 60_000),
   );
@@ -656,9 +715,21 @@ export async function getSpotifySchedulerStatus(
     ? new Date(earliest.getTime() + Math.max(queuedCount, dueBase.length) * slotMs)
     : null;
   const byWorkType: Partial<Record<SpotifySchedulerWorkType, number>> = {};
+  const byEndpointCategory = {
+    artist_albums: 0,
+    album_detail: 0,
+    album_tracks: 0,
+    playlist_read: 0,
+    playlist_write: 0,
+    oauth_or_other: 0,
+  };
   for (const request of requests) {
     if (request.workType) byWorkType[request.workType] = (byWorkType[request.workType] ?? 0) + 1;
+    byEndpointCategory[normalizedEndpointCategory(request.endpointCategory)] += 1;
   }
+  const lastQuotaExceeded = requests
+    .filter((request) => request.rateLimitClassification === "quota_exceeded")
+    .sort((left, right) => right.startedAt.getTime() - left.startedAt.getTime())[0];
   return {
     activeLease: activeLease?.leaseExpiresAt
       ? {
@@ -715,6 +786,14 @@ export async function getSpotifySchedulerStatus(
       state: cooldownActive && !provider?.cooldownUntil ? "blocked" : "available",
     },
     http429Last24Hours: requests.filter((request) => request.status === 429).length,
+    endpointBudget,
+    lastQuotaExceeded: lastQuotaExceeded
+      ? {
+          cooldownUntil: lastQuotaExceeded.cooldownUntil,
+          endpointCategory: normalizedEndpointCategory(lastQuotaExceeded.endpointCategory),
+          observedAt: lastQuotaExceeded.startedAt,
+        }
+      : null,
     mode: state?.mode ?? "disabled",
     nextBaseSlotAt: state?.nextBaseSlotAt ?? null,
     oldestOverdueAgeMs: oldestDue ? Math.max(0, now.getTime() - oldestDue.getTime()) : null,
@@ -726,7 +805,12 @@ export async function getSpotifySchedulerStatus(
         item.status !== "completed" &&
         item.status !== "cancelled",
     ).length,
-    requestCounts: { byWorkType, last24Hours: requests.length, last30Minutes: last30.length },
+    requestCounts: {
+      byEndpointCategory,
+      byWorkType,
+      last24Hours: requests.length,
+      last30Minutes: last30.length,
+    },
     recentWork: recentWork?.lastCompletedAt
       ? {
           artistId: recentWork.artistId,
@@ -1095,6 +1179,9 @@ function retryDelay(attemptCount: number): number {
 
 export function defaultSchedulerLimits(): SpotifySchedulerLimits {
   return {
+    artistAlbums24HourLimit: defaultSpotifyArtistAlbumsBudget.limit,
+    artistAlbumsPriorityReserve: defaultSpotifyArtistAlbumsBudget.priorityReserve,
+    artistAlbumsReserveReleaseAfterHours: defaultSpotifyArtistAlbumsBudget.reserveReleaseAfterHours,
     maxBroadArtistsPerLocalDay: 75,
     maxBroadRequestsPerLocalDay: 300,
     maxArtistsPerTick: 1,
@@ -1130,6 +1217,19 @@ function schedulerLimits(value: unknown): SpotifySchedulerLimits {
   if (!value || typeof value !== "object") return defaultSchedulerLimits();
   const limits = value as Partial<SpotifySchedulerLimits>;
   return {
+    artistAlbums24HourLimit: boundedInteger(limits.artistAlbums24HourLimit, 1, 1_000, 80),
+    artistAlbumsPriorityReserve: boundedInteger(
+      limits.artistAlbumsPriorityReserve,
+      0,
+      Math.max(0, boundedInteger(limits.artistAlbums24HourLimit, 1, 1_000, 80) - 1),
+      20,
+    ),
+    artistAlbumsReserveReleaseAfterHours: boundedInteger(
+      limits.artistAlbumsReserveReleaseAfterHours,
+      1,
+      24,
+      20,
+    ),
     maxBroadArtistsPerLocalDay: boundedInteger(limits.maxBroadArtistsPerLocalDay, 1, 75, 75),
     maxBroadRequestsPerLocalDay: boundedInteger(limits.maxBroadRequestsPerLocalDay, 1, 1_000, 300),
     maxArtistsPerTick: 1,
@@ -1142,6 +1242,36 @@ function schedulerLimits(value: unknown): SpotifySchedulerLimits {
     priorityRequestReserve: boundedInteger(limits.priorityRequestReserve, 1, 1_000, 200),
     windowHours: 24,
   };
+}
+
+function normalizedEndpointCategory(
+  value: string,
+):
+  | "artist_albums"
+  | "album_detail"
+  | "album_tracks"
+  | "playlist_read"
+  | "playlist_write"
+  | "oauth_or_other" {
+  switch (value) {
+    case "artist_albums":
+    case "album_detail":
+    case "album_tracks":
+    case "playlist_read":
+    case "playlist_write":
+    case "oauth_or_other":
+      return value;
+    case "album":
+      return "album_detail";
+    case "playlist":
+    case "playlist_items":
+    case "user_playlists":
+      return "playlist_read";
+    case "playlist_add_items":
+      return "playlist_write";
+    default:
+      return "oauth_or_other";
+  }
 }
 
 function boundedInteger(

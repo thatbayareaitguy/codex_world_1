@@ -847,7 +847,7 @@ export class SpotifyOAuthClient {
 
   private async tokenRequest(body: URLSearchParams): Promise<SpotifyTokenResponse> {
     const permit = await this.requestGate?.acquire({
-      endpointCategory: "oauth_token",
+      endpointCategory: "oauth_or_other",
       method: "POST",
     });
     let completed = false;
@@ -976,19 +976,14 @@ export function parseSpotifyRetryAfter(
 
 export function spotifyEndpointCategory(path: string, method = "GET"): string {
   if (/^\/artists\/[^/]+\/albums(?:\?|$)/.test(path)) return "artist_albums";
-  if (/^\/artists\/[^/]+$/.test(path)) return "artist";
   if (/^\/albums\/[^/]+\/tracks(?:\?|$)/.test(path)) return "album_tracks";
-  if (/^\/albums\/[^/]+$/.test(path)) return "album";
-  if (/^\/tracks\/[^/]+$/.test(path)) return "track";
-  if (path.startsWith("/me/following")) return "followed_artists";
-  if (path.startsWith("/me/playlists")) return "user_playlists";
+  if (/^\/albums\/[^/]+$/.test(path)) return "album_detail";
+  if (path.startsWith("/me/playlists")) return "playlist_read";
   if (/^\/playlists\/[^/]+\/items/.test(path)) {
-    return method === "POST" ? "playlist_add_items" : "playlist_items";
+    return method === "POST" ? "playlist_write" : "playlist_read";
   }
-  if (/^\/playlists\/[^/]+$/.test(path)) return "playlist";
-  if (path.startsWith("/search")) return "artist_search";
-  if (path === "/me") return "current_user";
-  return "other";
+  if (/^\/playlists\/[^/]+$/.test(path)) return "playlist_read";
+  return "oauth_or_other";
 }
 
 const spotifyErrorBodyMaximumBytes = 4_096;

@@ -12,6 +12,7 @@ import {
   artistExternalIds,
   releaseProviderReconciliations,
   spotifyProviderState,
+  spotifyPlaylistExportOperations,
   spotifySchedulerState,
   spotifySchedulerWork,
 } from "./schema";
@@ -308,6 +309,48 @@ export async function markDiscoveryPlaylistInboxStatus(
   });
 }
 
+export async function claimAutomaticDiscoveryPlaylistInboxExport(
+  db: RadarDatabase,
+  now = new Date(),
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const [state] = await tx
+      .select()
+      .from(discoveryScheduleState)
+      .where(eq(discoveryScheduleState.id, discoveryScheduleStateId))
+      .limit(1)
+      .for("update");
+    if (
+      !state ||
+      state.phase !== "playlist_inbox" ||
+      !["ready", "partial", "failed"].includes(state.playlistInboxStatus)
+    ) {
+      return false;
+    }
+    const provider = await tx.query.spotifyProviderState.findFirst({
+      where: eq(spotifyProviderState.id, "global"),
+    });
+    if (provider?.cooldownIndefinite || (provider?.cooldownUntil && provider.cooldownUntil > now)) {
+      return false;
+    }
+    const [claimed] = await tx
+      .update(discoveryScheduleState)
+      .set({
+        playlistInboxStatus: "exporting",
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(discoveryScheduleState.id, discoveryScheduleStateId),
+          eq(discoveryScheduleState.phase, "playlist_inbox"),
+          inArray(discoveryScheduleState.playlistInboxStatus, ["ready", "partial", "failed"]),
+        ),
+      )
+      .returning({ id: discoveryScheduleState.id });
+    return Boolean(claimed);
+  });
+}
+
 export async function prepareDiscoveryPlaylistInboxExport(
   db: RadarDatabase,
   campaignId: string,
@@ -601,9 +644,10 @@ export async function finishDiscoveryScheduleAppleJob(
     const playlistPending =
       scheduleState &&
       ["ready", "exporting", "partial", "failed"].includes(scheduleState.playlistInboxStatus);
+    const completedAppleJob = input.status === "completed";
     const phase: DiscoverySchedulePhase = cooldownActive
       ? "cooldown_wait"
-      : playlistPending
+      : completedAppleJob || playlistPending
         ? "playlist_inbox"
         : fullPriority > 0
           ? "apple_priority"
@@ -618,6 +662,9 @@ export async function finishDiscoveryScheduleAppleJob(
           ? { lastAppleScanCompletedAt: now }
           : {}),
         phase,
+        ...(completedAppleJob
+          ? { playlistInboxExportRunId: null, playlistInboxStatus: "ready" }
+          : {}),
         updatedAt: now,
       })
       .where(eq(discoveryScheduleState.id, discoveryScheduleStateId));
@@ -659,10 +706,26 @@ export async function getRecurringDiscoveryScheduleStatus(db: RadarDatabase, now
     jobs
       .filter((job) => job.jobType === type && job.scheduledFor > now)
       .sort((left, right) => left.scheduledFor.getTime() - right.scheduledFor.getTime())[0] ?? null;
+  const pendingExport = state?.playlistInboxExportRunId
+    ? await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(spotifyPlaylistExportOperations)
+        .where(
+          and(
+            eq(spotifyPlaylistExportOperations.runId, state.playlistInboxExportRunId),
+            inArray(spotifyPlaylistExportOperations.status, ["pending", "failed"]),
+          ),
+        )
+    : [];
   return {
     catchup: { latest: latest("apple_catchup"), next: next("apple_catchup") },
     full: { latest: latest("apple_full"), next: next("apple_full") },
     phase: state ? parseDiscoverySchedulePhase(state.phase) : "idle",
+    playlistInbox: {
+      exportRunId: state?.playlistInboxExportRunId ?? null,
+      pendingCount: Number(pendingExport[0]?.count ?? 0),
+      status: state?.playlistInboxStatus ?? "pending",
+    },
     timezone: discoveryScheduleTimezone,
   };
 }

@@ -9,6 +9,7 @@ import { loadProviderConfiguration } from "@radar/providers";
 import { desc, gte } from "drizzle-orm";
 import { appleMusicScanBatches } from "@radar/db";
 import { loadLocalEnvironment } from "./local-env";
+import { runAutomaticDiscoveryPlaylistExport } from "./spotify-playlist-export-runtime";
 
 loadLocalEnvironment();
 
@@ -45,6 +46,25 @@ async function main(): Promise<void> {
       throw new Error(
         "Recurring discovery execution is disabled. Set DISCOVERY_SCHEDULER_ENABLED=true only after validation.",
       );
+    }
+
+    const discoveryStatus = await getRecurringDiscoveryScheduleStatus(connection.db);
+    if (
+      discoveryStatus.phase === "playlist_inbox" &&
+      ["ready", "partial", "failed"].includes(discoveryStatus.playlistInbox.status)
+    ) {
+      const playlist = await runAutomaticDiscoveryPlaylistExport(connection.db, configuration);
+      process.stdout.write(`${JSON.stringify({ playlist }, null, 2)}\n`);
+      return;
+    }
+    if (
+      discoveryStatus.phase === "apple_priority" ||
+      discoveryStatus.phase === "apple_catchup_priority" ||
+      discoveryStatus.phase === "cooldown_wait"
+    ) {
+      const spotify = await runSpotifyTick(connection.db, configuration);
+      process.stdout.write(`${JSON.stringify({ spotify }, null, 2)}\n`);
+      return;
     }
 
     const appleClaim = await claimDiscoveryScheduleAppleJob(connection.db);
@@ -92,23 +112,30 @@ async function main(): Promise<void> {
       }
     }
 
-    const [schedulerCli, schedulerRuntime] = await Promise.all([
-      import("./spotify-scheduler-cli"),
-      import("./spotify-scheduler"),
-    ]);
-    const executor = configuration.spotify.scheduler.enabled
-      ? await schedulerCli.createProductionSchedulerExecutor(connection.db, configuration)
-      : undefined;
-    const spotify = await schedulerRuntime.runSpotifySchedulerTick(connection.db, {
-      capabilityEnabled: configuration.spotify.scheduler.enabled,
-      ...(executor ? { executor } : {}),
-      limits: schedulerCli.schedulerLimitsFromConfiguration(configuration),
-      mode: "production",
-    });
+    const spotify = await runSpotifyTick(connection.db, configuration);
     process.stdout.write(`${JSON.stringify({ spotify }, null, 2)}\n`);
   } finally {
     await connection.client.end();
   }
+}
+
+async function runSpotifyTick(
+  db: ReturnType<typeof createDatabase>["db"],
+  configuration: ReturnType<typeof loadProviderConfiguration>,
+) {
+  const [schedulerCli, schedulerRuntime] = await Promise.all([
+    import("./spotify-scheduler-cli"),
+    import("./spotify-scheduler"),
+  ]);
+  const executor = configuration.spotify.scheduler.enabled
+    ? await schedulerCli.createProductionSchedulerExecutor(db, configuration)
+    : undefined;
+  return schedulerRuntime.runSpotifySchedulerTick(db, {
+    capabilityEnabled: configuration.spotify.scheduler.enabled,
+    ...(executor ? { executor } : {}),
+    limits: schedulerCli.schedulerLimitsFromConfiguration(configuration),
+    mode: "production",
+  });
 }
 
 function safeClassification(error: unknown): string {

@@ -1117,6 +1117,13 @@ async function buildProviders(
         runtime?.schedulerContext,
         options.spotifyRequestCampaignId ??
           runtime?.schedulerContext?.discoveryReconciliationCampaignId,
+        {
+          artistAlbumsBudget: {
+            limit: configuration.spotify.artistAlbums24HourLimit,
+            priorityReserve: configuration.spotify.artistAlbumsPriorityReserve,
+            reserveReleaseAfterHours: configuration.spotify.artistAlbumsReserveReleaseAfterHours,
+          },
+        },
       );
       const requestGate = runtime?.requestGateWrapper
         ? runtime.requestGateWrapper(

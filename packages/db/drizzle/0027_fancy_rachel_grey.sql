@@ -1,0 +1,3 @@
+ALTER TABLE "spotify_request_events" ADD COLUMN "quota_lane" text DEFAULT 'other' NOT NULL;--> statement-breakpoint
+CREATE INDEX "spotify_request_events_endpoint_window_idx" ON "spotify_request_events" USING btree ("endpoint_category","started_at");--> statement-breakpoint
+ALTER TABLE "spotify_request_events" ADD CONSTRAINT "spotify_request_events_quota_lane_check" CHECK ("spotify_request_events"."quota_lane" in ('priority', 'broad', 'playlist', 'other'));

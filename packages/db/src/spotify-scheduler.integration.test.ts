@@ -63,6 +63,7 @@ beforeEach(async () => {
     .update(spotifySchedulerState)
     .set({
       cycleTargetArtists: 0,
+      effectiveConfiguration: defaultSchedulerLimits(),
       mode: "disabled",
       nextBaseSlotAt: null,
     })
@@ -80,6 +81,46 @@ afterAll(async () => {
 });
 
 describe("Spotify rolling scheduler persistence", () => {
+  it("blocks broad Artist Albums work at 60 calls while preserving priority capacity", async () => {
+    const now = new Date("2026-07-25T12:00:00.000Z");
+    const broadArtist = await createArtist("Budget broad", true, true);
+    const priorityArtist = await createArtist("Budget priority", true, true);
+    const limits = defaultSchedulerLimits();
+    await reconcileSpotifySchedulerWork(db, now, limits);
+    await setSpotifySchedulerMode(db, "automatic", now);
+    await db.insert(spotifyRequestEvents).values(
+      Array.from({ length: 60 }, (_, index) => ({
+        endpointCategory: "artist_albums",
+        id: randomUUID(),
+        method: "GET",
+        quotaLane: "broad" as const,
+        queueWaitMs: 0,
+        startedAt: new Date(now.getTime() - 2 * 60 * 60_000 - index * 1_000),
+        status: 200,
+      })),
+    );
+
+    expect(await claimSpotifySchedulerWork(db, now)).toBeNull();
+
+    await db.insert(discoveryScheduleState).values({
+      id: "global",
+      phase: "apple_priority",
+      playlistInboxStatus: "completed",
+    });
+    await db.insert(spotifySchedulerWork).values({
+      artistId: priorityArtist,
+      dueAt: now,
+      expectedSpotifyArtistId: `spotify-${priorityArtist}`,
+      priority: -100,
+      source: "apple_priority",
+      workKey: `budget-priority:${priorityArtist}`,
+      workType: "artist_reconciliation",
+    });
+    const priority = await claimSpotifySchedulerWork(db, now);
+    expect(priority).toMatchObject({ artistId: priorityArtist, source: "apple_priority" });
+    expect(priority?.artistId).not.toBe(broadArtist);
+  });
+
   it("initializes idempotently, prioritizes never-scanned artists, and excludes ineligible artists", async () => {
     const now = new Date("2026-07-22T12:00:00.000Z");
     const eligible = await createArtist("Eligible", true, true);
@@ -184,7 +225,19 @@ describe("Spotify rolling scheduler persistence", () => {
       targetArtistCount: 1,
     });
     expect(status.estimatedCompletion.earliest).toBeInstanceOf(Date);
-    expect(status.requestCounts).toEqual({ byWorkType: {}, last24Hours: 0, last30Minutes: 0 });
+    expect(status.requestCounts).toEqual({
+      byEndpointCategory: {
+        album_detail: 0,
+        album_tracks: 0,
+        artist_albums: 0,
+        oauth_or_other: 0,
+        playlist_read: 0,
+        playlist_write: 0,
+      },
+      byWorkType: {},
+      last24Hours: 0,
+      last30Minutes: 0,
+    });
   });
 
   it("queues recent catalog releases without details and protects due base work", async () => {

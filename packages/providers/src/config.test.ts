@@ -6,6 +6,9 @@ describe("provider configuration", () => {
     const config = loadProviderConfiguration({});
 
     expect(config.spotify).toMatchObject({
+      artistAlbums24HourLimit: 80,
+      artistAlbumsPriorityReserve: 20,
+      artistAlbumsReserveReleaseAfterHours: 20,
       enabled: true,
       configured: false,
       playlistWritesEnabled: false,
@@ -36,6 +39,26 @@ describe("provider configuration", () => {
     expect(() =>
       loadProviderConfiguration({ SPOTIFY_ALLOWED_PLAYLIST_ID: "not-a-playlist-id" }),
     ).toThrow();
+  });
+
+  it("validates the Artist Albums reserve below its trailing limit", () => {
+    expect(() =>
+      loadProviderConfiguration({
+        SPOTIFY_ARTIST_ALBUMS_24H_LIMIT: "20",
+        SPOTIFY_ARTIST_ALBUMS_PRIORITY_RESERVE: "20",
+      }),
+    ).toThrow();
+    expect(
+      loadProviderConfiguration({
+        SPOTIFY_ARTIST_ALBUMS_24H_LIMIT: "100",
+        SPOTIFY_ARTIST_ALBUMS_PRIORITY_RESERVE: "25",
+        SPOTIFY_ARTIST_ALBUMS_RESERVE_RELEASE_AFTER_HOURS: "22",
+      }).spotify,
+    ).toMatchObject({
+      artistAlbums24HourLimit: 100,
+      artistAlbumsPriorityReserve: 25,
+      artistAlbumsReserveReleaseAfterHours: 22,
+    });
   });
 
   it("validates typed feature flags", () => {

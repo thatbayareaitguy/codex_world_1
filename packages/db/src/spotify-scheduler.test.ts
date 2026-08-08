@@ -8,6 +8,9 @@ import {
 describe("Spotify rolling scheduler planning", () => {
   it("uses the accepted one-artist, six-request, 90-second limits", () => {
     expect(defaultSchedulerLimits()).toEqual({
+      artistAlbums24HourLimit: 80,
+      artistAlbumsPriorityReserve: 20,
+      artistAlbumsReserveReleaseAfterHours: 20,
       maxBroadArtistsPerLocalDay: 75,
       maxBroadRequestsPerLocalDay: 300,
       maxArtistsPerTick: 1,

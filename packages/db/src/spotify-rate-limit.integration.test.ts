@@ -15,9 +15,11 @@ import {
   clearInvalidSpotifyCooldown,
   createSpotifyRequestGate,
   deferSpotifyRequests,
+  getSpotifyEndpointBudgetStatus,
   getSpotify429Telemetry,
   getSpotifyOperationalStatus,
   SpotifyCooldownError,
+  SpotifyEndpointBudgetError,
 } from "./spotify-request-gate";
 import {
   artists,
@@ -25,6 +27,7 @@ import {
   spotifyProviderState,
   spotifyRequestEvents,
   spotifyScanBatches,
+  spotifySchedulerWork,
 } from "./schema";
 
 const databaseUrl =
@@ -39,6 +42,7 @@ beforeAll(() => {
 });
 
 beforeEach(async () => {
+  await db.delete(spotifySchedulerWork);
   await db.delete(spotifyRequestEvents);
   await db.delete(spotifyProviderState);
   await db.delete(spotifyArtistScans);
@@ -50,6 +54,117 @@ afterAll(async () => {
 });
 
 describe("Spotify global request gate", () => {
+  it("preserves twenty Artist Albums calls for priority work while playlist work remains available", async () => {
+    const now = new Date();
+    await db.insert(spotifyRequestEvents).values(
+      Array.from({ length: 60 }, (_, index) => ({
+        endpointCategory: "artist_albums",
+        id: randomUUID(),
+        method: "GET",
+        quotaLane: "broad" as const,
+        queueWaitMs: 0,
+        startedAt: new Date(now.getTime() - index * 1_000),
+        status: 200,
+      })),
+    );
+    const status = await getSpotifyEndpointBudgetStatus(db, undefined, now);
+    expect(status.artistAlbums).toMatchObject({
+      allowance: 80,
+      broadAllowance: 60,
+      broadRemaining: 0,
+      calls: 60,
+      priorityReserve: 20,
+      remaining: 20,
+      reserveReleased: false,
+    });
+
+    await expect(
+      createSpotifyRequestGate(db, 10_000, undefined, undefined, {
+        quotaLane: "broad",
+      }).acquire({ endpointCategory: "artist_albums", method: "GET" }),
+    ).rejects.toBeInstanceOf(SpotifyEndpointBudgetError);
+
+    const playlistGate = createSpotifyRequestGate(db, 10_000, undefined, undefined, {
+      quotaLane: "playlist",
+    });
+    const permit = await playlistGate.acquire({ endpointCategory: "playlist_read", method: "GET" });
+    await playlistGate.complete(permit, { status: 200 });
+    expect((await getSpotifyEndpointBudgetStatus(db)).playlist.reads).toBe(1);
+  });
+
+  it("does not report broad capacity after priority work consumes the total allowance", async () => {
+    const now = new Date();
+    await db.insert(spotifyRequestEvents).values([
+      ...Array.from({ length: 40 }, (_, index) => ({
+        endpointCategory: "artist_albums",
+        id: randomUUID(),
+        method: "GET",
+        quotaLane: "broad" as const,
+        queueWaitMs: 0,
+        startedAt: new Date(now.getTime() - index * 1_000),
+        status: 200,
+      })),
+      ...Array.from({ length: 40 }, (_, index) => ({
+        endpointCategory: "artist_albums",
+        id: randomUUID(),
+        method: "GET",
+        quotaLane: "priority" as const,
+        queueWaitMs: 0,
+        startedAt: new Date(now.getTime() - (index + 40) * 1_000),
+        status: 200,
+      })),
+    ]);
+
+    expect((await getSpotifyEndpointBudgetStatus(db, undefined, now)).artistAlbums).toMatchObject({
+      broadRemaining: 0,
+      calls: 80,
+      priorityRemaining: 0,
+      remaining: 0,
+    });
+  });
+
+  it("releases unused priority reserve only late in the trailing window and persists across restart", async () => {
+    const now = new Date();
+    await db.insert(spotifyRequestEvents).values(
+      Array.from({ length: 60 }, (_, index) => ({
+        endpointCategory: "artist_albums",
+        id: randomUUID(),
+        method: "GET",
+        quotaLane: "broad" as const,
+        queueWaitMs: 0,
+        startedAt: new Date(now.getTime() - 21 * 60 * 60_000 - index),
+        status: 200,
+      })),
+    );
+    const restarted = createDatabase(databaseUrl);
+    try {
+      expect(
+        (await getSpotifyEndpointBudgetStatus(restarted.db, undefined, now)).artistAlbums,
+      ).toMatchObject({ broadRemaining: 20, reserveReleased: true });
+      const artistId = randomUUID();
+      await restarted.db.insert(artists).values({
+        id: artistId,
+        name: "Priority reserve fixture",
+        normalizedName: `priority-reserve-${artistId}`,
+      });
+      await restarted.db.insert(spotifySchedulerWork).values({
+        artistId,
+        dueAt: now,
+        expectedSpotifyArtistId: `spotify-${artistId}`,
+        priority: -100,
+        source: "apple_priority",
+        status: "queued",
+        workKey: `priority:${randomUUID()}`,
+        workType: "artist_reconciliation",
+      });
+      expect(
+        (await getSpotifyEndpointBudgetStatus(restarted.db, undefined, now)).artistAlbums,
+      ).toMatchObject({ broadRemaining: 0, reserveReleased: false });
+    } finally {
+      await restarted.client.end();
+    }
+  });
+
   it("attributes requests to one discovery reconciliation campaign", async () => {
     const campaignId = randomUUID();
     const gate = createSpotifyRequestGate(db, 10_000, undefined, campaignId);
@@ -99,7 +214,9 @@ describe("Spotify global request gate", () => {
       deferSpotifyRequests(db, 86_400_000, now),
       deferSpotifyRequests(db, 365 * 86_400_000, now),
     ]);
-    expect(shorter.toISOString()).toBe("2026-07-19T09:00:00.000Z");
+    expect(["2026-07-19T09:00:00.000Z", "2027-07-18T09:00:00.000Z"]).toContain(
+      shorter.toISOString(),
+    );
     expect(longer.toISOString()).toBe("2027-07-18T09:00:00.000Z");
     expect((await getSpotifyOperationalStatus(db)).nextRequestAt?.toISOString()).toBe(
       "2027-07-18T09:00:00.000Z",

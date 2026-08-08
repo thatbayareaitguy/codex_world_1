@@ -599,6 +599,7 @@ test("defaults scan history to the meaningful batch and inspects other run types
             },
           },
           phase: "broad_spotify",
+          playlistInbox: { exportRunId: null, pendingCount: 0, status: "completed" },
           timezone: "America/Los_Angeles",
         },
         history: olderPage
@@ -688,13 +689,38 @@ test("defaults scan history to the meaningful batch and inspects other run types
               latest: "2026-07-23T12:00:00.000Z",
               state: "available",
             },
+            endpointBudget: {
+              artistAlbums: {
+                allowance: 80,
+                broadAllowance: 60,
+                broadRemaining: 48,
+                broadUsed: 12,
+                calls: 16,
+                nextCapacityAt: "2026-07-25T12:00:00.000Z",
+                priorityRemaining: 64,
+                priorityReserve: 20,
+                priorityUsed: 4,
+                remaining: 64,
+                reserveReleased: false,
+              },
+              playlist: { reads: 2, writes: 1 },
+            },
             http429Last24Hours: 0,
+            lastQuotaExceeded: null,
             mode: "disabled",
             nextBaseSlotAt: null,
             oldestOverdueAgeMs: 60000,
             overdueArtistCount: 10,
             partialArtistCount: 101,
             requestCounts: {
+              byEndpointCategory: {
+                album_detail: 0,
+                album_tracks: 2,
+                artist_albums: 16,
+                oauth_or_other: 1,
+                playlist_read: 2,
+                playlist_write: 1,
+              },
               byWorkType: { base_artist: 10, release_tracks: 2 },
               last24Hours: 12,
               last30Minutes: 1,
@@ -755,6 +781,7 @@ test("defaults scan history to the meaningful batch and inspects other run types
   await expect(appleSchedule).toContainText("Thursday full scan");
   await expect(appleSchedule).toContainText("Friday catch-up");
   await expect(appleSchedule).toContainText("593/593");
+  await expect(appleSchedule).toContainText("Automatic playlist inbox");
   const scheduler = page.getByRole("region", { name: "Spotify rolling scheduler status" });
   await expect(scheduler).toContainText("Disabled");
   await expect(scheduler).toContainText("Eligible artists");
@@ -764,6 +791,9 @@ test("defaults scan history to the meaningful batch and inspects other run types
   await expect(scheduler).toContainText("Broad request budget");
   await expect(scheduler).toContainText("48 / 300");
   await expect(scheduler).toContainText("Friday catch-up priority");
+  await expect(scheduler).toContainText("Artist Albums budget");
+  await expect(scheduler).toContainText("16 / 80");
+  await expect(scheduler).toContainText("2 reads / 1 writes");
   await scheduler
     .getByRole("button", { name: "Collapse Spotify rolling scheduler status" })
     .click();
@@ -1699,6 +1729,7 @@ test("controls persisted Spotify batches without bypassing cooldown state", asyn
       catchup: { latest: null, next: null },
       full: { latest: null, next: null },
       phase: "broad_spotify",
+      playlistInbox: { exportRunId: null, pendingCount: 0, status: "completed" },
       timezone: "America/Los_Angeles",
     },
     history: [

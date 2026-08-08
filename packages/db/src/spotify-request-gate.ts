@@ -4,13 +4,71 @@ import type {
   SpotifyRequestGate,
   SpotifyRequestPermit,
 } from "@radar/providers";
-import { and, eq, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { RadarDatabase } from "./client";
-import { spotifyProviderState, spotifyRequestEvents } from "./schema";
+import { spotifyProviderState, spotifyRequestEvents, spotifySchedulerWork } from "./schema";
 
 const spotifyStateId = "global";
 const leaseDurationMs = 30_000;
+const trailing24HoursMs = 24 * 60 * 60_000;
+
+type SpotifyRequestGateTransaction = Parameters<Parameters<RadarDatabase["transaction"]>[0]>[0];
+type SpotifyRequestGateDatabase = RadarDatabase | SpotifyRequestGateTransaction;
+
+export type SpotifyQuotaLane = "priority" | "broad" | "playlist" | "other";
+
+export interface SpotifyArtistAlbumsBudgetLimits {
+  limit: number;
+  priorityReserve: number;
+  reserveReleaseAfterHours: number;
+}
+
+export interface SpotifyRequestGateOptions {
+  artistAlbumsBudget?: SpotifyArtistAlbumsBudgetLimits;
+  quotaLane?: SpotifyQuotaLane;
+}
+
+export interface SpotifyEndpointBudgetStatus {
+  artistAlbums: {
+    allowance: number;
+    broadAllowance: number;
+    broadRemaining: number;
+    broadUsed: number;
+    calls: number;
+    nextCapacityAt: Date | null;
+    priorityRemaining: number;
+    priorityReserve: number;
+    priorityUsed: number;
+    remaining: number;
+    reserveReleased: boolean;
+  };
+  playlist: {
+    reads: number;
+    writes: number;
+  };
+}
+
+export const defaultSpotifyArtistAlbumsBudget: SpotifyArtistAlbumsBudgetLimits = {
+  limit: 80,
+  priorityReserve: 20,
+  reserveReleaseAfterHours: 20,
+};
+
+export class SpotifyEndpointBudgetError extends Error {
+  readonly code = "spotify_endpoint_budget";
+
+  constructor(
+    readonly endpointCategory: "artist_albums",
+    readonly nextCapacityAt: Date | null,
+    readonly quotaLane: SpotifyQuotaLane,
+  ) {
+    super(
+      `Spotify Artist Albums trailing-24-hour budget is exhausted${nextCapacityAt ? ` until capacity returns after ${nextCapacityAt.toISOString()}` : ""}.`,
+    );
+    this.name = "SpotifyEndpointBudgetError";
+  }
+}
 
 export class SpotifyCooldownError extends Error {
   readonly code = "spotify_cooldown";
@@ -67,10 +125,12 @@ export function createSpotifyRequestGate(
   db: RadarDatabase,
   minRequestIntervalMs: number,
   schedulerContext?: {
+    source?: "initial" | "recurring" | "validation" | "repair" | "apple_priority" | "apple_catchup";
     workId: string;
     workType: "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation";
   },
   discoveryReconciliationCampaignId?: string,
+  options: SpotifyRequestGateOptions = {},
 ): SpotifyRequestGate {
   if (!Number.isInteger(minRequestIntervalMs) || minRequestIntervalMs < 10_000) {
     throw new Error("Spotify request interval must be at least 10000 milliseconds.");
@@ -83,8 +143,79 @@ export function createSpotifyRequestGate(
         input,
         schedulerContext,
         discoveryReconciliationCampaignId,
+        options,
       ),
     complete: (permit, result) => completeSpotifyRequest(db, permit, result),
+  };
+}
+
+export async function getSpotifyEndpointBudgetStatus(
+  db: SpotifyRequestGateDatabase,
+  limits: SpotifyArtistAlbumsBudgetLimits = defaultSpotifyArtistAlbumsBudget,
+  now = new Date(),
+): Promise<SpotifyEndpointBudgetStatus> {
+  const validated = validateArtistAlbumsBudget(limits);
+  const windowStart = new Date(now.getTime() - trailing24HoursMs);
+  const [events, priorityRows] = await Promise.all([
+    db
+      .select({
+        endpointCategory: spotifyRequestEvents.endpointCategory,
+        quotaLane: spotifyRequestEvents.quotaLane,
+        startedAt: spotifyRequestEvents.startedAt,
+      })
+      .from(spotifyRequestEvents)
+      .where(
+        and(
+          gt(spotifyRequestEvents.startedAt, windowStart),
+          inArray(spotifyRequestEvents.endpointCategory, [
+            "artist_albums",
+            "playlist_read",
+            "playlist_write",
+          ]),
+        ),
+      )
+      .orderBy(asc(spotifyRequestEvents.startedAt)),
+    db
+      .select({ id: spotifySchedulerWork.id })
+      .from(spotifySchedulerWork)
+      .where(
+        and(
+          inArray(spotifySchedulerWork.source, ["apple_priority", "apple_catchup"]),
+          inArray(spotifySchedulerWork.status, ["queued", "leased"]),
+        ),
+      )
+      .limit(1),
+  ]);
+  const artistAlbums = events.filter((event) => event.endpointCategory === "artist_albums");
+  const priorityUsed = artistAlbums.filter((event) => event.quotaLane === "priority").length;
+  const broadUsed = artistAlbums.length - priorityUsed;
+  const broadAllowance = validated.limit - validated.priorityReserve;
+  const oldest = artistAlbums[0]?.startedAt ?? null;
+  const reserveReleased = Boolean(
+    priorityRows.length === 0 &&
+    oldest &&
+    now.getTime() - oldest.getTime() >= validated.reserveReleaseAfterHours * 60 * 60_000,
+  );
+  const effectiveBroadAllowance = reserveReleased ? validated.limit : broadAllowance;
+  const totalRemaining = Math.max(0, validated.limit - artistAlbums.length);
+  return {
+    artistAlbums: {
+      allowance: validated.limit,
+      broadAllowance,
+      broadRemaining: Math.max(0, Math.min(effectiveBroadAllowance - broadUsed, totalRemaining)),
+      broadUsed,
+      calls: artistAlbums.length,
+      nextCapacityAt: oldest ? new Date(oldest.getTime() + trailing24HoursMs) : null,
+      priorityRemaining: totalRemaining,
+      priorityReserve: validated.priorityReserve,
+      priorityUsed,
+      remaining: totalRemaining,
+      reserveReleased,
+    },
+    playlist: {
+      reads: events.filter((event) => event.endpointCategory === "playlist_read").length,
+      writes: events.filter((event) => event.endpointCategory === "playlist_write").length,
+    },
   };
 }
 
@@ -223,11 +354,18 @@ async function acquireSpotifyPermit(
   minRequestIntervalMs: number,
   input: { endpointCategory: string; method: string; signal?: AbortSignal },
   schedulerContext?: {
+    source?: "initial" | "recurring" | "validation" | "repair" | "apple_priority" | "apple_catchup";
     workId: string;
     workType: "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation";
   },
   discoveryReconciliationCampaignId?: string,
+  options: SpotifyRequestGateOptions = {},
 ): Promise<SpotifyRequestPermit> {
+  const endpointCategory = spotifyQuotaCategory(input.endpointCategory);
+  const quotaLane = spotifyQuotaLane(endpointCategory, schedulerContext?.source, options.quotaLane);
+  const artistAlbumsBudget = validateArtistAlbumsBudget(
+    options.artistAlbumsBudget ?? defaultSpotifyArtistAlbumsBudget,
+  );
   await ensureSpotifyState(db);
   await db
     .update(spotifyProviderState)
@@ -242,6 +380,18 @@ async function acquireSpotifyPermit(
       const status = await getSpotifyOperationalStatus(db, now);
       if (status.cooldownActive) {
         throw new SpotifyCooldownError(status.cooldownUntil, status.cooldownIndefinite);
+      }
+      if (endpointCategory === "artist_albums") {
+        const budget = await getSpotifyEndpointBudgetStatus(db, artistAlbumsBudget, now);
+        const exhausted = budget.artistAlbums.calls >= budget.artistAlbums.allowance;
+        const broadBlocked = quotaLane !== "priority" && budget.artistAlbums.broadRemaining === 0;
+        if (exhausted || broadBlocked) {
+          throw new SpotifyEndpointBudgetError(
+            "artist_albums",
+            budget.artistAlbums.nextCapacityAt,
+            quotaLane,
+          );
+        }
       }
       const waitUntil = Math.max(
         status.nextRequestAt?.getTime() ?? 0,
@@ -291,8 +441,9 @@ async function acquireSpotifyPermit(
       await db.insert(spotifyRequestEvents).values({
         ...(discoveryReconciliationCampaignId ? { discoveryReconciliationCampaignId } : {}),
         id: eventId,
-        endpointCategory: input.endpointCategory,
+        endpointCategory,
         method: input.method,
+        quotaLane,
         queueWaitMs,
         startedAt,
         ...(schedulerContext
@@ -321,6 +472,72 @@ async function acquireSpotifyPermit(
         .where(eq(spotifyProviderState.id, spotifyStateId));
     }
   }
+}
+
+function validateArtistAlbumsBudget(
+  value: SpotifyArtistAlbumsBudgetLimits,
+): SpotifyArtistAlbumsBudgetLimits {
+  if (!Number.isInteger(value.limit) || value.limit < 1 || value.limit > 1_000) {
+    throw new Error("Spotify Artist Albums limit must be an integer from 1 to 1000.");
+  }
+  if (
+    !Number.isInteger(value.priorityReserve) ||
+    value.priorityReserve < 0 ||
+    value.priorityReserve >= value.limit
+  ) {
+    throw new Error("Spotify Artist Albums priority reserve must be below the total limit.");
+  }
+  if (
+    !Number.isInteger(value.reserveReleaseAfterHours) ||
+    value.reserveReleaseAfterHours < 1 ||
+    value.reserveReleaseAfterHours > 24
+  ) {
+    throw new Error("Spotify Artist Albums reserve release must be from 1 to 24 hours.");
+  }
+  return value;
+}
+
+function spotifyQuotaCategory(value: string): string {
+  switch (value) {
+    case "artist_albums":
+    case "album_detail":
+    case "album_tracks":
+    case "playlist_read":
+    case "playlist_write":
+    case "oauth_or_other":
+      return value;
+    case "album":
+      return "album_detail";
+    case "playlist":
+    case "playlist_items":
+    case "user_playlists":
+      return "playlist_read";
+    case "playlist_add_items":
+      return "playlist_write";
+    default:
+      return "oauth_or_other";
+  }
+}
+
+function spotifyQuotaLane(
+  endpointCategory: string,
+  source:
+    | "initial"
+    | "recurring"
+    | "validation"
+    | "repair"
+    | "apple_priority"
+    | "apple_catchup"
+    | undefined,
+  explicit: SpotifyQuotaLane | undefined,
+): SpotifyQuotaLane {
+  if (endpointCategory === "playlist_read" || endpointCategory === "playlist_write") {
+    return "playlist";
+  }
+  if (explicit) return explicit;
+  if (source === "apple_priority" || source === "apple_catchup") return "priority";
+  if (source) return "broad";
+  return "other";
 }
 
 async function completeSpotifyRequest(

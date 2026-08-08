@@ -274,6 +274,37 @@ describe("SpotifyProvider incremental scanning", () => {
     expect(onBatch).toHaveBeenCalledWith(expect.objectContaining({ partial: true }));
   });
 
+  it("uses one Artist Albums page and no detail or track calls for an unchanged known release", async () => {
+    const summary = albumSummary("known-release", "Known Release", "2026-07-20");
+    const getArtistAlbumsPage = vi
+      .fn()
+      .mockResolvedValue({ items: [summary], nextOffset: null, offset: 0, total: 1 });
+    const getAlbum = vi.fn();
+    const getAlbumTracksPage = vi.fn();
+    const client = {
+      getAlbum,
+      getAlbumTracksPage,
+      getArtistAlbumsPage,
+      metrics: { failures: 0, rateLimitWaitMs: 0, requests: 1 },
+    } as unknown as SpotifyClient;
+    const provider = new SpotifyProvider({
+      client,
+      knownReleaseIds: new Set([summary.id]),
+      mappings: [{ artistId: "artist-1", name: "YUSSI", spotifyArtistId: "spotify-yussi" }],
+      maxPagesPerArtist: 1,
+    });
+
+    const result = await provider.scan({
+      filter: { provider: "spotify", since: "2026-05-22" },
+    });
+
+    expect(result.providerMetrics.requests).toBe(1);
+    expect(getArtistAlbumsPage).toHaveBeenCalledOnce();
+    expect(getAlbum).not.toHaveBeenCalled();
+    expect(getAlbumTracksPage).not.toHaveBeenCalled();
+    expect(result.candidates).toEqual([]);
+  });
+
   it("persists every page of a 25-track release before continuing", async () => {
     const summary = albumSummary("album-25", "Twenty Five", "2026-07-20");
     summary.total_tracks = 25;

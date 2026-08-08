@@ -144,8 +144,14 @@ describe.sequential("weekly discovery scheduler persistence", () => {
       where: eq(spotifySchedulerWork.source, "apple_catchup"),
     });
     expect(queued).toMatchObject({ artistId, status: "queued" });
-    expect(
-      (await getRecurringDiscoveryScheduleStatus(connection.db, now)).catchup.latest,
-    ).toMatchObject({ appleMusicBatchId: batch!.id, status: "completed" });
+    const status = await getRecurringDiscoveryScheduleStatus(connection.db, now);
+    expect(status.catchup.latest).toMatchObject({
+      appleMusicBatchId: batch!.id,
+      status: "completed",
+    });
+    expect(status).toMatchObject({
+      phase: "playlist_inbox",
+      playlistInbox: { pendingCount: 0, status: "ready" },
+    });
   });
 });

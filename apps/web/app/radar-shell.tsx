@@ -274,6 +274,11 @@ interface DiscoveryScheduleStatus {
     | "apple_catchup_priority"
     | "broad_spotify"
     | "weekly_apple";
+  playlistInbox: {
+    exportRunId: string | null;
+    pendingCount: number;
+    status: "pending" | "ready" | "exporting" | "partial" | "completed" | "failed";
+  };
   timezone: "America/Los_Angeles";
 }
 
@@ -312,13 +317,43 @@ interface SpotifySchedulerStatus {
     latest: string | null;
     state: "available" | "blocked";
   };
+  endpointBudget: {
+    artistAlbums: {
+      allowance: number;
+      broadAllowance: number;
+      broadRemaining: number;
+      broadUsed: number;
+      calls: number;
+      nextCapacityAt: string | null;
+      priorityRemaining: number;
+      priorityReserve: number;
+      priorityUsed: number;
+      remaining: number;
+      reserveReleased: boolean;
+    };
+    playlist: { reads: number; writes: number };
+  };
   http429Last24Hours: number;
+  lastQuotaExceeded: {
+    cooldownUntil: string | null;
+    endpointCategory: string;
+    observedAt: string;
+  } | null;
   mode: "disabled" | "planning" | "validation" | "automatic" | "paused";
   nextBaseSlotAt: string | null;
   oldestOverdueAgeMs: number | null;
   overdueArtistCount: number;
   partialArtistCount: number;
   requestCounts: {
+    byEndpointCategory: Record<
+      | "artist_albums"
+      | "album_detail"
+      | "album_tracks"
+      | "playlist_read"
+      | "playlist_write"
+      | "oauth_or_other",
+      number
+    >;
     byWorkType: {
       artist_reconciliation?: number | undefined;
       base_artist?: number | undefined;
@@ -1930,6 +1965,13 @@ function FeedView({
                       : "Unavailable"}
                   </dd>
                 </div>
+                <div>
+                  <dt>Automatic playlist inbox</dt>
+                  <dd>
+                    {titleCase(discoverySchedule.playlistInbox.status)} | Pending operations{" "}
+                    {discoverySchedule.playlistInbox.pendingCount}
+                  </dd>
+                </div>
               </dl>
               <small>
                 Full scan: Thursday 9:00 PM. Catch-up: Friday 9:00 AM. Times use America/Los_Angeles
@@ -2048,6 +2090,31 @@ function FeedView({
                   </dd>
                 </div>
                 <div>
+                  <dt>Artist Albums budget</dt>
+                  <dd>
+                    {spotifyScheduler.endpointBudget.artistAlbums.calls} /{" "}
+                    {spotifyScheduler.endpointBudget.artistAlbums.allowance} | Broad{" "}
+                    {spotifyScheduler.endpointBudget.artistAlbums.broadUsed} /{" "}
+                    {spotifyScheduler.endpointBudget.artistAlbums.broadAllowance}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Artist Albums reserve</dt>
+                  <dd>
+                    {spotifyScheduler.endpointBudget.artistAlbums.priorityReserve} reserved |{" "}
+                    {spotifyScheduler.endpointBudget.artistAlbums.reserveReleased
+                      ? "Released cautiously"
+                      : "Held for priority"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Playlist requests, 24h</dt>
+                  <dd>
+                    {spotifyScheduler.endpointBudget.playlist.reads} reads /{" "}
+                    {spotifyScheduler.endpointBudget.playlist.writes} writes
+                  </dd>
+                </div>
+                <div>
                   <dt>Release detail / tracks</dt>
                   <dd>
                     {spotifyScheduler.backlog.release_detail} /{" "}
@@ -2086,6 +2153,14 @@ function FeedView({
                 <div>
                   <dt>HTTP 429, 24h</dt>
                   <dd>{spotifyScheduler.http429Last24Hours}</dd>
+                </div>
+                <div>
+                  <dt>Last quota exceeded</dt>
+                  <dd>
+                    {spotifyScheduler.lastQuotaExceeded
+                      ? `${titleCase(spotifyScheduler.lastQuotaExceeded.endpointCategory)} | ${new Date(spotifyScheduler.lastQuotaExceeded.observedAt).toLocaleString()}${spotifyScheduler.lastQuotaExceeded.cooldownUntil ? ` | Cooldown until ${new Date(spotifyScheduler.lastQuotaExceeded.cooldownUntil).toLocaleString()}` : ""}`
+                      : "None recorded in 24 hours"}
+                  </dd>
                 </div>
                 <div>
                   <dt>Cooldown</dt>
@@ -5983,13 +6058,47 @@ const spotifySchedulerStatusSchema = z.object({
     latest: z.string().datetime().nullable(),
     state: z.enum(["available", "blocked"]),
   }),
+  endpointBudget: z.object({
+    artistAlbums: z.object({
+      allowance: z.number().int().positive(),
+      broadAllowance: z.number().int().nonnegative(),
+      broadRemaining: z.number().int().nonnegative(),
+      broadUsed: z.number().int().nonnegative(),
+      calls: z.number().int().nonnegative(),
+      nextCapacityAt: z.string().datetime().nullable(),
+      priorityRemaining: z.number().int().nonnegative(),
+      priorityReserve: z.number().int().nonnegative(),
+      priorityUsed: z.number().int().nonnegative(),
+      remaining: z.number().int().nonnegative(),
+      reserveReleased: z.boolean(),
+    }),
+    playlist: z.object({
+      reads: z.number().int().nonnegative(),
+      writes: z.number().int().nonnegative(),
+    }),
+  }),
   http429Last24Hours: z.number().int().nonnegative(),
+  lastQuotaExceeded: z
+    .object({
+      cooldownUntil: z.string().datetime().nullable(),
+      endpointCategory: z.string(),
+      observedAt: z.string().datetime(),
+    })
+    .nullable(),
   mode: z.enum(["disabled", "planning", "validation", "automatic", "paused"]),
   nextBaseSlotAt: z.string().datetime().nullable(),
   oldestOverdueAgeMs: z.number().nonnegative().nullable(),
   overdueArtistCount: z.number().int().nonnegative(),
   partialArtistCount: z.number().int().nonnegative(),
   requestCounts: z.object({
+    byEndpointCategory: z.object({
+      album_detail: z.number().int().nonnegative(),
+      album_tracks: z.number().int().nonnegative(),
+      artist_albums: z.number().int().nonnegative(),
+      oauth_or_other: z.number().int().nonnegative(),
+      playlist_read: z.number().int().nonnegative(),
+      playlist_write: z.number().int().nonnegative(),
+    }),
     byWorkType: z
       .object({
         artist_reconciliation: z.number().int().nonnegative().optional(),
@@ -6048,6 +6157,11 @@ const discoveryScheduleStatusSchema = z.object({
     "broad_spotify",
     "weekly_apple",
   ]),
+  playlistInbox: z.object({
+    exportRunId: z.string().uuid().nullable(),
+    pendingCount: z.number().int().nonnegative(),
+    status: z.enum(["pending", "ready", "exporting", "partial", "completed", "failed"]),
+  }),
   timezone: z.literal("America/Los_Angeles"),
 });
 

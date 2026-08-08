@@ -497,6 +497,9 @@ integration tests, production build, Playwright, doctor, and `git diff --check` 
 - Broad ceiling: 75 distinct artists and 300 request starts per local day.
 - Rolling reserves: 200 Spotify requests for Apple-priority resolution and 20 for add-only playlist
   operations.
+- Artist Albums endpoint allowance: 80 calls in a trailing 24-hour window, with 20 reserved for
+  Apple-priority work and 60 normally available to broad work. Unused reserve may release after 20
+  hours only when no priority work is queued or leased.
 - Recovery: Apple jobs remain recoverable for 24 hours; missed broad days never accumulate into a
   burst.
 
@@ -505,6 +508,18 @@ restart. Full-scan Apple priority cannot be displaced by the broad daily target.
 returns to the playlist inbox before Friday catch-up priority can run. Catch-up priority receives
 its own playlist checkpoint before broad rotation, so newly confirmed playable tracks are exported
 in the approved order.
+
+Each Thursday or Friday Apple job enters the playlist inbox immediately after completion. When the
+two scheduler capabilities and guarded playlist writes are explicitly enabled, the unified tick
+runs the add-only exporter automatically. It then processes the corresponding Apple-priority
+Spotify queue and returns to the playlist inbox for newly confirmed tracks. Playlist reads and
+writes use the same concurrency-one PostgreSQL request gate, but Artist Albums exhaustion does not
+block them.
+
+Endpoint telemetry is persisted as `artist_albums`, `album_detail`, `album_tracks`,
+`playlist_read`, `playlist_write`, or `oauth_or_other`. A catalog request for an unchanged known
+artist release costs one `artist_albums` call and no detail or track request. The local endpoint
+allowances are conservative application controls, not a claim about Spotify's unpublished quota.
 
 ## Rollback
 
@@ -524,8 +539,9 @@ not rewrite migration history.
   completeness; reconciliation remains necessary.
 - A sleeping or powered-off Windows host misses ticks. Recovery preserves work but deliberately
   avoids a catch-up burst, so overdue completion may exceed 24 hours.
-- The 1,200-request ceiling is an application safety choice. Gate 4 must establish whether it leaves
-  a sustainable detail backlog without changing the ten-second pace.
+- The 1,200-request ceiling and the 80-call Artist Albums allowance are application safety choices.
+  Gate 4 must establish whether they leave a sustainable detail backlog without changing the
+  ten-second pace.
 - Existing successful history predates full page telemetry for some artists. The migration backfill
   must preserve 101 known outcomes while making later coverage records authoritative.
 - The user must decide whether the untouched 15-artist Batch 3 becomes the ten-artist validation

@@ -201,6 +201,26 @@ enables the unified tick and the second enables its Spotify executor. Keep both 
 credential-free verification and while an active Spotify cooldown is stored. The status command
 never starts provider work.
 
+Automatic Thursday and Friday playlist delivery also requires all existing playlist safeguards:
+
+```dotenv
+SPOTIFY_PLAYLIST_WRITES_ENABLED=true
+SPOTIFY_ALLOWED_PLAYLIST_ID=<the one owned private playlist ID>
+SPOTIFY_ARTIST_ALBUMS_24H_LIMIT=80
+SPOTIFY_ARTIST_ALBUMS_PRIORITY_RESERVE=20
+SPOTIFY_ARTIST_ALBUMS_RESERVE_RELEASE_AFTER_HOURS=20
+```
+
+If recurring discovery is enabled while playlist writes are disabled, `pnpm doctor` reports an
+action item because the durable playlist-inbox phase cannot advance. Enabling writes does not give
+the scheduler permission to select, create, rename, remove from, reorder, or change another
+playlist. The server-configured allowed playlist remains the only valid target.
+
+The unified recurring order is: due Apple scan, automatic add-only export, Apple-priority Spotify
+resolution, a second automatic export for newly resolved tracks, then Saturday-Wednesday broad
+Spotify rotation. The Friday catch-up follows the same export, priority, export sequence. Thursday
+and Friday never run broad Spotify work.
+
 Cron example:
 
 ```cron

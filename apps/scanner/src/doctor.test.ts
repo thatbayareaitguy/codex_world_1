@@ -86,6 +86,34 @@ describe("doctor", () => {
     expect(output).not.toContain("1234567890123456789012");
   });
 
+  it("requires playlist writes when recurring discovery execution is enabled", async () => {
+    const report = await collectDoctorReport(
+      {
+        APP_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
+        DATABASE_URL: "postgresql://secret:secret@127.0.0.1:5432/radar",
+        DISCOVERY_SCHEDULER_ENABLED: "true",
+        MUSICBRAINZ_ENABLED: "false",
+        REDDIT_ENABLED: "false",
+        SPOTIFY_CLIENT_ID: "client-id",
+        SPOTIFY_CLIENT_SECRET: "client-secret",
+        SPOTIFY_ENABLED: "true",
+        SPOTIFY_PLAYLIST_WRITES_ENABLED: "false",
+        SPOTIFY_REDIRECT_URI: "http://127.0.0.1:3000/api/auth/spotify/callback",
+      },
+      {
+        databaseProbe: () => Promise.resolve(databaseReady),
+        directoryProbe: () => true,
+        expectedMigrationCount: 6,
+        pnpmVersion: "11.9.0",
+        portProbe: () => Promise.resolve("available"),
+      },
+    );
+
+    expect(
+      report.checks.find((check) => check.name === "Automatic Spotify playlist export"),
+    ).toMatchObject({ state: "ACTION_REQUIRED" });
+  });
+
   it("requires both Spotify playlist modification scopes when writes are enabled", async () => {
     const baseEnvironment = {
       APP_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
@@ -142,7 +170,15 @@ describe("doctor", () => {
         databaseProbe: () =>
           Promise.resolve({
             ...databaseReady,
-            spotifyScheduler: { activeLease: false, blocked: 0, mode: "disabled", queued: 694 },
+            spotifyScheduler: {
+              activeLease: false,
+              artistAlbumsAllowance: 80,
+              artistAlbumsCalls: 60,
+              artistAlbumsPriorityReserve: 20,
+              blocked: 0,
+              mode: "disabled",
+              queued: 694,
+            },
           }),
         directoryProbe: () => true,
         expectedMigrationCount: 6,

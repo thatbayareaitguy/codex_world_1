@@ -4,6 +4,7 @@ import {
   inspectSpotifyErrorResponse,
   parseSpotifyRetryAfter,
   spotifyArtistAlbumsSchema,
+  spotifyEndpointCategory,
   spotifyNextOffset,
   SpotifyClient,
   SpotifyHttpError,
@@ -62,6 +63,20 @@ describe("Spotify pagination cursors", () => {
     expect(() =>
       spotifyNextOffset("https://api.spotify.com/v1/artists/artist/albums?offset=nope", 90),
     ).toThrow("invalid next-page offset");
+  });
+});
+
+describe("Spotify endpoint quota categories", () => {
+  it.each([
+    ["/artists/artist/albums?limit=10", "GET", "artist_albums"],
+    ["/albums/album", "GET", "album_detail"],
+    ["/albums/album/tracks", "GET", "album_tracks"],
+    ["/playlists/playlist", "GET", "playlist_read"],
+    ["/playlists/playlist/items", "GET", "playlist_read"],
+    ["/playlists/playlist/items", "POST", "playlist_write"],
+    ["/me", "GET", "oauth_or_other"],
+  ])("classifies %s %s as %s", (path, method, expected) => {
+    expect(spotifyEndpointCategory(path, method)).toBe(expected);
   });
 });
 

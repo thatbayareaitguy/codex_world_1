@@ -64,6 +64,10 @@ export function schedulerLimitsFromConfiguration(
   const defaults = defaultSchedulerLimits();
   return {
     ...defaults,
+    artistAlbums24HourLimit: configuration.spotify.artistAlbums24HourLimit,
+    artistAlbumsPriorityReserve: configuration.spotify.artistAlbumsPriorityReserve,
+    artistAlbumsReserveReleaseAfterHours:
+      configuration.spotify.artistAlbumsReserveReleaseAfterHours,
     maxRequestsPerTick: configuration.spotify.scheduler.maxRequestsPerTick,
     maxRuntimeMs: configuration.spotify.scheduler.maxRuntimeMs,
     minRequestIntervalMs: configuration.spotify.minRequestIntervalMs,
@@ -113,9 +117,6 @@ async function main(): Promise<void> {
   const command = parseSpotifySchedulerCommand(process.argv.slice(2));
   const configuration = loadProviderConfiguration();
   if (!configuration.databaseUrl) throw new Error("DATABASE_URL is required.");
-  if (configuration.spotify.playlistWritesEnabled) {
-    throw new Error("Spotify playlist writes must remain disabled for scheduler execution.");
-  }
   const connection = createDatabase(configuration.databaseUrl);
   try {
     const mode = command === "plan" ? "plan" : "production";
@@ -352,10 +353,18 @@ async function createSchedulerSpotifyClient(
       db,
       configuration.spotify.minRequestIntervalMs,
       {
+        source: work.source,
         workId: work.id,
         workType: work.workType,
       },
       work.discoveryReconciliationCampaignId ?? undefined,
+      {
+        artistAlbumsBudget: {
+          limit: configuration.spotify.artistAlbums24HourLimit,
+          priorityReserve: configuration.spotify.artistAlbumsPriorityReserve,
+          reserveReleaseAfterHours: configuration.spotify.artistAlbumsReserveReleaseAfterHours,
+        },
+      },
     ),
   );
   const oauth = new SpotifyOAuthClient({
