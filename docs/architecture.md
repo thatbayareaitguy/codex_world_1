@@ -110,6 +110,12 @@ Spotify cooldown expires, the scheduler restores the waiting playlist or priorit
 advancing past it. A full Apple scan that completes after the current Friday 9:00 AM catch-up time
 satisfies that week's catch-up job, preventing a redundant second Apple scan.
 
+Saturday through Wednesday broad discoveries mark one durable playlist checkpoint as pending.
+They do not write once per artist. The checkpoint becomes ready and invokes the existing guarded
+exporter when the broad queue drains or reaches its rolling, local-day, or Artist Albums budget
+boundary. A provider cooldown keeps that checkpoint ahead of later broad work until export can
+resume.
+
 Broad Spotify claims are limited to 75 distinct artists and 300 request starts per local day. The
 rolling 24-hour ceiling retains separate reserves of 200 requests for Apple-priority resolution and
 20 for playlist operations. Never-scanned artists precede recurring artists, then recurring artists

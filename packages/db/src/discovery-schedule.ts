@@ -358,6 +358,56 @@ export async function markDiscoveryPlaylistInboxStatus(
   });
 }
 
+export async function markBroadDiscoveryPlaylistCheckpointPending(
+  db: RadarDatabase,
+  now = new Date(),
+): Promise<boolean> {
+  const [updated] = await db
+    .update(discoveryScheduleState)
+    .set({ playlistInboxStatus: "pending", updatedAt: now })
+    .where(
+      and(
+        eq(discoveryScheduleState.id, discoveryScheduleStateId),
+        eq(discoveryScheduleState.phase, "broad_spotify"),
+        eq(discoveryScheduleState.playlistInboxStatus, "completed"),
+      ),
+    )
+    .returning({ id: discoveryScheduleState.id });
+  return Boolean(updated);
+}
+
+export async function prepareBroadDiscoveryPlaylistCheckpoint(
+  db: RadarDatabase,
+  now = new Date(),
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const [state] = await tx
+      .select()
+      .from(discoveryScheduleState)
+      .where(eq(discoveryScheduleState.id, discoveryScheduleStateId))
+      .limit(1)
+      .for("update");
+    if (!state || state.phase !== "broad_spotify" || state.playlistInboxStatus !== "pending") {
+      return false;
+    }
+    const provider = await tx.query.spotifyProviderState.findFirst({
+      where: eq(spotifyProviderState.id, "global"),
+    });
+    const cooldownActive = Boolean(
+      provider?.cooldownIndefinite || (provider?.cooldownUntil && provider.cooldownUntil > now),
+    );
+    await tx
+      .update(discoveryScheduleState)
+      .set({
+        phase: cooldownActive ? "cooldown_wait" : "playlist_inbox",
+        playlistInboxStatus: "ready",
+        updatedAt: now,
+      })
+      .where(eq(discoveryScheduleState.id, discoveryScheduleStateId));
+    return true;
+  });
+}
+
 export async function claimAutomaticDiscoveryPlaylistInboxExport(
   db: RadarDatabase,
   now = new Date(),

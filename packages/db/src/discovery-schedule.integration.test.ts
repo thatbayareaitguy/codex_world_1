@@ -5,7 +5,9 @@ import { createDatabase } from "./client";
 import {
   activateDiscoverySpotifyPriorityScheduler,
   getDiscoveryScheduleStatus,
+  markBroadDiscoveryPlaylistCheckpointPending,
   markDiscoveryPlaylistInboxStatus,
+  prepareBroadDiscoveryPlaylistCheckpoint,
   prepareDiscoveryPlaylistInboxExport,
   reconcileDiscoveryScheduleAfterCooldown,
   transitionAppleFirstCampaignToRecurringSchedule,
@@ -16,6 +18,7 @@ import {
   artists,
   discoveryReconciliationArtists,
   discoveryReconciliationCampaigns,
+  discoveryScheduleState,
   releaseProviderReconciliations,
   spotifyProviderState,
   spotifySchedulerState,
@@ -225,5 +228,52 @@ describe.sequential("first-week discovery schedule transition", () => {
         where: eq(spotifySchedulerState.id, "global"),
       }),
     ).toMatchObject({ mode: "automatic" });
+  });
+
+  it("batches broad discoveries into one restart-safe playlist checkpoint", async () => {
+    const checkpointAt = new Date("2026-08-08T22:00:00.000Z");
+    await connection.db
+      .update(spotifyProviderState)
+      .set({ cooldownUntil: null })
+      .where(eq(spotifyProviderState.id, "global"));
+    await connection.db
+      .update(discoveryScheduleState)
+      .set({ phase: "broad_spotify", playlistInboxStatus: "completed" })
+      .where(eq(discoveryScheduleState.id, "global"));
+
+    await expect(
+      markBroadDiscoveryPlaylistCheckpointPending(connection.db, checkpointAt),
+    ).resolves.toBe(true);
+    await expect(
+      markBroadDiscoveryPlaylistCheckpointPending(connection.db, checkpointAt),
+    ).resolves.toBe(false);
+    expect((await getDiscoveryScheduleStatus(connection.db))?.state).toMatchObject({
+      phase: "broad_spotify",
+      playlistInboxStatus: "pending",
+    });
+
+    await expect(
+      prepareBroadDiscoveryPlaylistCheckpoint(connection.db, checkpointAt),
+    ).resolves.toBe(true);
+    expect((await getDiscoveryScheduleStatus(connection.db))?.state).toMatchObject({
+      phase: "playlist_inbox",
+      playlistInboxStatus: "ready",
+    });
+
+    await connection.db
+      .update(discoveryScheduleState)
+      .set({ phase: "broad_spotify", playlistInboxStatus: "pending" })
+      .where(eq(discoveryScheduleState.id, "global"));
+    await connection.db
+      .update(spotifyProviderState)
+      .set({ cooldownUntil: new Date(checkpointAt.getTime() + 60_000) })
+      .where(eq(spotifyProviderState.id, "global"));
+    await expect(
+      prepareBroadDiscoveryPlaylistCheckpoint(connection.db, checkpointAt),
+    ).resolves.toBe(true);
+    expect((await getDiscoveryScheduleStatus(connection.db))?.state).toMatchObject({
+      phase: "cooldown_wait",
+      playlistInboxStatus: "ready",
+    });
   });
 });

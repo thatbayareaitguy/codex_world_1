@@ -1,14 +1,14 @@
 # AI Handoff
 
-Updated: 2026-08-08 16:20 PDT
+Updated: 2026-08-08 17:51 PDT
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`
-- Current implementation checkpoint: this commit (`fix: complete automatic scheduled playlist delivery`)
-- Milestone: automatic guarded Thursday/Friday Spotify playlist delivery and recurring scheduler
-  recovery correction
-- Upstream: matches `origin/codex/release-radar-hardening` after the scheduler checkpoint push
+- Starting checkpoint: `9f0165c` (`docs: sync scheduler handoff`)
+- Current implementation checkpoint: this commit (`fix: batch recurring Spotify playlist delivery`)
+- Milestone: first-week bootstrap validation and bounded broad-work playlist delivery
+- Upstream: synchronized with `origin/codex/release-radar-hardening` after this checkpoint push
 - Worktree: clean except unrelated untracked `outputs/`, which remains excluded
 - PostgreSQL: healthy with 28 forward migrations; no migration was required for this milestone
 
@@ -34,6 +34,10 @@ Updated: 2026-08-08 16:20 PDT
   `SPOTIFY_PLAYLIST_WRITES_ENABLED=true`, and the exact allowed playlist ID above.
 - UI status distinguishes Apple resolution, playlist readiness, exporting, cooldown pause, completion,
   broad backlog, budgets, and next scheduled jobs.
+- Saturday-Wednesday broad discoveries create one durable playlist checkpoint and use the existing
+  guarded exporter at a queue, rolling-window, local-day, Artist Albums, or cooldown boundary. This
+  avoids one write cycle per artist while ensuring export precedes a scheduler yield or later broad
+  work.
 
 ## Operational State
 
@@ -43,17 +47,24 @@ Updated: 2026-08-08 16:20 PDT
 - Live guarded export completed with 934 managed tracks, zero duplicates, and one unrelated user-added
   track preserved. The final automatic rerun added zero tracks, proving idempotency.
 - Spotify cooldown: none active. Historical cooldown expiration remains preserved.
-- Bounded live Apple-priority validation processed 20 artists and eight release-detail steps, stopped
-  cleanly at the 30-request rolling ceiling, produced no 429, and used no broad capacity.
-- Apple-priority queue: 114 remaining. Broad Spotify work remains blocked behind this queue.
-- Spotify Artist Albums usage: 20 of 80 trailing-24-hour calls; no active lease or stale lock.
+- The preserved campaign has 282 playlist-eligible desired tracks after reconciliation; all 282 are
+  represented in the export ledger. The original 265 count grew as priority work confirmed more
+  records.
+- Bounded live Apple-priority bootstrap processed 80 of 134 carried artists using the available
+  Artist Albums allowance. It produced no 429 or cooldown and consumed no broad artist or request
+  capacity.
+- Apple-priority queue: 54 remaining. Broad Spotify work correctly remains blocked behind this queue.
+- Spotify Artist Albums usage: 80 of 80 trailing-24-hour calls, all priority work. Next capacity is
+  expected after `2026-08-09T22:57:05.633Z`; no active lease or stale lock remains.
+- Current endpoint telemetry: 80 artist-albums, 16 album-detail, 0 album-tracks, 130 playlist reads,
+  16 playlist writes, and 23 OAuth/other requests in the trailing 24 hours. Broad daily usage is zero.
 - Next scheduled full Apple job: Thursday, August 13 at 9:00 PM PDT. Next Friday catch-up: August 14
   at 9:00 AM PDT.
 
 ## Validation
 
 - Passed: formatting, lint, strict TypeScript across 6 workspaces, and the 27-route production build.
-- Passed: 438 unit tests across 60 files, 133 PostgreSQL integration tests across 25 files, and 30
+- Passed: 445 unit tests across 60 files, 134 PostgreSQL integration tests across 25 files, and 30
   Playwright tests.
 - Passed: migration application, local browser smoke, empty console-error inspection, and
   `git diff --check` before the final documentation refresh.
@@ -65,15 +76,16 @@ Updated: 2026-08-08 16:20 PDT
 - Spotify quota limits remain unpublished. Local endpoint and rolling ceilings reduce risk but cannot
   guarantee the absence of future 429 responses.
 - A complete recurring Thursday-Friday-Saturday week has not yet run unattended.
-- The current 114-item Apple-priority queue must drain before the next automatic playlist checkpoint
+- The current 54-item Apple-priority queue must drain before the next automatic playlist checkpoint
   and before broad Spotify reconciliation.
 - Windows Task Scheduler must invoke the unified tick with the ignored local production capability
   settings. PostgreSQL remains the schedule authority.
 
 ## Immediate Next Step
 
-Continue short-lived unified ticks after rolling request capacity returns. Drain Apple-priority work,
-let the scheduler run the automatic playlist checkpoint, then permit Saturday broad reconciliation.
+Resume unified ticks after Artist Albums capacity returns. Drain the remaining 54 Apple-priority
+artists, run the guarded playlist checkpoint for any newly eligible tracks, then allow bounded broad
+reconciliation and its batched automatic playlist checkpoint.
 
 ## Deferred
 

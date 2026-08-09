@@ -1,12 +1,78 @@
-import type { createDatabase } from "@radar/db";
+import { defaultSchedulerLimits, type createDatabase } from "@radar/db";
 import { loadProviderConfiguration } from "@radar/providers";
 import { describe, expect, it, vi } from "vitest";
 import {
   discoverySchedulerRoute,
   parseDiscoverySchedulerCommand,
+  runBroadAutomaticPlaylistCheckpoint,
   runReadyAutomaticPlaylistExport,
   selectDiscoverySchedulerAction,
+  shouldFlushBroadPlaylistCheckpoint,
 } from "./discovery-scheduler-cli";
+
+function broadTick(input: {
+  broadRemaining?: number;
+  cooldownActive?: boolean;
+  dueArtistCount?: number;
+  reason?: "completed" | "no_work" | "cooldown";
+  rolling30?: number;
+  source?: "recurring" | "apple_priority";
+}) {
+  return {
+    reason: input.reason ?? "completed",
+    requestsStarted: 1,
+    selected: { source: input.source ?? "recurring" },
+    status: {
+      backlog: {
+        artist_reconciliation: 1,
+        base_artist: 1,
+        release_detail: 0,
+        release_tracks: 0,
+      },
+      cooldownActive: input.cooldownActive ?? false,
+      dailyBudget: {
+        broadArtistsLimit: 75,
+        broadArtistsUsed: 1,
+        broadRequestsLimit: 300,
+        broadRequestsUsed: 1,
+        localDate: "2026-08-08",
+        playlistRequestReserve: 20,
+        priorityRequestReserve: 200,
+      },
+      dueArtistCount: input.dueArtistCount ?? 1,
+      endpointBudget: {
+        artistAlbums: {
+          allowance: 80,
+          broadAllowance: 60,
+          broadRemaining: input.broadRemaining ?? 59,
+          broadUsed: 1,
+          calls: 1,
+          nextCapacityAt: null,
+          priorityRemaining: 79,
+          priorityReserve: 20,
+          priorityUsed: 0,
+          remaining: 79,
+          reserveRemaining: 20,
+          reserveReleased: false,
+        },
+        playlist: { reads: 0, writes: 0 },
+      },
+      requestCounts: {
+        byEndpointCategory: {
+          album_detail: 0,
+          album_tracks: 0,
+          artist_albums: 1,
+          oauth_or_other: 0,
+          playlist_read: 0,
+          playlist_write: 0,
+        },
+        byWorkType: { base_artist: 1 },
+        last24Hours: 1,
+        last30Minutes: input.rolling30 ?? 1,
+      },
+    },
+  };
+}
 
 describe("discovery scheduler CLI", () => {
   it("parses only the supported commands", () => {
@@ -110,5 +176,52 @@ describe("discovery scheduler CLI", () => {
       }),
     ).resolves.toEqual({ route: "playlist_export" });
     expect(reconcileCooldown).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["rolling request ceiling", broadTick({ rolling30: 30 })],
+    ["Artist Albums ceiling", broadTick({ broadRemaining: 0 })],
+    ["provider cooldown", broadTick({ cooldownActive: true, reason: "cooldown" })],
+    ["drained queue", broadTick({ dueArtistCount: 0, reason: "no_work" })],
+  ])("flushes a batched broad playlist checkpoint at the %s", (_label, tick) => {
+    expect(shouldFlushBroadPlaylistCheckpoint(tick, defaultSchedulerLimits())).toBe(true);
+  });
+
+  it("does not flush a broad checkpoint between ordinary artist slots", () => {
+    expect(
+      shouldFlushBroadPlaylistCheckpoint(broadTick({ rolling30: 1 }), defaultSchedulerLimits()),
+    ).toBe(false);
+  });
+
+  it("marks broad discoveries pending and invokes one guarded export at a yield boundary", async () => {
+    const db = {} as ReturnType<typeof createDatabase>["db"];
+    const markPending = vi.fn(() => Promise.resolve(true));
+    const prepare = vi.fn(() => Promise.resolve(true));
+    const runExport = vi.fn(() => Promise.resolve({ reason: "completed" as const }));
+
+    await expect(
+      runBroadAutomaticPlaylistCheckpoint(
+        db,
+        loadProviderConfiguration({}),
+        broadTick({ rolling30: 30 }),
+        { markPending, prepare, runExport },
+      ),
+    ).resolves.toEqual({ reason: "completed" });
+    expect(markPending).toHaveBeenCalledOnce();
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(runExport).toHaveBeenCalledOnce();
+  });
+
+  it("does not mark priority resolution as a broad playlist batch", async () => {
+    const markPending = vi.fn(() => Promise.resolve(true));
+    const prepare = vi.fn(() => Promise.resolve(false));
+
+    await runBroadAutomaticPlaylistCheckpoint(
+      {} as ReturnType<typeof createDatabase>["db"],
+      loadProviderConfiguration({}),
+      broadTick({ rolling30: 30, source: "apple_priority" }),
+      { markPending, prepare },
+    );
+    expect(markPending).not.toHaveBeenCalled();
   });
 });

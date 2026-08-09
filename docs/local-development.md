@@ -233,6 +233,12 @@ run broad Spotify work. If the process exits or a provider cooldown interrupts e
 resumes the durable export phase before lower-priority work. The manual dry-run and live commands
 remain available only for diagnostics and explicitly initiated maintenance.
 
+During the Saturday-Wednesday window, broad work accumulates one durable playlist checkpoint rather
+than exporting after every artist. The unified tick flushes that checkpoint in supported batches at
+the rolling-request, daily artist/request, or Artist Albums boundary, or when the broad queue drains.
+If a 429 interrupts broad work, the pending checkpoint waits through the stored cooldown and resumes
+before broad scanning continues.
+
 Cron example:
 
 ```cron

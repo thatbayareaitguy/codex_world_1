@@ -4,14 +4,20 @@ import {
   finishDiscoveryScheduleAppleJob,
   getRecurringDiscoveryScheduleStatus,
   getSpotifySchedulerStatus,
+  markBroadDiscoveryPlaylistCheckpointPending,
+  prepareBroadDiscoveryPlaylistCheckpoint,
   reconcileDiscoveryScheduleAfterCooldown,
   type DiscoveryAppleJobClaim,
+  type SpotifySchedulerClaim,
+  type SpotifySchedulerLimits,
+  type SpotifySchedulerStatus,
 } from "@radar/db";
 import { loadProviderConfiguration } from "@radar/providers";
 import { desc, gte } from "drizzle-orm";
 import { appleMusicScanBatches } from "@radar/db";
 import { loadLocalEnvironment } from "./local-env";
 import { runAutomaticDiscoveryPlaylistExport } from "./spotify-playlist-export-runtime";
+import { schedulerLimitsFromConfiguration } from "./spotify-scheduler-cli";
 
 loadLocalEnvironment();
 
@@ -41,6 +47,74 @@ export function discoverySchedulerRoute(input: {
     return "spotify_priority";
   }
   return "apple_or_spotify";
+}
+
+type BroadPlaylistTickResult = {
+  reason: "planned" | "completed" | "no_work" | "capability_disabled" | "cooldown" | "failed";
+  requestsStarted: number;
+  selected: Pick<SpotifySchedulerClaim, "source"> | null;
+  status: Pick<
+    SpotifySchedulerStatus,
+    | "backlog"
+    | "cooldownActive"
+    | "dailyBudget"
+    | "dueArtistCount"
+    | "endpointBudget"
+    | "requestCounts"
+  >;
+};
+
+export function shouldFlushBroadPlaylistCheckpoint(
+  result: BroadPlaylistTickResult,
+  limits: SpotifySchedulerLimits,
+): boolean {
+  if (result.status.cooldownActive) return true;
+  const status = result.status;
+  const rollingBroadCeiling =
+    limits.rolling24HourLimit - limits.priorityRequestReserve - limits.playlistRequestReserve;
+  const budgetBoundary =
+    status.requestCounts.last30Minutes >= limits.rolling30MinuteLimit ||
+    status.requestCounts.last24Hours + limits.maxRequestsPerTick > rollingBroadCeiling ||
+    status.dailyBudget.broadArtistsUsed >= status.dailyBudget.broadArtistsLimit ||
+    status.dailyBudget.broadRequestsUsed + limits.maxRequestsPerTick >
+      status.dailyBudget.broadRequestsLimit ||
+    status.endpointBudget.artistAlbums.broadRemaining === 0;
+  const queueDrained =
+    result.reason === "no_work" &&
+    status.dueArtistCount === 0 &&
+    status.backlog.release_detail === 0 &&
+    status.backlog.release_tracks === 0;
+  return budgetBoundary || queueDrained;
+}
+
+export async function runBroadAutomaticPlaylistCheckpoint(
+  db: ReturnType<typeof createDatabase>["db"],
+  configuration: ReturnType<typeof loadProviderConfiguration>,
+  result: BroadPlaylistTickResult,
+  dependencies: {
+    markPending?: typeof markBroadDiscoveryPlaylistCheckpointPending;
+    prepare?: typeof prepareBroadDiscoveryPlaylistCheckpoint;
+    runExport?: (
+      db: ReturnType<typeof createDatabase>["db"],
+      configuration: ReturnType<typeof loadProviderConfiguration>,
+    ) => Promise<unknown>;
+  } = {},
+) {
+  const broadCompletion =
+    result.reason === "completed" &&
+    result.selected !== null &&
+    !["apple_priority", "apple_catchup", "validation"].includes(result.selected.source);
+  if (broadCompletion && result.requestsStarted > 0) {
+    await (dependencies.markPending ?? markBroadDiscoveryPlaylistCheckpointPending)(db);
+  }
+  if (
+    !shouldFlushBroadPlaylistCheckpoint(result, schedulerLimitsFromConfiguration(configuration))
+  ) {
+    return null;
+  }
+  const prepared = await (dependencies.prepare ?? prepareBroadDiscoveryPlaylistCheckpoint)(db);
+  if (!prepared) return null;
+  return (dependencies.runExport ?? runAutomaticDiscoveryPlaylistExport)(db, configuration);
 }
 
 export async function selectDiscoverySchedulerAction(
@@ -144,7 +218,14 @@ async function main(): Promise<void> {
     }
 
     const spotify = await runSpotifyTick(connection.db, configuration);
-    process.stdout.write(`${JSON.stringify({ spotify }, null, 2)}\n`);
+    const playlist = await runBroadAutomaticPlaylistCheckpoint(
+      connection.db,
+      configuration,
+      spotify,
+    );
+    process.stdout.write(
+      `${JSON.stringify({ spotify, ...(playlist ? { playlist } : {}) }, null, 2)}\n`,
+    );
   } finally {
     await connection.client.end();
   }
