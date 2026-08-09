@@ -2,7 +2,7 @@ import { log, normalizeSpotifyArtworkUrl } from "@radar/core";
 import { z } from "zod";
 import {
   abbreviateSpotifyPlaylistId,
-  assertOwnedPrivateSpotifyPlaylist,
+  assertOwnedNonCollaborativeSpotifyPlaylist,
   assertSpotifyPlaylistWriteTarget,
   assertSpotifyTrackIds,
   SpotifyPlaylistWriteDeniedError,
@@ -112,8 +112,10 @@ const trackSchema = trackSummarySchema
 const playlistSchema = z
   .object({
     collaborative: z.boolean(),
+    description: z.string().nullable().optional(),
     external_urls: externalUrlsSchema,
     id: z.string().min(1),
+    images: spotifyImagesSchema.optional(),
     name: z.string().min(1),
     owner: z
       .object({ account_id: z.string().optional(), id: z.string().optional() })
@@ -342,6 +344,7 @@ interface SpotifyClientOptions {
 interface RequestOptions {
   body?: unknown;
   method?: "GET" | "POST" | "PUT";
+  responseBody?: "empty" | "json";
   signal?: AbortSignal | undefined;
 }
 
@@ -588,7 +591,7 @@ export class SpotifyClient {
       this.getCurrentUser(signal),
       this.getPlaylist(targetPlaylistId, signal),
     ]);
-    assertOwnedPrivateSpotifyPlaylist(playlist, profile);
+    assertOwnedNonCollaborativeSpotifyPlaylist(playlist, profile);
     log("info", "spotify.playlist_addition_started", {
       itemCount: trackIds.length,
       playlistId: abbreviateSpotifyPlaylistId(targetPlaylistId),
@@ -631,7 +634,7 @@ export class SpotifyClient {
       this.getCurrentUser(signal),
       this.getPlaylist(targetPlaylistId, signal),
     ]);
-    assertOwnedPrivateSpotifyPlaylist(playlist, profile);
+    assertOwnedNonCollaborativeSpotifyPlaylist(playlist, profile);
     log("info", "spotify.playlist_positional_addition_started", {
       itemCount: trackIds.length,
       playlistId: abbreviateSpotifyPlaylistId(targetPlaylistId),
@@ -693,6 +696,25 @@ export class SpotifyClient {
       },
     );
     return response.snapshot_id;
+  }
+
+  async setAuthorizedPlaylistPublic(id: string, signal?: AbortSignal): Promise<void> {
+    const targetPlaylistId = assertSpotifyPlaylistWriteTarget(this.playlistWritePolicy, id);
+    const [profile, playlist] = await Promise.all([
+      this.getCurrentUser(signal),
+      this.getPlaylist(targetPlaylistId, signal),
+    ]);
+    assertOwnedNonCollaborativeSpotifyPlaylist(playlist, profile);
+    log("info", "spotify.playlist_visibility_update_started", {
+      playlistId: abbreviateSpotifyPlaylistId(targetPlaylistId),
+      public: true,
+    });
+    await this.request(`/playlists/${encodeURIComponent(targetPlaylistId)}`, z.undefined(), {
+      body: { collaborative: false, public: true },
+      method: "PUT",
+      responseBody: "empty",
+      signal,
+    });
   }
 
   private async request<T>(
@@ -793,7 +815,7 @@ export class SpotifyClient {
             providerErrorClassification,
           );
         }
-        return schema.parse(await response.json());
+        return schema.parse(options.responseBody === "empty" ? undefined : await response.json());
       } catch (error) {
         if (permit && !permitCompleted) {
           await this.requestGate?.complete(permit, {
@@ -1044,7 +1066,8 @@ export function spotifyEndpointCategory(path: string, method = "GET"): string {
   if (/^\/playlists\/[^/]+\/items/.test(path)) {
     return method === "GET" ? "playlist_read" : "playlist_write";
   }
-  if (/^\/playlists\/[^/]+$/.test(path)) return "playlist_read";
+  if (/^\/playlists\/[^/]+$/.test(path))
+    return method === "GET" ? "playlist_read" : "playlist_write";
   return "oauth_or_other";
 }
 

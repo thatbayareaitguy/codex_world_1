@@ -72,6 +72,7 @@ describe("Spotify endpoint quota categories", () => {
     ["/albums/album", "GET", "album_detail"],
     ["/albums/album/tracks", "GET", "album_tracks"],
     ["/playlists/playlist", "GET", "playlist_read"],
+    ["/playlists/playlist", "PUT", "playlist_write"],
     ["/playlists/playlist/items", "GET", "playlist_read"],
     ["/playlists/playlist/items", "POST", "playlist_write"],
     ["/playlists/playlist/items", "PUT", "playlist_write"],
@@ -526,11 +527,11 @@ describe("SpotifyClient", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it("verifies ownership and privacy before batching additions at 100 items", async () => {
+  it("verifies ownership and non-collaboration before batching public-playlist additions", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse(profile))
-      .mockResolvedValueOnce(jsonResponse(playlist()))
+      .mockResolvedValueOnce(jsonResponse(playlist({ public: true })))
       .mockResolvedValueOnce(jsonResponse({ snapshot_id: "one" }, 201))
       .mockResolvedValueOnce(jsonResponse({ snapshot_id: "two" }, 201))
       .mockResolvedValueOnce(jsonResponse({ snapshot_id: "three" }, 201));
@@ -634,6 +635,40 @@ describe("SpotifyClient", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("makes only the configured owned playlist public and non-collaborative", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(profile))
+      .mockResolvedValueOnce(jsonResponse(playlist()))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    const client = new SpotifyClient({
+      accessToken: () => Promise.resolve("token"),
+      fetcher,
+      playlistWritePolicy: {
+        allowedPlaylistId: "1234567890123456789012",
+        enabled: true,
+      },
+    });
+
+    await expect(
+      client.setAuthorizedPlaylistPublic("1234567890123456789012"),
+    ).resolves.toBeUndefined();
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(fetcher.mock.calls[2]?.[0]).toEqual(
+      expect.stringContaining("/playlists/1234567890123456789012"),
+    );
+    expect(fetcher.mock.calls[2]?.[1]).toMatchObject({
+      body: JSON.stringify({ collaborative: false, public: true }),
+      method: "PUT",
+    });
+
+    fetcher.mockClear();
+    await expect(
+      client.setAuthorizedPlaylistPublic("abcdefghijklmnopqrstuv"),
+    ).rejects.toMatchObject({ code: "playlist_id_mismatch" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("rejects positional additions before any request when the target or batch is invalid", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const client = new SpotifyClient({
@@ -659,8 +694,6 @@ describe("SpotifyClient", () => {
 
   it.each([
     ["another owner", playlist({ owner: { account_id: "someone-else" } }), "playlist_not_owned"],
-    ["a public playlist", playlist({ public: true }), "playlist_not_private"],
-    ["an unverifiable privacy state", playlist({ public: null }), "playlist_not_private"],
     ["a collaborative playlist", playlist({ collaborative: true }), "playlist_collaborative"],
   ])("rejects %s before posting items", async (_label, playlistResponse, code) => {
     const fetcher = vi

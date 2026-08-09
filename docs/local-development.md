@@ -26,7 +26,7 @@ Generate a base64-encoded 32-byte `APP_ENCRYPTION_KEY`. Set `MUSICBRAINZ_CONTACT
 
 Apple Music public-catalog discovery requires an active Apple Developer Program team, a MusicKit-enabled Media ID, and a Media Services private key. Configure `APPLE_MUSIC_TEAM_ID`, `APPLE_MUSIC_KEY_ID`, `APPLE_MUSIC_PRIVATE_KEY_PATH`, and a two-letter `APPLE_MUSIC_STOREFRONT`, then set `APPLE_MUSIC_ENABLED=true`. Keep the `.p8` key outside the repository. Do not configure or request a Music User Token.
 
-Spotify playlist writes are off by default. Leave `SPOTIFY_PLAYLIST_WRITES_ENABLED=false` and `SPOTIFY_ALLOWED_PLAYLIST_ID=` for read-only authorization. For an explicitly approved add-only export, manually create a private non-collaborative playlist in Spotify, configure its 22-character ID, enable writes, and reconnect Spotify with forced consent to grant both `playlist-modify-private` and `playlist-modify-public`. The second scope changes only the OAuth permission set; the browser and CLI still cannot select or override the configured ID or change playlist visibility.
+Spotify playlist writes are off by default. Leave `SPOTIFY_PLAYLIST_WRITES_ENABLED=false` and `SPOTIFY_ALLOWED_PLAYLIST_ID=` for read-only authorization. For an explicitly approved add-only export, manually create an owner-controlled, non-collaborative playlist in Spotify, configure its 22-character ID, enable writes, and reconnect Spotify with forced consent to grant both `playlist-modify-private` and `playlist-modify-public`. Public and private visibility pass the guard; the authorized production target is expected to be public. The browser and CLI cannot select or override the configured ID.
 
 Reddit must stay disabled until explicit Data API approval exists. `REDDIT_ACCESS_APPROVED=true` records the owner's assertion only and is not evidence of approval. Manual SoundCloud links can be enabled with `SOUNDCLOUD_MANUAL_LINKS_ENABLED=true`; this causes no SoundCloud request.
 
@@ -156,7 +156,16 @@ Normal scans use one global database lock. Each provider records an independent 
 
 Spotify uses one database-backed queue across web and scanner processes. The default and minimum configured interval is ten seconds with concurrency one. A provider 429 persists a client-wide cooldown across restart; do not clear or bypass a valid integer-second wait. Initial scans are limited to 15 artists per batch and begin paused for confirmation. See [Spotify Development Mode Scanning](spotify-development-mode-scanning.md).
 
-Spotify playlist export always targets `SPOTIFY_ALLOWED_PLAYLIST_ID`. Dry-run reads the owned private playlist and reports additions, existing tracks, skip reasons, duplicates, and Custom Order moves without provider mutation. Live mode requires `SPOTIFY_PLAYLIST_WRITES_ENABLED=true` and both stored playlist modification scopes. It records a durable run and per-track operation ledger, inserts only exact or manually confirmed tracks, preserves user-added tracks, retries isolated failures on an explicit rerun, and resumes unfinished operations after interruption. `--max-additions` is a canary limit, not a different target. The verified snapshot cache avoids playlist-item pagination while the remote `snapshot_id` is unchanged. An external change triggers one full reconciliation read. Existing items are ordered only with snapshot-aware contiguous range moves; no export command creates, removes, replaces, renames, follows, or changes playlist visibility.
+Spotify playlist export always targets `SPOTIFY_ALLOWED_PLAYLIST_ID`. Dry-run reads the owned, non-collaborative playlist and reports additions, existing tracks, skip reasons, duplicates, and Custom Order moves without provider mutation. Live mode requires `SPOTIFY_PLAYLIST_WRITES_ENABLED=true` and both stored playlist modification scopes. It records a durable run and per-track operation ledger, inserts only exact or manually confirmed tracks, preserves user-added tracks, retries isolated failures on an explicit rerun, and resumes unfinished operations after interruption. `--max-additions` is a canary limit, not a different target. The verified snapshot cache avoids playlist-item pagination while the remote `snapshot_id` is unchanged. An external change triggers one full reconciliation read. Existing items are ordered only with snapshot-aware contiguous range moves; no export command creates, removes, replaces, renames, follows, or changes playlist visibility.
+
+The production playlist visibility is managed by one fixed-target command. It has no playlist-ID argument and cannot select another playlist:
+
+```powershell
+pnpm spotify:playlist-visibility -- --dry-run
+pnpm spotify:playlist-visibility -- --live
+```
+
+Dry-run verifies the owner, collaboration state, item count, and Custom Order without mutation. Live mode sets only `public=true` and `collaborative=false`, then verifies item membership, exact order, `added_at`, `added_by`, owner, name, description, artwork, and the persisted snapshot cache. It does not export pending tracks.
 
 The initial 935-item Custom Order validation used 84 playlist-read requests across its dry run,
 canary readback, interrupted conversion recovery, and final verification. It completed 473 range

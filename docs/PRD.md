@@ -20,7 +20,7 @@ The product optimizes for recall but never guarantees completeness. It has no au
 - Match by same-provider ID, ISRC, MusicBrainz IDs, then strict metadata.
 - Keep Reddit disabled until explicit Data API approval exists; exact canonical artist and title corroboration may attach evidence, while every other Reddit candidate enters review.
 - Send ambiguous artist, recording, and version matches to review.
-- Prepare idempotent add-only synchronization to one owned private Spotify playlist. Writes remain disabled by default and require the server-configured allowlisted playlist ID.
+- Prepare idempotent add-only synchronization to one owned, non-collaborative Spotify playlist. The authorized production target is public and shareable. Writes remain disabled by default and require the server-configured allowlisted playlist ID.
 - Keep saved, dismissed, listened, upcoming, new, and review feed states.
 
 ## Deferred Scope

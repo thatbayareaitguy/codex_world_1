@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   abbreviateSpotifyPlaylistId,
-  assertOwnedPrivateSpotifyPlaylist,
+  assertOwnedNonCollaborativeSpotifyPlaylist,
   assertSpotifyPlaylistWriteTarget,
   assertSpotifyTrackIds,
 } from "./spotify-playlist-policy";
@@ -33,16 +33,34 @@ describe("Spotify playlist write policy", () => {
     expect(abbreviateSpotifyPlaylistId(allowedPlaylistId)).toBe("1234...9012");
   });
 
-  it("requires the connected owner and a private non-collaborative playlist", () => {
+  it.each([false, true, null])(
+    "requires the connected owner and a non-collaborative playlist at visibility %s",
+    (publicState) => {
+      expect(() =>
+        assertOwnedNonCollaborativeSpotifyPlaylist(
+          {
+            collaborative: false,
+            owner: { account_id: "owner" },
+            public: publicState,
+          },
+          { account_id: "owner", id: "user" },
+        ),
+      ).not.toThrow();
+    },
+  );
+
+  it("rejects an unowned or collaborative target regardless of visibility", () => {
     expect(() =>
-      assertOwnedPrivateSpotifyPlaylist(
-        {
-          collaborative: false,
-          owner: { account_id: "owner" },
-          public: false,
-        },
+      assertOwnedNonCollaborativeSpotifyPlaylist(
+        { collaborative: false, owner: { account_id: "other" }, public: true },
         { account_id: "owner", id: "user" },
       ),
-    ).not.toThrow();
+    ).toThrow("not owned");
+    expect(() =>
+      assertOwnedNonCollaborativeSpotifyPlaylist(
+        { collaborative: true, owner: { account_id: "owner" }, public: false },
+        { account_id: "owner", id: "user" },
+      ),
+    ).toThrow("Collaborative");
   });
 });

@@ -1,6 +1,6 @@
 import {
   applySpotifyPlaylistReorderMove,
-  assertOwnedPrivateSpotifyPlaylist,
+  assertOwnedNonCollaborativeSpotifyPlaylist,
   assertSpotifyPlaylistWriteTarget,
   hasSpotifyPlaylistWriteScopes,
   planSpotifyPlaylistReleaseDateOrder,
@@ -61,7 +61,7 @@ export async function previewSpotifyPlaylistCustomOrder(
   const profile = await client.getCurrentUser();
   const playlist = await client.getPlaylist(playlistId);
   assertPlaylistIdentity(playlistId, playlist.id);
-  assertOwnedPrivateSpotifyPlaylist(playlist, profile);
+  assertOwnedNonCollaborativeSpotifyPlaylist(playlist, profile);
   const snapshot = await loadVerifiedSpotifyPlaylistSnapshot(db, userId, client, playlist, {
     forceRefresh: options.forceRefresh ?? false,
   });
@@ -93,7 +93,7 @@ export async function executeSpotifyPlaylistCustomOrder(
   const profile = await client.getCurrentUser();
   const playlist = await client.getPlaylist(playlistId);
   assertPlaylistIdentity(playlistId, playlist.id);
-  assertOwnedPrivateSpotifyPlaylist(playlist, profile);
+  assertOwnedNonCollaborativeSpotifyPlaylist(playlist, profile);
   const snapshot = await loadVerifiedSpotifyPlaylistSnapshot(db, userId, client, playlist, {
     forceRefresh: input.forceRefresh ?? false,
     policy: input.policy,

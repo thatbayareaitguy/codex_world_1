@@ -1,6 +1,6 @@
 import {
   abbreviateSpotifyPlaylistId,
-  assertOwnedPrivateSpotifyPlaylist,
+  assertOwnedNonCollaborativeSpotifyPlaylist,
   loadProviderConfiguration,
 } from "@radar/providers";
 import type { NextRequest } from "next/server";
@@ -26,13 +26,14 @@ export async function GET(): Promise<NextResponse> {
         context.client.getCurrentUser(),
         context.client.getPlaylist(playlistId),
       ]);
-      assertOwnedPrivateSpotifyPlaylist(playlist, profile);
+      assertOwnedNonCollaborativeSpotifyPlaylist(playlist, profile);
       return NextResponse.json({
         allowedPlaylistConfigured: true,
         playlist: {
           id: abbreviateSpotifyPlaylistId(playlist.id),
           name: playlist.name,
-          private: true,
+          collaborative: false,
+          public: playlist.public,
         },
         writesEnabled: configuration.spotify.playlistWritesEnabled,
       });

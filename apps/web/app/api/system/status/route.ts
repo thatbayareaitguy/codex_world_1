@@ -61,7 +61,9 @@ export async function GET(): Promise<NextResponse> {
       allowedPlaylistConfigured: Boolean(configuration.spotify.allowedPlaylistId),
       configured: configuration.spotify.configured,
       enabled: configuration.spotify.enabled,
+      expectedPlaylistPublic: configuration.spotify.expectedPlaylistPublic,
       playlistWritesEnabled: configuration.spotify.playlistWritesEnabled,
+      playlistWritePolicy: "authorized_owner_non_collaborative",
       redirectUriValid:
         configuration.spotify.redirectUri === "http://127.0.0.1:3000/api/auth/spotify/callback",
       requiredScopes: [

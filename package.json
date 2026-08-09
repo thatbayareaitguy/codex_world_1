@@ -38,6 +38,7 @@
     "spotify:campaign": "tsx apps/scanner/src/spotify-sync-campaign-cli.ts",
     "spotify:playlist-export": "tsx apps/scanner/src/spotify-playlist-export-cli.ts",
     "spotify:playlist-order": "tsx apps/scanner/src/spotify-playlist-order-cli.ts",
+    "spotify:playlist-visibility": "tsx apps/scanner/src/spotify-playlist-visibility-cli.ts",
     "reddit:reconcile-deletions": "tsx apps/scanner/src/reddit-reconcile.ts",
     "test": "vitest run --exclude '**/*.integration.test.ts' --exclude '**/e2e/**'",
     "test:e2e": "playwright test",

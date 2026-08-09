@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const spotifyAuthorizedPlaylistId = "4l6LaMPL6duulmFe3hRR4Y";
+export const spotifyAuthorizedPlaylistExpectedPublic = true;
 
 export const spotifyPlaylistIdSchema = z
   .string()
@@ -34,11 +35,11 @@ export type SpotifyPlaylistWriteDenialCode =
   | "playlist_id_malformed"
   | "playlist_id_mismatch"
   | "playlist_not_owned"
-  | "playlist_not_private"
   | "playlist_collaborative"
   | "track_id_malformed"
   | "playlist_addition_invalid"
-  | "playlist_reorder_invalid";
+  | "playlist_reorder_invalid"
+  | "playlist_visibility_invalid";
 
 export class SpotifyPlaylistWriteDeniedError extends Error {
   constructor(
@@ -77,7 +78,7 @@ export function assertSpotifyPlaylistWriteTarget(
   return allowed;
 }
 
-export function assertOwnedPrivateSpotifyPlaylist(
+export function assertOwnedNonCollaborativeSpotifyPlaylist(
   playlist: SpotifyPlaylistOwnershipInput,
   profile: SpotifyProfileOwnershipInput,
 ): void {
@@ -86,18 +87,6 @@ export function assertOwnedPrivateSpotifyPlaylist(
     throw new SpotifyPlaylistWriteDeniedError(
       "The configured Spotify playlist is not owned by the connected account",
       "playlist_not_owned",
-    );
-  }
-  if (playlist.public === true) {
-    throw new SpotifyPlaylistWriteDeniedError(
-      "Spotify reports that the configured playlist is public",
-      "playlist_not_private",
-    );
-  }
-  if (playlist.public === null) {
-    throw new SpotifyPlaylistWriteDeniedError(
-      "Spotify did not provide a verifiable private state for the configured playlist",
-      "playlist_not_private",
     );
   }
   if (playlist.collaborative === true) {

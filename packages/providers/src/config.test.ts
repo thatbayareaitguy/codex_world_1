@@ -11,6 +11,7 @@ describe("provider configuration", () => {
       artistAlbumsReserveReleaseAfterHours: 20,
       enabled: true,
       configured: false,
+      expectedPlaylistPublic: true,
       playlistWritesEnabled: false,
     });
     expect(config.spotify.allowedPlaylistId).toBeUndefined();
@@ -34,6 +35,7 @@ describe("provider configuration", () => {
     });
     expect(config.spotify).toMatchObject({
       allowedPlaylistId: "4l6LaMPL6duulmFe3hRR4Y",
+      expectedPlaylistPublic: true,
       playlistWritesEnabled: true,
     });
     expect(() =>

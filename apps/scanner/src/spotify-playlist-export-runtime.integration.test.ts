@@ -268,7 +268,7 @@ function completedExecution(runId: string): SpotifyPlaylistExportExecution {
       idAbbreviated: "4l6L...RR4Y",
       name: "Release Inbox",
       ownerId: "owner",
-      private: true,
+      public: true,
       snapshotId: "snapshot",
     },
   };

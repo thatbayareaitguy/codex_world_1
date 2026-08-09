@@ -680,7 +680,10 @@ function spotifyChecks(
     );
   } else {
     checks.push(
-      ready("Spotify playlist writes", "Spotify playlist additions are explicitly enabled."),
+      ready(
+        "Spotify playlist writes",
+        "Spotify playlist additions, Custom Order writes, and the fixed-target visibility operation are explicitly enabled.",
+      ),
     );
     checks.push(
       configuration.spotify.allowedPlaylistId
@@ -702,6 +705,13 @@ function spotifyChecks(
             "The connected account has not granted both required playlist modification scopes.",
             "Disconnect and reconnect Spotify with playlist writes enabled, then confirm both modification scopes.",
           ),
+    );
+    checks.push(
+      ready(
+        "Spotify playlist safety policy",
+        "Runtime writes require the exact authorized playlist ID, connected owner, and non-collaborative state. The production target is expected to be public.",
+        false,
+      ),
     );
   }
   return checks;

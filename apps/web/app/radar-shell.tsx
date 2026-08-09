@@ -77,6 +77,7 @@ interface ProviderUiConfiguration {
     allowedPlaylistIdAbbreviated?: string;
     configured: boolean;
     enabled: boolean;
+    expectedPlaylistPublic: boolean;
     minRequestIntervalMs: number;
     playlistWritesEnabled: boolean;
   };
@@ -3530,7 +3531,7 @@ function ExportsView({
       title: string;
     }>;
     skipCounts: Record<string, number>;
-    target: { id: string; idAbbreviated: string; name: string; private: boolean };
+    target: { id: string; idAbbreviated: string; name: string; public: boolean | null };
     totals: {
       additions: number;
       alreadyPresent: number;
@@ -3540,9 +3541,10 @@ function ExportsView({
     };
   } | null>(null);
   const [inspectedPlaylist, setInspectedPlaylist] = useState<{
+    collaborative: false;
     id: string;
     name: string;
-    private: boolean;
+    public: boolean | null;
   } | null>(null);
 
   const playlistRequest = async (path: string, method: "GET" | "POST") => {
@@ -3575,7 +3577,7 @@ function ExportsView({
             id: z.string(),
             idAbbreviated: z.string(),
             name: z.string(),
-            private: z.boolean(),
+            public: z.boolean().nullable(),
           }),
           totals: z.object({
             additions: z.number().int().nonnegative(),
@@ -3619,17 +3621,24 @@ function ExportsView({
     try {
       const payload = z
         .object({
-          playlist: z.object({ id: z.string(), name: z.string(), private: z.boolean() }).nullable(),
+          playlist: z
+            .object({
+              collaborative: z.literal(false),
+              id: z.string(),
+              name: z.string(),
+              public: z.boolean().nullable(),
+            })
+            .nullable(),
         })
         .parse(await playlistRequest("/api/spotify/playlists", "GET"));
       setInspectedPlaylist(payload.playlist);
       onNotice(
         payload.playlist
-          ? `Configured private playlist ${payload.playlist.name} was verified.`
+          ? `Configured ${payload.playlist.public ? "public" : "private"} playlist ${payload.playlist.name} was verified.`
           : "No Spotify playlist ID is configured.",
       );
     } catch {
-      onNotice("Unable to inspect the configured private Spotify playlist.");
+      onNotice("Unable to inspect the configured Spotify playlist.");
     }
   };
   return (
@@ -3646,7 +3655,7 @@ function ExportsView({
           <div className="provider-card-heading">
             <span className="provider-dot spotify" />
             <div>
-              <h2>Spotify private release inbox</h2>
+              <h2>Spotify public release inbox</h2>
               <p>
                 {spotifyConfiguration.allowedPlaylistConfigured
                   ? `Configured target ${spotifyConfiguration.allowedPlaylistIdAbbreviated}`
@@ -3714,7 +3723,9 @@ function ExportsView({
             <div className="sync-preview" role="status">
               <span>{inspectedPlaylist.name}</span>
               <span>{inspectedPlaylist.id}</span>
-              <span>Owned and private</span>
+              <span>
+                Owned, {inspectedPlaylist.public ? "public" : "private"}, and non-collaborative
+              </span>
             </div>
           )}
           {preview && (
@@ -4649,6 +4660,7 @@ const systemStatusSchema = z.object({
     configured: z.boolean(),
     connected: z.boolean().optional(),
     enabled: z.boolean(),
+    expectedPlaylistPublic: z.boolean(),
     followedArtistsImported: z.boolean().optional(),
     grantedScopes: z.array(z.string()).optional(),
     lastError: z.string().nullable().optional(),
@@ -4657,6 +4669,7 @@ const systemStatusSchema = z.object({
     lastSuccessfulScanAt: z.string().nullable().optional(),
     playlistConfigured: z.boolean().optional(),
     playlistWritesEnabled: z.boolean(),
+    playlistWritePolicy: z.literal("authorized_owner_non_collaborative"),
     redirectUriValid: z.boolean(),
     requiredScopes: z.array(z.string()),
     scheduler: z.lazy(() => spotifySchedulerStatusSchema).optional(),
@@ -5516,7 +5529,8 @@ function SpotifySetupChecklist({ configured, enabled }: { configured: boolean; e
     ["Account connected", status?.spotify.connected ?? false],
     ["Required scopes granted", scopesGranted],
     ["Followed artists imported", status?.spotify.followedArtistsImported ?? false],
-    ["Allowed private playlist ID configured", status?.spotify.allowedPlaylistConfigured ?? false],
+    ["Allowed playlist ID configured", status?.spotify.allowedPlaylistConfigured ?? false],
+    ["Production playlist expected public", status?.spotify.expectedPlaylistPublic ?? false],
     ["Playlist writes enabled", status?.spotify.playlistWritesEnabled ?? false],
   ];
   return (

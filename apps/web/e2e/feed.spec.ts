@@ -1392,8 +1392,8 @@ test("navigates every primary view and resolves manual review", async ({ page })
   await expect(page.getByText("Disabled", { exact: true })).toBeVisible();
   await expect(page.getByText("Spotify setup checklist")).toBeVisible();
   await expect(page.getByLabel("Currently granted Spotify scopes")).toBeVisible();
-  await expect(page.getByLabel("Currently granted Spotify scopes")).not.toContainText(
-    "playlist-modify",
+  await expect(page.getByLabel("Currently granted Spotify scopes")).toContainText(
+    "user-follow-read",
   );
   await expect(
     page.getByText(
@@ -1414,7 +1414,12 @@ test("previews and runs the configured add-only Spotify export", async ({ page }
     await route.fulfill({
       json: {
         allowedPlaylistConfigured: true,
-        playlist: { id: "4l6L...RR4Y", name: "Release Inbox", private: true },
+        playlist: {
+          collaborative: false,
+          id: "4l6L...RR4Y",
+          name: "Release Inbox",
+          public: true,
+        },
         writesEnabled: true,
       },
     });
@@ -1437,7 +1442,7 @@ test("previews and runs the configured add-only Spotify export", async ({ page }
             id: targetId,
             idAbbreviated: "4l6L...RR4Y",
             name: "Release Inbox",
-            private: true,
+            public: true,
           },
           totals: {
             additions: 1,
@@ -1469,9 +1474,9 @@ test("previews and runs the configured add-only Spotify export", async ({ page }
   await expect(page.getByText("Configured target 4l6L...RR4Y")).toBeVisible();
 
   await page.getByRole("button", { name: "Inspect configured playlist" }).click();
-  await expect(page.getByRole("status").filter({ hasText: "Owned and private" })).toContainText(
-    "Release Inbox",
-  );
+  await expect(
+    page.getByRole("status").filter({ hasText: "Owned, public, and non-collaborative" }),
+  ).toContainText("Release Inbox");
 
   await page.getByRole("button", { name: "Preview sync" }).click();
   const preview = page.getByRole("status").filter({ hasText: "1 to add" });

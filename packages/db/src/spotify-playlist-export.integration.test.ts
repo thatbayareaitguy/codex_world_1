@@ -50,7 +50,7 @@ describe.sequential("Spotify canonical playlist export", () => {
 
     const preview = await previewSpotifyPlaylistExport(db, fixture.userId, client, playlistId);
 
-    expect(preview.target).toMatchObject({ id: playlistId, private: true });
+    expect(preview.target).toMatchObject({ id: playlistId, public: true });
     expect(preview.plan.desired.map((item) => item.title)).toEqual([
       "Exact track",
       "Confirmed track",
@@ -299,7 +299,7 @@ class FakePlaylistClient implements SpotifyPlaylistExportClient {
       id,
       name: "Release Radar Inbox",
       owner: { account_id: "owner-account", id: "owner" },
-      public: false,
+      public: true,
       snapshot_id: `snapshot-${this.snapshot}`,
       uri: `spotify:playlist:${id}`,
     });

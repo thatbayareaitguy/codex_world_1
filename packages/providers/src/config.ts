@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { spotifyAuthorizedPlaylistId, spotifyPlaylistIdSchema } from "./spotify-playlist-policy";
+import {
+  spotifyAuthorizedPlaylistExpectedPublic,
+  spotifyAuthorizedPlaylistId,
+  spotifyPlaylistIdSchema,
+} from "./spotify-playlist-policy";
 
 const booleanFlag = (defaultValue: boolean) =>
   z
@@ -180,6 +184,7 @@ export interface ProviderConfiguration {
     configured: boolean;
     dailyMaxPagesPerArtist: number;
     enabled: boolean;
+    expectedPlaylistPublic: boolean;
     initialMaxPagesPerArtist: number;
     maxConcurrency: number;
     maxRequestsPerRun: number;
@@ -284,6 +289,7 @@ export function loadProviderConfiguration(
       configured: spotifyConfigured,
       dailyMaxPagesPerArtist: parsed.SPOTIFY_DAILY_MAX_PAGES_PER_ARTIST,
       enabled: parsed.SPOTIFY_ENABLED,
+      expectedPlaylistPublic: spotifyAuthorizedPlaylistExpectedPublic,
       initialMaxPagesPerArtist: parsed.SPOTIFY_INITIAL_MAX_PAGES_PER_ARTIST,
       maxConcurrency: parsed.SPOTIFY_MAX_CONCURRENCY,
       maxRequestsPerRun: parsed.SPOTIFY_MAX_REQUESTS_PER_RUN,

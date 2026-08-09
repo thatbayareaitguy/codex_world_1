@@ -1,5 +1,14 @@
 # Implementation Plan
 
+## Current: public authorized Spotify release inbox
+
+The single authorized Spotify playlist remains owner-controlled and non-collaborative but is public
+for sharing. General write guards accept public or private visibility and continue to enforce the
+exact target ID and connected owner. One internal fixed-target command performs the visibility
+transition and verifies item membership, exact Custom Order, Date Added metadata, playlist
+properties, and the snapshot cache. It does not add any pending tracks. Default playlist writes
+remain off.
+
 ## Current: dormant MusicBrainz production boundary
 
 MusicBrainz is preserved as an advanced adapter but defaults off. Normal scans, direct identity
@@ -88,13 +97,13 @@ Keep the pnpm monorepo, strict TypeScript, Drizzle schema and migration history,
 7. Implement a read-only MusicBrainz client with a contactable User-Agent, one global request per second, bounded 503 retries, artist scoring, release-group and release browse, and `track_artist` appearance browse.
 8. Extend scanner arguments and orchestration for enabled providers, artist filters, dry runs, full scans, since dates, backfill windows, provider isolation, scan locking, checkpoints, and idempotent persistence.
 9. Extend matching regression coverage and persist algorithm version, reasons, conflicting source values, provider identifiers, release-level relationships, upcoming date history, and review records.
-10. Complete the feed, provider settings, watchlist mappings, review queue, scan history, private Spotify playlist preview and synchronization, privacy, terms, disconnect, and deletion controls. Hide manual SoundCloud controls by default.
+10. Complete the feed, provider settings, watchlist mappings, review queue, scan history, authorized Spotify playlist preview and synchronization, privacy, terms, disconnect, and deletion controls. Hide manual SoundCloud controls by default.
 11. Add synthetic unit, database integration, and Playwright tests. Normal verification never calls Spotify or MusicBrainz.
 12. Update all repository documentation, run every required command, inspect the complete diff, and correct migration, interaction, security, and stale-documentation defects.
 
 ## Verified Provider Constraints
 
-- Spotify Development Mode requires the app owner to retain Premium. Initial authorization requests only `user-follow-read` and `playlist-read-private`. The add-only export requests both `playlist-modify-private` and `playlist-modify-public` only when the default-off write gate and one allowed private target are explicitly enabled. The broader OAuth scope does not alter the server-side single-playlist, ownership, private, non-collaborative, and add-only restrictions.
+- Spotify Development Mode requires the app owner to retain Premium. Initial authorization requests only `user-follow-read` and `playlist-read-private`. The add-only export requests both `playlist-modify-private` and `playlist-modify-public` only when the default-off write gate and one allowed target are explicitly enabled. The broader OAuth scope does not alter the server-side exact-ID, ownership, non-collaborative, and add-only restrictions. Production expects the authorized target to be public.
 - Use `GET /me` and stable `account_id`, `GET /me/following`, individual artist, album, and track endpoints, and configured playlist `/items` endpoints. Do not list or create playlists for export selection.
 - Do not use removed browse new releases, user playlist routes, bulk track or artist reads, or playlist `/tracks` routes.
 - Spotify followed artists use cursor pagination up to 50 per page. Artist albums and search use no more than 10 per page. Playlist item reads use up to 50 and additions use batches up to 100.

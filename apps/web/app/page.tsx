@@ -89,6 +89,7 @@ export default async function HomePage({
             : {}),
           configured: configuration.spotify.configured,
           enabled: configuration.spotify.enabled,
+          expectedPlaylistPublic: configuration.spotify.expectedPlaylistPublic,
           minRequestIntervalMs: configuration.spotify.minRequestIntervalMs,
           playlistWritesEnabled: configuration.spotify.playlistWritesEnabled,
         },

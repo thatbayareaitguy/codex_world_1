@@ -1,7 +1,7 @@
 import {
   hasSpotifyPlaylistWriteScopes,
   abbreviateSpotifyPlaylistId,
-  assertOwnedPrivateSpotifyPlaylist,
+  assertOwnedNonCollaborativeSpotifyPlaylist,
   assertSpotifyPlaylistWriteTarget,
   applySpotifyPlaylistReorderMove,
   isExactSpotifyIdentity,
@@ -60,7 +60,7 @@ export interface SpotifyPlaylistExportPreview {
     idAbbreviated: string;
     name: string;
     ownerId: string;
-    private: true;
+    public: boolean | null;
     snapshotId: string;
   };
 }
@@ -103,7 +103,7 @@ export async function previewSpotifyPlaylistExport(
   const profile = await client.getCurrentUser();
   const playlist = await client.getPlaylist(playlistId);
   assertPlaylistIdentity(playlistId, playlist.id);
-  assertOwnedPrivateSpotifyPlaylist(playlist, profile);
+  assertOwnedNonCollaborativeSpotifyPlaylist(playlist, profile);
   const snapshot = await loadVerifiedSpotifyPlaylistSnapshot(db, userId, client, playlist);
   return buildPreview(
     db,
@@ -144,7 +144,7 @@ export async function executeSpotifyPlaylistExport(
   const profile = await client.getCurrentUser();
   const playlist = await client.getPlaylist(playlistId);
   assertPlaylistIdentity(playlistId, playlist.id);
-  assertOwnedPrivateSpotifyPlaylist(playlist, profile);
+  assertOwnedNonCollaborativeSpotifyPlaylist(playlist, profile);
   const snapshot = await loadVerifiedSpotifyPlaylistSnapshot(db, userId, client, playlist, {
     policy: input.policy,
   });
@@ -359,7 +359,7 @@ async function buildPreview(
       idAbbreviated: abbreviateSpotifyPlaylistId(playlistId),
       name: playlist.name,
       ownerId,
-      private: true,
+      public: playlist.public,
       snapshotId: playlist.snapshot_id,
     },
   };

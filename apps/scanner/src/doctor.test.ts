@@ -156,6 +156,12 @@ describe("doctor", () => {
     expect(
       dualScope.checks.find((check) => check.name === "Spotify playlist write scopes"),
     ).toMatchObject({ state: "READY" });
+    expect(
+      dualScope.checks.find((check) => check.name === "Spotify playlist safety policy"),
+    ).toMatchObject({ state: "READY" });
+    expect(
+      dualScope.checks.find((check) => check.name === "Spotify playlist safety policy")?.message,
+    ).toContain("expected to be public");
   });
 
   it("reports scheduler database state without treating a disabled scheduler as unhealthy", async () => {

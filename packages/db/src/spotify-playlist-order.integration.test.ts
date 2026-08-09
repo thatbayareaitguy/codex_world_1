@@ -141,7 +141,7 @@ class FakeOrderState {
           id,
           name: "Release Radar Inbox",
           owner: { account_id: "owner-account", id: "owner" },
-          public: false,
+          public: true,
           snapshot_id: `snapshot-${this.snapshot}`,
           uri: `spotify:playlist:${id}`,
         });
