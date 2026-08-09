@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  applySpotifyPlaylistReorderMove,
   groupSpotifyPlaylistAdditions,
   planSpotifyPlaylistExport,
+  planSpotifyPlaylistReleaseDateOrder,
   planSpotifyPlaylistSync,
   type SpotifyPlaylistExportCandidate,
+  type SpotifyPlaylistSnapshotItem,
 } from "./spotify-playlist";
 
 describe("Spotify playlist planning", () => {
@@ -101,11 +104,11 @@ describe("Spotify playlist planning", () => {
       "0000000000000000000002",
     ]);
     expect(plan.finalTrackIds).toEqual([
-      userA,
       "0000000000000000000003",
       "0000000000000000000004",
       "0000000000000000000001",
       "0000000000000000000002",
+      userA,
       userB,
     ]);
     expect(plan.finalTrackIds.filter((id) => id === userA || id === userB)).toEqual([userA, userB]);
@@ -235,7 +238,7 @@ describe("Spotify playlist planning", () => {
     ]);
   });
 
-  it("places a discovery inbox at the top in newest-first batches", () => {
+  it("places missing tracks in release-date custom order", () => {
     const existing = "9999999999999999999999";
     const plan = planSpotifyPlaylistExport(
       [
@@ -244,7 +247,6 @@ describe("Spotify playlist planning", () => {
       ],
       [{ position: 0, trackId: existing }],
       new Set(),
-      { additionsAtTop: true },
     );
 
     expect(plan.additions.map((item) => [item.providerTrackId, item.position])).toEqual([
@@ -256,6 +258,64 @@ describe("Spotify playlist planning", () => {
       "0000000000000000000001",
       existing,
     ]);
+  });
+
+  it("orders release groups by date and preserves disc and track order", () => {
+    const current = [
+      snapshot("old-2", 0, { albumId: "old", releaseDate: "2025-01-02", trackNumber: 2 }),
+      snapshot("new-disc-2", 1, {
+        albumId: "new",
+        discNumber: 2,
+        releaseDate: "2026-08-08",
+        trackNumber: 1,
+      }),
+      snapshot("old-1", 2, { albumId: "old", releaseDate: "2025-01-02", trackNumber: 1 }),
+      snapshot("new-disc-1", 3, {
+        albumId: "new",
+        discNumber: 1,
+        releaseDate: "2026-08-08",
+        trackNumber: 1,
+      }),
+    ];
+    const plan = planSpotifyPlaylistReleaseDateOrder(current);
+    let reordered: SpotifyPlaylistSnapshotItem[] = current;
+    for (const move of plan.moves) reordered = applySpotifyPlaylistReorderMove(reordered, move);
+
+    expect(plan.desiredItems.map((item) => item.trackId)).toEqual([
+      "new-disc-1",
+      "new-disc-2",
+      "old-1",
+      "old-2",
+    ]);
+    expect(reordered.map((item) => item.trackId)).toEqual(
+      plan.desiredItems.map((item) => item.trackId),
+    );
+    expect(plan.moves.every((move) => move.rangeLength >= 1)).toBe(true);
+  });
+
+  it("uses deterministic metadata fallbacks for same-date and unknown-date manual items", () => {
+    const plan = planSpotifyPlaylistReleaseDateOrder([
+      { position: 0, title: "Zulu", trackId: "unknown-z" },
+      snapshot("same-b", 1, {
+        albumId: "same-b",
+        albumTitle: "Beta",
+        releaseDate: "2026-08-08",
+      }),
+      { position: 2, title: "Alpha", trackId: "unknown-a" },
+      snapshot("same-a", 3, {
+        albumId: "same-a",
+        albumTitle: "Alpha",
+        releaseDate: "2026-08-08",
+      }),
+    ]);
+
+    expect(plan.desiredItems.map((item) => item.trackId)).toEqual([
+      "same-a",
+      "same-b",
+      "unknown-a",
+      "unknown-z",
+    ]);
+    expect(plan.unknownDateItems).toBe(2);
   });
 });
 
@@ -289,6 +349,22 @@ function candidate(
     releaseType: "single",
     title: `Track ${id}`,
     trackId: `track-${id}`,
+    trackNumber: 1,
+    ...overrides,
+  };
+}
+
+function snapshot(
+  trackId: string,
+  position: number,
+  overrides: Partial<Parameters<typeof planSpotifyPlaylistReleaseDateOrder>[0][number]> = {},
+) {
+  return {
+    albumId: `album-${trackId}`,
+    albumTitle: `Album ${trackId}`,
+    discNumber: 1,
+    position,
+    trackId,
     trackNumber: 1,
     ...overrides,
   };

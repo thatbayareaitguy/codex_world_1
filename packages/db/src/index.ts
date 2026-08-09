@@ -21,6 +21,8 @@ export * from "./spotify-release-tracks";
 export * from "./spotify-scheduler";
 export * from "./spotify-sync-campaign";
 export * from "./spotify-playlist-export";
+export * from "./spotify-playlist-cache";
+export * from "./spotify-playlist-order";
 export * from "./musicbrainz-request-gate";
 export * from "./musicbrainz-batches";
 export * from "./musicbrainz-mappings";

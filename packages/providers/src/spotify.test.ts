@@ -74,6 +74,7 @@ describe("Spotify endpoint quota categories", () => {
     ["/playlists/playlist", "GET", "playlist_read"],
     ["/playlists/playlist/items", "GET", "playlist_read"],
     ["/playlists/playlist/items", "POST", "playlist_write"],
+    ["/playlists/playlist/items", "PUT", "playlist_write"],
     ["/me", "GET", "oauth_or_other"],
   ])("classifies %s %s as %s", (path, method, expected) => {
     expect(spotifyEndpointCategory(path, method)).toBe(expected);
@@ -584,6 +585,55 @@ describe("SpotifyClient", () => {
     });
   });
 
+  it("reorders one bounded range only within the configured playlist", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ snapshot_id: "reordered" }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      }),
+    );
+    const client = new SpotifyClient({
+      accessToken: () => Promise.resolve("token"),
+      fetcher,
+      playlistWritePolicy: {
+        allowedPlaylistId: "1234567890123456789012",
+        enabled: true,
+      },
+    });
+
+    await expect(
+      client.reorderPlaylistItems("1234567890123456789012", {
+        insertBefore: 2,
+        rangeLength: 3,
+        rangeStart: 8,
+        snapshotId: "before",
+      }),
+    ).resolves.toBe("reordered");
+    expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining("/playlists/1234567890123456789012/items"),
+      expect.objectContaining({
+        body: JSON.stringify({
+          insert_before: 2,
+          range_length: 3,
+          range_start: 8,
+          snapshot_id: "before",
+        }),
+        method: "PUT",
+      }),
+    );
+
+    fetcher.mockClear();
+    await expect(
+      client.reorderPlaylistItems("abcdefghijklmnopqrstuv", {
+        insertBefore: 0,
+        rangeLength: 1,
+        rangeStart: 1,
+        snapshotId: "before",
+      }),
+    ).rejects.toMatchObject({ code: "playlist_id_mismatch" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("rejects positional additions before any request when the target or batch is invalid", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const client = new SpotifyClient({
@@ -610,6 +660,7 @@ describe("SpotifyClient", () => {
   it.each([
     ["another owner", playlist({ owner: { account_id: "someone-else" } }), "playlist_not_owned"],
     ["a public playlist", playlist({ public: true }), "playlist_not_private"],
+    ["an unverifiable privacy state", playlist({ public: null }), "playlist_not_private"],
     ["a collaborative playlist", playlist({ collaborative: true }), "playlist_collaborative"],
   ])("rejects %s before posting items", async (_label, playlistResponse, code) => {
     const fetcher = vi
@@ -638,7 +689,6 @@ describe("SpotifyClient", () => {
       "createPrivatePlaylist",
       "removePlaylistItems",
       "replacePlaylistItems",
-      "reorderPlaylistItems",
       "renamePlaylist",
       "changePlaylistVisibility",
       "uploadPlaylistCover",

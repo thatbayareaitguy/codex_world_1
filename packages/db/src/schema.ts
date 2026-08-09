@@ -2002,6 +2002,23 @@ export const playlistTargets = pgTable(
     enabled: boolean("enabled").notNull().default(true),
     autoAddExactMatches: boolean("auto_add_exact_matches").notNull().default(false),
     snapshotId: text("snapshot_id"),
+    snapshotItems: jsonb("snapshot_items").$type<
+      Array<{
+        addedAt?: string;
+        addedById?: string;
+        albumId?: string;
+        albumTitle?: string;
+        artistNames?: string[];
+        discNumber?: number;
+        position: number;
+        releaseDate?: string;
+        trackId: string | null;
+        trackNumber?: number;
+        title?: string;
+      }>
+    >(),
+    snapshotVerifiedAt: timestamp("snapshot_verified_at", { withTimezone: true }),
+    orderCanaryVerifiedAt: timestamp("order_canary_verified_at", { withTimezone: true }),
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
     createdAt,
     updatedAt,
@@ -2047,7 +2064,7 @@ export const spotifyPlaylistExportRuns = pgTable(
       () => discoveryReconciliationCampaigns.id,
       { onDelete: "set null" },
     ),
-    orderingPolicy: text("ordering_policy").notNull().default("canonical"),
+    orderingPolicy: text("ordering_policy").notNull().default("release_date_custom_order"),
     mode: text("mode").notNull().default("live"),
     status: spotifyPlaylistExportRunStatusEnum("status").notNull().default("planned"),
     targetPlaylistId: text("target_playlist_id").notNull(),

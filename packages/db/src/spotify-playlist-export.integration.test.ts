@@ -44,7 +44,7 @@ describe.sequential("Spotify canonical playlist export", () => {
     await connection.client.end();
   });
 
-  it("previews canonical exact and manual matches without mutating export tables", async () => {
+  it("previews canonical exact and manual matches while caching the verified snapshot", async () => {
     const fixture = await createFixture({ includeIneligible: true, writeScope: false });
     const client = new FakePlaylistClient(["9999999999999999999999"]);
 
@@ -64,10 +64,31 @@ describe.sequential("Spotify canonical playlist export", () => {
       "uncertain_spotify_match",
     ]);
     expect(client.items).toEqual(["9999999999999999999999"]);
-    await expect(tableCount(playlistTargets)).resolves.toBe(0);
+    await expect(tableCount(playlistTargets)).resolves.toBe(1);
     await expect(tableCount(playlistExports)).resolves.toBe(0);
     await expect(tableCount(spotifyPlaylistExportRuns)).resolves.toBe(0);
     await expect(tableCount(spotifyPlaylistExportOperations)).resolves.toBe(0);
+  });
+
+  it("avoids playlist-item pagination while the remote snapshot is unchanged", async () => {
+    const fixture = await createFixture({ writeScope: false });
+    const client = new FakePlaylistClient(["9999999999999999999999"]);
+
+    const first = await previewSpotifyPlaylistExport(db, fixture.userId, client, playlistId);
+    const second = await previewSpotifyPlaylistExport(db, fixture.userId, client, playlistId);
+
+    expect(first.cacheHit).toBe(false);
+    expect(second.cacheHit).toBe(true);
+    expect(client.itemReadCalls).toBe(1);
+    client.externalInsert("8888888888888888888888", 0);
+    const afterExternalChange = await previewSpotifyPlaylistExport(
+      db,
+      fixture.userId,
+      client,
+      playlistId,
+    );
+    expect(afterExternalChange.cacheHit).toBe(false);
+    expect(client.itemReadCalls).toBe(2);
   });
 
   it("blocks an allowlist mismatch and missing write scope before any Spotify call", async () => {
@@ -125,7 +146,7 @@ describe.sequential("Spotify canonical playlist export", () => {
     expect(client.items).toEqual([fixture.exactProviderTrackId, userTrack]);
     expect(client.addCalls).toHaveLength(1);
 
-    client.items.splice(1, 0, fixture.confirmedProviderTrackId);
+    client.externalInsert(fixture.confirmedProviderTrackId, 1);
     const resumed = await executeSpotifyPlaylistExport(db, fixture.userId, client, {
       playlistId,
       policy: { allowedPlaylistId: playlistId, enabled: true },
@@ -191,7 +212,7 @@ describe.sequential("Spotify canonical playlist export", () => {
     expect(failed).toMatchObject({ attemptCount: 1, errorCode: "playlist_item_add_failed" });
   });
 
-  it("exports only campaign-eligible tracks at the top and persists the ordering policy", async () => {
+  it("exports only campaign-eligible tracks in Custom Order and persists the ordering policy", async () => {
     const fixture = await createFixture({ writeScope: true });
     const campaignId = crypto.randomUUID();
     await db.insert(discoveryReconciliationCampaigns).values({
@@ -225,7 +246,7 @@ describe.sequential("Spotify canonical playlist export", () => {
 
     const result = await executeSpotifyPlaylistExport(db, fixture.userId, client, {
       discoveryReconciliationCampaignId: campaignId,
-      orderingPolicy: "discovery_inbox",
+      orderingPolicy: "release_date_custom_order",
       playlistId,
       policy: { allowedPlaylistId: playlistId, enabled: true },
     });
@@ -241,7 +262,7 @@ describe.sequential("Spotify canonical playlist export", () => {
       }),
     ).toMatchObject({
       discoveryReconciliationCampaignId: campaignId,
-      orderingPolicy: "discovery_inbox",
+      orderingPolicy: "release_date_custom_order",
       status: "completed",
     });
   });
@@ -249,6 +270,7 @@ describe.sequential("Spotify canonical playlist export", () => {
 
 class FakePlaylistClient implements SpotifyPlaylistExportClient {
   readonly addCalls: Array<{ position: number; trackIds: string[] }> = [];
+  itemReadCalls = 0;
   readCalls = 0;
   private snapshot = 1;
 
@@ -285,14 +307,33 @@ class FakePlaylistClient implements SpotifyPlaylistExportClient {
 
   getPlaylistItems = () => {
     this.readCalls += 1;
+    this.itemReadCalls += 1;
     return Promise.resolve(this.items.map((trackId, position) => ({ position, trackId })));
   };
+
+  externalInsert(trackId: string, position: number): void {
+    this.items.splice(position, 0, trackId);
+    this.snapshot += 1;
+  }
 
   addPlaylistItemsAtPosition = (_id: string, trackIds: string[], position: number) => {
     this.addCalls.push({ position, trackIds: [...trackIds] });
     const failure = this.fail?.(trackIds);
     if (failure) return Promise.reject(failure);
     this.items.splice(position, 0, ...trackIds);
+    this.snapshot += 1;
+    return Promise.resolve(`snapshot-${this.snapshot}`);
+  };
+
+  reorderPlaylistItems = (
+    _id: string,
+    input: { insertBefore: number; rangeLength?: number; rangeStart: number },
+  ) => {
+    const rangeLength = input.rangeLength ?? 1;
+    const moved = this.items.splice(input.rangeStart, rangeLength);
+    const adjustedInsert =
+      input.insertBefore > input.rangeStart ? input.insertBefore - rangeLength : input.insertBefore;
+    this.items.splice(adjustedInsert, 0, ...moved);
     this.snapshot += 1;
     return Promise.resolve(`snapshot-${this.snapshot}`);
   };

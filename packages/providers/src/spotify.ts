@@ -157,6 +157,11 @@ export const spotifyPlaylistItemsSchema = pagingBaseSchema.extend({
     z
       .object({
         added_at: z.string().nullable().optional(),
+        added_by: z
+          .object({ account_id: z.string().optional(), id: z.string().optional() })
+          .passthrough()
+          .nullable()
+          .optional(),
         item: z.union([trackSchema, z.null()]).optional(),
       })
       .passthrough(),
@@ -181,13 +186,23 @@ export type SpotifyTokenResponse = z.infer<typeof spotifyTokenSchema>;
 
 export interface SpotifyPlaylistItemSnapshot {
   addedAt?: string;
+  addedById?: string;
   albumId?: string;
   albumTitle?: string;
   artistNames?: string[];
+  discNumber?: number;
   position: number;
   releaseDate?: string;
   trackId: string | null;
+  trackNumber?: number;
   title?: string;
+}
+
+export interface SpotifyPlaylistReorderInput {
+  insertBefore: number;
+  rangeLength: number;
+  rangeStart: number;
+  snapshotId: string;
 }
 
 export interface SpotifyArtistAlbumsPage {
@@ -326,7 +341,7 @@ interface SpotifyClientOptions {
 
 interface RequestOptions {
   body?: unknown;
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PUT";
   signal?: AbortSignal | undefined;
 }
 
@@ -532,15 +547,19 @@ export class SpotifyClient {
       );
       for (const [index, entry] of page.items.entries()) {
         const track = entry.item;
+        const addedById = entry.added_by?.account_id ?? entry.added_by?.id;
         items.push({
           ...(entry.added_at ? { addedAt: entry.added_at } : {}),
+          ...(addedById ? { addedById } : {}),
           ...(track
             ? {
                 albumId: track.album.id,
                 albumTitle: track.album.name,
                 artistNames: track.artists.map((artist) => artist.name),
+                discNumber: track.disc_number,
                 releaseDate: track.album.release_date,
                 title: track.name,
+                trackNumber: track.track_number,
               }
             : {}),
           position: offset + index,
@@ -627,6 +646,49 @@ export class SpotifyClient {
           uris: trackIds.map((trackId) => `spotify:track:${trackId}`),
         },
         method: "POST",
+        signal,
+      },
+    );
+    return response.snapshot_id;
+  }
+
+  async reorderPlaylistItems(
+    id: string,
+    input: SpotifyPlaylistReorderInput,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const targetPlaylistId = assertSpotifyPlaylistWriteTarget(this.playlistWritePolicy, id);
+    if (
+      !Number.isInteger(input.rangeStart) ||
+      input.rangeStart < 0 ||
+      !Number.isInteger(input.insertBefore) ||
+      input.insertBefore < 0 ||
+      !Number.isInteger(input.rangeLength) ||
+      input.rangeLength < 1 ||
+      !input.snapshotId.trim()
+    ) {
+      throw new SpotifyPlaylistWriteDeniedError(
+        "Spotify playlist reorder parameters are invalid",
+        "playlist_reorder_invalid",
+      );
+    }
+    log("info", "spotify.playlist_reorder_started", {
+      insertBefore: input.insertBefore,
+      playlistId: abbreviateSpotifyPlaylistId(targetPlaylistId),
+      rangeLength: input.rangeLength,
+      rangeStart: input.rangeStart,
+    });
+    const response = await this.request(
+      `/playlists/${encodeURIComponent(targetPlaylistId)}/items`,
+      z.object({ snapshot_id: z.string().min(1) }),
+      {
+        body: {
+          insert_before: input.insertBefore,
+          range_length: input.rangeLength,
+          range_start: input.rangeStart,
+          snapshot_id: input.snapshotId,
+        },
+        method: "PUT",
         signal,
       },
     );
@@ -980,7 +1042,7 @@ export function spotifyEndpointCategory(path: string, method = "GET"): string {
   if (/^\/albums\/[^/]+$/.test(path)) return "album_detail";
   if (path.startsWith("/me/playlists")) return "playlist_read";
   if (/^\/playlists\/[^/]+\/items/.test(path)) {
-    return method === "POST" ? "playlist_write" : "playlist_read";
+    return method === "GET" ? "playlist_read" : "playlist_write";
   }
   if (/^\/playlists\/[^/]+$/.test(path)) return "playlist_read";
   return "oauth_or_other";

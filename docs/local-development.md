@@ -55,6 +55,9 @@ pnpm spotify:reconcile-releases -- --release <canonical-release-id> --page-size 
 pnpm spotify:playlist-export -- --dry-run
 pnpm spotify:playlist-export -- --live --max-additions 3
 pnpm spotify:playlist-export -- --live
+pnpm spotify:playlist-order -- --dry-run
+pnpm spotify:playlist-order -- --canary
+pnpm spotify:playlist-order -- --live
 ```
 
 ### Normal Apple-first discovery
@@ -94,7 +97,7 @@ pnpm discovery:bootstrap activate --campaign <campaign-id>
 ```
 
 The export remains bound to `SPOTIFY_ALLOWED_PLAYLIST_ID`. It adds only campaign-confirmed tracks at
-the top of the discovery inbox and preserves existing playlist items. Activation refuses to run
+their release-date Custom Order positions and preserves existing playlist membership. Activation refuses to run
 until the inbox export is complete and the provider cooldown is clear. Production ticks still
 require the separately configured `SPOTIFY_SCHEDULER_ENABLED=true` capability; do not change `.env`
 as part of credential-free verification.
@@ -153,7 +156,14 @@ Normal scans use one global database lock. Each provider records an independent 
 
 Spotify uses one database-backed queue across web and scanner processes. The default and minimum configured interval is ten seconds with concurrency one. A provider 429 persists a client-wide cooldown across restart; do not clear or bypass a valid integer-second wait. Initial scans are limited to 15 artists per batch and begin paused for confirmation. See [Spotify Development Mode Scanning](spotify-development-mode-scanning.md).
 
-Spotify playlist export always targets `SPOTIFY_ALLOWED_PLAYLIST_ID`. Dry-run reads the owned private playlist and reports additions, existing tracks, skip reasons, duplicates, and order conflicts without writing application or provider state. Live mode requires `SPOTIFY_PLAYLIST_WRITES_ENABLED=true` and both stored playlist modification scopes. It records a durable run and per-track operation ledger, inserts only exact or manually confirmed tracks, preserves user-added tracks, retries isolated failures on an explicit rerun, and resumes unfinished operations after interruption. `--max-additions` is a canary limit, not a different target. No export command creates, removes, replaces, reorders, renames, follows, or changes a playlist.
+Spotify playlist export always targets `SPOTIFY_ALLOWED_PLAYLIST_ID`. Dry-run reads the owned private playlist and reports additions, existing tracks, skip reasons, duplicates, and Custom Order moves without provider mutation. Live mode requires `SPOTIFY_PLAYLIST_WRITES_ENABLED=true` and both stored playlist modification scopes. It records a durable run and per-track operation ledger, inserts only exact or manually confirmed tracks, preserves user-added tracks, retries isolated failures on an explicit rerun, and resumes unfinished operations after interruption. `--max-additions` is a canary limit, not a different target. The verified snapshot cache avoids playlist-item pagination while the remote `snapshot_id` is unchanged. An external change triggers one full reconciliation read. Existing items are ordered only with snapshot-aware contiguous range moves; no export command creates, removes, replaces, renames, follows, or changes playlist visibility.
+
+The initial 935-item Custom Order validation used 84 playlist-read requests across its dry run,
+canary readback, interrupted conversion recovery, and final verification. It completed 473 range
+moves without a 429 and preserved every item's `added_at` and `added_by` metadata. After the verified
+snapshot was cached, an unchanged-snapshot export preview used one playlist metadata read and zero
+playlist-item page reads. External changes invalidate that steady-state cost and require one complete
+reconciliation read before writes continue.
 
 Apple Music uses a separate database-backed queue with concurrency one and a minimum 1100 ms request-start interval. Normal scans load only confirmed Apple mappings, use first-page `singles` and `full-albums` views, fetch tracks only for eligible recent releases, and persist after every artist. A never-scanned artist uses at most a 30-day lookback; later scans begin at the last successful timestamp within that floor. Missing optional views and invalid release records are isolated. Resume with the same normal command after a budget, runtime, transient, or cooldown stop.
 
@@ -221,8 +231,9 @@ SPOTIFY_ARTIST_ALBUMS_RESERVE_RELEASE_AFTER_HOURS=20
 
 If recurring discovery is enabled while playlist writes are disabled, `pnpm doctor` reports an
 action item because the durable playlist-inbox phase cannot advance. Enabling writes does not give
-the scheduler permission to select, create, rename, remove from, reorder, or change another
-playlist. The server-configured allowed playlist remains the only valid target.
+the scheduler permission to select, create, rename, remove from, replace, or change another
+playlist. The server-configured allowed playlist remains the only valid target. Custom Order range
+moves are allowed only on that target.
 
 The unified recurring order is: drain any previously pending export, run the due Apple scan,
 process its Apple-priority Spotify resolution, automatically export the newly eligible tracks, then

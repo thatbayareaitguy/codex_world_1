@@ -37,7 +37,8 @@ export type SpotifyPlaylistWriteDenialCode =
   | "playlist_not_private"
   | "playlist_collaborative"
   | "track_id_malformed"
-  | "playlist_addition_invalid";
+  | "playlist_addition_invalid"
+  | "playlist_reorder_invalid";
 
 export class SpotifyPlaylistWriteDeniedError extends Error {
   constructor(
@@ -87,9 +88,15 @@ export function assertOwnedPrivateSpotifyPlaylist(
       "playlist_not_owned",
     );
   }
-  if (playlist.public !== false) {
+  if (playlist.public === true) {
     throw new SpotifyPlaylistWriteDeniedError(
-      "The configured Spotify playlist is not private",
+      "Spotify reports that the configured playlist is public",
+      "playlist_not_private",
+    );
+  }
+  if (playlist.public === null) {
+    throw new SpotifyPlaylistWriteDeniedError(
+      "Spotify did not provide a verifiable private state for the configured playlist",
       "playlist_not_private",
     );
   }

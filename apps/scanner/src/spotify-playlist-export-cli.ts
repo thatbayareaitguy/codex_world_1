@@ -81,6 +81,7 @@ export function parseSpotifyPlaylistExportOptions(args: string[]): SpotifyPlayli
 }
 
 export function sanitizedSpotifyPlaylistExportOutput(input: {
+  cacheHit?: boolean;
   plan: SpotifyPlaylistExportPlan;
   run?: {
     additionsAttempted: number;
@@ -100,6 +101,7 @@ export function sanitizedSpotifyPlaylistExportOutput(input: {
       .map((reason) => [reason, input.plan.skips.filter((item) => item.reason === reason).length]),
   );
   return {
+    cacheHit: input.cacheHit ?? false,
     mode: input.run ? "live" : "dry-run",
     target: { id: input.target.id, name: input.target.name },
     totals: {
@@ -109,6 +111,7 @@ export function sanitizedSpotifyPlaylistExportOutput(input: {
       existingDuplicateTracks: input.plan.existingDuplicateTrackIds.length,
       finalPlaylistItems: input.plan.finalTrackIds.length,
       orderingConflicts: input.plan.orderingConflicts.length,
+      reorderMoves: input.plan.reorderMoves.length,
       releaseGroupingConflicts: input.plan.releaseGroupingConflicts.length,
       skipped: input.plan.skips.length,
       unrelatedItems: input.plan.unrelatedItems.length,
@@ -206,7 +209,7 @@ async function main(): Promise<void> {
         const execution = await executeSpotifyPlaylistExport(connection.db, userId, client, {
           ...(options.campaignId ? { discoveryReconciliationCampaignId: options.campaignId } : {}),
           ...(options.maxAdditions === undefined ? {} : { maxAdditions: options.maxAdditions }),
-          orderingPolicy: options.discoveryInbox ? "discovery_inbox" : "canonical",
+          orderingPolicy: "release_date_custom_order",
           playlistId: configuration.spotify.allowedPlaylistId,
           policy: {
             allowedPlaylistId: configuration.spotify.allowedPlaylistId,
@@ -230,7 +233,7 @@ async function main(): Promise<void> {
             ...(options.campaignId
               ? { discoveryReconciliationCampaignId: options.campaignId }
               : {}),
-            orderingPolicy: options.discoveryInbox ? "discovery_inbox" : "canonical",
+            orderingPolicy: "release_date_custom_order",
           },
         );
       }

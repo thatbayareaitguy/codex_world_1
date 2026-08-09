@@ -57,7 +57,7 @@ describe.sequential("automatic discovery playlist export", () => {
     const executeExport: typeof executeSpotifyPlaylistExport = vi.fn(
       (_db, _userId, _client, input) => {
         expect(input).toMatchObject({
-          orderingPolicy: "discovery_inbox",
+          orderingPolicy: "release_date_custom_order",
           playlistId,
           policy: { allowedPlaylistId: playlistId, enabled: true },
         });
@@ -238,14 +238,17 @@ function configuration() {
 
 function completedExecution(runId: string): SpotifyPlaylistExportExecution {
   return {
+    cacheHit: false,
     plan: {
       additions: [],
       alreadyPresent: [],
       desired: [],
       existingDuplicateTrackIds: [],
       finalTrackIds: [],
+      orderedItems: [],
       orderingConflicts: [],
       releaseGroupingConflicts: [],
+      reorderMoves: [],
       skips: [],
       unrelatedItems: [],
     },

@@ -52,7 +52,7 @@
 - `operation_locks`: one global expiring operation lock for scan serialization and interruption recovery.
 - `scan_locks`: one expiring lock per provider.
 - `provider_cursors` and `provider_cache`: scoped checkpoints and sanitized cached metadata. Spotify artwork backfill uses a dedicated cursor scope and advances it only after a release is updated or confirmed to have no usable artwork, so `--resume` starts after the last completed release without changing scan history.
-- `playlist_targets`: application export ledger target for the single server-configured Spotify playlist, including name, provider ID, snapshot, and last sync. Environment configuration remains the write authority.
+- `playlist_targets`: application export ledger target for the single server-configured Spotify playlist, including name, provider ID, last verified snapshot ID, ordered provider item metadata, snapshot verification time, Custom Order canary time, and last sync. Environment configuration remains the write authority.
 - `playlist_exports`: one app-owned addition per target and Spotify track with status and timestamp.
 - `manual_match_decisions`: explicit track match decisions.
 - `external_links`: optional manual HTTPS outbound links. SoundCloud records remain off by default and never imply automated availability.

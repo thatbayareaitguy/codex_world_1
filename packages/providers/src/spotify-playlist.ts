@@ -30,13 +30,29 @@ export interface SpotifyPlaylistExportCandidate {
 
 export interface SpotifyPlaylistSnapshotItem {
   addedAt?: string;
+  addedById?: string;
   albumId?: string;
   albumTitle?: string;
   artistNames?: string[];
+  discNumber?: number;
   position: number;
   releaseDate?: string;
   trackId: string | null;
+  trackNumber?: number;
   title?: string;
+}
+
+export interface SpotifyPlaylistReorderMove {
+  insertBefore: number;
+  rangeLength: number;
+  rangeStart: number;
+  trackIds: Array<string | null>;
+}
+
+export interface SpotifyPlaylistReleaseDateOrderPlan {
+  desiredItems: SpotifyPlaylistSnapshotItem[];
+  moves: SpotifyPlaylistReorderMove[];
+  unknownDateItems: number;
 }
 
 export interface SpotifyPlaylistUnrelatedItem extends SpotifyPlaylistSnapshotItem {
@@ -89,7 +105,9 @@ export interface SpotifyPlaylistExportPlan {
     releaseId: string;
     releaseTitle: string;
   }>;
+  reorderMoves: SpotifyPlaylistReorderMove[];
   skips: SpotifyPlaylistExportSkip[];
+  orderedItems: SpotifyPlaylistSnapshotItem[];
   unrelatedItems: SpotifyPlaylistUnrelatedItem[];
 }
 
@@ -124,7 +142,6 @@ export function planSpotifyPlaylistExport(
   candidates: readonly SpotifyPlaylistExportCandidate[],
   playlistItems: readonly SpotifyPlaylistSnapshotItem[],
   appManagedTrackIds: ReadonlySet<string>,
-  options: { additionsAtTop?: boolean } = {},
 ): SpotifyPlaylistExportPlan {
   const skips: SpotifyPlaylistExportSkip[] = [];
   const eligible = candidates
@@ -149,10 +166,8 @@ export function planSpotifyPlaylistExport(
     desired.push(candidate);
   }
 
-  const orderedPlaylist = playlistItems
-    .slice()
-    .sort((left, right) => left.position - right.position)
-    .map((item) => item.trackId);
+  const currentItems = playlistItems.slice().sort((left, right) => left.position - right.position);
+  const orderedPlaylist = currentItems.map((item) => item.trackId);
   const occurrences = new Map<string, number>();
   for (const trackId of orderedPlaylist) {
     if (trackId) occurrences.set(trackId, (occurrences.get(trackId) ?? 0) + 1);
@@ -162,7 +177,7 @@ export function planSpotifyPlaylistExport(
     .map(([trackId]) => trackId)
     .sort();
 
-  const additions: SpotifyPlaylistExportAddition[] = [];
+  const missingCandidates: SpotifyPlaylistExportCandidate[] = [];
   const alreadyPresent: SpotifyPlaylistAlreadyPresent[] = [];
   for (const [desiredOrdinal, candidate] of desired.entries()) {
     const providerTrackId = candidate.providerTrackId!;
@@ -177,26 +192,51 @@ export function planSpotifyPlaylistExport(
       continue;
     }
 
-    const nextExisting = desired
-      .slice(desiredOrdinal + 1)
-      .map((item) => item.providerTrackId!)
-      .find((trackId) => orderedPlaylist.includes(trackId));
-    let position = nextExisting ? orderedPlaylist.indexOf(nextExisting) : -1;
-    if (position < 0) {
-      const previousExisting = desired
-        .slice(0, desiredOrdinal)
-        .reverse()
-        .map((item) => item.providerTrackId!)
-        .find((trackId) => orderedPlaylist.includes(trackId));
-      position = previousExisting ? orderedPlaylist.lastIndexOf(previousExisting) + 1 : 0;
+    missingCandidates.push(candidate);
+  }
+
+  const combinedItems = [
+    ...currentItems,
+    ...missingCandidates.map((candidate, index) =>
+      snapshotFromCandidate(candidate, currentItems.length + index),
+    ),
+  ];
+  const decorated = buildDecoratedReleaseDateOrder(combinedItems);
+  const currentKeys = decorated.original.slice(0, currentItems.length).map((item) => item.key);
+  const additionByKey = new Map(
+    decorated.original.slice(currentItems.length).map((item, index) => [
+      item.key,
+      {
+        candidate: missingCandidates[index]!,
+        desiredOrdinal: desired.indexOf(missingCandidates[index]!),
+      },
+    ]),
+  );
+  const workingKeys = [...currentKeys];
+  const additions: SpotifyPlaylistExportAddition[] = [];
+  for (let targetIndex = 0; targetIndex < decorated.desired.length; targetIndex += 1) {
+    const target = decorated.desired[targetIndex]!;
+    if (!additionByKey.has(target.key) || workingKeys.includes(target.key)) continue;
+    const group = [target];
+    while (targetIndex + group.length < decorated.desired.length) {
+      const next = decorated.desired[targetIndex + group.length]!;
+      if (!additionByKey.has(next.key) || workingKeys.includes(next.key)) break;
+      group.push(next);
     }
-    orderedPlaylist.splice(position, 0, providerTrackId);
-    additions.push({
-      ...candidate,
-      desiredOrdinal,
-      position,
-      reason: "missing_from_playlist",
-    });
+    const nextExisting = decorated.desired
+      .slice(targetIndex + group.length)
+      .find((item) => workingKeys.includes(item.key));
+    const position = nextExisting ? workingKeys.indexOf(nextExisting.key) : workingKeys.length;
+    workingKeys.splice(position, 0, ...group.map((item) => item.key));
+    for (const [offset, item] of group.entries()) {
+      const addition = additionByKey.get(item.key)!;
+      additions.push({
+        ...addition.candidate,
+        desiredOrdinal: addition.desiredOrdinal,
+        position: position + offset,
+        reason: "missing_from_playlist",
+      });
+    }
   }
 
   const existingDesired = desired
@@ -261,29 +301,201 @@ export function planSpotifyPlaylistExport(
     .filter((item) => item.trackId === null || !desiredTrackIds.has(item.trackId))
     .map((item) => ({ ...item, reason: "not_in_export_set" as const }));
 
-  const plannedAdditions = options.additionsAtTop
-    ? additions.map((addition, position) => ({ ...addition, position }))
-    : additions;
-  const finalTrackIds = options.additionsAtTop
-    ? [
-        ...plannedAdditions.map((addition) => addition.providerTrackId!),
-        ...playlistItems
-          .slice()
-          .sort((left, right) => left.position - right.position)
-          .map((item) => item.trackId),
-      ]
-    : orderedPlaylist;
+  const reorderMoves = planMovesFromKeys(
+    workingKeys,
+    decorated.desired.map((item) => item.key),
+    decorated,
+  );
+  const orderedItems = decorated.desired.map((item, position) => ({ ...item.item, position }));
   return {
-    additions: plannedAdditions,
+    additions,
     alreadyPresent,
     desired,
     existingDuplicateTrackIds,
-    finalTrackIds,
+    finalTrackIds: orderedItems.map((item) => item.trackId),
     orderingConflicts,
+    orderedItems,
+    reorderMoves,
     releaseGroupingConflicts,
     skips,
     unrelatedItems,
   };
+}
+
+export function planSpotifyPlaylistReleaseDateOrder(
+  playlistItems: readonly SpotifyPlaylistSnapshotItem[],
+): SpotifyPlaylistReleaseDateOrderPlan {
+  const ordered = playlistItems.slice().sort((left, right) => left.position - right.position);
+  const decorated = buildDecoratedReleaseDateOrder(ordered);
+  return {
+    desiredItems: decorated.desired.map((item, position) => ({ ...item.item, position })),
+    moves: planMovesFromKeys(
+      decorated.original.map((item) => item.key),
+      decorated.desired.map((item) => item.key),
+      decorated,
+    ),
+    unknownDateItems: ordered.filter((item) => !normalizedReleaseDate(item.releaseDate)).length,
+  };
+}
+
+export function applySpotifyPlaylistReorderMove(
+  playlistItems: readonly SpotifyPlaylistSnapshotItem[],
+  move: Pick<SpotifyPlaylistReorderMove, "insertBefore" | "rangeLength" | "rangeStart">,
+): SpotifyPlaylistSnapshotItem[] {
+  if (
+    !Number.isInteger(move.rangeStart) ||
+    move.rangeStart < 0 ||
+    !Number.isInteger(move.rangeLength) ||
+    move.rangeLength < 1 ||
+    move.rangeStart + move.rangeLength > playlistItems.length ||
+    !Number.isInteger(move.insertBefore) ||
+    move.insertBefore < 0 ||
+    move.insertBefore > playlistItems.length
+  ) {
+    throw new Error("Spotify playlist reorder move is outside the playlist bounds.");
+  }
+  const result = playlistItems.slice().sort((left, right) => left.position - right.position);
+  const moved = result.splice(move.rangeStart, move.rangeLength);
+  const insertionIndex =
+    move.insertBefore > move.rangeStart ? move.insertBefore - move.rangeLength : move.insertBefore;
+  result.splice(insertionIndex, 0, ...moved);
+  return result.map((item, position) => ({ ...item, position }));
+}
+
+interface DecoratedPlaylistItem {
+  item: SpotifyPlaylistSnapshotItem;
+  key: string;
+}
+
+function buildDecoratedReleaseDateOrder(items: readonly SpotifyPlaylistSnapshotItem[]): {
+  desired: DecoratedPlaylistItem[];
+  original: DecoratedPlaylistItem[];
+} {
+  const occurrences = new Map<string, number>();
+  const original = items.map((item) => {
+    const base = item.trackId
+      ? `track:${item.trackId}`
+      : `unknown:${item.albumId ?? ""}:${item.title ?? ""}:${item.addedAt ?? ""}`;
+    const occurrence = occurrences.get(base) ?? 0;
+    occurrences.set(base, occurrence + 1);
+    return { item, key: `${base}#${occurrence}` };
+  });
+  const groups = new Map<string, DecoratedPlaylistItem[]>();
+  for (const item of original) {
+    const groupKey = item.item.albumId ? `album:${item.item.albumId}` : `item:${item.key}`;
+    const group = groups.get(groupKey) ?? [];
+    group.push(item);
+    groups.set(groupKey, group);
+  }
+  const desired = [...groups.entries()]
+    .sort(([leftKey, leftItems], [rightKey, rightItems]) =>
+      compareReleaseGroups(leftKey, leftItems, rightKey, rightItems),
+    )
+    .flatMap(([, group]) => group.slice().sort(compareReleaseTracks));
+  return { desired, original };
+}
+
+function compareReleaseGroups(
+  leftKey: string,
+  left: readonly DecoratedPlaylistItem[],
+  rightKey: string,
+  right: readonly DecoratedPlaylistItem[],
+): number {
+  const leftDate = releaseGroupDate(left);
+  const rightDate = releaseGroupDate(right);
+  if (leftDate && !rightDate) return -1;
+  if (!leftDate && rightDate) return 1;
+  return (
+    (leftDate && rightDate ? rightDate.localeCompare(leftDate) : 0) ||
+    (left[0]?.item.albumTitle ?? "").localeCompare(right[0]?.item.albumTitle ?? "", "en-US") ||
+    leftKey.localeCompare(rightKey, "en-US")
+  );
+}
+
+function compareReleaseTracks(left: DecoratedPlaylistItem, right: DecoratedPlaylistItem): number {
+  return (
+    (left.item.discNumber ?? Number.MAX_SAFE_INTEGER) -
+      (right.item.discNumber ?? Number.MAX_SAFE_INTEGER) ||
+    (left.item.trackNumber ?? Number.MAX_SAFE_INTEGER) -
+      (right.item.trackNumber ?? Number.MAX_SAFE_INTEGER) ||
+    (left.item.title ?? "").localeCompare(right.item.title ?? "", "en-US") ||
+    (left.item.trackId ?? "").localeCompare(right.item.trackId ?? "", "en-US") ||
+    left.key.localeCompare(right.key, "en-US")
+  );
+}
+
+function releaseGroupDate(items: readonly DecoratedPlaylistItem[]): string | null {
+  return (
+    items
+      .map((item) => normalizedReleaseDate(item.item.releaseDate))
+      .filter((value): value is string => value !== null)
+      .sort()
+      .at(-1) ?? null
+  );
+}
+
+function normalizedReleaseDate(value: string | undefined): string | null {
+  if (!value) return null;
+  const match = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(value);
+  if (!match) return null;
+  const month = match[2] ?? "00";
+  const day = match[3] ?? "00";
+  if (Number(month) > 12 || Number(day) > 31) return null;
+  return `${match[1]}-${month}-${day}`;
+}
+
+function snapshotFromCandidate(
+  candidate: SpotifyPlaylistExportCandidate,
+  position: number,
+): SpotifyPlaylistSnapshotItem {
+  return {
+    albumId: candidate.providerReleaseId ?? candidate.releaseId,
+    albumTitle: candidate.releaseTitle,
+    discNumber: candidate.discNumber,
+    position,
+    releaseDate: candidate.releaseDate,
+    trackId: candidate.providerTrackId ?? null,
+    trackNumber: candidate.trackNumber,
+    title: candidate.title,
+  };
+}
+
+function planMovesFromKeys(
+  currentKeys: readonly string[],
+  desiredKeys: readonly string[],
+  decorated: { desired: DecoratedPlaylistItem[] },
+): SpotifyPlaylistReorderMove[] {
+  if (currentKeys.length !== desiredKeys.length) {
+    throw new Error("Spotify playlist reorder planning requires the same item count.");
+  }
+  const working = [...currentKeys];
+  const trackIdByKey = new Map(decorated.desired.map((item) => [item.key, item.item.trackId]));
+  const moves: SpotifyPlaylistReorderMove[] = [];
+  for (let targetIndex = 0; targetIndex < desiredKeys.length; targetIndex += 1) {
+    if (working[targetIndex] === desiredKeys[targetIndex]) continue;
+    const rangeStart = working.indexOf(desiredKeys[targetIndex]!, targetIndex + 1);
+    if (rangeStart < 0) throw new Error("Spotify playlist reorder target is not a permutation.");
+    let rangeLength = 1;
+    while (
+      rangeStart + rangeLength < working.length &&
+      targetIndex + rangeLength < desiredKeys.length &&
+      working[rangeStart + rangeLength] === desiredKeys[targetIndex + rangeLength]
+    ) {
+      rangeLength += 1;
+    }
+    const block = working.splice(rangeStart, rangeLength);
+    working.splice(targetIndex, 0, ...block);
+    moves.push({
+      insertBefore: targetIndex,
+      rangeLength,
+      rangeStart,
+      trackIds: block.map((key) => trackIdByKey.get(key) ?? null),
+    });
+  }
+  if (working.some((key, index) => key !== desiredKeys[index])) {
+    throw new Error("Spotify playlist reorder planner did not reach the requested order.");
+  }
+  return moves;
 }
 
 export function groupSpotifyPlaylistAdditions(

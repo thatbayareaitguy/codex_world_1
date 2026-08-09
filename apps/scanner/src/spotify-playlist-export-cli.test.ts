@@ -80,8 +80,10 @@ describe("Spotify playlist export CLI", () => {
         desired: [],
         existingDuplicateTrackIds: [],
         finalTrackIds: [],
+        orderedItems: [],
         orderingConflicts: [],
         releaseGroupingConflicts: [],
+        reorderMoves: [],
         skips: [
           {
             feedItemId: "feed-skip",
