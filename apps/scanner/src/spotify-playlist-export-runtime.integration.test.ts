@@ -57,7 +57,7 @@ describe.sequential("automatic discovery playlist export", () => {
     const executeExport: typeof executeSpotifyPlaylistExport = vi.fn(
       (_db, _userId, _client, input) => {
         expect(input).toMatchObject({
-          orderingPolicy: "release_date_custom_order",
+          orderingPolicy: "discovery_inbox",
           playlistId,
           policy: { allowedPlaylistId: playlistId, enabled: true },
         });

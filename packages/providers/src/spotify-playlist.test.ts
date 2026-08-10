@@ -260,6 +260,35 @@ describe("Spotify playlist planning", () => {
     ]);
   });
 
+  it("prepends discovery-inbox additions without moving existing playlist items", () => {
+    const existingFirst = "9999999999999999999998";
+    const existingSecond = "9999999999999999999999";
+    const plan = planSpotifyPlaylistExport(
+      [
+        candidate("older", "0000000000000000000001", { releaseDate: "2026-08-01" }),
+        candidate("newer", "0000000000000000000002", { releaseDate: "2026-08-07" }),
+      ],
+      [
+        { position: 0, trackId: existingFirst },
+        { position: 1, trackId: existingSecond },
+      ],
+      new Set(),
+      "discovery_inbox",
+    );
+
+    expect(plan.additions.map((item) => [item.providerTrackId, item.position])).toEqual([
+      ["0000000000000000000002", 0],
+      ["0000000000000000000001", 1],
+    ]);
+    expect(plan.finalTrackIds).toEqual([
+      "0000000000000000000002",
+      "0000000000000000000001",
+      existingFirst,
+      existingSecond,
+    ]);
+    expect(plan.reorderMoves).toEqual([]);
+  });
+
   it("orders release groups by date and preserves disc and track order", () => {
     const current = [
       snapshot("old-2", 0, { albumId: "old", releaseDate: "2025-01-02", trackNumber: 2 }),

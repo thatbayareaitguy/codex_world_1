@@ -161,7 +161,7 @@ describe("doctor", () => {
     ).toMatchObject({ state: "READY" });
     expect(
       dualScope.checks.find((check) => check.name === "Spotify playlist safety policy")?.message,
-    ).toContain("expected to be public");
+    ).toContain("public and private visibility are supported");
   });
 
   it("reports scheduler database state without treating a disabled scheduler as unhealthy", async () => {

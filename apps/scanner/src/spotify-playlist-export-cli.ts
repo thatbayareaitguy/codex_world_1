@@ -209,7 +209,7 @@ async function main(): Promise<void> {
         const execution = await executeSpotifyPlaylistExport(connection.db, userId, client, {
           ...(options.campaignId ? { discoveryReconciliationCampaignId: options.campaignId } : {}),
           ...(options.maxAdditions === undefined ? {} : { maxAdditions: options.maxAdditions }),
-          orderingPolicy: "release_date_custom_order",
+          orderingPolicy: "discovery_inbox",
           playlistId: configuration.spotify.allowedPlaylistId,
           policy: {
             allowedPlaylistId: configuration.spotify.allowedPlaylistId,
@@ -233,7 +233,7 @@ async function main(): Promise<void> {
             ...(options.campaignId
               ? { discoveryReconciliationCampaignId: options.campaignId }
               : {}),
-            orderingPolicy: "release_date_custom_order",
+            orderingPolicy: "discovery_inbox",
           },
         );
       }

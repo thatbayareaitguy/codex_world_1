@@ -3,10 +3,8 @@ import {
   abbreviateSpotifyPlaylistId,
   assertOwnedNonCollaborativeSpotifyPlaylist,
   assertSpotifyPlaylistWriteTarget,
-  applySpotifyPlaylistReorderMove,
   isExactSpotifyIdentity,
   planSpotifyPlaylistExport,
-  planSpotifyPlaylistReleaseDateOrder,
   spotifyPlaylistIdSchema,
   SpotifyHttpError,
   SpotifyPlaylistWriteDeniedError,
@@ -37,7 +35,6 @@ import {
 import {
   invalidateSpotifyPlaylistSnapshot,
   loadVerifiedSpotifyPlaylistSnapshot,
-  persistSpotifyPlaylistSnapshot,
   upsertSpotifyPlaylistTarget,
 } from "./spotify-playlist-cache";
 
@@ -160,7 +157,7 @@ export async function executeSpotifyPlaylistExport(
       ...(input.discoveryReconciliationCampaignId
         ? { discoveryReconciliationCampaignId: input.discoveryReconciliationCampaignId }
         : {}),
-      orderingPolicy: input.orderingPolicy ?? "release_date_custom_order",
+      orderingPolicy: input.orderingPolicy ?? "discovery_inbox",
     },
     snapshot.cacheHit,
   );
@@ -170,13 +167,13 @@ export async function executeSpotifyPlaylistExport(
     target.id,
     playlistId,
     input.discoveryReconciliationCampaignId ?? null,
-    input.orderingPolicy ?? "release_date_custom_order",
+    input.orderingPolicy ?? "discovery_inbox",
   );
   const resumed = Boolean(run);
   if (!run) {
     run = await createExportRun(db, target.id, preview, {
       discoveryReconciliationCampaignId: input.discoveryReconciliationCampaignId ?? null,
-      orderingPolicy: input.orderingPolicy ?? "release_date_custom_order",
+      orderingPolicy: input.orderingPolicy ?? "discovery_inbox",
     });
   } else {
     await db
@@ -246,18 +243,6 @@ export async function executeSpotifyPlaylistExport(
             await markOperationFailed(db, operation.id, safeErrorCode(itemError));
           }
         }
-      }
-    }
-    const countsBeforeOrdering = await loadOperationCounts(db, run.id);
-    if (countsBeforeOrdering.pending === 0) {
-      const orderPlan = planSpotifyPlaylistReleaseDateOrder(workingItems);
-      for (const move of orderPlan.moves) {
-        snapshotAfter = await client.reorderPlaylistItems(playlistId, {
-          ...move,
-          snapshotId: snapshotAfter,
-        });
-        workingItems = applySpotifyPlaylistReorderMove(workingItems, move);
-        await persistSpotifyPlaylistSnapshot(db, target.id, snapshotAfter, workingItems);
       }
     }
   } catch (error) {
@@ -352,6 +337,7 @@ async function buildPreview(
       candidates,
       playlistItems,
       new Set(managedRows.map((row) => row.providerTrackId)),
+      options.orderingPolicy ?? "discovery_inbox",
     ),
     target: {
       collaborative: false,

@@ -132,10 +132,9 @@ is reconciled immediately, and the same unified tick invokes the existing guarde
 an interactive command. A later periodic tick provides restart recovery when the process exits at
 any earlier phase. Automatic execution requires recurring discovery, the Spotify scheduler, and
 playlist writes to be explicitly enabled in ignored local configuration. The exporter reads only
-playlist `4l6LaMPL6duulmFe3hRR4Y`, plans batched membership additions, and inserts discoveries at
-their release-date Custom Order positions while keeping release groups contiguous. It may reorder
-existing contiguous ranges on that one target using the current snapshot ID, but never removes,
-re-adds, replaces, renames, or changes the visibility of an existing playlist item. A Spotify 429
+playlist `4l6LaMPL6duulmFe3hRR4Y`, plans batched membership additions, and prepends each deterministic
+discovery-inbox batch at position zero. Routine export never reorders, removes, re-adds, replaces,
+renames, or changes the visibility of an existing playlist item. A Spotify 429
 changes the durable workflow to cooldown wait and preserves the partial export for automatic resume
 before any broad work.
 
@@ -154,14 +153,14 @@ but are not blocked by exhaustion of the Artist Albums bucket.
 4. The scanner loads only confirmed mappings and invokes providers independently. Apple Music mapping candidates that are not confirmed remain in review and cannot scan automatically.
 5. Typed provider candidates are matched to canonical tracks independently from canonical releases.
 6. A transaction preserves provider IDs, source evidence, upcoming history, feed state, availability, match reasons, and the provenance-backed release-to-track appearance.
-7. Spotify playlist planning starts from the canonical database-backed feed, keeps followed-artist appearances, selects only exact or manually confirmed Spotify identities, deduplicates repeated recording appearances, and compares the ordered result with current playlist items. Writes default off. When explicitly enabled, route and client guards allow positional additions and snapshot-aware contiguous range reorders only on the server-configured, owner-controlled, non-collaborative playlist. The production target is expected to be public.
+7. Spotify playlist planning starts from the canonical database-backed feed, keeps followed-artist appearances, selects only exact or manually confirmed Spotify identities, deduplicates repeated recording appearances, and compares the result with current playlist items. Writes default off. When explicitly enabled, route and client guards allow deterministic position-zero additions only on the server-configured, owner-controlled, non-collaborative playlist. Existing playlist item order is preserved.
 8. Reddit text is parsed locally, matched only against the canonical watchlist, and enters review unless exact canonical artist and title are corroborated by existing Spotify availability. Reddit content is never sent to AI.
 
 Spotify responses are never submitted to MusicBrainz. MusicBrainz mapping starts from canonical names, user aliases, and confirmed decisions. Canonical display data is provider-neutral; source-specific values remain in external-ID provider fields and evidence records. Apple and Spotify artwork remain separately namespaced and are rendered only when the matching provider supplies evidence for that canonical release appearance.
 
 The browser and CLI cannot supply or select a Spotify write target. `SPOTIFY_ALLOWED_PLAYLIST_ID` is the only target authority. Before every write boundary, the application verifies the returned playlist ID, connected owner, and non-collaborative state. Both public and private visibility pass the general write guard. The production target is expected to be public. Playlist creation, rename, arbitrary visibility changes, artwork, follow, unfollow, removal, and replacement remain outside the provider-client surface. One internal command can set only the hard-coded authorized playlist to `public=true` and `collaborative=false`; it verifies membership, exact order, Date Added metadata, owner, name, description, artwork, and the snapshot cache before reporting success. Reordering is limited to snapshot-aware range moves on the configured target and has no arbitrary public route.
 
-Playlist export uses `spotify_playlist_export_runs` and `spotify_playlist_export_operations` as a durable execution ledger. A run snapshots the exact target and planned counts; each add, already-present item, and skip is persisted separately. Provider readback reconciles writes that succeeded before a local interruption, and the unique export ledger prevents duplicate managed additions. Custom Order is newest release date first; release groups remain contiguous and use disc then track position. User-added items participate when Spotify supplies release metadata, with a deterministic fallback for unknown dates. `playlist_targets` caches the last verified `snapshot_id` and ordered item metadata. An unchanged remote snapshot avoids item pagination; an external snapshot change forces one consistent full read. Existing items are ordered only with snapshot-aware contiguous range moves, never removal and re-addition.
+Playlist export uses `spotify_playlist_export_runs` and `spotify_playlist_export_operations` as a durable execution ledger. A run snapshots the exact target and planned counts; each add, already-present item, and skip is persisted separately. Provider readback reconciles writes that succeeded before a local interruption, and the unique export ledger prevents duplicate managed additions. Newly discovered tracks are sorted deterministically and prepended as bounded batches; the relative order of every existing item remains unchanged. `playlist_targets` caches the last verified `snapshot_id` and ordered item metadata. An unchanged remote snapshot avoids item pagination; an external snapshot change forces one consistent full read.
 
 ## Resilience
 

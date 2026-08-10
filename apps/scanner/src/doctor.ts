@@ -682,7 +682,7 @@ function spotifyChecks(
     checks.push(
       ready(
         "Spotify playlist writes",
-        "Spotify playlist additions, Custom Order writes, and the fixed-target visibility operation are explicitly enabled.",
+        "Spotify add-only playlist writes and the fixed-target visibility operation are explicitly enabled.",
       ),
     );
     checks.push(
@@ -709,7 +709,7 @@ function spotifyChecks(
     checks.push(
       ready(
         "Spotify playlist safety policy",
-        "Runtime writes require the exact authorized playlist ID, connected owner, and non-collaborative state. The production target is expected to be public.",
+        "Runtime exports require the exact authorized playlist ID, connected owner, and non-collaborative state; public and private visibility are supported.",
         false,
       ),
     );

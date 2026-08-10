@@ -111,6 +111,9 @@ export interface SpotifyPlaylistExportPlan {
   unrelatedItems: SpotifyPlaylistUnrelatedItem[];
 }
 
+export type SpotifyPlaylistExportOrderingPolicy =
+  "canonical" | "discovery_inbox" | "release_date_custom_order";
+
 export function planSpotifyPlaylistSync(
   items: PlaylistItemInput[],
   existingTrackIds: ReadonlySet<string>,
@@ -142,6 +145,7 @@ export function planSpotifyPlaylistExport(
   candidates: readonly SpotifyPlaylistExportCandidate[],
   playlistItems: readonly SpotifyPlaylistSnapshotItem[],
   appManagedTrackIds: ReadonlySet<string>,
+  orderingPolicy: SpotifyPlaylistExportOrderingPolicy = "release_date_custom_order",
 ): SpotifyPlaylistExportPlan {
   const skips: SpotifyPlaylistExportSkip[] = [];
   const eligible = candidates
@@ -307,6 +311,34 @@ export function planSpotifyPlaylistExport(
     decorated,
   );
   const orderedItems = decorated.desired.map((item, position) => ({ ...item.item, position }));
+  if (orderingPolicy === "discovery_inbox") {
+    const additions = missingCandidates.map((candidate, position) => ({
+      ...candidate,
+      desiredOrdinal: desired.indexOf(candidate),
+      position,
+      reason: "missing_from_playlist" as const,
+    }));
+    const orderedItems = [
+      ...missingCandidates.map((candidate, position) => snapshotFromCandidate(candidate, position)),
+      ...currentItems.map((item, index) => ({
+        ...item,
+        position: missingCandidates.length + index,
+      })),
+    ];
+    return {
+      additions,
+      alreadyPresent,
+      desired,
+      existingDuplicateTrackIds,
+      finalTrackIds: orderedItems.map((item) => item.trackId),
+      orderingConflicts,
+      orderedItems,
+      reorderMoves: [],
+      releaseGroupingConflicts,
+      skips,
+      unrelatedItems,
+    };
+  }
   return {
     additions,
     alreadyPresent,

@@ -149,7 +149,7 @@ export async function runAutomaticDiscoveryPlaylistExport(
       userId,
       client,
       {
-        orderingPolicy: "release_date_custom_order",
+        orderingPolicy: "discovery_inbox",
         playlistId: configuration.spotify.allowedPlaylistId,
         policy: {
           allowedPlaylistId: configuration.spotify.allowedPlaylistId,

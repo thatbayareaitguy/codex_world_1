@@ -212,7 +212,7 @@ describe.sequential("Spotify canonical playlist export", () => {
     expect(failed).toMatchObject({ attemptCount: 1, errorCode: "playlist_item_add_failed" });
   });
 
-  it("exports only campaign-eligible tracks in Custom Order and persists the ordering policy", async () => {
+  it("prepends only campaign-eligible tracks and never reorders existing items", async () => {
     const fixture = await createFixture({ writeScope: true });
     const campaignId = crypto.randomUUID();
     await db.insert(discoveryReconciliationCampaigns).values({
@@ -246,7 +246,7 @@ describe.sequential("Spotify canonical playlist export", () => {
 
     const result = await executeSpotifyPlaylistExport(db, fixture.userId, client, {
       discoveryReconciliationCampaignId: campaignId,
-      orderingPolicy: "release_date_custom_order",
+      orderingPolicy: "discovery_inbox",
       playlistId,
       policy: { allowedPlaylistId: playlistId, enabled: true },
     });
@@ -256,13 +256,14 @@ describe.sequential("Spotify canonical playlist export", () => {
     ]);
     expect(client.addCalls).toEqual([{ position: 0, trackIds: [fixture.exactProviderTrackId] }]);
     expect(client.items).toEqual([fixture.exactProviderTrackId, userTrack]);
+    expect(client.reorderCalls).toBe(0);
     expect(
       await db.query.spotifyPlaylistExportRuns.findFirst({
         where: eq(spotifyPlaylistExportRuns.id, result.run.id),
       }),
     ).toMatchObject({
       discoveryReconciliationCampaignId: campaignId,
-      orderingPolicy: "release_date_custom_order",
+      orderingPolicy: "discovery_inbox",
       status: "completed",
     });
   });
@@ -272,6 +273,7 @@ class FakePlaylistClient implements SpotifyPlaylistExportClient {
   readonly addCalls: Array<{ position: number; trackIds: string[] }> = [];
   itemReadCalls = 0;
   readCalls = 0;
+  reorderCalls = 0;
   private snapshot = 1;
 
   constructor(
@@ -329,6 +331,7 @@ class FakePlaylistClient implements SpotifyPlaylistExportClient {
     _id: string,
     input: { insertBefore: number; rangeLength?: number; rangeStart: number },
   ) => {
+    this.reorderCalls += 1;
     const rangeLength = input.rangeLength ?? 1;
     const moved = this.items.splice(input.rangeStart, rangeLength);
     const adjustedInsert =
