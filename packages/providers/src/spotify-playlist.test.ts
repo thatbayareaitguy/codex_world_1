@@ -157,7 +157,7 @@ describe("Spotify playlist planning", () => {
     expect(plan.additions).toHaveLength(0);
   });
 
-  it("reports unrelated playlist items and release groups split by them", () => {
+  it("separates unmanaged items from the current export set", () => {
     const first = candidate("first", "0000000000000000000001", {
       providerReleaseId: "spotify-album-together",
       releaseId: "release-together",
@@ -185,7 +185,7 @@ describe("Spotify playlist planning", () => {
         },
         { position: 2, trackId: second.providerTrackId! },
       ],
-      new Set(),
+      new Set([unrelated]),
     );
 
     expect(plan.releaseGroupingConflicts).toEqual([
@@ -195,16 +195,19 @@ describe("Spotify playlist planning", () => {
         releaseTitle: "Together",
       },
     ]);
-    expect(plan.unrelatedItems).toEqual([
+    expect(plan.outsideCurrentExportSetItems).toEqual([
       expect.objectContaining({
+        appManaged: true,
         artistNames: ["User Artist"],
         position: 1,
-        reason: "not_in_export_set",
+        reason: "not_in_current_export_set",
         releaseDate: "2020-01-01",
         title: "User Track",
         trackId: unrelated,
       }),
     ]);
+    expect(plan.managedPlaylistItemCount).toBe(1);
+    expect(plan.unmanagedItems).toHaveLength(2);
 
     const sameAlbumPlan = planSpotifyPlaylistExport(
       [first, second],
@@ -345,6 +348,25 @@ describe("Spotify playlist planning", () => {
       "unknown-z",
     ]);
     expect(plan.unknownDateItems).toBe(2);
+  });
+
+  it("splits reorder ranges larger than Spotify's per-request item limit", () => {
+    const current = Array.from({ length: 121 }, (_, index) =>
+      snapshot(`track-${index}`, index, {
+        albumId: index === 0 ? "old" : "new",
+        releaseDate: index === 0 ? "2025-01-01" : "2026-01-01",
+        trackNumber: index === 0 ? 1 : index,
+      }),
+    );
+
+    const plan = planSpotifyPlaylistReleaseDateOrder(current);
+    expect(plan.moves.every((move) => move.rangeLength <= 100)).toBe(true);
+
+    let reordered: SpotifyPlaylistSnapshotItem[] = current;
+    for (const move of plan.moves) reordered = applySpotifyPlaylistReorderMove(reordered, move);
+    expect(reordered.map((item) => item.trackId)).toEqual(
+      plan.desiredItems.map((item) => item.trackId),
+    );
   });
 });
 

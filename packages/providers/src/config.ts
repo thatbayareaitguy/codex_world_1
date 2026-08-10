@@ -109,6 +109,7 @@ const environmentSchema = z
       .min(10_000)
       .max(90_000)
       .default(90_000),
+    SPOTIFY_PRIORITY_MAX_ITEMS_PER_RUN: z.coerce.number().int().min(1).max(10).default(10),
     SPOTIFY_SCHEDULER_ROLLING_24H_LIMIT: z.coerce.number().int().min(593).max(10_000).default(1200),
     SPOTIFY_SCHEDULER_ROLLING_30M_LIMIT: z.coerce.number().int().min(1).max(1000).default(30),
   })
@@ -199,6 +200,7 @@ export interface ProviderConfiguration {
       enabled: boolean;
       maxRequestsPerTick: number;
       maxRuntimeMs: number;
+      priorityMaxItemsPerRun: number;
       rolling24HourLimit: number;
       rolling30MinuteLimit: number;
     };
@@ -304,6 +306,7 @@ export function loadProviderConfiguration(
         enabled: parsed.SPOTIFY_SCHEDULER_ENABLED,
         maxRequestsPerTick: parsed.SPOTIFY_SCHEDULER_MAX_REQUESTS_PER_TICK,
         maxRuntimeMs: parsed.SPOTIFY_SCHEDULER_MAX_RUNTIME_MS,
+        priorityMaxItemsPerRun: parsed.SPOTIFY_PRIORITY_MAX_ITEMS_PER_RUN,
         rolling24HourLimit: parsed.SPOTIFY_SCHEDULER_ROLLING_24H_LIMIT,
         rolling30MinuteLimit: parsed.SPOTIFY_SCHEDULER_ROLLING_30M_LIMIT,
       },

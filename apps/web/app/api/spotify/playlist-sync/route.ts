@@ -114,8 +114,11 @@ function toResponse(preview: SpotifyPlaylistExportPreview) {
       alreadyPresent: preview.plan.alreadyPresent.length,
       eligible: preview.plan.desired.length,
       finalPlaylistItems: preview.plan.finalTrackIds.length,
+      managedPlaylistItems: preview.plan.managedPlaylistItemCount,
       orderingConflicts: preview.plan.orderingConflicts.length,
+      outsideCurrentEligibility: preview.plan.outsideCurrentExportSetItems.length,
       skipped: preview.plan.skips.length,
+      unmanagedPlaylistItems: preview.plan.unmanagedItems.length,
     },
   };
 }

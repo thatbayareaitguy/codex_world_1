@@ -1,94 +1,96 @@
 # AI Handoff
 
-Updated: 2026-08-09 19:59 PDT
+Updated: 2026-08-09 22:05 PDT
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`
-- Starting checkpoint: `6f1feeaff5a3befd0d881302713fe20a477627c4`
-- Current implementation checkpoint: `HEAD` (`fix: finish priority export with add-only ordering`)
-- Upstream before push: local checkpoint is one commit ahead of `origin/codex/release-radar-hardening`
-- Worktree: milestone changes plus unrelated untracked `outputs/`; `outputs/` must remain excluded
-- PostgreSQL: healthy; all 29 forward migrations applied; no migration is needed for this milestone
+- Current checkpoint: `HEAD` (`fix: restore playlist ordering and priority execution`)
+- Upstream: current branch tracks `origin/codex/release-radar-hardening`
+- Worktree: tracked files are clean; unrelated `outputs/` remains untracked and excluded
+- Database: PostgreSQL healthy; all 29 forward migrations applied
 
 ## Current Milestone
 
-Complete the runnable Apple-priority Spotify queue, export every eligible absent track to the sole
-authorized playlist, and harden routine export as deterministic add-only discovery-inbox writes.
+Restore release-date Spotify Custom Order, separate playlist ownership from current export
+eligibility, eliminate repeated full playlist reads, and preserve the intentional dynamic
+Apple-priority scheduler and hidden Windows launcher changes.
 
 ## Verified
 
-- The initial guarded export added 24 eligible tracks. Export run
-  `f35ce29c-5380-4aaa-9b16-fc3592671ac8` completed with zero failed or pending operations.
-- All 54 remaining Apple-priority artists completed using 54 Artist Albums requests and three release
-  detail requests. No broad artist was processed. The priority queue is now empty.
-- Priority work created two releases, two canonical tracks, four candidates, four evidence rows,
-  three feed items, and 61 release-track appearances.
-- Automatic post-priority export identified 50 absent eligible tracks. Run
-  `a78f07f3-9c89-4956-825e-9b924c21c637` resumed safely after its temporary task time limit and
-  completed all 50 additions with zero failures or pending operations.
-- Final provider readback contains 1,009 playlist items: 967 currently eligible tracks and 42
-  preserved unrelated or user-added items. It reports no duplicate track IDs.
-- The playlist inbox is `completed`, Apple-priority work is zero, scheduler phase is
-  `broad_spotify`, and no broad request capacity was consumed by this milestone.
-- Routine manual and scheduled exports now use `discovery_inbox`: new tracks are sorted
-  deterministically, prepended in supported batches, and existing relative order is never changed.
-  The exporter no longer invokes Spotify reorder operations.
-- The fixed target, connected owner, non-collaborative state, exact/manual-match eligibility,
-  playability, encrypted OAuth storage, global request gate, cooldown, ledger, and restart safeguards
-  remain unchanged. The user reports the authorized playlist is currently private.
-- Browser smoke renders `http://127.0.0.1:3000/#feed` with no application error overlay or console
-  errors.
+- The authorized Spotify playlist is public, non-collaborative, and contains 1,009 unique track IDs.
+- Custom Order is newest release date first. Albums and EPs are contiguous in disc then track order.
+  A complete live readback reports zero remaining reorder moves, zero duplicate IDs, zero unknown
+  release dates, and zero noncontiguous release groups.
+- Reordering used Spotify range moves only. No item was added, removed, or re-added. The pre/post
+  provenance hash over track ID, Date Added, and Added By is unchanged.
+- Playlist ownership is 1,008 app-managed items and one unmanaged item. The unmanaged item is Becky
+  Hill, `>>>hands on me<<<`. The prior count of 42 described tracks outside the current eligibility
+  set, not user-added tracks; all 42 have app-owned export-ledger rows.
+- Internal additions and reorder moves persist the returned snapshot and known ordered cache. An
+  unchanged snapshot requires one playlist metadata check and no item pagination. An external or
+  interrupted-write snapshot change requires one complete reconciliation read.
+- The final full reconciliation used 23 playlist reads: metadata before, 21 pages of up to 50 items,
+  and metadata after. No 429 occurred. A normal unchanged-snapshot export used one playlist metadata
+  read and no item pages.
+- Reorder planning and the provider-client boundary cap ranges at 100 items. A live 113-item move was
+  rejected with HTTP 400 after two earlier moves committed; the durable run resumed from that
+  snapshot, split the range, and completed without replaying committed moves.
+- Apple-priority scheduling can commit up to 10 priority items per process and immediately claim the
+  next item. It retains one Spotify request at a time, at least 10 seconds between request starts,
+  rolling 24-hour capacity, restart-safe progress, priority precedence, and immediate stop on 429 or
+  capacity exhaustion. Credential-free five-item and ten-item canaries pass; broad work is excluded.
+- Windows campaign registration uses hidden `conhost.exe --headless node.exe --import tsx` execution
+  and does not register PowerShell or pnpm as the recurring task action.
+- Browser smoke renders the live Discovery Feed without an application error overlay.
 
 ## Validation
 
-- Format, lint, strict TypeScript, production build, doctor, migration, browser smoke, and diff
-  checks pass.
-- Unit tests: 460 passed across 62 files.
-- PostgreSQL integration tests: 140 passed across 27 files after rebuilding through all 29
-  migrations.
-- Playwright: 30 passed.
-- Doctor: READY; no provider cooldown, stale lock, or pending playlist operation.
-- Focused add-only regressions: 10 provider planner tests, 8 playlist-export integration tests, six
-  automatic-runtime integration tests, and 10 doctor tests pass.
+- Format: passed
+- Lint: passed with zero warnings
+- Strict TypeScript: passed across six workspace projects
+- Unit: 466 passed across 62 files
+- PostgreSQL integration: 141 passed across 27 files
+- Playwright: 30 passed
+- Production build: passed
+- Doctor: READY; no provider cooldown, stale lock, active lease, or pending playlist operation
+- Migrations: all 29 applied
+- Git diff check: passed
 
-## Implemented But Not Fully Live-Tested
+## Implemented But Not Live-Verified
 
-- A future scheduled export with more than 100 new items will use the tested bounded grouping logic,
-  but this milestone's largest live discovery-inbox export contained 50 items.
-- A complete recurring Thursday/Friday production cycle remains to be observed unattended.
+- Dynamic multi-item Apple-priority execution has not made a live Spotify request because the live
+  priority queue is empty. Its request gate and bounded single-item work were live-validated earlier.
+- A complete unattended Thursday/Friday recurring production cycle remains unobserved.
 
 ## Operational State
 
-- Authorized playlist: 1,009 verified items; user reports private; owner-controlled and
-  non-collaborative guard remains mandatory.
-- Spotify cooldown: none. Latest 429 was a playlist-read `QUOTA_EXCEEDED` at
-  `2026-08-09T20:12:23.665Z`; its 5,550-second cooldown expired and was not bypassed.
-- Artist Albums trailing-24-hour usage: 54 of 80; no active lease.
-- Apple-priority artists: 0 pending.
-- Playlist additions: 0 pending.
-- Scheduler: phase `broad_spotify`; automatic scheduler capability remains disabled by default.
-- Temporary priority scheduled task and its process are removed.
-- Local app: responding on `127.0.0.1:3000`.
+- Spotify cooldown: none. The latest `quota_exceeded` was a playlist-read 429 with a 5,550-second
+  Retry-After; it expired and was not cleared or bypassed.
+- Apple-priority queue: empty.
+- Playlist export: complete with zero pending operations.
+- Broad Spotify backlog: present; broad reconciliation was not started during this correction.
+- Automatic recurring execution remains disabled by default in repository and local configuration.
+- Apple Music automatic discovery is currently disabled. Reddit and SoundCloud automation remain
+  disabled.
 
 ## Risks
 
-- Spotify limits remain unpublished. All requests must continue through the shared PostgreSQL gate
-  and persisted cooldown.
-- The temporary Windows task had a 20-minute execution limit and interrupted one export after 33 of
-  50 additions. The durable ledger recovered the remaining 17 safely; future long-running task
-  wrappers must not impose a shorter lifetime than the bounded operation they launch.
-- Historical playlist order reflects earlier explicitly authorized Custom Order maintenance. Routine
-  export no longer moves existing items and will not attempt to repair historical ordering.
+- Spotify rate limits remain unpublished. All Spotify work must continue through the shared
+  PostgreSQL request gate and persisted cooldown.
+- A crash between a successful provider write and local snapshot persistence requires one full
+  playlist reconciliation after restart. The durable snapshot and export ledger make that recovery
+  safe but relatively expensive for a 1,009-item playlist.
+- The dynamic priority loop is covered by simulated canaries but still needs observation with a real
+  nonempty Apple-priority queue.
 
 ## Immediate Next Step
 
-Review the committed checkpoint, then allow the normal scheduler to choose bounded broad Spotify
-reconciliation work when its production capability is explicitly enabled. Do not manually launch the
-whole watchlist.
+Review the combined checkpoint, then begin broad Spotify reconciliation only through the existing
+bounded scheduler and request budgets. Do not bypass the playlist cache or request gate.
 
 ## Deferred
 
-- Broad Spotify reconciliation beyond the completed priority queue
-- Another explicit Custom Order conversion or visibility transition
+- Live observation of a nonempty dynamic Apple-priority run
+- Unattended Thursday/Friday recurring-cycle validation
 - Deep historical reconciliation and inactive providers

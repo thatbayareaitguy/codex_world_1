@@ -132,9 +132,9 @@ is reconciled immediately, and the same unified tick invokes the existing guarde
 an interactive command. A later periodic tick provides restart recovery when the process exits at
 any earlier phase. Automatic execution requires recurring discovery, the Spotify scheduler, and
 playlist writes to be explicitly enabled in ignored local configuration. The exporter reads only
-playlist `4l6LaMPL6duulmFe3hRR4Y`, plans batched membership additions, and prepends each deterministic
-discovery-inbox batch at position zero. Routine export never reorders, removes, re-adds, replaces,
-renames, or changes the visibility of an existing playlist item. A Spotify 429
+playlist `4l6LaMPL6duulmFe3hRR4Y`, plans batched membership additions, and maintains newest-release-first
+Custom Order with albums and EPs contiguous in disc then track order. Routine export uses only
+snapshot-aware range moves and never removes, re-adds, replaces, renames, or changes visibility. A Spotify 429
 changes the durable workflow to cooldown wait and preserves the partial export for automatic resume
 before any broad work.
 
@@ -153,14 +153,20 @@ but are not blocked by exhaustion of the Artist Albums bucket.
 4. The scanner loads only confirmed mappings and invokes providers independently. Apple Music mapping candidates that are not confirmed remain in review and cannot scan automatically.
 5. Typed provider candidates are matched to canonical tracks independently from canonical releases.
 6. A transaction preserves provider IDs, source evidence, upcoming history, feed state, availability, match reasons, and the provenance-backed release-to-track appearance.
-7. Spotify playlist planning starts from the canonical database-backed feed, keeps followed-artist appearances, selects only exact or manually confirmed Spotify identities, deduplicates repeated recording appearances, and compares the result with current playlist items. Writes default off. When explicitly enabled, route and client guards allow deterministic position-zero additions only on the server-configured, owner-controlled, non-collaborative playlist. Existing playlist item order is preserved.
+7. Spotify playlist planning starts from the canonical database-backed feed, keeps followed-artist appearances, selects only exact or manually confirmed Spotify identities, deduplicates repeated recording appearances, and compares the ordered result with current playlist items. Writes default off. When explicitly enabled, route and client guards allow positional additions and snapshot-aware contiguous range reorders only on the server-configured, owner-controlled, non-collaborative playlist.
 8. Reddit text is parsed locally, matched only against the canonical watchlist, and enters review unless exact canonical artist and title are corroborated by existing Spotify availability. Reddit content is never sent to AI.
 
 Spotify responses are never submitted to MusicBrainz. MusicBrainz mapping starts from canonical names, user aliases, and confirmed decisions. Canonical display data is provider-neutral; source-specific values remain in external-ID provider fields and evidence records. Apple and Spotify artwork remain separately namespaced and are rendered only when the matching provider supplies evidence for that canonical release appearance.
 
 The browser and CLI cannot supply or select a Spotify write target. `SPOTIFY_ALLOWED_PLAYLIST_ID` is the only target authority. Before every write boundary, the application verifies the returned playlist ID, connected owner, and non-collaborative state. Both public and private visibility pass the general write guard. The production target is expected to be public. Playlist creation, rename, arbitrary visibility changes, artwork, follow, unfollow, removal, and replacement remain outside the provider-client surface. One internal command can set only the hard-coded authorized playlist to `public=true` and `collaborative=false`; it verifies membership, exact order, Date Added metadata, owner, name, description, artwork, and the snapshot cache before reporting success. Reordering is limited to snapshot-aware range moves on the configured target and has no arbitrary public route.
 
-Playlist export uses `spotify_playlist_export_runs` and `spotify_playlist_export_operations` as a durable execution ledger. A run snapshots the exact target and planned counts; each add, already-present item, and skip is persisted separately. Provider readback reconciles writes that succeeded before a local interruption, and the unique export ledger prevents duplicate managed additions. Newly discovered tracks are sorted deterministically and prepended as bounded batches; the relative order of every existing item remains unchanged. `playlist_targets` caches the last verified `snapshot_id` and ordered item metadata. An unchanged remote snapshot avoids item pagination; an external snapshot change forces one consistent full read.
+Playlist export uses `spotify_playlist_export_runs` and `spotify_playlist_export_operations` as a durable execution ledger. A run snapshots the exact target and planned counts; each add, already-present item, and skip is persisted separately. The unique export ledger prevents duplicate managed additions. Custom Order is newest release date first; release groups remain contiguous and use disc then track position with deterministic ties. Existing and user-added items may move, but only through Spotify range reorders that preserve membership, Date Added, and Added By. `playlist_targets` caches the last verified `snapshot_id` and ordered item metadata. An unchanged remote snapshot avoids item pagination. Internal writes persist their returned snapshot and locally known order, while an external or crash-induced snapshot change forces one consistent full reconciliation read.
+
+Reorder planning limits each contiguous range to 100 items. A live 113-item range was rejected with
+HTTP 400; the durable run resumed from the two prior committed moves after the planner split the
+remaining range. Ownership reporting is independent from current export eligibility: an app-managed
+track that is no longer selected by the current canonical candidate set remains managed and is not
+reported as user-added.
 
 ## Resilience
 
@@ -185,6 +191,13 @@ The local application lifecycle is intentionally simple: Docker Compose runs Pos
 The implemented scheduled strategy uses persisted 15-artist batches. Daily discovery checks page one, while initial backfill and periodic reconciliation use bounded work units that resume from the next unresolved Spotify offset. A new reconciliation cycle resets to page one only when explicitly requested or when the configured cycle has expired. Provider ordering is not treated as an updated-since guarantee.
 
 The rolling scheduler in [spotify-rolling-scheduler-design.md](spotify-rolling-scheduler-design.md) is implemented as a short-lived tick backed by `spotify_scheduler_state` and `spotify_scheduler_work`. It uses dynamic 24-hour base due times, deterministic PostgreSQL claims, expiring work leases, the existing `scan:global` operation lock, the existing Spotify request gate and cooldown, and explicit planning, validation, automatic, paused, and disabled modes. Each tick handles at most one artist, six Spotify request starts, and 90 seconds. OAuth refreshes and retries that start a request consume the same budget.
+
+Apple-priority Spotify resolution may run up to 10 persisted work items in one scheduler process. Each
+item still uses an independent bounded tick and commits before the next claim. There is no fixed delay
+between priority artists: the shared PostgreSQL request gate enforces one concurrent request, at least
+10 seconds between request starts, the trailing 24-hour Artist Albums budget, and immediate cooldown
+shutdown. Broad Spotify work remains one bounded item per scheduler process and cannot be selected
+while the discovery phase is Apple priority.
 
 Base checks can defer newly selected release details into typed work. The detail worker reuses the existing candidate persistence, matching, evidence, release-track page, and resume checkpoints. Incomplete track retrievals become repair work, while deeper artist reconciliation is eligible only when due base and urgent release work do not need the slot. Planning constructs no production provider client and performs no durable mutation. Production capability and database mode both default disabled. The scheduler tick and ten-second pacing have bounded live validation, but automatic long-running execution is not yet live verified. Existing manual batches remain available and Batch 3 remains untouched.
 

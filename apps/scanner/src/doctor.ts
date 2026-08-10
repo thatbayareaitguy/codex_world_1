@@ -682,7 +682,7 @@ function spotifyChecks(
     checks.push(
       ready(
         "Spotify playlist writes",
-        "Spotify add-only playlist writes and the fixed-target visibility operation are explicitly enabled.",
+        "Spotify additions, snapshot-aware Custom Order writes, and the fixed-target visibility operation are explicitly enabled.",
       ),
     );
     checks.push(

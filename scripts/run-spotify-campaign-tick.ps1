@@ -8,4 +8,7 @@ $ErrorActionPreference = "Stop"
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $repositoryRoot
 
-pnpm.cmd spotify:campaign -- tick --campaign $CampaignId
+$node = (Get-Command "node.exe" -ErrorAction Stop).Source
+$campaignCli = Join-Path $repositoryRoot "apps\scanner\src\spotify-sync-campaign-cli.ts"
+& $node --import tsx $campaignCli tick --campaign $CampaignId
+exit $LASTEXITCODE

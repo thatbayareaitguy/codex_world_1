@@ -84,6 +84,13 @@ describe("provider configuration", () => {
     expect(config.discoverySchedulerEnabled).toBe(true);
   });
 
+  it("bounds dynamic Spotify priority work to ten persisted items per process", () => {
+    expect(
+      loadProviderConfiguration({ SPOTIFY_PRIORITY_MAX_ITEMS_PER_RUN: "5" }).spotify.scheduler,
+    ).toMatchObject({ priorityMaxItemsPerRun: 5 });
+    expect(() => loadProviderConfiguration({ SPOTIFY_PRIORITY_MAX_ITEMS_PER_RUN: "11" })).toThrow();
+  });
+
   it("requires an explicit flag and contact email to configure MusicBrainz", () => {
     const config = loadProviderConfiguration({
       MUSICBRAINZ_CONTACT_EMAIL: "owner@example.test",

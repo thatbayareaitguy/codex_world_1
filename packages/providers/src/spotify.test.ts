@@ -633,6 +633,16 @@ describe("SpotifyClient", () => {
       }),
     ).rejects.toMatchObject({ code: "playlist_id_mismatch" });
     expect(fetcher).not.toHaveBeenCalled();
+
+    await expect(
+      client.reorderPlaylistItems("1234567890123456789012", {
+        insertBefore: 0,
+        rangeLength: 101,
+        rangeStart: 1,
+        snapshotId: "before",
+      }),
+    ).rejects.toMatchObject({ code: "playlist_reorder_invalid" });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("makes only the configured owned playlist public and non-collaborative", async () => {

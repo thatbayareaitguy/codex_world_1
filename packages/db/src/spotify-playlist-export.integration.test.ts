@@ -91,6 +91,51 @@ describe.sequential("Spotify canonical playlist export", () => {
     expect(client.itemReadCalls).toBe(2);
   });
 
+  it("restores release-date Custom Order from cache without a second full playlist read", async () => {
+    const fixture = await createFixture({ writeScope: true });
+    const client = new FakePlaylistClient([
+      fixture.confirmedProviderTrackId,
+      fixture.exactProviderTrackId,
+    ]);
+    await db.insert(playlistTargets).values({
+      name: "Release Radar Inbox",
+      provider: "spotify",
+      providerPlaylistId: playlistId,
+      snapshotId: "snapshot-1",
+      snapshotItems: [
+        {
+          addedAt: "2026-08-01T00:00:00.000Z",
+          position: 0,
+          releaseDate: "2026-07-31",
+          trackId: fixture.confirmedProviderTrackId,
+        },
+        {
+          addedAt: "2026-08-02T00:00:00.000Z",
+          position: 1,
+          releaseDate: "2026-08-01",
+          trackId: fixture.exactProviderTrackId,
+        },
+      ],
+      snapshotVerifiedAt: new Date(),
+      userId: fixture.userId,
+    });
+
+    const result = await executeSpotifyPlaylistExport(db, fixture.userId, client, {
+      playlistId,
+      policy: { allowedPlaylistId: playlistId, enabled: true },
+    });
+
+    expect(result.cacheHit).toBe(true);
+    expect(client.items).toEqual([fixture.exactProviderTrackId, fixture.confirmedProviderTrackId]);
+    expect(client.reorderCalls).toBe(1);
+    expect(client.itemReadCalls).toBe(0);
+    const target = await db.query.playlistTargets.findFirst();
+    expect(target?.snapshotItems?.map((item) => item.addedAt)).toEqual([
+      "2026-08-02T00:00:00.000Z",
+      "2026-08-01T00:00:00.000Z",
+    ]);
+  });
+
   it("blocks an allowlist mismatch and missing write scope before any Spotify call", async () => {
     const fixture = await createFixture({ writeScope: false });
     const mismatchClient = new FakePlaylistClient([]);
@@ -170,6 +215,7 @@ describe.sequential("Spotify canonical playlist export", () => {
     });
     expect(repeat.run).toMatchObject({ additionsAttempted: 0, status: "completed" });
     expect(client.addCalls).toHaveLength(1);
+    expect(client.itemReadCalls).toBe(2);
     expect(new Set(client.items).size).toBe(client.items.length);
     expect(client.items.filter((item) => item === userTrack)).toHaveLength(1);
 
@@ -212,7 +258,7 @@ describe.sequential("Spotify canonical playlist export", () => {
     expect(failed).toMatchObject({ attemptCount: 1, errorCode: "playlist_item_add_failed" });
   });
 
-  it("prepends only campaign-eligible tracks and never reorders existing items", async () => {
+  it("exports only campaign-eligible tracks in release-date Custom Order", async () => {
     const fixture = await createFixture({ writeScope: true });
     const campaignId = crypto.randomUUID();
     await db.insert(discoveryReconciliationCampaigns).values({
@@ -246,7 +292,7 @@ describe.sequential("Spotify canonical playlist export", () => {
 
     const result = await executeSpotifyPlaylistExport(db, fixture.userId, client, {
       discoveryReconciliationCampaignId: campaignId,
-      orderingPolicy: "discovery_inbox",
+      orderingPolicy: "release_date_custom_order",
       playlistId,
       policy: { allowedPlaylistId: playlistId, enabled: true },
     });
@@ -256,14 +302,14 @@ describe.sequential("Spotify canonical playlist export", () => {
     ]);
     expect(client.addCalls).toEqual([{ position: 0, trackIds: [fixture.exactProviderTrackId] }]);
     expect(client.items).toEqual([fixture.exactProviderTrackId, userTrack]);
-    expect(client.reorderCalls).toBe(0);
+    expect(client.itemReadCalls).toBe(1);
     expect(
       await db.query.spotifyPlaylistExportRuns.findFirst({
         where: eq(spotifyPlaylistExportRuns.id, result.run.id),
       }),
     ).toMatchObject({
       discoveryReconciliationCampaignId: campaignId,
-      orderingPolicy: "discovery_inbox",
+      orderingPolicy: "release_date_custom_order",
       status: "completed",
     });
   });

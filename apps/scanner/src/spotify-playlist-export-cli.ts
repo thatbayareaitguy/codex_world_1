@@ -93,7 +93,13 @@ export function sanitizedSpotifyPlaylistExportOutput(input: {
     skipped: number;
     status: string;
   };
-  target: { id: string; name: string; snapshotId: string };
+  target: {
+    collaborative?: boolean;
+    id: string;
+    name: string;
+    public?: boolean | null;
+    snapshotId: string;
+  };
 }) {
   const skipCounts = Object.fromEntries(
     [...new Set(input.plan.skips.map((item) => item.reason))]
@@ -103,7 +109,14 @@ export function sanitizedSpotifyPlaylistExportOutput(input: {
   return {
     cacheHit: input.cacheHit ?? false,
     mode: input.run ? "live" : "dry-run",
-    target: { id: input.target.id, name: input.target.name },
+    target: {
+      ...(input.target.collaborative === undefined
+        ? {}
+        : { collaborative: input.target.collaborative }),
+      id: input.target.id,
+      name: input.target.name,
+      ...(input.target.public === undefined ? {} : { public: input.target.public }),
+    },
     totals: {
       additions: input.plan.additions.length,
       alreadyPresent: input.plan.alreadyPresent.length,
@@ -114,7 +127,12 @@ export function sanitizedSpotifyPlaylistExportOutput(input: {
       reorderMoves: input.plan.reorderMoves.length,
       releaseGroupingConflicts: input.plan.releaseGroupingConflicts.length,
       skipped: input.plan.skips.length,
-      unrelatedItems: input.plan.unrelatedItems.length,
+      managedPlaylistItems: input.plan.managedPlaylistItemCount,
+      managedOutsideCurrentEligibility: input.plan.outsideCurrentExportSetItems.filter(
+        (item) => item.appManaged,
+      ).length,
+      outsideCurrentEligibility: input.plan.outsideCurrentExportSetItems.length,
+      unmanagedPlaylistItems: input.plan.unmanagedItems.length,
     },
     skipCounts,
     additions: input.plan.additions.map((item) => ({
@@ -132,9 +150,19 @@ export function sanitizedSpotifyPlaylistExportOutput(input: {
     })),
     orderingConflicts: input.plan.orderingConflicts,
     releaseGroupingConflicts: input.plan.releaseGroupingConflicts,
-    unrelatedItems: input.plan.unrelatedItems.map((item) => ({
+    outsideCurrentExportSetItems: input.plan.outsideCurrentExportSetItems.map((item) => ({
+      appManaged: item.appManaged,
       ...(item.addedAt ? { addedAt: item.addedAt } : {}),
       ...(item.albumId ? { albumId: item.albumId } : {}),
+      ...(item.albumTitle ? { albumTitle: item.albumTitle } : {}),
+      ...(item.artistNames ? { artistNames: item.artistNames } : {}),
+      position: item.position,
+      ...(item.releaseDate ? { releaseDate: item.releaseDate } : {}),
+      trackId: item.trackId,
+      ...(item.title ? { title: item.title } : {}),
+    })),
+    unmanagedItems: input.plan.unmanagedItems.map((item) => ({
+      ...(item.addedAt ? { addedAt: item.addedAt } : {}),
       ...(item.albumTitle ? { albumTitle: item.albumTitle } : {}),
       ...(item.artistNames ? { artistNames: item.artistNames } : {}),
       position: item.position,
@@ -209,7 +237,7 @@ async function main(): Promise<void> {
         const execution = await executeSpotifyPlaylistExport(connection.db, userId, client, {
           ...(options.campaignId ? { discoveryReconciliationCampaignId: options.campaignId } : {}),
           ...(options.maxAdditions === undefined ? {} : { maxAdditions: options.maxAdditions }),
-          orderingPolicy: "discovery_inbox",
+          orderingPolicy: "release_date_custom_order",
           playlistId: configuration.spotify.allowedPlaylistId,
           policy: {
             allowedPlaylistId: configuration.spotify.allowedPlaylistId,
@@ -233,7 +261,7 @@ async function main(): Promise<void> {
             ...(options.campaignId
               ? { discoveryReconciliationCampaignId: options.campaignId }
               : {}),
-            orderingPolicy: "discovery_inbox",
+            orderingPolicy: "release_date_custom_order",
           },
         );
       }

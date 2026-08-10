@@ -55,8 +55,9 @@ export interface SpotifyPlaylistReleaseDateOrderPlan {
   unknownDateItems: number;
 }
 
-export interface SpotifyPlaylistUnrelatedItem extends SpotifyPlaylistSnapshotItem {
-  reason: "not_in_export_set";
+export interface SpotifyPlaylistOutsideCurrentExportSetItem extends SpotifyPlaylistSnapshotItem {
+  appManaged: boolean;
+  reason: "not_in_current_export_set";
 }
 
 export type SpotifyPlaylistExportSkipReason =
@@ -94,6 +95,7 @@ export interface SpotifyPlaylistExportPlan {
   desired: SpotifyPlaylistExportCandidate[];
   existingDuplicateTrackIds: string[];
   finalTrackIds: Array<string | null>;
+  managedPlaylistItemCount: number;
   orderingConflicts: Array<{
     earlierTrackId: string;
     earlierPosition: number;
@@ -108,7 +110,8 @@ export interface SpotifyPlaylistExportPlan {
   reorderMoves: SpotifyPlaylistReorderMove[];
   skips: SpotifyPlaylistExportSkip[];
   orderedItems: SpotifyPlaylistSnapshotItem[];
-  unrelatedItems: SpotifyPlaylistUnrelatedItem[];
+  outsideCurrentExportSetItems: SpotifyPlaylistOutsideCurrentExportSetItem[];
+  unmanagedItems: SpotifyPlaylistSnapshotItem[];
 }
 
 export type SpotifyPlaylistExportOrderingPolicy =
@@ -301,9 +304,17 @@ export function planSpotifyPlaylistExport(
     }
   }
 
-  const unrelatedItems = playlistItems
+  const outsideCurrentExportSetItems = playlistItems
     .filter((item) => item.trackId === null || !desiredTrackIds.has(item.trackId))
-    .map((item) => ({ ...item, reason: "not_in_export_set" as const }));
+    .map((item) => ({
+      ...item,
+      appManaged: item.trackId !== null && appManagedTrackIds.has(item.trackId),
+      reason: "not_in_current_export_set" as const,
+    }));
+  const unmanagedItems = playlistItems.filter(
+    (item) => item.trackId === null || !appManagedTrackIds.has(item.trackId),
+  );
+  const managedPlaylistItemCount = playlistItems.length - unmanagedItems.length;
 
   const reorderMoves = planMovesFromKeys(
     workingKeys,
@@ -331,12 +342,14 @@ export function planSpotifyPlaylistExport(
       desired,
       existingDuplicateTrackIds,
       finalTrackIds: orderedItems.map((item) => item.trackId),
+      managedPlaylistItemCount,
       orderingConflicts,
       orderedItems,
+      outsideCurrentExportSetItems,
       reorderMoves: [],
       releaseGroupingConflicts,
       skips,
-      unrelatedItems,
+      unmanagedItems,
     };
   }
   return {
@@ -345,12 +358,14 @@ export function planSpotifyPlaylistExport(
     desired,
     existingDuplicateTrackIds,
     finalTrackIds: orderedItems.map((item) => item.trackId),
+    managedPlaylistItemCount,
     orderingConflicts,
     orderedItems,
+    outsideCurrentExportSetItems,
     reorderMoves,
     releaseGroupingConflicts,
     skips,
-    unrelatedItems,
+    unmanagedItems,
   };
 }
 
@@ -497,6 +512,7 @@ function planMovesFromKeys(
   desiredKeys: readonly string[],
   decorated: { desired: DecoratedPlaylistItem[] },
 ): SpotifyPlaylistReorderMove[] {
+  const maximumRangeLength = 100;
   if (currentKeys.length !== desiredKeys.length) {
     throw new Error("Spotify playlist reorder planning requires the same item count.");
   }
@@ -509,6 +525,7 @@ function planMovesFromKeys(
     if (rangeStart < 0) throw new Error("Spotify playlist reorder target is not a permutation.");
     let rangeLength = 1;
     while (
+      rangeLength < maximumRangeLength &&
       rangeStart + rangeLength < working.length &&
       targetIndex + rangeLength < desiredKeys.length &&
       working[rangeStart + rangeLength] === desiredKeys[targetIndex + rangeLength]

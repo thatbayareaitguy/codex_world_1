@@ -96,8 +96,8 @@ pnpm spotify:playlist-export -- --live --campaign <campaign-id> --discovery-inbo
 pnpm discovery:bootstrap activate --campaign <campaign-id>
 ```
 
-The export remains bound to `SPOTIFY_ALLOWED_PLAYLIST_ID`. It adds only campaign-confirmed tracks in
-a deterministic position-zero discovery batch and preserves existing playlist membership and order. Activation refuses to run
+The export remains bound to `SPOTIFY_ALLOWED_PLAYLIST_ID`. It adds only campaign-confirmed tracks and
+maintains release-date Custom Order without changing playlist membership. Activation refuses to run
 until the inbox export is complete and the provider cooldown is clear. Production ticks still
 require the separately configured `SPOTIFY_SCHEDULER_ENABLED=true` capability; do not change `.env`
 as part of credential-free verification.
@@ -156,7 +156,13 @@ Normal scans use one global database lock. Each provider records an independent 
 
 Spotify uses one database-backed queue across web and scanner processes. The default and minimum configured interval is ten seconds with concurrency one. A provider 429 persists a client-wide cooldown across restart; do not clear or bypass a valid integer-second wait. Initial scans are limited to 15 artists per batch and begin paused for confirmation. See [Spotify Development Mode Scanning](spotify-development-mode-scanning.md).
 
-Spotify playlist export always targets `SPOTIFY_ALLOWED_PLAYLIST_ID`. Dry-run reads the owned, non-collaborative playlist and reports additions, existing tracks, skip reasons, and duplicates without provider mutation. Live mode requires `SPOTIFY_PLAYLIST_WRITES_ENABLED=true` and both stored playlist modification scopes. It records a durable run and per-track operation ledger, prepends only exact or manually confirmed tracks in deterministic batches, preserves user-added tracks and all existing relative order, retries isolated failures on an explicit rerun, and resumes unfinished operations after interruption. `--max-additions` is a canary limit, not a different target. The verified snapshot cache avoids playlist-item pagination while the remote `snapshot_id` is unchanged. An external change triggers one full reconciliation read. No export command reorders, creates, removes, replaces, renames, follows, or changes playlist visibility.
+Spotify playlist export always targets `SPOTIFY_ALLOWED_PLAYLIST_ID`. Dry-run reads the owned, non-collaborative playlist and reports additions, existing tracks, skip reasons, duplicate IDs, managed versus unmanaged membership, and Custom Order moves without mutation. Live mode requires `SPOTIFY_PLAYLIST_WRITES_ENABLED=true` and both stored playlist modification scopes. It records a durable run and per-track operation ledger, adds only exact or manually confirmed tracks, and maintains newest-release-first Custom Order with contiguous release groups. Existing and user-added tracks may move through snapshot-aware range operations, but they are never removed or re-added and their Spotify Date Added and Added By values remain intact. `--max-additions` is a canary limit, not a different target. An unchanged snapshot uses the verified cache; an external or interrupted-write snapshot change triggers one full reconciliation read. Successful internal writes update the cache from returned snapshot IDs and do not force repeated pagination. No export command creates, removes, replaces, renames, follows, or changes playlist visibility.
+
+The verified steady-state read cost is one account check and one playlist metadata/snapshot check per
+export attempt when the snapshot is unchanged. A changed snapshot requires one complete item read;
+with Spotify's 50-item page limit, the current 1,009-item playlist requires 21 item pages plus the
+before/after metadata checks. Reorder ranges are capped at 100 items and resume from the last persisted
+snapshot after interruption.
 
 The production playlist visibility is managed by one fixed-target command. It has no playlist-ID argument and cannot select another playlist:
 
@@ -205,7 +211,18 @@ The command requires completed browser OAuth and is read-only. It has no playlis
 
 ## Scheduling And Logs
 
-Windows Task Scheduler should invoke `scripts/run-daily-scan.ps1`. The script changes to the repository, relies on the scanner's ignored `.env` loader, uses the scan lock, writes dated logs under `%LOCALAPPDATA%\TSNewMusicRadar\logs`, and returns the scanner exit code. Do not put secrets in task arguments. Configure Run whether user is logged on or not only when that account can start Docker Desktop, then use Task Scheduler's Run command to test it.
+`scripts/run-daily-scan.ps1` remains a manual logging wrapper. Do not use it as an interactive
+scheduled-task action. Windows Task Scheduler actions must launch the intended TypeScript CLI through
+`conhost.exe --headless node.exe --import tsx`, use the repository as the working directory, and put
+no secrets in task arguments. The scanner loads ignored local configuration, uses its operation lock,
+and writes structured logs under `%LOCALAPPDATA%\TSNewMusicRadar\logs`.
+
+Temporary Spotify campaign tasks must be registered through
+`scripts/register-spotify-campaign-task.ps1`. The registered action bypasses `powershell.exe` and
+`pnpm.cmd`: Task Scheduler launches `conhost.exe --headless`, which runs `node.exe --import tsx`
+against the campaign CLI. The task itself is marked hidden and rejects overlapping instances. Do not
+replace that action with a PowerShell or pnpm task action, because either console host can briefly
+take focus from a full-screen application on every tick.
 
 The recurring scheduler combines weekly Apple jobs and the bounded Spotify worker. Its read-only
 status command is:
@@ -214,10 +231,15 @@ status command is:
 pnpm discovery:scheduler:status
 ```
 
-The bounded launcher is `scripts/run-spotify-scheduler-tick.ps1`. Despite its retained filename, it
-runs `pnpm discovery:scheduler:tick`, claims at most one due Apple job or one bounded Spotify work
-unit, and exits. Register that script with Windows Task Scheduler at a short fixed interval. The
-actual Thursday 9:00 PM Apple scan, Friday 9:00 AM catch-up, Saturday-Wednesday Spotify window,
+The bounded scheduler entry point is `apps/scanner/src/discovery-scheduler-cli.ts tick`. It claims at
+most one due Apple job or one bounded broad Spotify work unit and exits. During Apple-priority
+resolution, one process may handle up to `SPOTIFY_PRIORITY_MAX_ITEMS_PER_RUN` committed priority work
+items, default 10. It immediately claims the next priority item after the previous item commits; the
+shared Spotify request gate supplies the required 10-second request spacing and rolling-capacity
+check. Register the entry point through the same hidden
+`conhost.exe --headless node.exe --import tsx` action pattern at a one-minute wake-up interval. The
+Windows interval is not the artist pacing mechanism. The actual Thursday 9:00 PM Apple scan, Friday
+9:00 AM catch-up, Saturday-Wednesday Spotify window,
 recovery deadlines, daily ceilings, and provider cooldowns are enforced from PostgreSQL state in
 `America/Los_Angeles`, not by the Windows trigger time.
 

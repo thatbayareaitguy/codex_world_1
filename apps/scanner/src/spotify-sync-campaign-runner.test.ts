@@ -11,11 +11,17 @@ describe("Spotify campaign Windows runner", () => {
     );
     const cleanup = readFileSync(resolve("scripts/remove-spotify-campaign-task.ps1"), "utf8");
 
-    expect(runner).toContain("pnpm.cmd spotify:campaign -- tick --campaign $CampaignId");
+    expect(runner).toContain("& $node --import tsx $campaignCli tick --campaign $CampaignId");
+    expect(runner).not.toContain("pnpm.cmd");
     expect(registration).toContain("TS New Music Scanner Spotify Campaign 100");
+    expect(registration).toContain("System32\\conhost.exe");
+    expect(registration).toContain('--headless `"$node`" --import tsx');
+    expect(registration).not.toContain('New-ScheduledTaskAction -Execute "powershell.exe"');
+    expect(registration).not.toContain("pnpm.cmd");
     expect(registration).toContain("-MultipleInstances IgnoreNew");
     expect(registration).toContain("-RepetitionInterval (New-TimeSpan -Minutes 1)");
     expect(registration).toContain("-WakeToRun");
+    expect(registration).toContain("-Hidden");
     expect(registration).not.toMatch(/CLIENT_SECRET|ACCESS_TOKEN|REFRESH_TOKEN/);
     expect(cleanup).toContain("Unregister-ScheduledTask");
   });

@@ -1,10 +1,12 @@
 import {
+  applySpotifyPlaylistReorderMove,
   hasSpotifyPlaylistWriteScopes,
   abbreviateSpotifyPlaylistId,
   assertOwnedNonCollaborativeSpotifyPlaylist,
   assertSpotifyPlaylistWriteTarget,
   isExactSpotifyIdentity,
   planSpotifyPlaylistExport,
+  planSpotifyPlaylistReleaseDateOrder,
   spotifyPlaylistIdSchema,
   SpotifyHttpError,
   SpotifyPlaylistWriteDeniedError,
@@ -33,8 +35,8 @@ import {
   tracks,
 } from "./schema";
 import {
-  invalidateSpotifyPlaylistSnapshot,
   loadVerifiedSpotifyPlaylistSnapshot,
+  persistSpotifyPlaylistSnapshot,
   upsertSpotifyPlaylistTarget,
 } from "./spotify-playlist-cache";
 
@@ -157,7 +159,7 @@ export async function executeSpotifyPlaylistExport(
       ...(input.discoveryReconciliationCampaignId
         ? { discoveryReconciliationCampaignId: input.discoveryReconciliationCampaignId }
         : {}),
-      orderingPolicy: input.orderingPolicy ?? "discovery_inbox",
+      orderingPolicy: input.orderingPolicy ?? "release_date_custom_order",
     },
     snapshot.cacheHit,
   );
@@ -167,13 +169,13 @@ export async function executeSpotifyPlaylistExport(
     target.id,
     playlistId,
     input.discoveryReconciliationCampaignId ?? null,
-    input.orderingPolicy ?? "discovery_inbox",
+    input.orderingPolicy ?? "release_date_custom_order",
   );
   const resumed = Boolean(run);
   if (!run) {
     run = await createExportRun(db, target.id, preview, {
       discoveryReconciliationCampaignId: input.discoveryReconciliationCampaignId ?? null,
-      orderingPolicy: input.orderingPolicy ?? "discovery_inbox",
+      orderingPolicy: input.orderingPolicy ?? "release_date_custom_order",
     });
   } else {
     await db
@@ -215,7 +217,7 @@ export async function executeSpotifyPlaylistExport(
           group[0]!.insertPosition,
         );
         workingItems = insertExportedItems(workingItems, preview.plan.orderedItems, group);
-        await invalidateSpotifyPlaylistSnapshot(db, userId, playlistId);
+        await persistSpotifyPlaylistSnapshot(db, target.id, snapshotAfter, workingItems);
         for (const operation of group) {
           await markOperationExported(db, target.id, operation, true);
         }
@@ -235,7 +237,7 @@ export async function executeSpotifyPlaylistExport(
                 insertPosition: Math.max(0, operation.insertPosition - failedBefore),
               },
             ]);
-            await invalidateSpotifyPlaylistSnapshot(db, userId, playlistId);
+            await persistSpotifyPlaylistSnapshot(db, target.id, snapshotAfter, workingItems);
             await markOperationExported(db, target.id, operation, true);
           } catch (itemError) {
             if (isGlobalSpotifyWriteFailure(itemError)) throw itemError;
@@ -245,6 +247,21 @@ export async function executeSpotifyPlaylistExport(
         }
       }
     }
+    const countsBeforeOrdering = await loadOperationCounts(db, run.id);
+    if (
+      countsBeforeOrdering.pending === 0 &&
+      (input.orderingPolicy ?? "release_date_custom_order") === "release_date_custom_order"
+    ) {
+      const orderPlan = planSpotifyPlaylistReleaseDateOrder(workingItems);
+      for (const move of orderPlan.moves) {
+        snapshotAfter = await client.reorderPlaylistItems(playlistId, {
+          ...move,
+          snapshotId: snapshotAfter,
+        });
+        workingItems = applySpotifyPlaylistReorderMove(workingItems, move);
+        await persistSpotifyPlaylistSnapshot(db, target.id, snapshotAfter, workingItems);
+      }
+    }
   } catch (error) {
     await db
       .update(spotifyPlaylistExportRuns)
@@ -252,19 +269,8 @@ export async function executeSpotifyPlaylistExport(
       .where(eq(spotifyPlaylistExportRuns.id, run.id));
     throw error;
   }
-  const wrotePlaylist = additionsAttempted > 0 || snapshotAfter !== snapshot.playlist.snapshot_id;
-  const verifiedSnapshot = wrotePlaylist
-    ? await loadVerifiedSpotifyPlaylistSnapshot(
-        db,
-        userId,
-        client,
-        { ...snapshot.playlist, snapshot_id: snapshotAfter },
-        { forceRefresh: true, policy: input.policy },
-      )
-    : snapshot;
-  const finalItems = verifiedSnapshot.items;
-  snapshotAfter = verifiedSnapshot.playlist.snapshot_id;
-  await reconcilePendingOperations(db, run.id, target.id, finalItems);
+  await persistSpotifyPlaylistSnapshot(db, target.id, snapshotAfter, workingItems);
+  await reconcilePendingOperations(db, run.id, target.id, workingItems);
   const counts = await loadOperationCounts(db, run.id);
   const status = counts.pending === 0 && counts.failed === 0 ? "completed" : "partial";
   const finishedAt = status === "completed" ? new Date() : null;
@@ -337,7 +343,7 @@ async function buildPreview(
       candidates,
       playlistItems,
       new Set(managedRows.map((row) => row.providerTrackId)),
-      options.orderingPolicy ?? "discovery_inbox",
+      options.orderingPolicy ?? "release_date_custom_order",
     ),
     target: {
       collaborative: false,

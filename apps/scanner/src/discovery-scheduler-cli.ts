@@ -18,6 +18,7 @@ import { appleMusicScanBatches } from "@radar/db";
 import { loadLocalEnvironment } from "./local-env";
 import { runAutomaticDiscoveryPlaylistExport } from "./spotify-playlist-export-runtime";
 import { schedulerLimitsFromConfiguration } from "./spotify-scheduler-cli";
+import type { SpotifySchedulerTickResult } from "./spotify-scheduler";
 
 loadLocalEnvironment();
 
@@ -170,6 +171,82 @@ export async function runReadyAutomaticPlaylistExport(
   return (dependencies.runExport ?? runAutomaticDiscoveryPlaylistExport)(db, configuration);
 }
 
+type PriorityPhaseStatus = {
+  phase: string;
+  playlistInbox: { status: string };
+};
+
+export type DynamicPriorityRunResult = {
+  completedItems: number;
+  reason: "capacity_exhausted" | "cooldown" | "drained" | "failed" | "limit_reached" | "no_work";
+  requestsStarted: number;
+};
+
+export async function runDynamicSpotifyPriorityPhase(
+  db: ReturnType<typeof createDatabase>["db"],
+  configuration: ReturnType<typeof loadProviderConfiguration>,
+  dependencies: {
+    getStatus?: (db: ReturnType<typeof createDatabase>["db"]) => Promise<PriorityPhaseStatus>;
+    runExport?: (
+      db: ReturnType<typeof createDatabase>["db"],
+      configuration: ReturnType<typeof loadProviderConfiguration>,
+    ) => Promise<unknown>;
+    runTick?: (
+      db: ReturnType<typeof createDatabase>["db"],
+      configuration: ReturnType<typeof loadProviderConfiguration>,
+    ) => Promise<SpotifySchedulerTickResult>;
+  } = {},
+): Promise<DynamicPriorityRunResult> {
+  const getStatus = dependencies.getStatus ?? getRecurringDiscoveryScheduleStatus;
+  const runExport = dependencies.runExport ?? runReadyAutomaticPlaylistExport;
+  const runTick = dependencies.runTick ?? runSpotifyTick;
+  const maximumItems = configuration.spotify.scheduler.priorityMaxItemsPerRun;
+  let completedItems = 0;
+  let requestsStarted = 0;
+
+  while (completedItems < maximumItems) {
+    const status = await getStatus(db);
+    if (
+      discoverySchedulerRoute({
+        phase: status.phase,
+        playlistInboxStatus: status.playlistInbox.status,
+      }) !== "spotify_priority"
+    ) {
+      return { completedItems, reason: "drained", requestsStarted };
+    }
+
+    const result = await runTick(db, configuration);
+    requestsStarted += result.requestsStarted;
+    if (result.reason !== "completed") {
+      if (result.reason === "cooldown" || result.status.cooldownActive) {
+        return { completedItems, reason: "cooldown", requestsStarted };
+      }
+      if (
+        result.reason === "no_work" &&
+        result.status.endpointBudget.artistAlbums.priorityRemaining === 0
+      ) {
+        return { completedItems, reason: "capacity_exhausted", requestsStarted };
+      }
+      return {
+        completedItems,
+        reason: result.reason === "no_work" ? "no_work" : "failed",
+        requestsStarted,
+      };
+    }
+    if (!result.selected || !["apple_priority", "apple_catchup"].includes(result.selected.source)) {
+      throw new Error("Dynamic priority execution selected non-priority Spotify work.");
+    }
+
+    completedItems += 1;
+    await runExport(db, configuration);
+    if (result.status.endpointBudget.artistAlbums.priorityRemaining === 0) {
+      return { completedItems, reason: "capacity_exhausted", requestsStarted };
+    }
+  }
+
+  return { completedItems, reason: "limit_reached", requestsStarted };
+}
+
 async function main(): Promise<void> {
   const command = parseDiscoverySchedulerCommand(process.argv.slice(2));
   const configuration = loadProviderConfiguration();
@@ -209,11 +286,8 @@ async function main(): Promise<void> {
       return;
     }
     if (route === "spotify_priority") {
-      const spotify = await runSpotifyTick(connection.db, configuration);
-      const playlist = await runReadyAutomaticPlaylistExport(connection.db, configuration);
-      process.stdout.write(
-        `${JSON.stringify({ spotify, ...(playlist ? { playlist } : {}) }, null, 2)}\n`,
-      );
+      const spotifyPriority = await runDynamicSpotifyPriorityPhase(connection.db, configuration);
+      process.stdout.write(`${JSON.stringify({ spotifyPriority }, null, 2)}\n`);
       return;
     }
 

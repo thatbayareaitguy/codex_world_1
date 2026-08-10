@@ -5,6 +5,7 @@ import {
   discoverySchedulerRoute,
   parseDiscoverySchedulerCommand,
   runBroadAutomaticPlaylistCheckpoint,
+  runDynamicSpotifyPriorityPhase,
   runReadyAutomaticPlaylistExport,
   selectDiscoverySchedulerAction,
   shouldFlushBroadPlaylistCheckpoint,
@@ -223,5 +224,152 @@ describe("discovery scheduler CLI", () => {
       { markPending, prepare },
     );
     expect(markPending).not.toHaveBeenCalled();
+  });
+
+  it("processes five priority artists back-to-back and stops before broad work", async () => {
+    const db = {} as ReturnType<typeof createDatabase>["db"];
+    const runTick = vi.fn(() =>
+      Promise.resolve({
+        ...broadTick({ source: "apple_priority" }),
+        mode: "credential_free" as const,
+        selected: {
+          artistId: "artist",
+          discoveryReconciliationCampaignId: null,
+          dueAt: new Date(),
+          id: "work",
+          leaseExpiresAt: new Date(),
+          leaseOwner: "lease",
+          source: "apple_priority" as const,
+          spotifyAlbumId: null,
+          spotifyReleaseTrackRetrievalId: null,
+          workType: "artist_reconciliation" as const,
+        },
+      }),
+    );
+    const getStatus = vi
+      .fn()
+      .mockResolvedValueOnce({
+        phase: "apple_priority",
+        playlistInbox: { status: "completed" },
+      })
+      .mockResolvedValueOnce({
+        phase: "apple_priority",
+        playlistInbox: { status: "completed" },
+      })
+      .mockResolvedValueOnce({
+        phase: "apple_priority",
+        playlistInbox: { status: "completed" },
+      })
+      .mockResolvedValueOnce({
+        phase: "apple_priority",
+        playlistInbox: { status: "completed" },
+      })
+      .mockResolvedValueOnce({
+        phase: "apple_priority",
+        playlistInbox: { status: "completed" },
+      })
+      .mockResolvedValueOnce({
+        phase: "broad_spotify",
+        playlistInbox: { status: "completed" },
+      });
+    const runExport = vi.fn(() => Promise.resolve(null));
+
+    await expect(
+      runDynamicSpotifyPriorityPhase(
+        db,
+        loadProviderConfiguration({ SPOTIFY_PRIORITY_MAX_ITEMS_PER_RUN: "10" }),
+        { getStatus, runExport, runTick: runTick as never },
+      ),
+    ).resolves.toEqual({ completedItems: 5, reason: "drained", requestsStarted: 5 });
+    expect(runTick).toHaveBeenCalledTimes(5);
+    expect(runExport).toHaveBeenCalledTimes(5);
+  });
+
+  it("bounds one dynamic priority process at ten committed work items", async () => {
+    const runTick = vi.fn(() =>
+      Promise.resolve({
+        ...broadTick({ source: "apple_priority" }),
+        mode: "credential_free" as const,
+        selected: {
+          artistId: "artist",
+          discoveryReconciliationCampaignId: null,
+          dueAt: new Date(),
+          id: "work",
+          leaseExpiresAt: new Date(),
+          leaseOwner: "lease",
+          source: "apple_priority" as const,
+          spotifyAlbumId: null,
+          spotifyReleaseTrackRetrievalId: null,
+          workType: "artist_reconciliation" as const,
+        },
+      }),
+    );
+
+    await expect(
+      runDynamicSpotifyPriorityPhase(
+        {} as ReturnType<typeof createDatabase>["db"],
+        loadProviderConfiguration({ SPOTIFY_PRIORITY_MAX_ITEMS_PER_RUN: "10" }),
+        {
+          getStatus: vi.fn(() =>
+            Promise.resolve({
+              phase: "apple_priority",
+              playlistInbox: { status: "completed" },
+            }),
+          ),
+          runExport: vi.fn(() => Promise.resolve(null)),
+          runTick: runTick as never,
+        },
+      ),
+    ).resolves.toEqual({ completedItems: 10, reason: "limit_reached", requestsStarted: 10 });
+    expect(runTick).toHaveBeenCalledTimes(10);
+  });
+
+  it("stops dynamic priority execution immediately on cooldown", async () => {
+    const tick = broadTick({ cooldownActive: true, reason: "cooldown", source: "apple_priority" });
+    await expect(
+      runDynamicSpotifyPriorityPhase(
+        {} as ReturnType<typeof createDatabase>["db"],
+        loadProviderConfiguration({}),
+        {
+          getStatus: vi.fn(() =>
+            Promise.resolve({
+              phase: "apple_priority",
+              playlistInbox: { status: "completed" },
+            }),
+          ),
+          runExport: vi.fn(() => Promise.resolve(null)),
+          runTick: vi.fn(() =>
+            Promise.resolve({ ...tick, mode: "credential_free" as const, selected: null }),
+          ) as never,
+        },
+      ),
+    ).resolves.toEqual({ completedItems: 0, reason: "cooldown", requestsStarted: 1 });
+  });
+
+  it("stops dynamic priority execution when Artist Albums capacity is exhausted", async () => {
+    const tick = broadTick({ broadRemaining: 0, reason: "no_work", source: "apple_priority" });
+    tick.status.endpointBudget.artistAlbums.priorityRemaining = 0;
+    await expect(
+      runDynamicSpotifyPriorityPhase(
+        {} as ReturnType<typeof createDatabase>["db"],
+        loadProviderConfiguration({}),
+        {
+          getStatus: vi.fn(() =>
+            Promise.resolve({
+              phase: "apple_priority",
+              playlistInbox: { status: "completed" },
+            }),
+          ),
+          runExport: vi.fn(() => Promise.resolve(null)),
+          runTick: vi.fn(() =>
+            Promise.resolve({ ...tick, mode: "credential_free" as const, selected: null }),
+          ) as never,
+        },
+      ),
+    ).resolves.toEqual({
+      completedItems: 0,
+      reason: "capacity_exhausted",
+      requestsStarted: 1,
+    });
   });
 });

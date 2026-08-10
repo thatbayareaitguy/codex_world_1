@@ -13,7 +13,7 @@
 - Keep the Spotify playlist, provider-neutral saved releases, and optional verified SoundCloud outbound-link collection separate.
 - Use `http://127.0.0.1:3000/api/auth/spotify/callback` for local Spotify registration. Do not use localhost.
 - Spotify OAuth initially requests only `user-follow-read` and `playlist-read-private`. Playlist writes default off.
-- Spotify membership writes are additions only to the single valid `SPOTIFY_ALLOWED_PLAYLIST_ID`, must pass enabled, target, ownership, and non-collaborative checks, and may use only exact or manually confirmed tracks. Routine manual and scheduled exports prepend deterministic discovery batches and must never reorder or remove existing items. The separate Custom Order maintenance utility is not part of normal export operation and requires explicit authorization before use.
+- Spotify membership writes are additions only to the single valid `SPOTIFY_ALLOWED_PLAYLIST_ID`, must pass enabled, target, ownership, and non-collaborative checks, and may use only exact or manually confirmed tracks. Routine manual and scheduled exports maintain newest-release-first Custom Order with snapshot-aware range reorders. They must never remove or re-add an item to order it, and must preserve Spotify Date Added and Added By metadata.
 - Never expose Spotify playlist creation, selection, rename, arbitrary visibility changes, artwork upload, follow, unfollow, remove, replace, or arbitrary reorder operations. The browser and request bodies cannot choose a target. The only visibility operation is the internal fixed-target transition that sets the authorized playlist public and non-collaborative, with full readback verification.
 - Real provider tests must use synthetic fixtures and injected HTTP mocks. Normal verification must never call live providers.
 - Apple Music is limited to read-only public catalog discovery with a server-generated developer token. Do not request a Music User Token, personal library data, recommendations, playback, favorites, or playlist access.
@@ -24,6 +24,7 @@
 - Never bypass, probe during, or erase a valid Spotify provider cooldown. Persist safe 429 evidence without tokens, provider payloads, or artist-specific URLs.
 - Spotify artist scans must remain bounded, persisted per artist, resumable, and partial when a page limit is reached. The first full staged batch requires explicit confirmation and must never launch the whole watchlist at once.
 - Operational commands must remain Windows-compatible, loopback-only, secret-safe, and must not modify `.env`.
+- Windows scheduled scanner tasks must execute `conhost.exe --headless node.exe --import tsx` directly. Do not register `powershell.exe`, `pnpm.cmd`, or a `.ps1` runner as the recurring task action; those console hosts can interrupt the active desktop.
 - Database restore must require explicit replacement confirmation. Backups belong outside source control and must use PostgreSQL-supported custom-format dumps.
 - Database integration tests must provision the test PostgreSQL service or fail clearly. Never report a skipped database suite as passing.
 - Use official APIs only, preserve source evidence, validate external payloads with Zod, and keep matching deterministic and explainable.

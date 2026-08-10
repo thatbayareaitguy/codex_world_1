@@ -668,6 +668,7 @@ export class SpotifyClient {
       input.insertBefore < 0 ||
       !Number.isInteger(input.rangeLength) ||
       input.rangeLength < 1 ||
+      input.rangeLength > 100 ||
       !input.snapshotId.trim()
     ) {
       throw new SpotifyPlaylistWriteDeniedError(
