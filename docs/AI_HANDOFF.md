@@ -5,7 +5,7 @@ Updated: 2026-08-10 18:24 PDT
 ## Repository
 
 - Branch: `codex/release-radar-hardening`
-- Current checkpoint: `HEAD` (`fix: restore playlist ordering and priority execution`)
+- Current checkpoint: latest branch `HEAD`; activation handoff is committed
 - Upstream: current branch tracks `origin/codex/release-radar-hardening`
 - Worktree before this update: tracked files clean; unrelated `outputs/` untracked and excluded
 - Database: PostgreSQL healthy; all 29 forward migrations applied
