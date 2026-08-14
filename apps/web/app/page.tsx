@@ -2,6 +2,7 @@ import { feedFixtures, mockScanFeedFixture } from "@radar/testing";
 import { abbreviateSpotifyPlaylistId, loadProviderConfiguration } from "@radar/providers";
 import { RadarShell } from "./radar-shell";
 import { loadDatabaseFeedPage, type DatabaseFeedSummary } from "../lib/feed-server";
+import { createInitialPageDataSource, type PageDataMode } from "../lib/page-data-source";
 import { loadDatabaseWatchlist } from "../lib/watchlist-server";
 import type { WatchlistArtistViewModel } from "../lib/watchlist-types";
 
@@ -16,7 +17,8 @@ export default async function HomePage({
   const e2eMockMode = process.env.RADAR_E2E_MOCK_MODE === "true";
   const parameters = await searchParams;
   const e2eScanStatusMode = e2eMockMode && parameters["e2e-scan-status"] === "database";
-  let initialItems = feedFixtures;
+  const initialDataSource = createInitialPageDataSource(feedFixtures, e2eMockMode);
+  let initialItems = initialDataSource.initialItems;
   let initialFeedRevision: string | null = null;
   let initialFeedHasMore = false;
   let initialFeedNextCursor: string | null = null;
@@ -26,9 +28,9 @@ export default async function HomePage({
     newThisWeek: initialItems.length,
     upcoming: initialItems.filter((item) => item.state === "upcoming").length,
   };
-  let feedMode: "database" | "error" | "mock" = "mock";
+  let feedMode: PageDataMode = initialDataSource.feedMode;
   let initialArtists: WatchlistArtistViewModel[] = [];
-  let watchlistMode: "database" | "error" | "mock" = "mock";
+  let watchlistMode: PageDataMode = initialDataSource.watchlistMode;
   if (e2eScanStatusMode) {
     feedMode = "database";
     initialItems = feedFixtures.filter((item) => item.state === "new");

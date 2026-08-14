@@ -10,6 +10,8 @@
     "app:up": "tsx apps/scanner/src/app-ops.ts up",
     "app:up:dev": "tsx apps/scanner/src/app-ops.ts up --development",
     "app:down": "tsx apps/scanner/src/app-ops.ts down",
+    "app:startup:register": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/register-web-startup-task.ps1",
+    "app:startup:remove": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/remove-web-startup-task.ps1",
     "build": "pnpm --filter @radar/web build",
     "db:backup": "tsx apps/scanner/src/database-ops-cli.ts backup",
     "db:generate": "pnpm --filter @radar/db db:generate",

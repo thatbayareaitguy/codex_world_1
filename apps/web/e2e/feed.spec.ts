@@ -4,6 +4,9 @@ import { feedFixtures } from "@radar/testing";
 test("opens the discovery feed on New and keeps All as the second tab", async ({ page }) => {
   await page.goto("/#feed");
 
+  await expect(page.getByText("Mock mode", { exact: true })).toBeVisible();
+  await expect(page.getByText("Mock provider", { exact: true })).toBeVisible();
+
   const tabs = page.getByRole("tablist", { name: "Feed state" }).getByRole("tab");
   await expect(tabs.nth(0)).toHaveText("New");
   await expect(tabs.nth(1)).toHaveText("All");
@@ -64,6 +67,8 @@ test("shows released previews individually without exposing their future album i
   });
 
   await page.goto("/?e2e-scan-status=database#feed");
+  await expect(page.getByText("Database mode", { exact: true })).toBeVisible();
+  await expect(page.getByText("Mock provider", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Refresh feed" }).click();
   await expect(
     page.getByRole("heading", { name: "Future Artist - Released Preview One" }),
@@ -734,7 +739,9 @@ test("defaults scan history to the meaningful batch and inspects other run types
     });
   });
 
-  await page.goto("/?e2e-scan-status=database#feed");
+  await page.goto("/?e2e-scan-status=database#history");
+  await expect(page.getByRole("heading", { name: "History and Schedules" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Discovery feed" })).toHaveCount(0);
   const panel = page.getByRole("region", { name: "Scan history status" });
   const selector = panel.getByLabel("Inspect scan history");
   const metric = (label: string) =>
@@ -806,6 +813,16 @@ test("defaults scan history to the meaningful batch and inspects other run types
   await expect(scheduler.getByText("Eligible artists")).toBeVisible();
   await panel.getByRole("button", { name: "Load older scans" }).click();
   await expect(selector.locator(`option[value="${olderRunId}"]`)).toHaveCount(1);
+
+  await page.getByRole("link", { name: /^Discovery feed/ }).click();
+  await expect(page.getByRole("heading", { name: "Discovery feed" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Scan history status" })).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "Apple Music discovery schedule status" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Spotify rolling scheduler status" })).toHaveCount(
+    0,
+  );
 });
 
 test("hides dormant MusicBrainz controls and does not request its review API", async ({ page }) => {
@@ -1380,6 +1397,10 @@ test("navigates every primary view and resolves manual review", async ({ page })
   await page.getByRole("button", { name: "Confirm match" }).click();
   await expect(page.getByText("No items need review.")).toBeVisible();
 
+  await navigation.getByRole("link", { name: "History and Schedules" }).click();
+  await expect(page.getByRole("heading", { name: "History and Schedules" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Discovery feed" })).toHaveCount(0);
+
   await navigation.getByRole("link", { name: "System status" }).click();
   await expect(page.getByRole("heading", { name: "System status" })).toBeVisible();
   await expect(page.getByText("External scheduler required", { exact: true })).toBeVisible();
@@ -1841,7 +1862,7 @@ test("controls persisted Spotify batches without bypassing cooldown state", asyn
     await route.fulfill({ contentType: "application/json", json: { accepted: true }, status: 202 });
   });
 
-  await page.goto("/?e2e-scan-status=database#feed");
+  await page.goto("/?e2e-scan-status=database#history");
   const spotifyStatus = page.getByRole("region", { name: "Spotify scan status" });
   await expect(spotifyStatus).toContainText("Synthetic Artist");
   await expect(spotifyStatus).toContainText("Partial catalogs");
@@ -1868,6 +1889,7 @@ test("controls persisted Spotify batches without bypassing cooldown state", asyn
   cooldownActive = true;
   await page.reload();
   await expect(page.getByRole("button", { name: "Resume" })).toBeDisabled();
+  await page.getByRole("link", { name: /^Discovery feed/ }).click();
   const musicBrainzOnlyUpdate = page.locator(".last-scan-metric").getByRole("button");
   await expect(musicBrainzOnlyUpdate).toBeDisabled();
   await expect(musicBrainzOnlyUpdate).toHaveAttribute(
@@ -1877,7 +1899,7 @@ test("controls persisted Spotify batches without bypassing cooldown state", asyn
 
   batchStatus = "completed";
   cooldownActive = false;
-  await page.reload();
+  await page.getByRole("link", { name: "History and Schedules" }).click();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Deep reconciliation" }).click();
   expect(actions).toContain("start_reconciliation");

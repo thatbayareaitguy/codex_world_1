@@ -12,6 +12,26 @@ pnpm app:up:dev
 
 `app:up:dev` starts PostgreSQL, applies all pending migrations, and serves only on `127.0.0.1:3000`. `pnpm app:up` uses a production build, creating it if needed. `pnpm app:down` stops the web process tree and database service but preserves the volume. Neither command modifies `.env`.
 
+On Windows, register the production web application to start automatically after the current user
+logs on:
+
+```powershell
+pnpm app:startup:register
+Start-ScheduledTask -TaskName "TS New Music Radar Web Application"
+```
+
+Registration is safe to repeat. The hidden, non-overlapping task runs
+`conhost.exe --headless node.exe --import tsx` directly, waits up to ten minutes per task attempt for
+Docker Desktop and PostgreSQL, applies pending migrations, and then starts production Next.js only
+on `127.0.0.1:3000`. Its persistent supervisor does not duplicate an already healthy server, removes
+dead PID records, and restarts the web process after an exit or repeated health-check failure. Task
+Scheduler retries a failed supervisor attempt three times at one-minute intervals. Remove the task
+and its exact repository-scoped supervisor process without changing application data or `.env` with:
+
+```powershell
+pnpm app:startup:remove
+```
+
 Run components separately when debugging:
 
 ```powershell
