@@ -107,6 +107,13 @@ const streamingSourceDefinitions: StreamingSourceDefinition[] = [
   { id: "soundcloud", label: "SoundCloud", sourcePrefixes: ["soundcloud"] },
 ];
 
+function hasSpotifyMatch(item: FeedFixtureItem): boolean {
+  return (
+    item.spotify === "playable" ||
+    item.sources.some((source) => source.provider.toLocaleLowerCase("en-US") === "spotify")
+  );
+}
+
 interface FeedAdvancedFilters {
   artist: string;
   dateFrom: string;
@@ -775,8 +782,8 @@ export function RadarShell({
         const spotifyMatches =
           advancedFilters.spotify === "all" ||
           (advancedFilters.spotify === "available"
-            ? item.spotify === "playable"
-            : item.spotify !== "playable");
+            ? hasSpotifyMatch(item)
+            : !hasSpotifyMatch(item));
         const releaseTypeMatches =
           advancedFilters.releaseType === "all" || item.releaseType === advancedFilters.releaseType;
         const artistMatches =
@@ -1232,19 +1239,8 @@ export function RadarShell({
               label: providerConfiguration.spotify.configured
                 ? "Spotify configured"
                 : "Spotify not configured",
-              connected: false,
+              connected: providerConfiguration.spotify.configured,
             },
-            ...(providerConfiguration.musicbrainz.enabled
-              ? [
-                  {
-                    provider: "musicbrainz",
-                    label: providerConfiguration.musicbrainz.configured
-                      ? "MusicBrainz configured"
-                      : "MusicBrainz not configured",
-                    connected: providerConfiguration.musicbrainz.configured,
-                  },
-                ]
-              : []),
           ].map(({ provider, label, connected }) => (
             <div className="provider-line" key={provider}>
               <span className={`provider-dot ${provider}`} /> {label}
@@ -3164,6 +3160,9 @@ function ArtistsView({
         >
           <UserPlus size={15} /> Add artist
         </button>
+        <span aria-live="polite" className="artist-count">
+          Followed Artist Count: {artists.length}
+        </span>
         <label className="artist-search">
           <Search aria-hidden="true" size={15} />
           <input
@@ -6617,9 +6616,6 @@ function FeedItem({
               </a>
             ))}
           </div>
-          <span className={`availability availability-${item.spotify}`}>
-            Spotify {item.spotify}
-          </span>
           {soundCloudManualLinksEnabled && (
             <span className="availability availability-unavailable">
               SoundCloud {soundCloudStateLabel(soundCloudLink?.state ?? item.soundcloudState)}

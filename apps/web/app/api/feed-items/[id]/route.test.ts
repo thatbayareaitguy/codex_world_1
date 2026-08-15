@@ -1,8 +1,9 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { end, resolveFeedReview, updateFeedPreferences } = vi.hoisted(() => ({
+const { end, enforceRateLimit, resolveFeedReview, updateFeedPreferences } = vi.hoisted(() => ({
   end: vi.fn(() => Promise.resolve()),
+  enforceRateLimit: vi.fn(),
   resolveFeedReview: vi.fn(),
   updateFeedPreferences: vi.fn(),
 }));
@@ -18,7 +19,7 @@ vi.mock("@radar/providers", () => ({
 }));
 vi.mock("../../../../lib/request-security", () => ({
   assertSameOrigin: vi.fn(),
-  enforceRateLimit: vi.fn(),
+  enforceRateLimit,
 }));
 
 import { PATCH } from "./route";
@@ -87,6 +88,12 @@ describe("feed item preferences", () => {
     await expect(response.json()).resolves.toMatchObject({
       resolution: { decision: "confirm", removed: true },
     });
+    expect(enforceRateLimit).toHaveBeenCalledWith(
+      expect.anything(),
+      300,
+      60_000,
+      "/api/feed-items",
+    );
   });
 
   it("persists a decision to keep recordings separate", async () => {

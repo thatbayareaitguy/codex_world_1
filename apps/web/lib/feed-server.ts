@@ -226,19 +226,9 @@ async function selectFeedGroups(
   }
   if (filters.exactOnly) clauses.push(`"candidate"."match_confidence" = 1`);
   if (filters.spotify === "available") {
-    clauses.push(`EXISTS (
-      SELECT 1 FROM "track_availabilities" "availability"
-      WHERE "availability"."track_id" = "feed"."track_id"
-        AND "availability"."provider" = 'spotify'
-        AND "availability"."state" = 'playable'
-    )`);
+    clauses.push(spotifyMatchExistsSql());
   } else if (filters.spotify === "unavailable") {
-    clauses.push(`NOT EXISTS (
-      SELECT 1 FROM "track_availabilities" "availability"
-      WHERE "availability"."track_id" = "feed"."track_id"
-        AND "availability"."provider" = 'spotify'
-        AND "availability"."state" = 'playable'
-    )`);
+    clauses.push(`NOT (${spotifyMatchExistsSql()})`);
   }
   if (filters.provider) {
     const provider = bind(filters.provider);
@@ -491,7 +481,10 @@ async function projectFeedItems(
     const completeness = retrievalByRelease.get(release?.id ?? "");
     const availabilities = feed.trackId ? (availabilityByTrack.get(feed.trackId) ?? []) : [];
     const spotify = availabilities.find((row) => row.provider === "spotify");
-    const spotifyState = spotify?.state ?? "unavailable";
+    const spotifyState =
+      hasSpotifyEvidence || spotify?.state === "playable"
+        ? "playable"
+        : (spotify?.state ?? "unavailable");
     const exact = candidate.matchRule.startsWith("exact_");
     return [
       {
@@ -614,4 +607,26 @@ function accentFor(id: string): FeedFixtureItem["accent"] {
 
 function escapeLike(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
+}
+
+function spotifyMatchExistsSql(): string {
+  return `(
+    EXISTS (
+      SELECT 1 FROM "track_availabilities" "availability"
+      WHERE "availability"."track_id" = "feed"."track_id"
+        AND "availability"."provider" = 'spotify'
+        AND "availability"."state" = 'playable'
+    ) OR EXISTS (
+      SELECT 1 FROM "source_evidence" "spotify_evidence"
+      WHERE "spotify_evidence"."candidate_id" = "feed"."candidate_id"
+        AND "spotify_evidence"."provider" = 'spotify'
+    ) OR EXISTS (
+      SELECT 1
+      FROM "release_track_appearance_sources" "spotify_appearance_source"
+      JOIN "source_evidence" "spotify_appearance_evidence"
+        ON "spotify_appearance_evidence"."candidate_id" = "spotify_appearance_source"."candidate_id"
+      WHERE "spotify_appearance_source"."appearance_id" = "feed"."appearance_id"
+        AND "spotify_appearance_evidence"."provider" = 'spotify'
+    )
+  )`;
 }

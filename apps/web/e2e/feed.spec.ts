@@ -980,9 +980,14 @@ test("runs a mock scan, opens evidence, changes status, and filters the feed", a
   await page.getByLabel("Exact matches only").check();
   await expect(page.getByRole("heading", { name: "Oxide Echo - Static Bloom" })).toHaveCount(0);
   await page.getByLabel("Exact matches only").uncheck();
+  await page.getByLabel("Spotify availability").selectOption("available");
+  await expect(page.getByRole("heading", { name: "Lumen Field - Glass Horizon" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Juniper Vale - Afterimage" })).toHaveCount(0);
   await page.getByLabel("Spotify availability").selectOption("unavailable");
   await expect(page.getByRole("heading", { name: "Lumen Field - Glass Horizon" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Juniper Vale - Afterimage" })).toBeVisible();
   await page.getByLabel("Spotify availability").selectOption("all");
+  await expect(page.getByText("Spotify unavailable", { exact: true })).toHaveCount(0);
   await page.getByLabel("Evidence source").selectOption("musicbrainz");
   await expect(page.getByRole("heading", { name: "Juniper Vale - Afterimage" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Lumen Field - Glass Horizon" })).toHaveCount(0);
@@ -1032,6 +1037,8 @@ test("adds, sorts, edits, and removes a canonical artist", async ({ page }) => {
   const artistRows = page.locator(".data-row");
   const search = page.getByRole("searchbox", { name: "Search followed artists" });
   const sort = page.getByLabel("Sort artists");
+  const followedArtistCount = page.getByText("Followed Artist Count: 4", { exact: true });
+  await expect(followedArtistCount).toBeVisible();
   await search.fill("oxide");
   await expect(artistRows).toHaveCount(1);
   await expect(artistRows.first()).toContainText("Oxide Echo");
@@ -1069,6 +1076,7 @@ test("adds, sorts, edits, and removes a canonical artist", async ({ page }) => {
   await page.getByLabel("Artist name", { exact: true }).fill("Night Index");
   await page.getByRole("button", { name: "Add to watchlist" }).click();
   await expect(page.getByText("Night Index", { exact: true })).toBeVisible();
+  await expect(page.getByText("Followed Artist Count: 5", { exact: true })).toBeVisible();
   await sort.selectOption("recent");
   await expect(artistRows.first()).toContainText("Night Index");
 
@@ -1079,6 +1087,7 @@ test("adds, sorts, edits, and removes a canonical artist", async ({ page }) => {
 
   await page.getByRole("button", { name: "Remove Night Index Ensemble" }).click();
   await expect(page.getByText("Night Index Ensemble", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Followed Artist Count: 4", { exact: true })).toBeVisible();
   await expect(
     page
       .getByRole("complementary", { name: "Primary navigation" })

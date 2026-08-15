@@ -3,6 +3,7 @@ import { abbreviateSpotifyPlaylistId, loadProviderConfiguration } from "@radar/p
 import { RadarShell } from "./radar-shell";
 import { loadDatabaseFeedPage, type DatabaseFeedSummary } from "../lib/feed-server";
 import { createInitialPageDataSource, type PageDataMode } from "../lib/page-data-source";
+import { loadDatabaseProviderActivity } from "../lib/provider-status-server";
 import { loadDatabaseWatchlist } from "../lib/watchlist-server";
 import type { WatchlistArtistViewModel } from "../lib/watchlist-types";
 
@@ -31,6 +32,7 @@ export default async function HomePage({
   let feedMode: PageDataMode = initialDataSource.feedMode;
   let initialArtists: WatchlistArtistViewModel[] = [];
   let watchlistMode: PageDataMode = initialDataSource.watchlistMode;
+  let databaseProviderActivity = { appleMusic: false, spotify: false };
   if (e2eScanStatusMode) {
     feedMode = "database";
     initialItems = feedFixtures.filter((item) => item.state === "new");
@@ -58,6 +60,11 @@ export default async function HomePage({
     } catch {
       watchlistMode = "error";
     }
+    try {
+      databaseProviderActivity = await loadDatabaseProviderActivity(configuration.databaseUrl);
+    } catch {
+      // The configuration status remains available when operational evidence cannot be read.
+    }
   }
   return (
     <RadarShell
@@ -71,13 +78,13 @@ export default async function HomePage({
       initialItems={initialItems}
       providerConfiguration={{
         appleMusic: {
-          configured: configuration.appleMusic.configured,
+          configured: configuration.appleMusic.configured || databaseProviderActivity.appleMusic,
           enabled: configuration.appleMusic.enabled,
         },
         databaseConfigured: Boolean(configuration.databaseUrl),
         musicbrainz: {
-          configured: configuration.musicbrainz.configured,
-          enabled: configuration.musicbrainz.enabled,
+          configured: false,
+          enabled: false,
         },
         soundcloudManualLinksEnabled: configuration.soundcloudManualLinksEnabled,
         spotify: {
@@ -89,7 +96,7 @@ export default async function HomePage({
                 ),
               }
             : {}),
-          configured: configuration.spotify.configured,
+          configured: configuration.spotify.configured || databaseProviderActivity.spotify,
           enabled: configuration.spotify.enabled,
           expectedPlaylistPublic: configuration.spotify.expectedPlaylistPublic,
           minRequestIntervalMs: configuration.spotify.minRequestIntervalMs,

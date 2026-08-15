@@ -25,7 +25,7 @@ export async function PATCH(
 ): Promise<NextResponse> {
   try {
     assertSameOrigin(request);
-    enforceRateLimit(request, 30);
+    enforceRateLimit(request, 300, 60_000, "/api/feed-items");
     const input = updateSchema.parse(await request.json());
     const { id } = await context.params;
     const configuration = loadProviderConfiguration();

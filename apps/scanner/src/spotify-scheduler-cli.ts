@@ -113,6 +113,19 @@ export function sanitizedSchedulerOutput(
   };
 }
 
+export function spotifyArtistWorkScanOptions(
+  work: Pick<SpotifySchedulerClaim, "source" | "workType">,
+) {
+  const refreshNewestCatalogPage = ["apple_priority", "apple_catchup"].includes(work.source);
+  return {
+    full: work.workType === "artist_reconciliation" && !refreshNewestCatalogPage,
+    spotifyMode:
+      work.workType === "artist_reconciliation" && !refreshNewestCatalogPage
+        ? ("reconciliation" as const)
+        : ("daily" as const),
+  };
+}
+
 async function main(): Promise<void> {
   const command = parseSpotifySchedulerCommand(process.argv.slice(2));
   const configuration = loadProviderConfiguration();
@@ -189,17 +202,18 @@ async function executeProductionWork(
     },
   };
   const startedAt = new Date();
+  const scanOptions = spotifyArtistWorkScanOptions(work);
   try {
     await runScanUnlocked(
       {
         artistId: work.artistId,
         dryRun: false,
-        full: work.workType === "artist_reconciliation",
+        full: scanOptions.full,
         provider: "spotify",
         source: "spotify_scheduler",
         spotifyConfirmBatch: false,
         spotifyMaxPages: 1,
-        spotifyMode: work.workType === "artist_reconciliation" ? "reconciliation" : "daily",
+        spotifyMode: scanOptions.spotifyMode,
         spotifyNewReconciliationCycle: false,
       },
       adjustedConfiguration,

@@ -5,6 +5,7 @@ import {
   feedRevisions,
   releaseCandidates,
   sourceEvidence,
+  trackAvailabilities,
   tracks,
 } from "@radar/db";
 import { eq, inArray, sql } from "drizzle-orm";
@@ -12,6 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { persistCandidates } from "../../scanner/src/scan";
 import { loadDatabaseFeed, loadDatabaseFeedPage, loadDatabaseFeedRevision } from "./feed-server";
+import { loadDatabaseProviderActivity } from "./provider-status-server";
 
 const databaseUrl =
   process.env.TEST_DATABASE_URL ?? "postgres://radar:radar@127.0.0.1:5433/radar_test";
@@ -130,6 +132,41 @@ describe.sequential("database feed pagination", () => {
     expect(page.totalCount).toBe(10);
     expect(page.hasMore).toBe(false);
     expect(page.items.every((item) => item.releaseType === "single")).toBe(true);
+  });
+
+  it("reports providers observed in persisted source evidence", async () => {
+    await expect(loadDatabaseProviderActivity(databaseUrl)).resolves.toEqual({
+      appleMusic: false,
+      spotify: true,
+    });
+  });
+
+  it("treats safe Spotify evidence as available when an availability row is absent", async () => {
+    const [track] = await connection.db
+      .select({ id: tracks.id, title: tracks.title })
+      .from(tracks)
+      .where(eq(tracks.title, "Synthetic Track 1"))
+      .limit(1);
+    await connection.db
+      .delete(trackAvailabilities)
+      .where(eq(trackAvailabilities.trackId, track!.id));
+
+    const page = await loadDatabaseFeedPage(databaseUrl, {
+      filters: { search: track!.title, spotify: "available" },
+      limit: 25,
+      secret: cursorSecret,
+    });
+
+    const projected = page.items.find((item) => item.title === "Synthetic Track 1");
+    expect(projected).toMatchObject({ spotify: "playable", title: "Synthetic Track 1" });
+    expect(projected!.sources.some((source) => source.provider === "Spotify")).toBe(true);
+
+    const unavailable = await loadDatabaseFeedPage(databaseUrl, {
+      filters: { search: track!.title, spotify: "unavailable" },
+      limit: 25,
+      secret: cursorSecret,
+    });
+    expect(unavailable.items.some((item) => item.title === "Synthetic Track 1")).toBe(false);
   });
 
   it("increments the durable revision when projected track data changes", async () => {
