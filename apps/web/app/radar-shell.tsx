@@ -6642,6 +6642,10 @@ function FeedItem({
             record={soundCloudLink}
           />
         )}
+        {!hasSpotifyMatch(item) &&
+          item.sources.some((source) => source.provider === "Apple Music") && (
+            <SpotifyResolutionControls item={item} />
+          )}
       </div>
 
       <div className="export-column">
@@ -6665,6 +6669,104 @@ function FeedItem({
         )}
       </div>
     </article>
+  );
+}
+
+function SpotifyResolutionControls({ item }: { item: FeedFixtureItem }) {
+  const [editing, setEditing] = useState(false);
+  const [url, setUrl] = useState("");
+  const [status, setStatus] = useState<"idle" | "submitting" | "queued" | "verifying">(
+    item.spotifyResolution?.status === "queued" || item.spotifyResolution?.status === "verifying"
+      ? item.spotifyResolution.status
+      : "idle",
+  );
+  const [error, setError] = useState<string | null>(null);
+  const automaticResolution = item.spotifyResolution?.mode === "automatic";
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setStatus("submitting");
+    setError(null);
+    try {
+      const response = await fetch(`/api/feed-items/${encodeURIComponent(item.id)}/spotify-link`, {
+        body: JSON.stringify({ url }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+      const body = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Spotify verification could not be queued.");
+      setStatus("queued");
+      setEditing(false);
+    } catch (submissionError) {
+      setStatus("idle");
+      setError(
+        submissionError instanceof Error
+          ? submissionError.message
+          : "Spotify verification could not be queued.",
+      );
+    }
+  };
+
+  return (
+    <div className="soundcloud-controls spotify-resolution-controls">
+      <div className="soundcloud-actions">
+        {status === "queued" || status === "verifying" ? (
+          <span className="success-text">
+            {status === "verifying"
+              ? automaticResolution
+                ? "Spotify match is being verified"
+                : "Spotify link is being verified"
+              : automaticResolution
+                ? "Spotify match queued for exact verification"
+                : "Spotify link queued for exact verification"}
+          </span>
+        ) : (
+          <button
+            aria-expanded={editing}
+            className="text-button"
+            onClick={() => {
+              setEditing((current) => !current);
+              setError(null);
+            }}
+            type="button"
+          >
+            <Link2 size={13} /> Paste exact Spotify track URL
+          </button>
+        )}
+      </div>
+      {item.spotifyResolution?.status === "mismatch" && !editing && (
+        <span className="form-error">
+          The last Spotify URL did not match this track&apos;s ISRC and artist.
+        </span>
+      )}
+      {editing && (
+        <form className="soundcloud-link-form" onSubmit={(event) => void submit(event)}>
+          <label htmlFor={`spotify-resolution-${item.id}`}>Exact Spotify track URL</label>
+          <input
+            id={`spotify-resolution-${item.id}`}
+            onChange={(event) => {
+              setUrl(event.target.value);
+              setError(null);
+            }}
+            placeholder="https://open.spotify.com/track/..."
+            value={url}
+          />
+          <button className="primary-button" disabled={status === "submitting"} type="submit">
+            {status === "submitting" ? "Queuing..." : "Verify and link"}
+          </button>
+          <button
+            className="secondary-button"
+            disabled={status === "submitting"}
+            onClick={() => setEditing(false)}
+            type="button"
+          >
+            Cancel
+          </button>
+          {error && <span className="form-error">{error}</span>}
+          <small>The scheduler verifies ISRC and artist before saving the match.</small>
+        </form>
+      )}
+    </div>
   );
 }
 

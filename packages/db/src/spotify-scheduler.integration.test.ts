@@ -9,6 +9,7 @@ import {
   finishSpotifySchedulerWork,
   getSpotifySchedulerStatus,
   planSpotifySchedulerTick,
+  queueSpotifyTrackResolutionWork,
   reconcileSpotifySchedulerWork,
   setSpotifySchedulerMode,
   spotifySchedulerWindowMs,
@@ -27,6 +28,9 @@ import {
   spotifySchedulerDailyArtists,
   spotifySchedulerState,
   spotifySchedulerWork,
+  releaseCandidates,
+  trackExternalIds,
+  tracks,
   users,
 } from "./schema";
 
@@ -55,6 +59,7 @@ beforeEach(async () => {
   await db.delete(discoveryScheduleState);
   await db.delete(spotifySchedulerDailyArtists);
   await db.delete(spotifySchedulerWork);
+  await db.execute(sql`truncate table tracks restart identity cascade`);
   await db.delete(discoveryReconciliationCampaigns);
   await db.delete(spotifyRequestEvents);
   await db.delete(spotifyProviderState);
@@ -81,6 +86,126 @@ afterAll(async () => {
 });
 
 describe("Spotify rolling scheduler persistence", () => {
+  it("queues Apple tracks missing Spotify evidence and retires the work after an exact match", async () => {
+    const now = new Date("2026-07-26T12:00:00.000Z");
+    const artistId = await createArtist("Targeted resolution", true, true);
+    await db.insert(artistExternalIds).values({
+      artistId,
+      confirmed: true,
+      externalId: `apple-${artistId}`,
+      mappingSource: "test",
+      provider: "apple_music",
+    });
+    const [track] = await db
+      .insert(tracks)
+      .values({
+        isrc: "CA5KR2665824",
+        normalizedTitle: "wonky",
+        title: "Wonky",
+      })
+      .returning({ id: tracks.id });
+    if (!track) throw new Error("Target track was not created.");
+    await db.insert(releaseCandidates).values({
+      artistExternalId: `apple-${artistId}`,
+      firstSeenAt: now,
+      matchConfidence: "1.000",
+      matchReasons: ["Synthetic exact Apple candidate"],
+      matchingAlgorithmVersion: "test",
+      matchRule: "exact_isrc",
+      matchStatus: "matched",
+      matchedTrackId: track.id,
+      normalizedTitle: "wonky",
+      payloadHash: "synthetic",
+      provider: "apple_music",
+      providerReleaseId: "apple-release",
+      providerTrackId: "apple-track",
+      rawPayload: {},
+      releaseDate: "2026-07-26",
+      title: "Wonky",
+    });
+
+    await reconcileSpotifySchedulerWork(db, now);
+    await reconcileSpotifySchedulerWork(db, now);
+    const resolution = await db.query.spotifySchedulerWork.findMany({
+      where: eq(spotifySchedulerWork.workType, "track_resolution"),
+    });
+    expect(resolution).toHaveLength(1);
+    expect(resolution[0]).toMatchObject({
+      artistId,
+      source: "repair",
+      status: "queued",
+      targetIsrc: "CA5KR2665824",
+      targetTrackId: track.id,
+      trackResolutionMode: "isrc",
+    });
+
+    await setSpotifySchedulerMode(db, "automatic", now);
+    await markDiscoveryPlaylistInboxStatus(db, { status: "completed" }, now);
+    const claim = await claimSpotifySchedulerWork(db, new Date(now.getTime() + 1));
+    expect(claim).toMatchObject({ targetTrackId: track.id, workType: "track_resolution" });
+    await finishSpotifySchedulerWork(db, claim!, { status: "completed" }, now);
+    expect(
+      await db.query.spotifySchedulerWork.findFirst({
+        where: eq(spotifySchedulerWork.id, claim!.id),
+      }),
+    ).toMatchObject({
+      dueAt: new Date(now.getTime() + spotifySchedulerWindowMs),
+      status: "queued",
+    });
+
+    await db.insert(trackExternalIds).values({
+      externalId: "spotify-track",
+      provider: "spotify",
+      providerUrl: "https://open.spotify.com/track/0123456789ABCDEFGHIJKL",
+      trackId: track.id,
+    });
+    await reconcileSpotifySchedulerWork(db, new Date(now.getTime() + 2));
+    expect(
+      await db.query.spotifySchedulerWork.findFirst({
+        where: eq(spotifySchedulerWork.id, claim!.id),
+      }),
+    ).toMatchObject({ status: "completed" });
+  });
+
+  it("prioritizes a user-supplied exact track link without consuming broad scan capacity", async () => {
+    const now = new Date("2026-08-13T19:00:00.000Z");
+    const artistId = await createArtist("Manual resolution", true, true);
+    const [track] = await db
+      .insert(tracks)
+      .values({ isrc: "USABC2600002", normalizedTitle: "manual-track", title: "Manual Track" })
+      .returning({ id: tracks.id });
+    if (!track) throw new Error("Target track was not created.");
+    await queueSpotifyTrackResolutionWork(db, {
+      artistId,
+      dueAt: now,
+      expectedSpotifyArtistId: `spotify-${artistId}`,
+      mode: "isrc",
+      targetIsrc: "USABC2600002",
+      targetTrackId: track.id,
+    });
+    await queueSpotifyTrackResolutionWork(db, {
+      artistId,
+      dueAt: now,
+      expectedSpotifyArtistId: `spotify-${artistId}`,
+      mode: "manual",
+      spotifyTrackId: "0M6v8qTwT7wfiEsAmLQKdd",
+      targetIsrc: "USABC2600002",
+      targetTrackId: track.id,
+    });
+    await db
+      .update(spotifySchedulerState)
+      .set({
+        effectiveConfiguration: { ...defaultSchedulerLimits(), maxBroadRequestsPerLocalDay: 0 },
+        mode: "automatic",
+      })
+      .where(eq(spotifySchedulerState.id, "global"));
+
+    expect(await claimSpotifySchedulerWork(db, now)).toMatchObject({
+      targetSpotifyTrackId: "0M6v8qTwT7wfiEsAmLQKdd",
+      trackResolutionMode: "manual",
+    });
+  });
+
   it("blocks broad Artist Albums work at 60 calls while preserving priority capacity", async () => {
     const now = new Date("2026-07-25T12:00:00.000Z");
     const broadArtist = await createArtist("Budget broad", true, true);

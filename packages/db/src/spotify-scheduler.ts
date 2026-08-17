@@ -34,6 +34,8 @@ import {
   spotifySchedulerDailyArtists,
   spotifySchedulerState,
   spotifySchedulerWork,
+  trackExternalIds,
+  tracks,
 } from "./schema";
 
 export const spotifySchedulerStateId = "global";
@@ -45,7 +47,12 @@ export type SchedulerDatabase = RadarDatabase | SchedulerTransaction;
 
 export type SpotifySchedulerMode = "disabled" | "planning" | "validation" | "automatic" | "paused";
 export type SpotifySchedulerWorkType =
-  "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation";
+  | "base_artist"
+  | "release_detail"
+  | "release_tracks"
+  | "artist_reconciliation"
+  | "track_resolution";
+export type SpotifyTrackResolutionMode = "isrc" | "single" | "album" | "manual";
 export type SpotifySchedulerWorkStatus =
   "queued" | "leased" | "blocked" | "completed" | "cancelled";
 
@@ -80,6 +87,10 @@ export interface SpotifySchedulerClaim {
   releaseTrackRetrievalId: string | null;
   source: "initial" | "recurring" | "validation" | "repair" | "apple_priority" | "apple_catchup";
   spotifyAlbumId: string | null;
+  targetIsrc: string | null;
+  targetSpotifyTrackId: string | null;
+  targetTrackId: string | null;
+  trackResolutionMode: SpotifyTrackResolutionMode | null;
   workType: SpotifySchedulerWorkType;
 }
 
@@ -165,6 +176,26 @@ export async function reconcileSpotifySchedulerWork(
   });
 
   await db.transaction(async (tx) => {
+    await tx
+      .update(spotifySchedulerWork)
+      .set({
+        blockedReason: null,
+        lastCompletedAt: now,
+        notBefore: null,
+        status: "completed",
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(spotifySchedulerWork.workType, "track_resolution"),
+          inArray(spotifySchedulerWork.status, ["queued", "blocked"]),
+          sql`exists (
+            select 1 from ${trackExternalIds} external_track
+            where external_track.track_id = ${spotifySchedulerWork.targetTrackId}
+              and external_track.provider = 'spotify'
+          )`,
+        ),
+      );
     for (const artist of eligible) {
       const dueAt = artist.lastSuccessfulAt
         ? new Date(artist.lastSuccessfulAt.getTime() + spotifySchedulerWindowMs)
@@ -298,6 +329,48 @@ export async function reconcileSpotifySchedulerWork(
         .onConflictDoNothing();
     }
 
+    await tx.execute(sql`
+      insert into spotify_scheduler_work (
+        work_key, work_type, status, source, artist_id, expected_spotify_artist_id,
+        target_track_id, target_isrc, track_resolution_mode, priority, due_at
+      )
+      select distinct on (candidate.matched_track_id)
+        'track_resolution:isrc:' || candidate.matched_track_id::text,
+        'track_resolution'::spotify_scheduler_work_type,
+        'queued'::spotify_scheduler_work_status,
+        'repair'::spotify_scheduler_work_source,
+        apple_mapping.artist_id,
+        spotify_mapping.external_id,
+        candidate.matched_track_id,
+        upper(regexp_replace(${tracks.isrc}, '[^A-Za-z0-9]', '', 'g')),
+        'isrc'::spotify_track_resolution_mode,
+        -20,
+        candidate.first_seen_at
+      from ${releaseCandidates} candidate
+      inner join ${tracks} on ${tracks.id} = candidate.matched_track_id
+      inner join ${artistExternalIds} apple_mapping
+        on apple_mapping.provider = 'apple_music'
+       and apple_mapping.external_id = candidate.artist_external_id
+       and apple_mapping.confirmed = true
+      inner join ${artistFollows}
+        on ${artistFollows.artistId} = apple_mapping.artist_id
+       and ${artistFollows.active} = true
+      inner join ${artistExternalIds} spotify_mapping
+        on spotify_mapping.artist_id = apple_mapping.artist_id
+       and spotify_mapping.provider = 'spotify'
+       and spotify_mapping.confirmed = true
+      where candidate.provider = 'apple_music'
+        and candidate.matched_track_id is not null
+        and ${tracks.isrc} is not null
+        and not exists (
+          select 1 from ${trackExternalIds} external_track
+          where external_track.track_id = candidate.matched_track_id
+            and external_track.provider = 'spotify'
+        )
+      order by candidate.matched_track_id, candidate.first_seen_at desc
+      on conflict (work_key) do nothing
+    `);
+
     await tx
       .update(spotifySchedulerState)
       .set({
@@ -328,6 +401,39 @@ export async function queueSpotifyReleaseDetailWork(
     ...input,
     dueAt: input.dueAt ?? new Date(),
   });
+}
+
+export async function queueSpotifyResolutionReleaseDetailWork(
+  db: SchedulerDatabase,
+  input: {
+    artistId: string;
+    dueAt?: Date;
+    source: "initial" | "recurring" | "validation" | "repair" | "apple_priority" | "apple_catchup";
+    spotifyAlbumId: string;
+    targetTrackId: string;
+  },
+): Promise<void> {
+  await db
+    .insert(spotifySchedulerWork)
+    .values({
+      artistId: input.artistId,
+      dueAt: input.dueAt ?? new Date(),
+      priority: -15,
+      source: input.source,
+      spotifyAlbumId: input.spotifyAlbumId,
+      workKey: `release_detail:track_resolution:${input.targetTrackId}:${input.spotifyAlbumId}`,
+      workType: "release_detail",
+    })
+    .onConflictDoUpdate({
+      target: spotifySchedulerWork.workKey,
+      set: {
+        blockedReason: null,
+        dueAt: input.dueAt ?? new Date(),
+        source: input.source ?? "repair",
+        status: sql`case when ${spotifySchedulerWork.status} in ('blocked', 'completed', 'cancelled') then 'queued'::spotify_scheduler_work_status else ${spotifySchedulerWork.status} end`,
+        updatedAt: new Date(),
+      },
+    });
 }
 
 export async function markSpotifyReleaseDetailsFetched(
@@ -402,6 +508,56 @@ export async function queueSpotifyReleaseTrackWork(
     .onConflictDoNothing();
 }
 
+export async function queueSpotifyTrackResolutionWork(
+  db: SchedulerDatabase,
+  input: {
+    artistId: string;
+    dueAt?: Date;
+    expectedSpotifyArtistId: string;
+    mode: SpotifyTrackResolutionMode;
+    source?: "initial" | "recurring" | "validation" | "repair" | "apple_priority" | "apple_catchup";
+    spotifyTrackId?: string | null;
+    targetIsrc: string;
+    targetTrackId: string;
+  },
+): Promise<void> {
+  const normalizedIsrc = input.targetIsrc.replaceAll(/[^A-Za-z0-9]/g, "").toUpperCase();
+  if (!/^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(normalizedIsrc)) {
+    throw new Error("Spotify resolution work requires a valid ISRC.");
+  }
+  if (input.mode === "manual" && !input.spotifyTrackId) {
+    throw new Error("Manual Spotify resolution work requires a Spotify track ID.");
+  }
+  const suffix = input.mode === "manual" ? `:${input.spotifyTrackId}` : "";
+  await db
+    .insert(spotifySchedulerWork)
+    .values({
+      artistId: input.artistId,
+      dueAt: input.dueAt ?? new Date(),
+      expectedSpotifyArtistId: input.expectedSpotifyArtistId,
+      priority: input.mode === "isrc" ? -20 : input.mode === "manual" ? -30 : -10,
+      source: input.source ?? "repair",
+      status: "queued",
+      targetIsrc: normalizedIsrc,
+      targetSpotifyTrackId: input.spotifyTrackId ?? null,
+      targetTrackId: input.targetTrackId,
+      trackResolutionMode: input.mode,
+      workKey: `track_resolution:${input.mode}:${input.targetTrackId}${suffix}`,
+      workType: "track_resolution",
+    })
+    .onConflictDoUpdate({
+      target: spotifySchedulerWork.workKey,
+      set: {
+        blockedReason: null,
+        dueAt: input.dueAt ?? new Date(),
+        source: input.source ?? "repair",
+        status: sql`case when ${spotifySchedulerWork.status} in ('blocked', 'completed', 'cancelled') then 'queued'::spotify_scheduler_work_status else ${spotifySchedulerWork.status} end`,
+        targetSpotifyTrackId: input.spotifyTrackId ?? null,
+        updatedAt: new Date(),
+      },
+    });
+}
+
 export async function planSpotifySchedulerTick(
   db: RadarDatabase,
   now = new Date(),
@@ -456,7 +612,11 @@ export async function claimSpotifySchedulerWork(
     await advanceDiscoverySchedulePhaseIfDrained(tx, now);
     const candidate = await selectSpotifySchedulerCandidate(tx, now, true, state.mode);
     if (!candidate) return null;
-    if (["base_artist", "artist_reconciliation"].includes(candidate.workType)) {
+    if (
+      ["base_artist", "artist_reconciliation"].includes(candidate.workType) ||
+      (candidate.workType === "track_resolution" &&
+        ["single", "album"].includes(candidate.trackResolutionMode ?? ""))
+    ) {
       const endpointBudget = await getSpotifyEndpointBudgetStatus(
         tx,
         {
@@ -475,7 +635,7 @@ export async function claimSpotifySchedulerWork(
       }
     }
     const localDay = spotifySchedulerLocalDayWindow(now);
-    if (isBroadSpotifyWork(candidate.source)) {
+    if (isBroadSpotifyWork(candidate)) {
       if (!isBroadSpotifyDay(localDay.weekday)) return null;
       const [broadRequests, broadArtists] = await Promise.all([
         countBroadSpotifyRequests(tx, localDay.start, localDay.end),
@@ -518,11 +678,7 @@ export async function claimSpotifySchedulerWork(
       )
       .returning();
     if (!claimed) return null;
-    if (
-      claimed.workType === "base_artist" &&
-      claimed.artistId &&
-      isBroadSpotifyWork(claimed.source)
-    ) {
+    if (claimed.workType === "base_artist" && claimed.artistId && isBroadSpotifyWork(claimed)) {
       await tx
         .insert(spotifySchedulerDailyArtists)
         .values({
@@ -580,7 +736,14 @@ export async function finishSpotifySchedulerWork(
             dueAt: new Date(now.getTime() + spotifySchedulerWindowMs),
             status: "queued" as const,
           }
-        : { status: nextStatus }),
+        : outcome.status === "completed" &&
+            claim.workType === "track_resolution" &&
+            claim.trackResolutionMode === "isrc"
+          ? {
+              dueAt: new Date(now.getTime() + spotifySchedulerWindowMs),
+              status: "queued" as const,
+            }
+          : { status: nextStatus }),
       updatedAt: now,
     })
     .where(
@@ -758,6 +921,9 @@ export async function getSpotifySchedulerStatus(
       release_tracks: work.filter(
         (item) => item.workType === "release_tracks" && item.status === "queued",
       ).length,
+      track_resolution: work.filter(
+        (item) => item.workType === "track_resolution" && item.status === "queued",
+      ).length,
     },
     blockedCount: work.filter((item) => item.status === "blocked").length,
     blockedReasons: [
@@ -850,7 +1016,13 @@ async function selectSpotifySchedulerCandidate(
     mode === "validation" ? eq(spotifySchedulerWork.source, "validation") : undefined,
     broadDay
       ? undefined
-      : inArray(spotifySchedulerWork.source, ["apple_priority", "apple_catchup", "validation"]),
+      : or(
+          inArray(spotifySchedulerWork.source, ["apple_priority", "apple_catchup", "validation"]),
+          and(
+            eq(spotifySchedulerWork.workType, "track_resolution"),
+            eq(spotifySchedulerWork.trackResolutionMode, "manual"),
+          ),
+        ),
     discoveryState?.phase === "apple_priority"
       ? eq(spotifySchedulerWork.source, "apple_priority")
       : discoveryState?.phase === "apple_catchup_priority"
@@ -867,18 +1039,25 @@ async function selectSpotifySchedulerCandidate(
     .orderBy(
       asc(
         sql`case
-          when ${spotifySchedulerWork.source} = 'apple_priority' and ${spotifySchedulerWork.workType} = 'release_tracks' then 0
-          when ${spotifySchedulerWork.source} = 'apple_priority' and ${spotifySchedulerWork.workType} = 'release_detail' then 1
-          when ${spotifySchedulerWork.source} = 'apple_priority' then 2
-          when ${spotifySchedulerWork.source} = 'apple_catchup' and ${spotifySchedulerWork.workType} = 'release_tracks' then 3
-          when ${spotifySchedulerWork.source} = 'apple_catchup' and ${spotifySchedulerWork.workType} = 'release_detail' then 4
-          when ${spotifySchedulerWork.source} = 'apple_catchup' then 5
-          when ${spotifySchedulerWork.source} = 'initial' and ${spotifySchedulerWork.workType} = 'base_artist' and ${baseSlotOpen} then 6
-          when ${spotifySchedulerWork.source} = 'recurring' and ${spotifySchedulerWork.workType} = 'base_artist' and ${baseSlotOpen} then 7
-          when ${spotifySchedulerWork.workType} = 'release_tracks' and ${spotifySchedulerWork.source} <> 'repair' then 8
-          when ${spotifySchedulerWork.workType} = 'release_detail' and ${spotifySchedulerWork.source} <> 'repair' then 9
-          when ${spotifySchedulerWork.workType} = 'base_artist' then 10
-          else 11 end`,
+          when ${spotifySchedulerWork.source} = 'apple_priority' and ${spotifySchedulerWork.workType} = 'track_resolution' and ${spotifySchedulerWork.trackResolutionMode} in ('isrc', 'manual') then 0
+          when ${spotifySchedulerWork.source} = 'apple_priority' and ${spotifySchedulerWork.workType} = 'release_tracks' then 1
+          when ${spotifySchedulerWork.source} = 'apple_priority' and ${spotifySchedulerWork.workType} = 'release_detail' then 2
+          when ${spotifySchedulerWork.source} = 'apple_priority' and ${spotifySchedulerWork.workType} = 'track_resolution' then 3
+          when ${spotifySchedulerWork.source} = 'apple_priority' then 4
+          when ${spotifySchedulerWork.source} = 'apple_catchup' and ${spotifySchedulerWork.workType} = 'track_resolution' and ${spotifySchedulerWork.trackResolutionMode} in ('isrc', 'manual') then 5
+          when ${spotifySchedulerWork.source} = 'apple_catchup' and ${spotifySchedulerWork.workType} = 'release_tracks' then 6
+          when ${spotifySchedulerWork.source} = 'apple_catchup' and ${spotifySchedulerWork.workType} = 'release_detail' then 7
+          when ${spotifySchedulerWork.source} = 'apple_catchup' and ${spotifySchedulerWork.workType} = 'track_resolution' then 8
+          when ${spotifySchedulerWork.source} = 'apple_catchup' then 9
+          when ${spotifySchedulerWork.workType} = 'track_resolution' and ${spotifySchedulerWork.trackResolutionMode} = 'manual' then 10
+          when ${spotifySchedulerWork.workType} = 'track_resolution' and ${spotifySchedulerWork.trackResolutionMode} = 'isrc' then 11
+          when ${spotifySchedulerWork.source} = 'initial' and ${spotifySchedulerWork.workType} = 'base_artist' and ${baseSlotOpen} then 12
+          when ${spotifySchedulerWork.source} = 'recurring' and ${spotifySchedulerWork.workType} = 'base_artist' and ${baseSlotOpen} then 13
+          when ${spotifySchedulerWork.workType} = 'release_tracks' and ${spotifySchedulerWork.source} <> 'repair' then 14
+          when ${spotifySchedulerWork.workType} = 'release_detail' and ${spotifySchedulerWork.source} <> 'repair' then 15
+          when ${spotifySchedulerWork.workType} = 'track_resolution' then 16
+          when ${spotifySchedulerWork.workType} = 'base_artist' then 17
+          else 18 end`,
       ),
       asc(spotifySchedulerWork.dueAt),
       asc(spotifySchedulerWork.priority),
@@ -956,6 +1135,7 @@ async function countBroadSpotifyRequests(
         gte(spotifyRequestEvents.startedAt, start),
         lt(spotifyRequestEvents.startedAt, end),
         inArray(spotifySchedulerWork.source, ["initial", "recurring", "repair"]),
+        sql`not (${spotifySchedulerWork.workType} = 'track_resolution' and ${spotifySchedulerWork.trackResolutionMode} = 'manual')`,
       ),
     );
   return rows[0]?.count ?? 0;
@@ -987,8 +1167,11 @@ async function hasBroadArtistStarted(
   return rows.length === 1;
 }
 
-function isBroadSpotifyWork(source: SpotifySchedulerClaim["source"]): boolean {
-  return ["initial", "recurring", "repair"].includes(source);
+function isBroadSpotifyWork(
+  work: Pick<SpotifySchedulerClaim, "source" | "trackResolutionMode" | "workType">,
+): boolean {
+  if (work.workType === "track_resolution" && work.trackResolutionMode === "manual") return false;
+  return ["initial", "recurring", "repair"].includes(work.source);
 }
 
 function isBroadSpotifyDay(weekday: number): boolean {
@@ -1072,6 +1255,10 @@ function toClaim(row: typeof spotifySchedulerWork.$inferSelect): SpotifySchedule
     releaseTrackRetrievalId: row.releaseTrackRetrievalId,
     source: row.source,
     spotifyAlbumId: row.spotifyAlbumId,
+    targetIsrc: row.targetIsrc,
+    targetSpotifyTrackId: row.targetSpotifyTrackId,
+    targetTrackId: row.targetTrackId,
+    trackResolutionMode: row.trackResolutionMode,
     workType: row.workType,
   };
 }

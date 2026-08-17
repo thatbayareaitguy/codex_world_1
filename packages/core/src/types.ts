@@ -214,6 +214,10 @@ export interface FeedFixtureItem {
   firstSeenAt: string;
   sources: Array<{ provider: string; href: string; evidenceHref: string }>;
   spotify: AvailabilityState;
+  spotifyResolution?: {
+    mode: "automatic" | "manual";
+    status: "queued" | "verifying" | "mismatch";
+  };
   spotifyArtwork?: SpotifyReleaseArtwork;
   appleMusicArtwork?: AppleMusicReleaseArtwork;
   soundcloudState: SoundCloudLinkState;

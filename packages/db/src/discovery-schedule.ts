@@ -11,10 +11,13 @@ import {
   appleMusicScanBatches,
   artistExternalIds,
   releaseProviderReconciliations,
+  releaseCandidates,
   spotifyProviderState,
   spotifyPlaylistExportOperations,
   spotifySchedulerState,
   spotifySchedulerWork,
+  trackExternalIds,
+  tracks,
 } from "./schema";
 
 export const discoveryScheduleStateId = "global";
@@ -884,6 +887,64 @@ async function queueAppleBatchSpotifyPriority(
     source: "apple_priority" | "apple_catchup";
   },
 ): Promise<number> {
+  const [batch] = await db
+    .select({ scanRunId: appleMusicScanBatches.scanRunId })
+    .from(appleMusicScanBatches)
+    .where(eq(appleMusicScanBatches.id, input.batchId))
+    .limit(1);
+  let queued = 0;
+  if (batch?.scanRunId) {
+    const insertedTracks = await db.execute(sql`
+      insert into spotify_scheduler_work (
+        work_key, work_type, status, source, artist_id, expected_spotify_artist_id,
+        target_track_id, target_isrc, track_resolution_mode, priority, due_at
+      )
+      select distinct on (candidate.matched_track_id)
+        'track_resolution:isrc:' || candidate.matched_track_id::text,
+        'track_resolution'::spotify_scheduler_work_type,
+        'queued'::spotify_scheduler_work_status,
+        ${input.source}::spotify_scheduler_work_source,
+        apple_mapping.artist_id,
+        spotify_mapping.external_id,
+        candidate.matched_track_id,
+        upper(regexp_replace(${tracks.isrc}, '[^A-Za-z0-9]', '', 'g')),
+        'isrc'::spotify_track_resolution_mode,
+        ${input.source === "apple_priority" ? -120 : -100},
+        ${input.now.toISOString()}::timestamptz
+      from ${releaseCandidates} candidate
+      inner join ${tracks} on ${tracks.id} = candidate.matched_track_id
+      inner join ${artistExternalIds} apple_mapping
+        on apple_mapping.provider = 'apple_music'
+       and apple_mapping.external_id = candidate.artist_external_id
+       and apple_mapping.confirmed = true
+      inner join ${artistExternalIds} spotify_mapping
+        on spotify_mapping.artist_id = apple_mapping.artist_id
+       and spotify_mapping.provider = 'spotify'
+       and spotify_mapping.confirmed = true
+      where candidate.provider = 'apple_music'
+        and candidate.scan_run_id = ${batch.scanRunId}
+        and candidate.matched_track_id is not null
+        and ${tracks.isrc} is not null
+        and not exists (
+          select 1 from ${trackExternalIds} external_track
+          where external_track.track_id = candidate.matched_track_id
+            and external_track.provider = 'spotify'
+        )
+      order by candidate.matched_track_id, candidate.first_seen_at desc
+      on conflict (work_key) do update set
+        source = excluded.source,
+        priority = excluded.priority,
+        due_at = excluded.due_at,
+        status = case
+          when spotify_scheduler_work.status in ('blocked', 'cancelled')
+            then 'queued'::spotify_scheduler_work_status
+          else spotify_scheduler_work.status
+        end,
+        updated_at = ${input.now.toISOString()}::timestamptz
+      returning id
+    `);
+    queued += insertedTracks.length;
+  }
   const discoveries = await db
     .select({
       artistId: appleMusicArtistScans.artistId,
@@ -905,7 +966,6 @@ async function queueAppleBatchSpotifyPriority(
         sql`${appleMusicArtistScans.candidateCount} > 0`,
       ),
     );
-  let queued = 0;
   for (const discovery of discoveries) {
     const inserted = await db
       .insert(spotifySchedulerWork)

@@ -128,7 +128,12 @@ export function createSpotifyRequestGate(
   schedulerContext?: {
     source?: "initial" | "recurring" | "validation" | "repair" | "apple_priority" | "apple_catchup";
     workId: string;
-    workType: "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation";
+    workType:
+      | "base_artist"
+      | "release_detail"
+      | "release_tracks"
+      | "artist_reconciliation"
+      | "track_resolution";
   },
   discoveryReconciliationCampaignId?: string,
   options: SpotifyRequestGateOptions = {},
@@ -365,7 +370,12 @@ async function acquireSpotifyPermit(
   schedulerContext?: {
     source?: "initial" | "recurring" | "validation" | "repair" | "apple_priority" | "apple_catchup";
     workId: string;
-    workType: "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation";
+    workType:
+      | "base_artist"
+      | "release_detail"
+      | "release_tracks"
+      | "artist_reconciliation"
+      | "track_resolution";
   },
   discoveryReconciliationCampaignId?: string,
   options: SpotifyRequestGateOptions = {},

@@ -1091,6 +1091,10 @@ function toCampaignClaim(
     releaseTrackRetrievalId: row.releaseTrackRetrievalId,
     source: row.source,
     spotifyAlbumId: row.spotifyAlbumId,
+    targetIsrc: row.targetIsrc,
+    targetSpotifyTrackId: row.targetSpotifyTrackId,
+    targetTrackId: row.targetTrackId,
+    trackResolutionMode: row.trackResolutionMode,
     workType: row.workType,
   };
 }

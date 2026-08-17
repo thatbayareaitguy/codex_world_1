@@ -23,6 +23,10 @@ const claim: SpotifySchedulerClaim = {
   releaseTrackRetrievalId: null,
   source: "initial",
   spotifyAlbumId: null,
+  targetIsrc: null,
+  targetSpotifyTrackId: null,
+  targetTrackId: null,
+  trackResolutionMode: null,
   workType: "base_artist",
 };
 
@@ -37,6 +41,7 @@ const status: SpotifySchedulerStatus = {
     base_artist: 1,
     release_detail: 0,
     release_tracks: 0,
+    track_resolution: 0,
   },
   blockedCount: 0,
   blockedReasons: [],
@@ -307,6 +312,44 @@ describe("Spotify scheduler tick", () => {
       expect.anything(),
       detailClaim,
       { errorClassification: "scheduler_work_failed", status: "retry" },
+      expect.any(Date),
+    );
+  });
+
+  it("blocks a manually supplied Spotify track that fails exact verification", async () => {
+    const dependencies = fakeDependencies();
+    const manualClaim: SpotifySchedulerClaim = {
+      ...claim,
+      targetIsrc: "CA5KR2665824",
+      targetSpotifyTrackId: "0M6v8qTwT7wfiEsAmLQKdd",
+      targetTrackId: "55555555-5555-4555-8555-555555555555",
+      trackResolutionMode: "manual",
+      workType: "track_resolution",
+    };
+    dependencies.claimWork.mockResolvedValue(manualClaim);
+    const executor: SpotifySchedulerExecutor = {
+      execute: vi.fn(() =>
+        Promise.reject(
+          Object.assign(new Error("synthetic mismatch"), {
+            code: "spotify_resolution_mismatch",
+          }),
+        ),
+      ),
+    };
+
+    const result = await runSpotifySchedulerTick(fakeDatabase(), {
+      capabilityEnabled: true,
+      dependencies: dependencies as never,
+      executor,
+      limits,
+      mode: "credential_free",
+    });
+
+    expect(result.reason).toBe("failed");
+    expect(dependencies.finishWork).toHaveBeenCalledWith(
+      expect.anything(),
+      manualClaim,
+      { reason: "spotify_track_mismatch", status: "blocked" },
       expect.any(Date),
     );
   });

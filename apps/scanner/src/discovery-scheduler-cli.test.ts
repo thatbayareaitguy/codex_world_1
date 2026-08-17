@@ -29,6 +29,7 @@ function broadTick(input: {
         base_artist: 1,
         release_detail: 0,
         release_tracks: 0,
+        track_resolution: 0,
       },
       cooldownActive: input.cooldownActive ?? false,
       dailyBudget: {

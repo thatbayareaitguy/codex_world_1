@@ -79,6 +79,8 @@ Policy uncertainty remains. The Apple Developer Program License Agreement and Mu
 - [Authorization Code](https://developer.spotify.com/documentation/web-api/tutorials/code-flow) and [PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow): server token exchange and S256 challenge.
 - [Followed artists](https://developer.spotify.com/documentation/web-api/reference/get-followed): `user-follow-read`, cursor pagination, maximum 50.
 - [Artist albums](https://developer.spotify.com/documentation/web-api/reference/get-an-artists-albums): album, single, appears_on, and compilation groups, current maximum 10.
+- [Search](https://developer.spotify.com/documentation/web-api/reference/search): track search accepts the `isrc` field filter and has a current maximum of 10 results in Development Mode. Verified 2026-08-16.
+- [Get Track](https://developer.spotify.com/documentation/web-api/reference/get-track): a supplied Spotify track ID can be read from the public catalog and its returned `external_ids.isrc`, artists, and title can be checked before the match is stored. Verified 2026-08-16.
 - [Get Album](https://developer.spotify.com/documentation/web-api/reference/get-an-album): the official album response includes cover-art URLs and dimensions; Spotify documents the images in widest-first order.
 - [Get Album Tracks](https://developer.spotify.com/documentation/web-api/reference/get-an-albums-tracks): offset pagination supports an explicit limit from 1 through 50. The production default remains 50; bounded live validation may explicitly use 10 without changing normal behavior.
 - [Spotify design guidelines](https://developer.spotify.com/documentation/design): Spotify visual content must remain in its original form and should link back to Spotify. The feed uses the original aspect ratio, no crop, overlay, download, proxy, or transformation, and a direct album link.
@@ -112,6 +114,19 @@ already retrieved for new releases supply optional artwork metadata, so artwork 
 request. Only validated HTTPS `i.scdn.co/image/...` URLs are retained, and the artwork link must be
 the matching `open.spotify.com/album/...` URL. See
 [Spotify Development Mode Scanning](spotify-development-mode-scanning.md).
+
+Apple discoveries that have a provider-neutral ISRC but no Spotify evidence now enter a durable,
+one-request-per-item resolution queue. The queue first performs an exact ISRC track search. A miss
+falls back to separate page-zero `single` and `album` catalog requests, because the combined Artist
+Albums response is not documented as newest-first. Relevant release details are then processed by
+the existing deterministic matcher. Automatic misses retry the inexpensive ISRC search after 24
+hours. A user-supplied `open.spotify.com/track/...` URL follows the same queue and is accepted only
+when the returned Spotify track agrees on ISRC and confirmed Spotify artist identity. Every request
+remains inside the shared client-ID gate, persisted cooldown, and
+global request budget. Manual exact-link verification is prioritized ahead of broad scans but never
+bypasses cooldown or rolling request limits. Apple evidence is used only to locate Spotify evidence;
+Spotify data is not submitted to Apple Music or any other provider. Verified against the cited
+Search, Get Track, Artist Albums, rate-limit, and policy pages on 2026-08-16.
 
 ## MusicBrainz Verification
 

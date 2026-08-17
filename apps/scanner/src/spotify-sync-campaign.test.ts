@@ -22,6 +22,10 @@ const claim: SpotifySyncCampaignClaim = {
   releaseTrackRetrievalId: null,
   source: "initial",
   spotifyAlbumId: null,
+  targetIsrc: null,
+  targetSpotifyTrackId: null,
+  targetTrackId: null,
+  trackResolutionMode: null,
   workType: "base_artist",
 };
 

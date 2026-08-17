@@ -1,7 +1,32 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderReleaseTrackPage, ProviderScanPage } from "./contracts";
-import { SpotifyProvider } from "./spotify-provider";
-import type { SpotifyAlbum, SpotifyAlbumSummary, SpotifyClient } from "./spotify";
+import { spotifyCandidateFromTrack, SpotifyProvider } from "./spotify-provider";
+import type { SpotifyAlbum, SpotifyAlbumSummary, SpotifyClient, SpotifyTrack } from "./spotify";
+
+describe("Spotify targeted track candidates", () => {
+  it("retains a full-track ISRC for exact canonical matching", () => {
+    const album = albumSummary("album", "Wonky", "2026-08-14");
+    const track = {
+      ...spotifyTrack(1),
+      album,
+      external_ids: { isrc: "CA5KR2665824" },
+      name: "Wonky",
+    } satisfies SpotifyTrack;
+    const candidate = spotifyCandidateFromTrack(
+      { artistId: "artist-1", name: "Ganja White Night", spotifyArtistId: "spotify-yussi" },
+      track,
+      new Date("2026-08-16T00:00:00Z"),
+      "US",
+    );
+
+    expect(candidate).toMatchObject({
+      externalTrackId: "track-1",
+      isrc: "CA5KR2665824",
+      provider: "spotify",
+      title: "Wonky",
+    });
+  });
+});
 
 describe("SpotifyProvider incremental scanning", () => {
   it("reports one persisted batch for every mapped artist, including empty results", async () => {

@@ -230,6 +230,60 @@ test("loads another feed page and keeps unavailable evidence non-clickable", asy
   await expect(page.getByRole("button", { name: "Load more discoveries" })).toHaveCount(0);
 });
 
+test("queues an exact Spotify track URL for an Apple-only discovery", async ({ page }) => {
+  const appleOnly = {
+    ...feedFixtures[0]!,
+    artist: "Ganja White Night",
+    exportStatus: "blocked" as const,
+    id: "72000000-0000-4000-8000-000000000001",
+    sources: [
+      {
+        evidenceHref: "https://music.apple.com/us/album/wonky-single/6794432333",
+        href: "https://music.apple.com/us/album/wonky-single/6794432333",
+        provider: "Apple Music",
+      },
+    ],
+    spotify: "unavailable" as const,
+    title: "Wonky",
+  };
+  await page.route("**/api/feed?**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("mode") === "revision") {
+      await route.fulfill({ json: { count: 1, revision: "spotify-link-test" } });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        count: 1,
+        hasMore: false,
+        items: [appleOnly],
+        nextCursor: null,
+        revision: "spotify-link-test",
+        summary: { needsReview: 0, newThisWeek: 1, upcoming: 0 },
+        totalCount: 1,
+      },
+    });
+  });
+  await page.route("**/api/feed-items/*/spotify-link", async (route) => {
+    expect(route.request().postDataJSON()).toEqual({
+      url: "https://open.spotify.com/track/0M6v8qTwT7wfiEsAmLQKdd",
+    });
+    await route.fulfill({ json: { status: "queued" }, status: 202 });
+  });
+
+  await page.goto("/?e2e-scan-status=database#feed");
+  await page.getByRole("button", { name: "Refresh feed" }).click();
+  const item = page.getByRole("article").filter({
+    has: page.getByRole("heading", { name: "Ganja White Night - Wonky" }),
+  });
+  await item.getByRole("button", { name: "Paste exact Spotify track URL" }).click();
+  await item
+    .getByLabel("Exact Spotify track URL")
+    .fill("https://open.spotify.com/track/0M6v8qTwT7wfiEsAmLQKdd");
+  await item.getByRole("button", { name: "Verify and link" }).click();
+  await expect(item.getByText("Spotify link queued for exact verification")).toBeVisible();
+});
+
 test("resets feed pagination when filters and search change", async ({ page }) => {
   const feedRequests: string[] = [];
   await page.route("**/api/feed**", async (route) => {

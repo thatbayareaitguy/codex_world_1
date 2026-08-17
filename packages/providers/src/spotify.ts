@@ -153,6 +153,9 @@ export const spotifyAlbumTracksSchema = albumTracksPageSchema;
 export const spotifySearchArtistsSchema = z.object({
   artists: pagingBaseSchema.extend({ items: z.array(artistSchema) }),
 });
+export const spotifySearchTracksSchema = z.object({
+  tracks: pagingBaseSchema.extend({ items: z.array(trackSchema) }),
+});
 export const spotifyPlaylistsSchema = pagingBaseSchema.extend({ items: z.array(playlistSchema) });
 export const spotifyPlaylistItemsSchema = pagingBaseSchema.extend({
   items: z.array(
@@ -213,6 +216,8 @@ export interface SpotifyArtistAlbumsPage {
   offset: number;
   total: number;
 }
+
+export type SpotifyArtistAlbumGroup = "album" | "single" | "appears_on" | "compilation";
 
 export interface SpotifyAlbumTracksPage {
   items: SpotifyTrackSummary[];
@@ -438,10 +443,17 @@ export class SpotifyClient {
     id: string,
     offset: number,
     signal?: AbortSignal,
+    includeGroups: readonly SpotifyArtistAlbumGroup[] = [
+      "album",
+      "single",
+      "appears_on",
+      "compilation",
+    ],
   ): Promise<SpotifyArtistAlbumsPage> {
     if (!Number.isInteger(offset) || offset < 0) throw new Error("Spotify offset is invalid.");
+    if (includeGroups.length === 0) throw new Error("Spotify album groups cannot be empty.");
     const query = new URLSearchParams({
-      include_groups: "album,single,appears_on,compilation",
+      include_groups: includeGroups.join(","),
       limit: "10",
       offset: String(offset),
     });
@@ -509,6 +521,16 @@ export class SpotifyClient {
 
   getTrack(id: string, signal?: AbortSignal): Promise<SpotifyTrack> {
     return this.request(`/tracks/${encodeURIComponent(id)}`, trackSchema, { signal });
+  }
+
+  async searchTracksByIsrc(isrc: string, signal?: AbortSignal): Promise<SpotifyTrack[]> {
+    const normalized = isrc.replaceAll(/[^A-Za-z0-9]/g, "").toUpperCase();
+    if (!/^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(normalized)) {
+      throw new Error("Spotify ISRC search requires a valid 12-character ISRC.");
+    }
+    const query = new URLSearchParams({ limit: "10", q: `isrc:${normalized}`, type: "track" });
+    const result = await this.request(`/search?${query}`, spotifySearchTracksSchema, { signal });
+    return result.tracks.items;
   }
 
   async searchArtists(queryValue: string, signal?: AbortSignal): Promise<SpotifyArtist[]> {

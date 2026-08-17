@@ -112,6 +112,13 @@ export const spotifySchedulerWorkTypeEnum = pgEnum("spotify_scheduler_work_type"
   "release_detail",
   "release_tracks",
   "artist_reconciliation",
+  "track_resolution",
+]);
+export const spotifyTrackResolutionModeEnum = pgEnum("spotify_track_resolution_mode", [
+  "isrc",
+  "single",
+  "album",
+  "manual",
 ]);
 export const spotifySchedulerWorkStatusEnum = pgEnum("spotify_scheduler_work_status", [
   "queued",
@@ -1322,6 +1329,10 @@ export const spotifySchedulerWork = pgTable(
     source: spotifySchedulerWorkSourceEnum("source").notNull(),
     artistId: uuid("artist_id").references(() => artists.id, { onDelete: "cascade" }),
     expectedSpotifyArtistId: text("expected_spotify_artist_id"),
+    targetTrackId: uuid("target_track_id").references(() => tracks.id, { onDelete: "cascade" }),
+    targetIsrc: text("target_isrc"),
+    targetSpotifyTrackId: text("target_spotify_track_id"),
+    trackResolutionMode: spotifyTrackResolutionModeEnum("track_resolution_mode"),
     spotifyAlbumId: text("spotify_album_id"),
     releaseTrackRetrievalId: uuid("release_track_retrieval_id").references(
       () => spotifyReleaseTrackRetrievals.id,
@@ -1360,6 +1371,7 @@ export const spotifySchedulerWork = pgTable(
     ),
     index("spotify_scheduler_work_lease_idx").on(table.leaseExpiresAt),
     index("spotify_scheduler_work_artist_idx").on(table.artistId, table.status),
+    index("spotify_scheduler_work_target_track_idx").on(table.targetTrackId, table.status),
     index("spotify_scheduler_work_album_idx").on(table.spotifyAlbumId, table.workType),
     index("spotify_scheduler_work_campaign_idx").on(
       table.campaignId,
@@ -1379,6 +1391,7 @@ export const spotifySchedulerWork = pgTable(
         (${table.workType} in ('base_artist', 'artist_reconciliation') and ${table.artistId} is not null and ${table.expectedSpotifyArtistId} is not null)
         or (${table.workType} = 'release_detail' and ${table.spotifyAlbumId} is not null)
         or (${table.workType} = 'release_tracks' and ${table.spotifyAlbumId} is not null and ${table.releaseTrackRetrievalId} is not null)
+        or (${table.workType} = 'track_resolution' and ${table.artistId} is not null and ${table.expectedSpotifyArtistId} is not null and ${table.targetTrackId} is not null and ${table.targetIsrc} is not null and ${table.trackResolutionMode} is not null and (${table.trackResolutionMode} <> 'manual' or ${table.targetSpotifyTrackId} is not null))
       )`,
     ),
     check(

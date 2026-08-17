@@ -12,6 +12,7 @@ import type {
   SpotifyAlbum,
   SpotifyAlbumSummary,
   SpotifyClient,
+  SpotifyTrack,
   SpotifyTrackSummary,
 } from "./spotify";
 
@@ -381,7 +382,9 @@ function spotifySummaryHash(album: SpotifyAlbumSummary): string {
 
 function spotifyCandidate(
   mapping: SpotifyArtistMapping,
-  album: SpotifyAlbum,
+  album: SpotifyAlbumSummary & {
+    external_ids?: { ean?: string | undefined; upc?: string | undefined } | undefined;
+  },
   track: SpotifyTrackSummary,
   firstSeen: Date,
   region: string,
@@ -436,6 +439,23 @@ function spotifyCandidate(
   };
 }
 
+export function spotifyCandidateFromTrack(
+  mapping: SpotifyArtistMapping,
+  track: SpotifyTrack,
+  firstSeen: Date,
+  region: string,
+): TrackCandidate {
+  const candidate = spotifyCandidate(mapping, track.album, track, firstSeen, region);
+  if (!track.external_ids?.isrc) return candidate;
+  const base = { ...candidate, isrc: track.external_ids.isrc };
+  const { payloadHash, ...payload } = base;
+  void payloadHash;
+  return {
+    ...payload,
+    payloadHash: createHash("sha256").update(JSON.stringify(payload)).digest("hex"),
+  };
+}
+
 function spotifyCredits(track: SpotifyTrackSummary, watchedArtistId: string): ArtistCreditInput[] {
   return track.artists.map((artist, index) => ({
     name: artist.name,
@@ -443,7 +463,10 @@ function spotifyCredits(track: SpotifyTrackSummary, watchedArtistId: string): Ar
   }));
 }
 
-function classifySpotifyRelease(album: SpotifyAlbum, trackTitle: string): ReleaseType {
+function classifySpotifyRelease(
+  album: Pick<SpotifyAlbumSummary, "album_type" | "name" | "total_tracks">,
+  trackTitle: string,
+): ReleaseType {
   const text = normalizeText(`${album.name} ${trackTitle}`);
   if (text.includes("remix")) return "remix";
   if (text.includes("live")) return "live";

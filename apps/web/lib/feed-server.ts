@@ -14,8 +14,10 @@ import {
   releases,
   sourceEvidence,
   spotifyReleaseTrackRetrievals,
+  spotifySchedulerWork,
   trackAvailabilities,
   trackCredits,
+  trackExternalIds,
   tracks,
 } from "@radar/db";
 import { inArray } from "drizzle-orm";
@@ -391,6 +393,8 @@ async function projectFeedItems(
     availabilityRows,
     exportRows,
     releaseTrackRetrievalRows,
+    spotifyResolutionRows,
+    trackExternalIdRows,
   ] = await Promise.all([
     resolvedReleaseIds.length
       ? db.select().from(releases).where(inArray(releases.id, resolvedReleaseIds))
@@ -422,6 +426,15 @@ async function projectFeedItems(
           .from(spotifyReleaseTrackRetrievals)
           .where(inArray(spotifyReleaseTrackRetrievals.releaseId, resolvedReleaseIds))
       : [],
+    trackIds.length
+      ? db
+          .select()
+          .from(spotifySchedulerWork)
+          .where(inArray(spotifySchedulerWork.targetTrackId, trackIds))
+      : [],
+    trackIds.length
+      ? db.select().from(trackExternalIds).where(inArray(trackExternalIds.trackId, trackIds))
+      : [],
   ]);
 
   const candidateById = mapBy(candidateRows, (row) => row.id);
@@ -437,6 +450,8 @@ async function projectFeedItems(
   const exportedTrackIds = new Set(
     exportRows.filter((row) => row.status === "exported").map((row) => row.trackId),
   );
+  const resolutionByTrack = groupBy(spotifyResolutionRows, (row) => row.targetTrackId ?? "");
+  const externalIdsByTrack = groupBy(trackExternalIdRows, (row) => row.trackId);
 
   return feedRows.flatMap((feed) => {
     const candidate = feed.candidateId ? candidateById.get(feed.candidateId) : undefined;
@@ -460,13 +475,18 @@ async function projectFeedItems(
       const href = safeProviderEvidenceUrl(row.provider, row.sourceUrl);
       return href ? [{ ...row, href }] : [];
     });
-    const hasSpotifyEvidence = safeEvidence.some((row) => row.provider === "spotify");
+    const spotifyTrackHref = (externalIdsByTrack.get(feed.trackId ?? "") ?? [])
+      .filter((row) => row.provider === "spotify")
+      .map((row) => safeProviderEvidenceUrl("spotify", row.providerUrl))
+      .find((href) => href !== null);
+    const hasSpotifySourceEvidence = safeEvidence.some((row) => row.provider === "spotify");
+    const hasSpotifyEvidence = hasSpotifySourceEvidence || Boolean(spotifyTrackHref);
     const hasAppleMusicEvidence = safeEvidence.some((row) => row.provider === "apple_music");
     const storedSpotifyArtwork = (externalByRelease.get(release?.id ?? "") ?? [])
       .filter((row) => row.provider === "spotify")
       .map((row) => parseSpotifyReleaseArtwork(providerField(row.providerFields, "spotify")))
       .find((artwork) => artwork !== null);
-    const spotifyArtwork = hasSpotifyEvidence
+    const spotifyArtwork = hasSpotifySourceEvidence
       ? (storedSpotifyArtwork ??
         parseSpotifyReleaseArtwork(providerField(candidate.rawPayload, "spotifyRelease")))
       : null;
@@ -485,7 +505,22 @@ async function projectFeedItems(
       hasSpotifyEvidence || spotify?.state === "playable"
         ? "playable"
         : (spotify?.state ?? "unavailable");
+    const resolution = [...(feed.trackId ? (resolutionByTrack.get(feed.trackId) ?? []) : [])]
+      .filter((row) => ["queued", "leased", "blocked"].includes(row.status))
+      .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0];
     const exact = candidate.matchRule.startsWith("exact_");
+    const projectedSources = safeEvidence.map((row) => ({
+      evidenceHref: row.href,
+      href: row.href,
+      provider: providerLabel(row.provider),
+    }));
+    if (spotifyTrackHref && !projectedSources.some((source) => source.provider === "Spotify")) {
+      projectedSources.push({
+        evidenceHref: spotifyTrackHref,
+        href: spotifyTrackHref,
+        provider: "Spotify",
+      });
+    }
     return [
       {
         accent: accentFor(feed.id),
@@ -530,12 +565,21 @@ async function projectFeedItems(
         releaseType: release?.releaseType ?? "other",
         saved: feed.savedAt !== null || feed.state === "saved",
         soundcloudState: "NOT_CHECKED",
-        sources: safeEvidence.map((row) => ({
-          evidenceHref: row.href,
-          href: row.href,
-          provider: providerLabel(row.provider),
-        })),
+        sources: projectedSources,
         spotify: spotifyState,
+        ...(resolution
+          ? {
+              spotifyResolution: {
+                mode: resolution.trackResolutionMode === "manual" ? "manual" : "automatic",
+                status:
+                  resolution.status === "leased"
+                    ? ("verifying" as const)
+                    : resolution.status === "blocked"
+                      ? ("mismatch" as const)
+                      : ("queued" as const),
+              },
+            }
+          : {}),
         ...(appleMusicArtwork ? { appleMusicArtwork } : {}),
         ...(spotifyArtwork ? { spotifyArtwork } : {}),
         state: feed.state === "saved" || feed.state === "listened" ? "new" : feed.state,
@@ -616,6 +660,10 @@ function spotifyMatchExistsSql(): string {
       WHERE "availability"."track_id" = "feed"."track_id"
         AND "availability"."provider" = 'spotify'
         AND "availability"."state" = 'playable'
+    ) OR EXISTS (
+      SELECT 1 FROM "track_external_ids" "spotify_track_id"
+      WHERE "spotify_track_id"."track_id" = "feed"."track_id"
+        AND "spotify_track_id"."provider" = 'spotify'
     ) OR EXISTS (
       SELECT 1 FROM "source_evidence" "spotify_evidence"
       WHERE "spotify_evidence"."candidate_id" = "feed"."candidate_id"

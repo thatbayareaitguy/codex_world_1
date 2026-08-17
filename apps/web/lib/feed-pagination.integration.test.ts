@@ -141,7 +141,7 @@ describe.sequential("database feed pagination", () => {
     });
   });
 
-  it("treats safe Spotify evidence as available when an availability row is absent", async () => {
+  it("projects a canonical Spotify track link when appearance evidence is absent", async () => {
     const [track] = await connection.db
       .select({ id: tracks.id, title: tracks.title })
       .from(tracks)
@@ -150,6 +150,12 @@ describe.sequential("database feed pagination", () => {
     await connection.db
       .delete(trackAvailabilities)
       .where(eq(trackAvailabilities.trackId, track!.id));
+    const feed = await connection.db.query.feedItems.findFirst({
+      where: eq(feedItems.trackId, track!.id),
+    });
+    await connection.db
+      .delete(sourceEvidence)
+      .where(eq(sourceEvidence.candidateId, feed!.candidateId!));
 
     const page = await loadDatabaseFeedPage(databaseUrl, {
       filters: { search: track!.title, spotify: "available" },

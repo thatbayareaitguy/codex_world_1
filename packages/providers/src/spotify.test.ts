@@ -211,6 +211,61 @@ describe("Spotify 429 response evidence", () => {
 });
 
 describe("SpotifyClient", () => {
+  it("uses an exact ISRC search with a bounded result page", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        tracks: {
+          href: "https://api.spotify.com/v1/search",
+          items: [],
+          limit: 10,
+          next: null,
+          offset: 0,
+          previous: null,
+          total: 0,
+        },
+      }),
+    );
+    const client = new SpotifyClient({ accessToken: () => Promise.resolve("token"), fetcher });
+
+    await expect(client.searchTracksByIsrc("US-ABC-26-12345")).resolves.toEqual([]);
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://api.spotify.com/v1/search?limit=10&q=isrc%3AUSABC2612345&type=track",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("requests single and album groups independently when directed", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(() =>
+      Promise.resolve(
+        jsonResponse({
+          href: "https://api.spotify.com/v1/artists/artist/albums",
+          items: [],
+          limit: 10,
+          next: null,
+          offset: 0,
+          previous: null,
+          total: 0,
+        }),
+      ),
+    );
+    const client = new SpotifyClient({ accessToken: () => Promise.resolve("token"), fetcher });
+
+    await client.getArtistAlbumsPage("artist", 0, undefined, ["single"]);
+    await client.getArtistAlbumsPage("artist", 0, undefined, ["album"]);
+
+    expect(fetcher.mock.calls.map((call) => call[0])).toEqual([
+      "https://api.spotify.com/v1/artists/artist/albums?include_groups=single&limit=10&offset=0",
+      "https://api.spotify.com/v1/artists/artist/albums?include_groups=album&limit=10&offset=0",
+    ]);
+  });
+
+  it("rejects malformed ISRC search input before a request", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const client = new SpotifyClient({ accessToken: () => Promise.resolve("token"), fetcher });
+    await expect(client.searchTracksByIsrc("not-an-isrc")).rejects.toThrow("valid 12-character");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("uses an explicit bounded album-track page size", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse({

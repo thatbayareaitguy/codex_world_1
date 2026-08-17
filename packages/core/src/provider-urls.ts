@@ -53,6 +53,13 @@ export function safeProviderEvidenceUrl(provider: string, value: string): string
   return result.valid ? (result.normalizedUrl ?? null) : null;
 }
 
+export function spotifyTrackIdFromUrl(value: string): string | null {
+  const result = validateProviderEvidenceUrl("spotify", value);
+  if (!result.valid || !result.normalizedUrl) return null;
+  const segments = pathSegments(new URL(result.normalizedUrl));
+  return segments[0] === "track" && spotifyId.test(segments[1] ?? "") ? segments[1]! : null;
+}
+
 function validateSpotifyUrl(url: URL): ProviderUrlValidationResult {
   if (url.hostname !== "open.spotify.com") return invalid("Spotify evidence host is not allowed");
   if (url.hash) return invalid("Spotify evidence fragments are not allowed");

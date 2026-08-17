@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { safeProviderEvidenceUrl, validateProviderEvidenceUrl } from "./provider-urls";
+import {
+  safeProviderEvidenceUrl,
+  spotifyTrackIdFromUrl,
+  validateProviderEvidenceUrl,
+} from "./provider-urls";
 
 describe("provider evidence URLs", () => {
   it("accepts catalog Apple Music evidence and rejects lookalike hosts", () => {
@@ -32,6 +36,18 @@ describe("provider evidence URLs", () => {
     ]) {
       expect(validateProviderEvidenceUrl("spotify", value).valid).toBe(false);
     }
+  });
+
+  it("extracts only a safe Spotify track ID", () => {
+    expect(
+      spotifyTrackIdFromUrl("https://open.spotify.com/track/0123456789ABCDEFGHIJKL?si=synthetic"),
+    ).toBe("0123456789ABCDEFGHIJKL");
+    expect(
+      spotifyTrackIdFromUrl("https://open.spotify.com/album/0123456789ABCDEFGHIJKL"),
+    ).toBeNull();
+    expect(
+      spotifyTrackIdFromUrl("https://open.spotify.example/track/0123456789ABCDEFGHIJKL"),
+    ).toBeNull();
   });
 
   it("accepts MusicBrainz entity paths only with valid MBIDs", () => {

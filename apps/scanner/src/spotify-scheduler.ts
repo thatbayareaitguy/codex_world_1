@@ -183,10 +183,17 @@ export async function runSpotifySchedulerTick(
         status: await dependencies.getStatus(db, now()),
       };
     } catch (error) {
+      const mismatch =
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "spotify_resolution_mismatch";
       await dependencies.finishWork(
         db,
         selected,
-        { errorClassification: schedulerErrorClassification(error), status: "retry" },
+        mismatch
+          ? { reason: "spotify_track_mismatch", status: "blocked" }
+          : { errorClassification: schedulerErrorClassification(error), status: "retry" },
         now(),
       );
       await dependencies.recordTick(db, {

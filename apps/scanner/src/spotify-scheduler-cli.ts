@@ -12,6 +12,7 @@ import {
   oauthAccounts,
   reconcileCampaignProviderReleases,
   recordSpotifyReleaseTrackPage,
+  recordSpotifyCatalogReleaseSummaries,
   recordCampaignSpotifyBatch,
   spotifyCatalogReleases,
   spotifyArtistScans,
@@ -20,7 +21,12 @@ import {
   startSpotifyReleaseTrackRetrieval,
   SpotifyTokenManager,
   queueSpotifyCampaignReleaseTrackWork,
+  queueSpotifyResolutionReleaseDetailWork,
   queueSpotifyReleaseTrackWork,
+  queueSpotifyTrackResolutionWork,
+  releases,
+  trackExternalIds,
+  tracks,
   type SpotifySchedulerClaim,
   type SpotifySchedulerLimits,
 } from "@radar/db";
@@ -29,6 +35,7 @@ import {
   SpotifyClient,
   SpotifyOAuthClient,
   SpotifyProvider,
+  spotifyCandidateFromTrack,
   type ProviderReleaseTrackPage,
   type ProviderConfiguration,
   type SpotifyArtistMapping,
@@ -47,6 +54,15 @@ import {
   type SpotifySchedulerExecutionContext,
   type SpotifySchedulerExecutor,
 } from "./spotify-scheduler";
+
+class SpotifyResolutionMismatchError extends Error {
+  readonly code = "spotify_resolution_mismatch";
+
+  constructor() {
+    super("The Spotify track does not match the target ISRC and artist.");
+    this.name = "SpotifyResolutionMismatchError";
+  }
+}
 
 loadLocalEnvironment();
 
@@ -188,6 +204,10 @@ async function executeProductionWork(
     await executeReleaseDetailWork(db, configuration, work, context);
     return;
   }
+  if (work.workType === "track_resolution") {
+    await executeTrackResolutionWork(db, configuration, work, context);
+    return;
+  }
   if (!work.artistId) throw new Error("Scheduler artist work is missing its canonical artist ID.");
   const adjustedConfiguration: ProviderConfiguration = {
     ...configuration,
@@ -241,6 +261,190 @@ async function executeProductionWork(
     throw error;
   }
   await recordDiscoveryCampaignScan(db, work, startedAt, true);
+}
+
+async function executeTrackResolutionWork(
+  db: ReturnType<typeof createDatabase>["db"],
+  configuration: ProviderConfiguration,
+  work: SpotifySchedulerClaim,
+  context: SpotifySchedulerExecutionContext,
+): Promise<void> {
+  if (
+    !work.artistId ||
+    !work.expectedSpotifyArtistId ||
+    !work.targetTrackId ||
+    !work.targetIsrc ||
+    !work.trackResolutionMode
+  ) {
+    throw new Error("Track-resolution work is missing its target context.");
+  }
+  const expectedSpotifyArtistId = work.expectedSpotifyArtistId;
+  const existing = await db.query.trackExternalIds.findFirst({
+    where: and(
+      eq(trackExternalIds.trackId, work.targetTrackId),
+      eq(trackExternalIds.provider, "spotify"),
+    ),
+    columns: { id: true },
+  });
+  if (existing) return;
+
+  const [target] = await db
+    .select({
+      artistName: artists.name,
+      durationMs: tracks.durationMs,
+      releaseDate: releases.releaseDate,
+      title: tracks.title,
+    })
+    .from(tracks)
+    .leftJoin(releases, eq(releases.id, tracks.releaseId))
+    .innerJoin(artists, eq(artists.id, work.artistId))
+    .where(eq(tracks.id, work.targetTrackId))
+    .limit(1);
+  if (!target) throw new Error("Track-resolution target no longer exists.");
+
+  const client = await createSchedulerSpotifyClient(db, configuration, work, context);
+  const mapping: SpotifyArtistMapping = {
+    artistId: work.artistId,
+    name: target.artistName,
+    spotifyArtistId: work.expectedSpotifyArtistId,
+  };
+  if (work.trackResolutionMode === "manual") {
+    if (!work.targetSpotifyTrackId) throw new Error("Manual track resolution has no Spotify ID.");
+    const track = await client.getTrack(work.targetSpotifyTrackId, context.signal);
+    assertSpotifyResolutionTrack(work, track);
+    await persistCandidates(
+      db,
+      [spotifyCandidateFromTrack(mapping, track, new Date(), "US")],
+      trackResolutionScanOptions(work.artistId),
+    );
+    return;
+  }
+  if (work.trackResolutionMode === "isrc") {
+    const matches = (await client.searchTracksByIsrc(work.targetIsrc, context.signal))
+      .filter((track) => spotifyResolutionTrackMatches(work, track))
+      .sort((left, right) =>
+        compareResolutionTracks(left, right, target.releaseDate, expectedSpotifyArtistId),
+      );
+    const match = matches[0];
+    if (match) {
+      await persistCandidates(
+        db,
+        [spotifyCandidateFromTrack(mapping, match, new Date(), "US")],
+        trackResolutionScanOptions(work.artistId),
+      );
+      return;
+    }
+    await queueSpotifyTrackResolutionWork(db, {
+      artistId: work.artistId,
+      expectedSpotifyArtistId: work.expectedSpotifyArtistId,
+      mode: "single",
+      source: work.source,
+      targetIsrc: work.targetIsrc,
+      targetTrackId: work.targetTrackId,
+    });
+    return;
+  }
+
+  const group = work.trackResolutionMode;
+  const page = await client.getArtistAlbumsPage(work.expectedSpotifyArtistId, 0, context.signal, [
+    group,
+  ]);
+  const observedAt = new Date();
+  await recordSpotifyCatalogReleaseSummaries(db, {
+    artistId: work.artistId,
+    observedAt,
+    releases: page.items.map((album) => ({
+      externalReleaseId: album.id,
+      releaseDate: normalizeSpotifyReleaseDate(album.release_date),
+      releaseDatePrecision: album.release_date_precision,
+      releaseType: album.album_type,
+      title: album.name,
+      totalTracks: album.total_tracks,
+    })),
+  });
+  for (const album of page.items.filter((item) =>
+    isResolutionReleaseDate(item.release_date, target.releaseDate),
+  )) {
+    await queueSpotifyResolutionReleaseDetailWork(db, {
+      artistId: work.artistId,
+      dueAt: observedAt,
+      source: work.source,
+      spotifyAlbumId: album.id,
+      targetTrackId: work.targetTrackId,
+    });
+  }
+  if (group === "single") {
+    await queueSpotifyTrackResolutionWork(db, {
+      artistId: work.artistId,
+      expectedSpotifyArtistId: work.expectedSpotifyArtistId,
+      mode: "album",
+      source: work.source,
+      targetIsrc: work.targetIsrc,
+      targetTrackId: work.targetTrackId,
+    });
+  }
+}
+
+function spotifyResolutionTrackMatches(
+  work: Pick<SpotifySchedulerClaim, "expectedSpotifyArtistId" | "targetIsrc">,
+  track: Awaited<ReturnType<SpotifyClient["getTrack"]>>,
+): boolean {
+  const targetIsrc = work.targetIsrc?.replaceAll(/[^A-Za-z0-9]/g, "").toUpperCase();
+  const trackIsrc = track.external_ids?.isrc?.replaceAll(/[^A-Za-z0-9]/g, "").toUpperCase();
+  return Boolean(
+    targetIsrc &&
+    targetIsrc === trackIsrc &&
+    track.artists.some((artist) => artist.id === work.expectedSpotifyArtistId),
+  );
+}
+
+function assertSpotifyResolutionTrack(
+  work: Pick<SpotifySchedulerClaim, "expectedSpotifyArtistId" | "targetIsrc">,
+  track: Awaited<ReturnType<SpotifyClient["getTrack"]>>,
+): void {
+  if (!spotifyResolutionTrackMatches(work, track)) {
+    throw new SpotifyResolutionMismatchError();
+  }
+}
+
+function compareResolutionTracks(
+  left: Awaited<ReturnType<SpotifyClient["getTrack"]>>,
+  right: Awaited<ReturnType<SpotifyClient["getTrack"]>>,
+  targetReleaseDate: string | null,
+  expectedSpotifyArtistId: string,
+): number {
+  const leftDate = normalizeSpotifyReleaseDate(left.album.release_date);
+  const rightDate = normalizeSpotifyReleaseDate(right.album.release_date);
+  const leftExact = targetReleaseDate === leftDate ? 1 : 0;
+  const rightExact = targetReleaseDate === rightDate ? 1 : 0;
+  if (leftExact !== rightExact) return rightExact - leftExact;
+  const leftPrimary = left.artists[0]?.id === expectedSpotifyArtistId ? 1 : 0;
+  const rightPrimary = right.artists[0]?.id === expectedSpotifyArtistId ? 1 : 0;
+  if (leftPrimary !== rightPrimary) return rightPrimary - leftPrimary;
+  return left.id.localeCompare(right.id);
+}
+
+function isResolutionReleaseDate(releaseDate: string, targetReleaseDate: string | null): boolean {
+  if (!targetReleaseDate) return true;
+  const observed = Date.parse(`${normalizeSpotifyReleaseDate(releaseDate)}T00:00:00Z`);
+  const target = Date.parse(`${targetReleaseDate}T00:00:00Z`);
+  return Number.isFinite(observed) && Math.abs(observed - target) <= 45 * 86_400_000;
+}
+
+function normalizeSpotifyReleaseDate(value: string): string {
+  if (/^\d{4}$/.test(value)) return `${value}-01-01`;
+  if (/^\d{4}-\d{2}$/.test(value)) return `${value}-01`;
+  return value;
+}
+
+function trackResolutionScanOptions(artistId: string) {
+  return {
+    artistId,
+    dryRun: false,
+    full: false,
+    provider: "spotify" as const,
+    source: "spotify_track_resolution",
+  };
 }
 
 async function executeReleaseDetailWork(
