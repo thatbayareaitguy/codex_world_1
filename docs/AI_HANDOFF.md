@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-08-16 20:17 PDT
+Updated: 2026-08-16 20:20 PDT
 
 ## Repository
 
@@ -90,23 +90,22 @@ Updated: 2026-08-16 20:17 PDT
 
 - PostgreSQL is healthy on `127.0.0.1:5432`; 30 migrations are applied.
 - Spotify has no active cooldown and no 429 in the last 24 hours. Artist Albums usage remains 80/80.
-- Track resolution has completed five automatic ISRC jobs and one manual job. The backlog contains
-  127 ISRC jobs and one `single` fallback. These continue only as safe request capacity returns.
-- The last completed playlist run had 1 addition, 1,095 already present, 332 skipped, and 0 failures.
-  A newer automatic run was active with 1 planned addition, 1,096 already present, 332 skipped, and
-  0 failures at the evidence snapshot.
+- Track resolution has completed six automatic ISRC jobs and one manual job. The backlog contains
+  126 ISRC jobs and one `single` fallback. These continue only as safe request capacity returns.
+- The latest playlist run completed with 1 addition, 1,097 already present, 332 skipped, and 0
+  failures. Discovery returned to `broad_spotify` with the playlist inbox completed.
 - Thursday Apple discovery remains the latest Apple scan. It completed all 583 artists with zero
   failures. The next full Apple run is Thursday, August 20 at 21:00 PDT, followed by the configured
   Friday catch-up.
 - Apple has no active request lease or cooldown. No Apple request was made during this work.
 - `TS New Music Radar Recurring Discovery` remains enabled, hidden, and unchanged. Its action is
-  still direct `conhost.exe --headless node.exe --env-file=... --import tsx ... tick`. It was running
-  normal automatic work at the final snapshot; prior completed invocations returned result `0`.
+  still direct `conhost.exe --headless node.exe --env-file=... --import tsx ... tick`. It was ready
+  after its 20:19 PDT invocation completed with result `0`.
 - No provider request was invoked manually. Wonky verification and playlist addition were performed
   by the existing recurring task after its persisted limits allowed them.
 
 ## Deferred
 
-- Automatic processing of the remaining 127 ISRC resolution jobs and one catalog fallback
+- Automatic processing of the remaining 126 ISRC resolution jobs and one catalog fallback
 - Database backup refresh after the last recorded 2026-08-04 backup
 - Physical Windows restart or logoff validation
