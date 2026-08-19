@@ -4,6 +4,10 @@ import { RadarShell } from "./radar-shell";
 import { loadDatabaseFeedPage, type DatabaseFeedSummary } from "../lib/feed-server";
 import { createInitialPageDataSource, type PageDataMode } from "../lib/page-data-source";
 import { loadDatabaseProviderActivity } from "../lib/provider-status-server";
+import {
+  loadDatabaseSpotifyPlaylistSummary,
+  type SpotifyPlaylistDashboardSummary,
+} from "../lib/playlist-summary-server";
 import { loadDatabaseWatchlist } from "../lib/watchlist-server";
 import type { WatchlistArtistViewModel } from "../lib/watchlist-types";
 
@@ -33,6 +37,14 @@ export default async function HomePage({
   let initialArtists: WatchlistArtistViewModel[] = [];
   let watchlistMode: PageDataMode = initialDataSource.watchlistMode;
   let databaseProviderActivity = { appleMusic: false, spotify: false };
+  let initialPlaylistSummary: SpotifyPlaylistDashboardSummary = {
+    blocked: initialItems.filter(
+      (item) => !["eligible", "exported"].includes(item.exportStatus ?? "blocked"),
+    ).length,
+    exported: initialItems.filter((item) => item.exportStatus === "exported").length,
+    pendingReorderMoves: 0,
+    ready: initialItems.filter((item) => item.exportStatus === "eligible").length,
+  };
   if (e2eScanStatusMode) {
     feedMode = "database";
     initialItems = feedFixtures.filter((item) => item.state === "new");
@@ -65,6 +77,16 @@ export default async function HomePage({
     } catch {
       // The configuration status remains available when operational evidence cannot be read.
     }
+    if (configuration.spotify.allowedPlaylistId) {
+      try {
+        initialPlaylistSummary = await loadDatabaseSpotifyPlaylistSummary(
+          configuration.databaseUrl,
+          configuration.spotify.allowedPlaylistId,
+        );
+      } catch {
+        // Feed data remains usable when the local playlist summary cannot be read.
+      }
+    }
   }
   return (
     <RadarShell
@@ -76,6 +98,7 @@ export default async function HomePage({
       initialFeedTotalCount={initialFeedTotalCount}
       initialArtists={initialArtists}
       initialItems={initialItems}
+      initialPlaylistSummary={initialPlaylistSummary}
       providerConfiguration={{
         appleMusic: {
           configured: configuration.appleMusic.configured || databaseProviderActivity.appleMusic,

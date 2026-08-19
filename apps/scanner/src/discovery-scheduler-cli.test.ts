@@ -200,18 +200,42 @@ describe("discovery scheduler CLI", () => {
     const markPending = vi.fn(() => Promise.resolve(true));
     const prepare = vi.fn(() => Promise.resolve(true));
     const runExport = vi.fn(() => Promise.resolve({ reason: "completed" as const }));
+    const inspect = vi.fn(() => Promise.resolve({ reason: "pending_additions", shouldRun: true }));
 
     await expect(
       runBroadAutomaticPlaylistCheckpoint(
         db,
         loadProviderConfiguration({}),
         broadTick({ rolling30: 30 }),
-        { markPending, prepare, runExport },
+        { inspect, markPending, prepare, runExport },
       ),
     ).resolves.toEqual({ reason: "completed" });
     expect(markPending).toHaveBeenCalledOnce();
     expect(prepare).toHaveBeenCalledOnce();
     expect(runExport).toHaveBeenCalledOnce();
+  });
+
+  it("does not create or run a broad checkpoint when database state has no playlist work", async () => {
+    const markPending = vi.fn(() => Promise.resolve(true));
+    const prepare = vi.fn(() => Promise.resolve(true));
+    const runExport = vi.fn(() => Promise.resolve({ reason: "completed" as const }));
+
+    await expect(
+      runBroadAutomaticPlaylistCheckpoint(
+        {} as ReturnType<typeof createDatabase>["db"],
+        loadProviderConfiguration({}),
+        broadTick({ broadRemaining: 0 }),
+        {
+          inspect: vi.fn(() => Promise.resolve({ reason: "none", shouldRun: false })),
+          markPending,
+          prepare,
+          runExport,
+        },
+      ),
+    ).resolves.toMatchObject({ reason: "no_changes" });
+    expect(markPending).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
+    expect(runExport).not.toHaveBeenCalled();
   });
 
   it("does not mark priority resolution as a broad playlist batch", async () => {

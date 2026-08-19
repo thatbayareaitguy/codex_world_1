@@ -18,6 +18,7 @@ describe("Spotify playlist planning", () => {
         item("0000000000000000000002", "metadata", 0.8),
         { ...item("0000000000000000000003", "manual_review", 0.8), manuallyConfirmed: true },
         item("0000000000000000000004", "new_canonical", 1),
+        item("0000000000000000000005", "manual_separate", 1),
       ],
       new Set(["0000000000000000000001"]),
     );
@@ -30,7 +31,7 @@ describe("Spotify playlist planning", () => {
           reason: "Only exact or manually confirmed matches may be exported",
         },
       ],
-      toAdd: ["0000000000000000000003", "0000000000000000000004"],
+      toAdd: ["0000000000000000000003", "0000000000000000000004", "0000000000000000000005"],
     });
   });
 

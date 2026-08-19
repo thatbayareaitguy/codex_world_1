@@ -67,6 +67,11 @@ export async function loadVerifiedSpotifyPlaylistSnapshot(
     target.snapshotId === playlist.snapshot_id &&
     Array.isArray(target.snapshotItems)
   ) {
+    const verifiedAt = new Date();
+    await db
+      .update(playlistTargets)
+      .set({ snapshotVerifiedAt: verifiedAt, updatedAt: verifiedAt })
+      .where(eq(playlistTargets.id, target.id));
     return {
       cacheHit: true,
       items: target.snapshotItems,

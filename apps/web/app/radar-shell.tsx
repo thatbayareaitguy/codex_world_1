@@ -46,6 +46,7 @@ import type { FormEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import type { WatchlistArtistViewModel } from "../lib/watchlist-types";
+import type { SpotifyPlaylistDashboardSummary } from "../lib/playlist-summary-server";
 
 interface RadarShellProps {
   feedMode: "database" | "error" | "mock";
@@ -56,6 +57,7 @@ interface RadarShellProps {
   initialFeedSummary: FeedSummary;
   initialFeedTotalCount: number;
   initialItems: FeedFixtureItem[];
+  initialPlaylistSummary: SpotifyPlaylistDashboardSummary;
   providerConfiguration: ProviderUiConfiguration;
   scannedItem: FeedFixtureItem;
   watchlistMode: "database" | "error" | "mock";
@@ -459,6 +461,7 @@ export function RadarShell({
   initialFeedSummary,
   initialFeedTotalCount,
   initialItems,
+  initialPlaylistSummary,
   providerConfiguration,
   scannedItem,
   watchlistMode,
@@ -1408,6 +1411,7 @@ export function RadarShell({
         )}
         {activeView === "exports" && (
           <ExportsView
+            initialSummary={initialPlaylistSummary}
             items={items}
             onNotice={setNotice}
             spotifyConfiguration={providerConfiguration.spotify}
@@ -3567,16 +3571,17 @@ function ArtistsView({
 }
 
 function ExportsView({
+  initialSummary,
   items,
   onNotice,
   spotifyConfiguration,
 }: {
+  initialSummary: SpotifyPlaylistDashboardSummary;
   items: FeedFixtureItem[];
   onNotice: (message: string) => void;
   spotifyConfiguration: ProviderUiConfiguration["spotify"];
 }) {
-  const readyCount = items.filter((item) => item.exportStatus === "eligible").length;
-  const exportedCount = items.filter((item) => item.exportStatus === "exported").length;
+  const [summary, setSummary] = useState(initialSummary);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<{
     additions: Array<{
@@ -3646,6 +3651,17 @@ function ExportsView({
         .passthrough()
         .parse(await playlistRequest("/api/spotify/playlist-sync", "GET"));
       setPreview(payload);
+      setSummary({
+        blocked: [
+          "malformed_spotify_track_id",
+          "missing_spotify_match",
+          "needs_review",
+          "uncertain_spotify_match",
+        ].reduce((total, reason) => total + (payload.skipCounts[reason] ?? 0), 0),
+        exported: payload.totals.alreadyPresent,
+        pendingReorderMoves: payload.totals.orderingConflicts,
+        ready: payload.totals.additions,
+      });
     } catch {
       onNotice("Unable to preview Spotify playlist synchronization.");
     }
@@ -3722,15 +3738,15 @@ function ExportsView({
           <dl>
             <div>
               <dt>Ready</dt>
-              <dd>{readyCount}</dd>
+              <dd>{summary.ready}</dd>
             </div>
             <div>
               <dt>Exported</dt>
-              <dd>{exportedCount}</dd>
+              <dd>{summary.exported}</dd>
             </div>
             <div>
               <dt>Blocked</dt>
-              <dd>{items.length - readyCount - exportedCount}</dd>
+              <dd>{summary.blocked}</dd>
             </div>
           </dl>
           <div className="row-actions">
@@ -3791,7 +3807,7 @@ function ExportsView({
               <span>{preview.totals.additions} to add</span>
               <span>{preview.totals.alreadyPresent} already present</span>
               <span>{preview.totals.skipped} skipped</span>
-              <span>{preview.totals.orderingConflicts} existing order conflicts</span>
+              <span>{preview.totals.orderingConflicts} pending reorder moves</span>
               {Object.entries(preview.skipCounts).map(([reason, count]) => (
                 <span key={reason}>
                   {count} {reason.replaceAll("_", " ")}

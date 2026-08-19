@@ -8,6 +8,7 @@ import {
   planSpotifyPlaylistExport,
   planSpotifyPlaylistReleaseDateOrder,
   spotifyPlaylistIdSchema,
+  spotifyTrackIdSchema,
   SpotifyHttpError,
   SpotifyPlaylistWriteDeniedError,
   type SpotifyClient,
@@ -15,7 +16,7 @@ import {
   type SpotifyPlaylistExportPlan,
   type SpotifyPlaylistWritePolicy,
 } from "@radar/providers";
-import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, ne, sql } from "drizzle-orm";
 import type { RadarDatabase } from "./client";
 import {
   artistFollows,
@@ -41,6 +42,26 @@ import {
 } from "./spotify-playlist-cache";
 
 type SpotifyPlaylistOrderingPolicy = "canonical" | "discovery_inbox" | "release_date_custom_order";
+
+export const automaticPlaylistReconciliationIntervalMs = 24 * 60 * 60_000;
+
+export interface SpotifyPlaylistCheckpointInspection {
+  blockedCount: number;
+  duplicateAppearanceCount: number;
+  exportedCount: number;
+  pendingAdditionCount: number;
+  pendingOperationCount: number;
+  reason:
+    | "incomplete_run"
+    | "missing_snapshot"
+    | "pending_additions"
+    | "pending_reorder"
+    | "periodic_reconciliation"
+    | "none";
+  reorderMoveCount: number;
+  shouldRun: boolean;
+  skippedCount: number;
+}
 
 export interface SpotifyPlaylistExportClient {
   addPlaylistItemsAtPosition: SpotifyClient["addPlaylistItemsAtPosition"];
@@ -480,6 +501,7 @@ export async function loadCanonicalExportCandidates(
     const candidate = candidateByTrack.get(feed.trackId);
     const providerReleaseId = providerReleaseIdByRelease.get(feed.releaseId);
     return {
+      ...(candidate ? { candidateId: candidate.candidateId } : {}),
       ...(candidate ? { confidence: Number(candidate.confidence) } : {}),
       discNumber: feed.discNumber,
       feedItemId: feed.feedItemId,
@@ -498,6 +520,171 @@ export async function loadCanonicalExportCandidates(
       trackNumber: feed.trackNumber,
     };
   });
+}
+
+export async function inspectSpotifyPlaylistCheckpoint(
+  db: RadarDatabase,
+  userId: string,
+  playlistId: string,
+  options: { now?: Date; reconciliationIntervalMs?: number } = {},
+): Promise<SpotifyPlaylistCheckpointInspection> {
+  const now = options.now ?? new Date();
+  const reconciliationIntervalMs =
+    options.reconciliationIntervalMs ?? automaticPlaylistReconciliationIntervalMs;
+  if (!Number.isSafeInteger(reconciliationIntervalMs) || reconciliationIntervalMs < 60_000) {
+    throw new Error("Spotify playlist reconciliation interval must be at least one minute.");
+  }
+  const target = await db.query.playlistTargets.findFirst({
+    where: and(
+      eq(playlistTargets.userId, userId),
+      eq(playlistTargets.provider, "spotify"),
+      eq(playlistTargets.providerPlaylistId, playlistId),
+    ),
+  });
+  if (!target || !target.snapshotId || !Array.isArray(target.snapshotItems)) {
+    return emptyCheckpointInspection("missing_snapshot", true);
+  }
+
+  const incompleteRun = await db.query.spotifyPlaylistExportRuns.findFirst({
+    orderBy: [desc(spotifyPlaylistExportRuns.createdAt)],
+    where: and(
+      eq(spotifyPlaylistExportRuns.playlistTargetId, target.id),
+      inArray(spotifyPlaylistExportRuns.status, ["planned", "running", "partial"]),
+    ),
+  });
+  const pendingOperations = incompleteRun
+    ? await db
+        .select({ id: spotifyPlaylistExportOperations.id })
+        .from(spotifyPlaylistExportOperations)
+        .where(
+          and(
+            eq(spotifyPlaylistExportOperations.runId, incompleteRun.id),
+            inArray(spotifyPlaylistExportOperations.status, ["pending", "failed"]),
+          ),
+        )
+    : [];
+  const [candidates, managedRows] = await Promise.all([
+    loadCanonicalExportCandidates(db, userId),
+    db
+      .select({ providerTrackId: playlistExports.providerTrackId })
+      .from(playlistExports)
+      .where(
+        and(
+          eq(playlistExports.playlistTargetId, target.id),
+          eq(playlistExports.appOwned, true),
+          eq(playlistExports.status, "exported"),
+        ),
+      ),
+  ]);
+  const plan = planSpotifyPlaylistExport(
+    candidates,
+    target.snapshotItems,
+    new Set(managedRows.map((row) => row.providerTrackId)),
+    "release_date_custom_order",
+  );
+  const actionableBlockedTrackIds = new Set(
+    plan.skips
+      .filter((skip) =>
+        [
+          "malformed_spotify_track_id",
+          "missing_spotify_match",
+          "needs_review",
+          "uncertain_spotify_match",
+        ].includes(skip.reason),
+      )
+      .map((skip) => skip.trackId),
+  );
+  const snapshotVerifiedAt = target.snapshotVerifiedAt?.getTime() ?? 0;
+  const reconciliationDue = now.getTime() - snapshotVerifiedAt >= reconciliationIntervalMs;
+  const reason: SpotifyPlaylistCheckpointInspection["reason"] = incompleteRun
+    ? "incomplete_run"
+    : plan.additions.length > 0
+      ? "pending_additions"
+      : plan.reorderMoves.length > 0
+        ? "pending_reorder"
+        : reconciliationDue
+          ? "periodic_reconciliation"
+          : "none";
+  return {
+    blockedCount: actionableBlockedTrackIds.size,
+    duplicateAppearanceCount: plan.skips.filter(
+      (skip) => skip.reason === "duplicate_recording_appearance",
+    ).length,
+    exportedCount: plan.alreadyPresent.length,
+    pendingAdditionCount: plan.additions.length,
+    pendingOperationCount: pendingOperations.length,
+    reason,
+    reorderMoveCount: plan.reorderMoves.length,
+    shouldRun: reason !== "none",
+    skippedCount: plan.skips.length,
+  };
+}
+
+export async function surfaceUncertainSpotifyMatchesForReview(
+  db: RadarDatabase,
+  userId: string,
+  now = new Date(),
+): Promise<{ candidatesUpdated: number; feedItemsUpdated: number }> {
+  const candidates = await loadCanonicalExportCandidates(db, userId);
+  const candidateIds = [
+    ...new Set(
+      candidates.flatMap((candidate) =>
+        candidate.candidateId &&
+        candidate.followedArtist &&
+        candidate.feedState !== "dismissed" &&
+        candidate.providerTrackId &&
+        spotifyTrackIdSchema.safeParse(candidate.providerTrackId).success &&
+        !candidate.manuallyConfirmed &&
+        !isExactSpotifyIdentity(candidate.matchRule ?? "", candidate.confidence ?? 0)
+          ? [candidate.candidateId]
+          : [],
+      ),
+    ),
+  ];
+  if (candidateIds.length === 0) return { candidatesUpdated: 0, feedItemsUpdated: 0 };
+  return db.transaction(async (tx) => {
+    const updatedCandidates = await tx
+      .update(releaseCandidates)
+      .set({ matchStatus: "needs_review" })
+      .where(
+        and(
+          inArray(releaseCandidates.id, candidateIds),
+          ne(releaseCandidates.matchStatus, "needs_review"),
+        ),
+      )
+      .returning({ id: releaseCandidates.id });
+    const updatedFeedItems = await tx
+      .update(feedItems)
+      .set({ state: "needs_review", updatedAt: now })
+      .where(
+        and(
+          inArray(feedItems.candidateId, candidateIds),
+          inArray(feedItems.state, ["new", "upcoming"]),
+        ),
+      )
+      .returning({ id: feedItems.id });
+    return {
+      candidatesUpdated: updatedCandidates.length,
+      feedItemsUpdated: updatedFeedItems.length,
+    };
+  });
+}
+
+function emptyCheckpointInspection(
+  reason: SpotifyPlaylistCheckpointInspection["reason"],
+  shouldRun: boolean,
+): SpotifyPlaylistCheckpointInspection {
+  return {
+    blockedCount: 0,
+    duplicateAppearanceCount: 0,
+    exportedCount: 0,
+    pendingAdditionCount: 0,
+    pendingOperationCount: 0,
+    reason,
+    reorderMoveCount: 0,
+    shouldRun,
+    skippedCount: 0,
+  };
 }
 
 function compareProviderCandidates(
@@ -591,7 +778,7 @@ async function createExportRun(
         discoveryReconciliationCampaignId: options.discoveryReconciliationCampaignId,
         mode: "live",
         orderingPolicy: options.orderingPolicy,
-        orderingConflictCount: preview.plan.orderingConflicts.length,
+        orderingConflictCount: preview.plan.reorderMoves.length,
         playlistName: preview.target.name,
         playlistTargetId: targetId,
         skippedCount: preview.plan.skips.length,

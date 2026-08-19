@@ -4,9 +4,12 @@ import {
   finishDiscoveryScheduleAppleJob,
   getRecurringDiscoveryScheduleStatus,
   getSpotifySchedulerStatus,
+  ensureLocalOwner,
   markBroadDiscoveryPlaylistCheckpointPending,
   prepareBroadDiscoveryPlaylistCheckpoint,
   reconcileDiscoveryScheduleAfterCooldown,
+  reconcileStaleSpotifyQueueDepth,
+  surfaceUncertainSpotifyMatchesForReview,
   type DiscoveryAppleJobClaim,
   type SpotifySchedulerClaim,
   type SpotifySchedulerLimits,
@@ -16,7 +19,10 @@ import { loadProviderConfiguration } from "@radar/providers";
 import { desc, gte } from "drizzle-orm";
 import { appleMusicScanBatches } from "@radar/db";
 import { loadLocalEnvironment } from "./local-env";
-import { runAutomaticDiscoveryPlaylistExport } from "./spotify-playlist-export-runtime";
+import {
+  inspectAutomaticDiscoveryPlaylistCheckpoint,
+  runAutomaticDiscoveryPlaylistExport,
+} from "./spotify-playlist-export-runtime";
 import { schedulerLimitsFromConfiguration } from "./spotify-scheduler-cli";
 import type { SpotifySchedulerTickResult } from "./spotify-scheduler";
 
@@ -93,6 +99,10 @@ export async function runBroadAutomaticPlaylistCheckpoint(
   configuration: ReturnType<typeof loadProviderConfiguration>,
   result: BroadPlaylistTickResult,
   dependencies: {
+    inspect?: (
+      db: ReturnType<typeof createDatabase>["db"],
+      configuration: ReturnType<typeof loadProviderConfiguration>,
+    ) => Promise<{ reason: string; shouldRun: boolean }>;
     markPending?: typeof markBroadDiscoveryPlaylistCheckpointPending;
     prepare?: typeof prepareBroadDiscoveryPlaylistCheckpoint;
     runExport?: (
@@ -101,18 +111,23 @@ export async function runBroadAutomaticPlaylistCheckpoint(
     ) => Promise<unknown>;
   } = {},
 ) {
-  const broadCompletion =
-    result.reason === "completed" &&
-    result.selected !== null &&
-    !["apple_priority", "apple_catchup", "validation"].includes(result.selected.source);
-  if (broadCompletion && result.requestsStarted > 0) {
-    await (dependencies.markPending ?? markBroadDiscoveryPlaylistCheckpointPending)(db);
+  if (
+    result.selected &&
+    ["apple_priority", "apple_catchup", "validation"].includes(result.selected.source)
+  ) {
+    return null;
   }
   if (
     !shouldFlushBroadPlaylistCheckpoint(result, schedulerLimitsFromConfiguration(configuration))
   ) {
     return null;
   }
+  const inspection = await (dependencies.inspect ?? inspectAutomaticDiscoveryPlaylistCheckpoint)(
+    db,
+    configuration,
+  );
+  if (!inspection.shouldRun) return { inspection, reason: "no_changes" as const };
+  await (dependencies.markPending ?? markBroadDiscoveryPlaylistCheckpointPending)(db);
   const prepared = await (dependencies.prepare ?? prepareBroadDiscoveryPlaylistCheckpoint)(db);
   if (!prepared) return null;
   return (dependencies.runExport ?? runAutomaticDiscoveryPlaylistExport)(db, configuration);
@@ -273,6 +288,10 @@ async function main(): Promise<void> {
         "Recurring discovery execution is disabled. Set DISCOVERY_SCHEDULER_ENABLED=true only after validation.",
       );
     }
+
+    const userId = await ensureLocalOwner(connection.db);
+    await surfaceUncertainSpotifyMatchesForReview(connection.db, userId);
+    await reconcileStaleSpotifyQueueDepth(connection.db);
 
     const action = await selectDiscoverySchedulerAction(connection.db);
     const route = action.route;

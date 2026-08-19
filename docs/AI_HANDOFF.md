@@ -1,111 +1,133 @@
 # AI Handoff
 
-Updated: 2026-08-16 20:20 PDT
+Updated: 2026-08-18 21:10 PDT
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`
-- Starting HEAD and upstream for this change: `5c03fe7901c3a455b75184b375b3ff7eb1b62e26`
+- Starting HEAD and upstream for this correction: `a8be3006f9d582e95cb11933684f48027ac6ee71`
 - Unrelated `outputs/` remains untracked and excluded. No secret or `.env` file was changed.
 
-## Missing Spotify Mapping Root Cause
+## Fresh Backup
 
-- Spotify Artist Albums was requested as one combined `album,single,appears_on,compilation`
-  page with a maximum of 10 results. Spotify does not document that response as newest-first.
-- The scanner treated page zero as the recent catalog. For Ganja White Night, that page contained
-  older albums, so the new `Wonky` release was never detailed. The playlist exporter correctly
-  skipped the Apple discovery because its canonical track had no persisted Spotify track ID.
-- Refreshing priority artist offset zero fixed one path but could not guarantee that a recent single
-  appeared in the combined first page. The durable per-track correction below closes that gap.
+- Created before code or production-state changes:
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-08-19T03-47-56-616Z.dump`
+- Size: 30,696,688 bytes
+- SHA-256: `94AD0F1C5C0C9448420D5B29C41EB745F29294893B8643F6124C99AA4EDBA17C`
+- `pg_restore --list` validated the PostgreSQL 17.10 custom archive with 514 table-of-contents entries.
+- `last-backup.json` references this archive.
 
-## Implemented Resolution
+## Playlist Export Correction
 
-- Migration `0029_violet_ink.sql` adds durable `track_resolution` scheduler work with ISRC, target
-  canonical track, expected confirmed Spotify artist, optional exact Spotify track ID, and mode.
-- Apple discoveries with a provider-neutral ISRC and no Spotify evidence are automatically queued.
-  The scheduler first searches Spotify by exact ISRC. It requires the returned track to include the
-  confirmed Spotify artist. ISRC is the exact recording match, so harmless title formatting
-  differences do not reject it.
-- An ISRC miss queues separate page-zero `single` and `album` requests, then sends relevant release
-  details through the existing deterministic matcher. This avoids relying on combined Artist Albums
-  ordering. Automatic ISRC misses retry after 24 hours until Spotify evidence exists.
-- Apple-priority discoveries enter this queue immediately after their Apple batch. Existing Apple
-  discoveries are backfilled idempotently during scheduler reconciliation.
-- Apple-only feed cards now accept an exact `open.spotify.com/track/...` URL. The request only queues
-  work. The recurring scheduler later reads that public track through the shared Spotify gate and
-  verifies exact ISRC plus confirmed artist identity before persisting it.
-- User-supplied exact links run ahead of broad Spotify scanning and do not consume broad daily scan
-  capacity. They still respect the global 30-minute and 24-hour request limits, the 10-second request
-  interval, concurrency one, and any provider cooldown.
-- Invalid manual links become a visible mismatch instead of retrying forever. Queued, verifying, and
-  mismatch states are projected from PostgreSQL. Every feed appearance of a matched canonical track
-  now shows its safe Spotify track link, including the original Apple appearance.
-- Spotify data remains Spotify-namespaced. Apple ISRC evidence is used only to locate Spotify
-  evidence, and no Spotify response is sent to Apple Music or another provider.
+- Root cause: every completed broad Spotify work item marked the playlist inbox pending. Once broad
+  Artist Albums work reached its checkpoint, each minute's repair work invoked a full export even
+  when the cached playlist already had every eligible track in the correct order.
+- Those zero-change exports unnecessarily acquired Spotify access, read playlist metadata, and
+  created a completed run plus operation rows. The stored ordering-conflict number was pairwise
+  inversion history rather than the number of actual reorder moves still required.
+- A database-only checkpoint inspection now runs before the Spotify request gate or client is
+  created. Broad work requests an export only for a pending addition, an actual reorder move, an
+  incomplete prior operation, a missing snapshot, or the legitimate 24-hour reconciliation.
+- A no-work checkpoint completes the inbox without a provider request or export ledger. Cache-hit
+  verification advances the reconciliation timestamp so the 24-hour check does not repeat each
+  minute.
+- Exact target restrictions, snapshot checks, Custom Order, Spotify Date Added and Added By
+  provenance, additions-only writes, the unmanaged user-added track, and idempotency remain intact.
+- Live baseline before the correction was 164 runs, 229,068 operations, and 4,863 Spotify requests.
+  One legitimate pending addition then produced run 165, 230,504 operations, and 4,868 requests.
+  Repeated natural scheduler ticks through 21:10 PDT left all three totals unchanged.
 
-## Wonky Verified Outcome
+## Manual Review And Identity State
 
-- Canonical track: `a0acf493-e364-42fc-ad10-e3ea9754d28d`
-- ISRC: `CA5KR2665824`
-- Supplied Spotify track: `0M6v8qTwT7wfiEsAmLQKdd`
-- The exact-link work waited while 35 requests occupied the configured 30-request rolling window.
-  No limit or cooldown was bypassed.
-- The unchanged recurring task verified and persisted the Spotify ID at 20:10 PDT. Both the manual
-  work and its redundant automatic ISRC work are completed.
-- The automatic playlist workflow added Wonky at 20:11 PDT. A later export recognized the other feed
-  appearance as the same recording and skipped that duplicate without removing or re-adding it.
-- Final browser verification shows Spotify on both the Spotify and original Apple feed appearances,
-  and both report `Exported`.
+- Chosen Spotify candidates that are not exact and have no prior manual decision are now projected
+  into the existing release review queue. Reconciliation is database-only and idempotent.
+- Production currently shows one release review: `phantom parade` by Bad Computer. It offers the
+  existing Keep separate and Confirm match decisions. It remains blocked from export until decided.
+- A previous Keep separate decision for Sub Focus `ELEVATE` was incorrectly treated as uncertain for
+  its own canonical Spotify recording. A high-confidence `manual_separate` identity is now exact for
+  that recording, while still keeping the two artist identities separate. The natural scheduler then
+  added the legitimately pending track in run `f62793c5-df33-4767-8c1e-f9b0afbdba85`.
+- The reported 10 Apple identity decisions and 53 proposals are inactive historical records. All 10
+  artists are unfollowed Spotify imports with confirmed Spotify identities and no track credits.
+  Nine retain 53 historical Apple proposals; CLEMS has an old requires-manual status without a
+  proposal. None is active Apple work and the review UI already excludes them.
+- Historical rows were preserved. Doctor reporting now separates active unresolved work from
+  inactive history: active unresolved artists 0, active pending proposals 0, inactive unresolved
+  artists 10, inactive pending proposals 53, and issues 0.
 
-## Startup And Recovery Verification
+## Reporting Corrections
 
-- Windows task `TS New Music Radar Web Application` remains enabled, hidden, StartWhenAvailable,
-  non-overlapping with `IgnoreNew`, and configured for three one-minute failure restarts.
-- Trigger: current-user logon.
-- Exact action:
+- The exports dashboard now calculates Ready, Exported, and Blocked from the complete database
+  playlist plan instead of the currently loaded feed page.
+- The production dashboard now reports Ready 0, Exported 1,105, and Blocked 122.
+- Spotify `queue_depth` is reconciled only when an abandoned counter is stale, no live lease exists,
+  and the request interval has elapsed. The stale production value changed from 1 to 0 naturally.
+- Ordering status now reports actual pending range-reorder moves. Production currently has 0 pending
+  reorder moves, not the previous 319 pairwise inversions.
+
+## Thursday And Friday Workflows
+
+- Thursday, August 13 at 21:00 PDT: the full Apple workflow completed at 21:23. It processed 583 of
+  583 artists with zero failures and 1,270 requests. It discovered 240 candidates, inserted 132,
+  skipped 108, and sent 14 to review.
+- Apple-priority Spotify work started automatically afterward. It used the configured 80 of 80
+  Artist Albums allowance and 21 release-detail requests without a 429 or provider cooldown.
+  Automatic exports ran only after eligible priority work reached its checkpoint.
+- Friday, August 14 at 09:00 PDT: catch-up completed at 09:22. It processed 583 of 583 artists with
+  zero failures and 1,214 requests. It discovered 127 candidates, inserted 0, skipped 127 existing
+  records, and created 0 reviews.
+- The catch-up and its downstream priority/export routing completed under persisted scheduler state.
+  No manual provider scan or duplicate campaign was launched during this correction.
+
+## Current Production State
+
+- PostgreSQL is healthy on `127.0.0.1:5432`; all 30 migrations are applied. The Docker `db` service
+  has `restart: unless-stopped` and was up and healthy for more than 27 hours at final verification.
+- Authorized Spotify playlist: `4l6LaMPL6duulmFe3hRR4Y`.
+- Cached state: 1,164 tracks, 1,163 scanner-managed, 1 unmanaged user-added track, 0 duplicate track
+  IDs, 0 pending additions, 0 incomplete operations, and 0 pending reorder moves. The user-added
+  track remains preserved.
+- Current full plan: 1,105 exported eligible recordings, 122 blocked canonical recordings, and 207
+  duplicate feed appearances intentionally skipped.
+- Spotify has no active lease or cooldown and no 429 in the last 24 hours. All-time telemetry retains
+  five quota-classified and two legacy 429 events, with the latest on August 9. Artist Albums remains
+  78 of 80 for the current trailing window, with the configured priority reserve intact.
+- The broad scheduler backlog is 1,217 queued and 10 blocked work items. This is scheduled catalog
+  work, not a stuck lease. Playlist inbox status is completed with zero pending additions.
+
+## Windows And Web Recovery
+
+- `TS New Music Radar Recurring Discovery` remains enabled, hidden, direct, and non-overlapping. It
+  runs every minute with `conhost.exe --headless node.exe --env-file=... --import tsx ... tick`.
+  Its 21:09 PDT execution returned 0 and the next minute was scheduled normally.
+- `TS New Music Radar Web Application` remains enabled, hidden, non-overlapping, and running from its
+  current-user logon trigger. Its direct action remains:
   `C:\Windows\System32\conhost.exe --headless "C:\Program Files\nodejs\node.exe" --import tsx "C:\Users\taysh\Documents\Codex\codex_world_1\apps\scanner\src\web-supervisor-cli.ts"`
-- The supervisor waits up to 60 ten-second attempts for Docker and PostgreSQL, applies migrations,
-  removes stale PID records safely, avoids a duplicate when health already responds, binds Next.js
-  only to `127.0.0.1:3000`, and restarts an unexpectedly exited child.
-- Final controlled recovery stopped verified web PID `57020`; supervisor PID `50040` restored web PID
-  `40520`, and `/api/health` returned `ok`. The web and supervisor processes reported
-  `MainWindowHandle=0`. No visible console appeared and no Windows restart was performed.
+- Live reboot recovery was previously validated on August 17. After Windows boot, the supervisor
+  retried while Docker was unavailable, reached PostgreSQL on attempt 7, applied migrations, and
+  restored loopback web health. During this correction, a controlled stop of verified Next child PID
+  31080 was restored as PID 4840 in about 10 seconds. `/api/health` returned `ok`, and no visible
+  console appeared.
 
 ## Validation
 
 - `pnpm format:check`: passed
 - `pnpm lint`: passed with zero warnings
 - `pnpm typecheck`: passed across all six workspace projects
-- `pnpm test`: 67 files and 488 tests passed
-- `pnpm test:integration`: 27 files and 145 tests passed after provisioning `db-test` and applying
-  all migrations
-- `pnpm build`: production Next.js build passed with 27 routes
+- `pnpm test`: 67 files and 489 tests passed
+- `pnpm test:integration`: 27 files and 148 tests passed with all 30 migrations
+- `pnpm build`: production Next.js build passed with 27 pages and routes
 - `pnpm test:e2e`: 31 Playwright tests passed
-- `pnpm doctor`: READY
-- `git diff --check`: passed
-- In-app browser smoke test: Wonky's original Apple appearance showed both Apple Music and Spotify,
-  the Spotify appearance showed Spotify, and both showed `Exported`.
+- `pnpm run doctor`: READY
+- In-app browser smoke: exports showed 0 ready, 1,105 exported, and 122 blocked; release review showed
+  one actionable uncertain Spotify match; Apple mapping review showed zero active unresolved artists;
+  browser console errors and warnings were empty.
 
-## Current Operational State
+## Remaining Non-Blocking Work
 
-- PostgreSQL is healthy on `127.0.0.1:5432`; 30 migrations are applied.
-- Spotify has no active cooldown and no 429 in the last 24 hours. Artist Albums usage remains 80/80.
-- Track resolution has completed six automatic ISRC jobs and one manual job. The backlog contains
-  126 ISRC jobs and one `single` fallback. These continue only as safe request capacity returns.
-- The latest playlist run completed with 1 addition, 1,097 already present, 332 skipped, and 0
-  failures. Discovery returned to `broad_spotify` with the playlist inbox completed.
-- Thursday Apple discovery remains the latest Apple scan. It completed all 583 artists with zero
-  failures. The next full Apple run is Thursday, August 20 at 21:00 PDT, followed by the configured
-  Friday catch-up.
-- Apple has no active request lease or cooldown. No Apple request was made during this work.
-- `TS New Music Radar Recurring Discovery` remains enabled, hidden, and unchanged. Its action is
-  still direct `conhost.exe --headless node.exe --env-file=... --import tsx ... tick`. It was ready
-  after its 20:19 PDT invocation completed with result `0`.
-- No provider request was invoked manually. Wonky verification and playlist addition were performed
-  by the existing recurring task after its persisted limits allowed them.
-
-## Deferred
-
-- Automatic processing of the remaining 126 ISRC resolution jobs and one catalog fallback
-- Database backup refresh after the last recorded 2026-08-04 backup
-- Physical Windows restart or logoff validation
+- The 1,217 broad Spotify jobs and 10 blocked jobs continue under the existing daily and trailing
+  budgets.
+- The 122 blocked playlist candidates require future provider evidence or human decisions where an
+  uncertain candidate exists. They are not eligible for automatic export.
+- The intentional 24-hour playlist reconciliation may perform minimal Spotify metadata reads and
+  record a reconciliation run even when it confirms no changes. Per-minute no-work churn is fixed.

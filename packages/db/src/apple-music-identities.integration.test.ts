@@ -159,6 +159,20 @@ describe.sequential("bulk Apple Music identity decisions", () => {
       await restarted.client.end();
     }
   });
+
+  it("reports inactive identity proposals separately from current review work", async () => {
+    await connection.db
+      .update(artistFollows)
+      .set({ active: false })
+      .where(eq(artistFollows.artistId, artistIds[5]!));
+
+    await expect(verifyAppleIdentityResolutionState(connection.db)).resolves.toMatchObject({
+      inactivePendingCandidates: 1,
+      inactiveUnresolvedArtists: 1,
+      pendingCandidates: 1,
+      unresolvedArtists: 1,
+    });
+  });
 });
 
 function decision(

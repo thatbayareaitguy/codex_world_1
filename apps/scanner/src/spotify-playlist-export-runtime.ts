@@ -4,6 +4,7 @@ import {
   createSpotifyRequestGate,
   ensureLocalOwner,
   executeSpotifyPlaylistExport,
+  inspectSpotifyPlaylistCheckpoint,
   markDiscoveryPlaylistInboxStatus,
   previewSpotifyPlaylistExport,
   releaseOperationLock,
@@ -113,6 +114,15 @@ export async function runAutomaticDiscoveryPlaylistExport(
     const claimed = await claimAutomaticDiscoveryPlaylistInboxExport(db);
     if (!claimed) return { reason: "not_due" as const };
     const userId = await ensureLocalOwner(db);
+    const inspection = await inspectSpotifyPlaylistCheckpoint(
+      db,
+      userId,
+      configuration.spotify.allowedPlaylistId,
+    );
+    if (!inspection.shouldRun) {
+      await markDiscoveryPlaylistInboxStatus(db, { status: "completed" });
+      return { inspection, reason: "no_changes" as const };
+    }
     const requestGate = createSpotifyRequestGate(
       db,
       configuration.spotify.minRequestIntervalMs,
@@ -175,6 +185,22 @@ export async function runAutomaticDiscoveryPlaylistExport(
   } finally {
     await releaseOperationLock(db, lock);
   }
+}
+
+export async function inspectAutomaticDiscoveryPlaylistCheckpoint(
+  db: RadarDatabase,
+  configuration: ProviderConfiguration,
+) {
+  if (
+    !configuration.discoverySchedulerEnabled ||
+    !configuration.spotify.scheduler.enabled ||
+    !configuration.spotify.playlistWritesEnabled ||
+    !configuration.spotify.allowedPlaylistId
+  ) {
+    return { reason: "capability_disabled" as const, shouldRun: false };
+  }
+  const userId = await ensureLocalOwner(db);
+  return inspectSpotifyPlaylistCheckpoint(db, userId, configuration.spotify.allowedPlaylistId);
 }
 
 function isSpotifyCooldown(error: unknown): boolean {

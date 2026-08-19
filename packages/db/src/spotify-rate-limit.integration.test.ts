@@ -18,6 +18,7 @@ import {
   getSpotifyEndpointBudgetStatus,
   getSpotify429Telemetry,
   getSpotifyOperationalStatus,
+  reconcileStaleSpotifyQueueDepth,
   SpotifyCooldownError,
   SpotifyEndpointBudgetError,
 } from "./spotify-request-gate";
@@ -54,6 +55,26 @@ afterAll(async () => {
 });
 
 describe("Spotify global request gate", () => {
+  it("repairs an abandoned queue counter without touching a live waiter", async () => {
+    const now = new Date("2026-08-19T04:00:00.000Z");
+    await db.insert(spotifyProviderState).values({
+      id: "global",
+      nextRequestAt: new Date(now.getTime() - 60_000),
+      queueDepth: 2,
+      updatedAt: new Date(now.getTime() - 10 * 60_000),
+    });
+
+    await expect(reconcileStaleSpotifyQueueDepth(db, now)).resolves.toBe(true);
+    await expect(getSpotifyOperationalStatus(db, now)).resolves.toMatchObject({ queueDepth: 0 });
+
+    await db
+      .update(spotifyProviderState)
+      .set({ queueDepth: 1, updatedAt: new Date(now.getTime() - 30_000) })
+      .where(eq(spotifyProviderState.id, "global"));
+    await expect(reconcileStaleSpotifyQueueDepth(db, now)).resolves.toBe(false);
+    await expect(getSpotifyOperationalStatus(db, now)).resolves.toMatchObject({ queueDepth: 1 });
+  });
+
   it("preserves twenty Artist Albums calls for priority work while playlist work remains available", async () => {
     const now = new Date();
     await db.insert(spotifyRequestEvents).values(

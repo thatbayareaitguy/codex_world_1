@@ -448,11 +448,13 @@ export async function preserveAppleIdentityExactLinkConflict(
 
 export async function verifyAppleIdentityResolutionState(db: RadarDatabase): Promise<{
   confirmedMappings: number;
+  inactivePendingCandidates: number;
+  inactiveUnresolvedArtists: number;
   issues: string[];
   pendingCandidates: number;
   unresolvedArtists: number;
 }> {
-  const [statuses, mappings, pending] = await Promise.all([
+  const [statuses, mappings, pending, activeFollows] = await Promise.all([
     db
       .select()
       .from(artistProviderIdentityStatuses)
@@ -472,11 +474,20 @@ export async function verifyAppleIdentityResolutionState(db: RadarDatabase): Pro
           eq(artistMappingReviews.status, "pending"),
         ),
       ),
+    db
+      .select({ artistId: artistFollows.artistId })
+      .from(artistFollows)
+      .where(eq(artistFollows.active, true)),
   ]);
-  const mappingByArtist = new Map(mappings.map((mapping) => [mapping.artistId, mapping]));
-  const pendingByArtist = new Set(pending.map((row) => row.artistId));
+  const activeArtistIds = new Set(activeFollows.map((follow) => follow.artistId));
+  const activeStatuses = statuses.filter((status) => activeArtistIds.has(status.artistId));
+  const activeMappings = mappings.filter((mapping) => activeArtistIds.has(mapping.artistId));
+  const activePending = pending.filter((row) => activeArtistIds.has(row.artistId));
+  const inactivePending = pending.filter((row) => !activeArtistIds.has(row.artistId));
+  const mappingByArtist = new Map(activeMappings.map((mapping) => [mapping.artistId, mapping]));
+  const pendingByArtist = new Set(activePending.map((row) => row.artistId));
   const issues: string[] = [];
-  for (const status of statuses) {
+  for (const status of activeStatuses) {
     const mapping = mappingByArtist.get(status.artistId);
     if (
       (status.status === "automatically_confirmed" || status.status === "manually_confirmed") &&
@@ -492,10 +503,19 @@ export async function verifyAppleIdentityResolutionState(db: RadarDatabase): Pro
     }
   }
   return {
-    confirmedMappings: mappings.length,
+    confirmedMappings: activeMappings.length,
+    inactivePendingCandidates: inactivePending.length,
+    inactiveUnresolvedArtists: new Set(
+      statuses
+        .filter(
+          (status) =>
+            !activeArtistIds.has(status.artistId) && status.status === "requires_manual_decision",
+        )
+        .map((status) => status.artistId),
+    ).size,
     issues,
-    pendingCandidates: pending.length,
-    unresolvedArtists: new Set(pending.map((row) => row.artistId)).size,
+    pendingCandidates: activePending.length,
+    unresolvedArtists: new Set(activePending.map((row) => row.artistId)).size,
   };
 }
 

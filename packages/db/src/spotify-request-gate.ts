@@ -263,6 +263,37 @@ export async function getSpotifyOperationalStatus(
   };
 }
 
+export async function reconcileStaleSpotifyQueueDepth(
+  db: RadarDatabase,
+  now = new Date(),
+  staleAfterMs = 2 * 60_000,
+): Promise<boolean> {
+  if (!Number.isSafeInteger(staleAfterMs) || staleAfterMs < leaseDurationMs) {
+    throw new Error("Spotify queue staleness threshold must be at least one lease duration.");
+  }
+  const staleBefore = new Date(now.getTime() - staleAfterMs);
+  const rows = await db
+    .update(spotifyProviderState)
+    .set({ queueDepth: 0, updatedAt: now })
+    .where(
+      and(
+        eq(spotifyProviderState.id, spotifyStateId),
+        gt(spotifyProviderState.queueDepth, 0),
+        lte(spotifyProviderState.updatedAt, staleBefore),
+        or(
+          isNull(spotifyProviderState.leaseExpiresAt),
+          lte(spotifyProviderState.leaseExpiresAt, now),
+        ),
+        or(
+          isNull(spotifyProviderState.nextRequestAt),
+          lte(spotifyProviderState.nextRequestAt, now),
+        ),
+      ),
+    )
+    .returning({ id: spotifyProviderState.id });
+  return rows.length === 1;
+}
+
 export async function getSpotify429Telemetry(
   db: RadarDatabase,
   now = new Date(),

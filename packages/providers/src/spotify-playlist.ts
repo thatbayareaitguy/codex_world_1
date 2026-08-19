@@ -9,6 +9,7 @@ export interface PlaylistSyncPlan {
 }
 
 export interface SpotifyPlaylistExportCandidate {
+  candidateId?: string;
   confidence?: number;
   discNumber: number;
   feedItemId: string;
@@ -573,7 +574,12 @@ export function groupSpotifyPlaylistAdditions(
 }
 
 export function isExactSpotifyIdentity(matchRule: string, confidence: number): boolean {
-  return confidence >= 0.98 && (matchRule === "new_canonical" || matchRule.startsWith("exact_"));
+  return (
+    confidence >= 0.98 &&
+    (matchRule === "new_canonical" ||
+      matchRule === "manual_separate" ||
+      matchRule.startsWith("exact_"))
+  );
 }
 
 function spotifyPlaylistExportSkipReason(

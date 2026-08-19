@@ -123,7 +123,7 @@ export function sanitizedSpotifyPlaylistExportOutput(input: {
       eligible: input.plan.desired.length,
       existingDuplicateTracks: input.plan.existingDuplicateTrackIds.length,
       finalPlaylistItems: input.plan.finalTrackIds.length,
-      orderingConflicts: input.plan.orderingConflicts.length,
+      orderingConflicts: input.plan.reorderMoves.length,
       reorderMoves: input.plan.reorderMoves.length,
       releaseGroupingConflicts: input.plan.releaseGroupingConflicts.length,
       skipped: input.plan.skips.length,
@@ -148,7 +148,7 @@ export function sanitizedSpotifyPlaylistExportOutput(input: {
       reason: item.reason,
       title: item.title,
     })),
-    orderingConflicts: input.plan.orderingConflicts,
+    orderingConflicts: input.plan.reorderMoves,
     releaseGroupingConflicts: input.plan.releaseGroupingConflicts,
     outsideCurrentExportSetItems: input.plan.outsideCurrentExportSetItems.map((item) => ({
       appManaged: item.appManaged,

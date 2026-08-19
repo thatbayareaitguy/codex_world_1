@@ -5,7 +5,9 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createDatabase } from "./client";
 import {
   executeSpotifyPlaylistExport,
+  inspectSpotifyPlaylistCheckpoint,
   previewSpotifyPlaylistExport,
+  surfaceUncertainSpotifyMatchesForReview,
 } from "./spotify-playlist-export";
 import {
   artistFollows,
@@ -89,6 +91,49 @@ describe.sequential("Spotify canonical playlist export", () => {
     );
     expect(afterExternalChange.cacheHit).toBe(false);
     expect(client.itemReadCalls).toBe(2);
+  });
+
+  it("uses cached database state to skip no-change checkpoints and surface uncertain matches", async () => {
+    const fixture = await createFixture({ includeIneligible: true, writeScope: false });
+    const verifiedAt = new Date("2026-08-19T04:00:00.000Z");
+    const client = new FakePlaylistClient([
+      fixture.exactProviderTrackId,
+      fixture.confirmedProviderTrackId,
+    ]);
+    await previewSpotifyPlaylistExport(db, fixture.userId, client, playlistId);
+    await db
+      .update(playlistTargets)
+      .set({ snapshotVerifiedAt: verifiedAt })
+      .where(eq(playlistTargets.userId, fixture.userId));
+
+    await expect(
+      inspectSpotifyPlaylistCheckpoint(db, fixture.userId, playlistId, {
+        now: new Date(verifiedAt.getTime() + 60_000),
+      }),
+    ).resolves.toMatchObject({
+      exportedCount: 2,
+      pendingAdditionCount: 0,
+      reason: "none",
+      reorderMoveCount: 0,
+      shouldRun: false,
+    });
+    await expect(
+      inspectSpotifyPlaylistCheckpoint(db, fixture.userId, playlistId, {
+        now: new Date(verifiedAt.getTime() + 25 * 60 * 60_000),
+      }),
+    ).resolves.toMatchObject({ reason: "periodic_reconciliation", shouldRun: true });
+
+    await expect(
+      surfaceUncertainSpotifyMatchesForReview(db, fixture.userId, verifiedAt),
+    ).resolves.toMatchObject({ candidatesUpdated: 1, feedItemsUpdated: 1 });
+    const uncertain = await db.query.releaseCandidates.findFirst({
+      where: eq(releaseCandidates.title, "Uncertain track"),
+    });
+    const uncertainFeed = uncertain
+      ? await db.query.feedItems.findFirst({ where: eq(feedItems.candidateId, uncertain.id) })
+      : undefined;
+    expect(uncertain).toMatchObject({ matchStatus: "needs_review" });
+    expect(uncertainFeed).toMatchObject({ state: "needs_review" });
   });
 
   it("restores release-date Custom Order from cache without a second full playlist read", async () => {
