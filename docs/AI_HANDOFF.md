@@ -1,8 +1,43 @@
 # AI Handoff
 
-Updated: 2026-08-18 21:10 PDT
+Updated: 2026-08-21 14:44 PDT
 
-## Repository
+## Showcase Public Site Milestone
+
+- Showcase work is isolated on `codex/showcase-public-site` in
+  `C:\Users\taysh\Documents\Codex\codex_world_1_showcase`, based on production checkpoint
+  `113d2a51db6030f8fe663e2667d752540b1dced3` from `codex/release-radar-hardening`.
+- `apps/showcase` is a separate Next.js application with no imports from `@radar/db`, scanner,
+  provider, scheduler, playlist, or private web packages. It uses eight fixture releases and six
+  fixture artists only. No production database or music-provider request was made.
+- Public routes are `/`, `/releases`, `/releases/[slug]`, `/artists`, `/artists/[slug]`,
+  `/playlists`, and `/about`, with responsive navigation, local filters, loading states, empty
+  states, not-found handling, public record metadata, neutral CSS placeholder artwork, and a
+  generated site-wide social preview. The navigation now exposes Featured Playlists and About Us.
+  Featured Playlists has three initial editorial cards; About Us intentionally contains structured
+  placeholders for later mission, selection, and team copy.
+- `showcase-public-v0.1` in `apps/showcase/lib/public-catalog.ts` is the proposed public publishing
+  contract. It exposes Showcase IDs/slugs, public display metadata, normalized public references,
+  dates, genres, optional labels, tracks, and outbound links. It excludes operational and identity
+  evidence, internal IDs, credentials, provider payloads, review state, queues, quota state,
+  playlists, and errors.
+- Root scripts add `showcase:dev`, `showcase:build`, and `test:e2e:showcase`. Local development uses
+  `pnpm showcase:dev -- --hostname 127.0.0.1 --port 3200` and
+  `http://127.0.0.1:3200`.
+- Validation passed after the navigation and editorial-page update: formatting, lint, all seven
+  workspace type checks, 68 unit files with 492 tests, 27 database integration files with 148 tests
+  against the isolated test service, the Showcase production build with 21 generated pages, and all
+  five Showcase Playwright tests. Earlier milestone validation also passed all 31 private scanner
+  Playwright regression tests in mock mode. No live provider activity was used.
+- The original production worktree remains on `codex/release-radar-hardening` at `113d2a51...` with
+  only its pre-existing untracked `outputs/` directory.
+- The supplied `Showcase Logo V1 PNG.png` is now the active public brand asset at
+  `apps/showcase/public/showcase-logo-v1.png`. Header, hero, controls, gradients, artwork
+  placeholders, and link-preview metadata use its orange, pink, violet, and blue palette. Manrope
+  and DM Mono remain unchanged. The former acid-lime page and social preview are stored under
+  `docs/showcase-theme-archive`.
+
+## Production Baseline Repository
 
 - Branch: `codex/release-radar-hardening`
 - Starting HEAD and upstream for this correction: `a8be3006f9d582e95cb11933684f48027ac6ee71`

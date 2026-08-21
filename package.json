@@ -30,6 +30,8 @@
     "discovery:bootstrap": "tsx apps/scanner/src/discovery-bootstrap-cli.ts",
     "discovery:scheduler:status": "tsx apps/scanner/src/discovery-scheduler-cli.ts status",
     "discovery:scheduler:tick": "tsx apps/scanner/src/discovery-scheduler-cli.ts tick",
+    "showcase:dev": "pnpm --filter @showcase/web dev",
+    "showcase:build": "pnpm --filter @showcase/web build",
     "scan:reconcile": "tsx apps/scanner/src/cli.ts --full",
     "scan:status": "tsx apps/scanner/src/scan-status.ts status",
     "scan:unlock-stale": "tsx apps/scanner/src/scan-status.ts unlock-stale",
@@ -44,6 +46,7 @@
     "reddit:reconcile-deletions": "tsx apps/scanner/src/reddit-reconcile.ts",
     "test": "vitest run --exclude '**/*.integration.test.ts' --exclude '**/e2e/**'",
     "test:e2e": "playwright test",
+    "test:e2e:showcase": "playwright test --config playwright.showcase.config.ts",
     "test:integration": "tsx packages/db/src/prepare-test.ts && vitest run --config vitest.integration.config.ts",
     "test:spotify:live": "tsx apps/scanner/src/spotify-live-smoke-cli.ts",
     "typecheck": "pnpm -r typecheck"
