@@ -6,6 +6,7 @@ import {
   parseDiscoverySchedulerCommand,
   runBroadAutomaticPlaylistCheckpoint,
   runDynamicSpotifyPriorityPhase,
+  runPriorityAutomaticPlaylistCheckpoint,
   runReadyAutomaticPlaylistExport,
   selectDiscoverySchedulerAction,
   shouldFlushBroadPlaylistCheckpoint,
@@ -251,6 +252,41 @@ describe("discovery scheduler CLI", () => {
     expect(markPending).not.toHaveBeenCalled();
   });
 
+  it("runs a guarded priority checkpoint only when confirmed playlist work exists", async () => {
+    const db = {} as ReturnType<typeof createDatabase>["db"];
+    const prepare = vi.fn(() => Promise.resolve(true));
+    const runExport = vi.fn(() => Promise.resolve({ reason: "completed" as const }));
+
+    await expect(
+      runPriorityAutomaticPlaylistCheckpoint(db, loadProviderConfiguration({}), {
+        inspect: vi.fn(() => Promise.resolve({ reason: "pending_additions", shouldRun: true })),
+        prepare,
+        runExport,
+      }),
+    ).resolves.toEqual({ reason: "completed" });
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(runExport).toHaveBeenCalledOnce();
+  });
+
+  it("does not open a priority checkpoint when there are no playlist changes", async () => {
+    const prepare = vi.fn(() => Promise.resolve(true));
+    const runExport = vi.fn(() => Promise.resolve({ reason: "completed" as const }));
+
+    await expect(
+      runPriorityAutomaticPlaylistCheckpoint(
+        {} as ReturnType<typeof createDatabase>["db"],
+        loadProviderConfiguration({}),
+        {
+          inspect: vi.fn(() => Promise.resolve({ reason: "none", shouldRun: false })),
+          prepare,
+          runExport,
+        },
+      ),
+    ).resolves.toMatchObject({ reason: "no_changes" });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(runExport).not.toHaveBeenCalled();
+  });
+
   it("processes five priority artists back-to-back and stops before broad work", async () => {
     const db = {} as ReturnType<typeof createDatabase>["db"];
     const runTick = vi.fn(() =>
@@ -297,17 +333,17 @@ describe("discovery scheduler CLI", () => {
         phase: "broad_spotify",
         playlistInbox: { status: "completed" },
       });
-    const runExport = vi.fn(() => Promise.resolve(null));
+    const runCheckpoint = vi.fn(() => Promise.resolve(null));
 
     await expect(
       runDynamicSpotifyPriorityPhase(
         db,
         loadProviderConfiguration({ SPOTIFY_PRIORITY_MAX_ITEMS_PER_RUN: "10" }),
-        { getStatus, runExport, runTick: runTick as never },
+        { getStatus, runCheckpoint, runTick: runTick as never },
       ),
     ).resolves.toEqual({ completedItems: 5, reason: "drained", requestsStarted: 5 });
     expect(runTick).toHaveBeenCalledTimes(5);
-    expect(runExport).toHaveBeenCalledTimes(5);
+    expect(runCheckpoint).toHaveBeenCalledOnce();
   });
 
   it("bounds one dynamic priority process at ten committed work items", async () => {
@@ -341,7 +377,7 @@ describe("discovery scheduler CLI", () => {
               playlistInbox: { status: "completed" },
             }),
           ),
-          runExport: vi.fn(() => Promise.resolve(null)),
+          runCheckpoint: vi.fn(() => Promise.resolve(null)),
           runTick: runTick as never,
         },
       ),
@@ -362,7 +398,7 @@ describe("discovery scheduler CLI", () => {
               playlistInbox: { status: "completed" },
             }),
           ),
-          runExport: vi.fn(() => Promise.resolve(null)),
+          runCheckpoint: vi.fn(() => Promise.resolve(null)),
           runTick: vi.fn(() =>
             Promise.resolve({ ...tick, mode: "credential_free" as const, selected: null }),
           ) as never,
@@ -385,7 +421,7 @@ describe("discovery scheduler CLI", () => {
               playlistInbox: { status: "completed" },
             }),
           ),
-          runExport: vi.fn(() => Promise.resolve(null)),
+          runCheckpoint: vi.fn(() => Promise.resolve(null)),
           runTick: vi.fn(() =>
             Promise.resolve({ ...tick, mode: "credential_free" as const, selected: null }),
           ) as never,

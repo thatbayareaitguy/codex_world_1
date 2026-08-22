@@ -741,6 +741,9 @@ export async function finishSpotifySchedulerWork(
             claim.trackResolutionMode === "isrc"
           ? {
               dueAt: new Date(now.getTime() + spotifySchedulerWindowMs),
+              source: ["apple_priority", "apple_catchup"].includes(claim.source)
+                ? ("repair" as const)
+                : claim.source,
               status: "queued" as const,
             }
           : { status: nextStatus }),
@@ -755,6 +758,27 @@ export async function finishSpotifySchedulerWork(
     )
     .returning({ id: spotifySchedulerWork.id });
   return rows.length === 1;
+}
+
+export async function reconcileDeferredPriorityTrackResolutionWork(
+  db: RadarDatabase,
+  now = new Date(),
+): Promise<number> {
+  const moved = await db
+    .update(spotifySchedulerWork)
+    .set({ source: "repair", updatedAt: now })
+    .where(
+      and(
+        inArray(spotifySchedulerWork.source, ["apple_priority", "apple_catchup"]),
+        eq(spotifySchedulerWork.workType, "track_resolution"),
+        eq(spotifySchedulerWork.trackResolutionMode, "isrc"),
+        eq(spotifySchedulerWork.status, "queued"),
+        gt(spotifySchedulerWork.attemptCount, 0),
+        gt(spotifySchedulerWork.dueAt, now),
+      ),
+    )
+    .returning({ id: spotifySchedulerWork.id });
+  return moved.length;
 }
 
 export async function renewSpotifySchedulerLease(

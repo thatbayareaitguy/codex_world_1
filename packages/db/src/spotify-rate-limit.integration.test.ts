@@ -412,10 +412,12 @@ describe("Spotify global request gate", () => {
       endpointCategory: "artist_albums",
       method: "GET",
     });
+    await new Promise((resolve) => setTimeout(resolve, 100));
     await firstGate.complete(first, { status: 200 });
     const second = await secondPromise;
     await secondGate.complete(second, { status: 200 });
     expect(second.startedAt.getTime() - first.startedAt.getTime()).toBeGreaterThanOrEqual(9_900);
+    expect(second.startedAt.getTime() - first.startedAt.getTime()).toBeLessThan(15_000);
   }, 20_000);
 });
 

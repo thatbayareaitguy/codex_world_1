@@ -10,6 +10,7 @@ import {
   getSpotifySchedulerStatus,
   planSpotifySchedulerTick,
   queueSpotifyTrackResolutionWork,
+  reconcileDeferredPriorityTrackResolutionWork,
   reconcileSpotifySchedulerWork,
   setSpotifySchedulerMode,
   spotifySchedulerWindowMs,
@@ -204,6 +205,93 @@ describe("Spotify rolling scheduler persistence", () => {
       targetSpotifyTrackId: "0M6v8qTwT7wfiEsAmLQKdd",
       trackResolutionMode: "manual",
     });
+  });
+
+  it("moves completed Apple-priority ISRC retries into normal repair work", async () => {
+    const now = new Date("2026-08-22T06:30:00.000Z");
+    const artistId = await createArtist("Priority retry", true, true);
+    const [track] = await db
+      .insert(tracks)
+      .values({ isrc: "USABC2600011", normalizedTitle: "priority-retry", title: "Priority Retry" })
+      .returning({ id: tracks.id });
+    if (!track) throw new Error("Priority retry target was not created.");
+    await queueSpotifyTrackResolutionWork(db, {
+      artistId,
+      dueAt: now,
+      expectedSpotifyArtistId: `spotify-${artistId}`,
+      mode: "isrc",
+      source: "apple_priority",
+      targetIsrc: "USABC2600011",
+      targetTrackId: track.id,
+    });
+    await db.insert(discoveryScheduleState).values({
+      id: "global",
+      phase: "apple_priority",
+      playlistInboxStatus: "pending",
+    });
+    await setSpotifySchedulerMode(db, "automatic", now);
+
+    const claim = await claimSpotifySchedulerWork(db, now);
+    expect(claim).toMatchObject({ source: "apple_priority", workType: "track_resolution" });
+    await finishSpotifySchedulerWork(db, claim!, { status: "completed" }, now);
+
+    expect(
+      await db.query.spotifySchedulerWork.findFirst({
+        where: eq(spotifySchedulerWork.id, claim!.id),
+      }),
+    ).toMatchObject({
+      dueAt: new Date(now.getTime() + spotifySchedulerWindowMs),
+      source: "repair",
+      status: "queued",
+    });
+  });
+
+  it("repairs future-dated priority ISRC rows without moving immediate first attempts", async () => {
+    const now = new Date("2026-08-22T06:40:00.000Z");
+    const artistId = await createArtist("Legacy priority retry", true, true);
+    const [futureTrack, immediateTrack] = await db
+      .insert(tracks)
+      .values([
+        { isrc: "USABC2600012", normalizedTitle: "future-retry", title: "Future Retry" },
+        { isrc: "USABC2600013", normalizedTitle: "immediate-check", title: "Immediate Check" },
+      ])
+      .returning({ id: tracks.id });
+    if (!futureTrack || !immediateTrack) throw new Error("Legacy retry targets were not created.");
+    await queueSpotifyTrackResolutionWork(db, {
+      artistId,
+      dueAt: new Date(now.getTime() + spotifySchedulerWindowMs),
+      expectedSpotifyArtistId: `spotify-${artistId}`,
+      mode: "isrc",
+      source: "apple_priority",
+      targetIsrc: "USABC2600012",
+      targetTrackId: futureTrack.id,
+    });
+    await queueSpotifyTrackResolutionWork(db, {
+      artistId,
+      dueAt: now,
+      expectedSpotifyArtistId: `spotify-${artistId}`,
+      mode: "isrc",
+      source: "apple_priority",
+      targetIsrc: "USABC2600013",
+      targetTrackId: immediateTrack.id,
+    });
+    await db
+      .update(spotifySchedulerWork)
+      .set({ attemptCount: 1 })
+      .where(eq(spotifySchedulerWork.targetTrackId, futureTrack.id));
+
+    await expect(reconcileDeferredPriorityTrackResolutionWork(db, now)).resolves.toBe(1);
+    const rows = await db
+      .select({
+        source: spotifySchedulerWork.source,
+        targetTrackId: spotifySchedulerWork.targetTrackId,
+      })
+      .from(spotifySchedulerWork)
+      .where(inArray(spotifySchedulerWork.targetTrackId, [futureTrack.id, immediateTrack.id]));
+    expect(rows.find((row) => row.targetTrackId === futureTrack.id)?.source).toBe("repair");
+    expect(rows.find((row) => row.targetTrackId === immediateTrack.id)?.source).toBe(
+      "apple_priority",
+    );
   });
 
   it("blocks broad Artist Albums work at 60 calls while preserving priority capacity", async () => {

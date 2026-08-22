@@ -379,6 +379,28 @@ export async function markBroadDiscoveryPlaylistCheckpointPending(
   return Boolean(updated);
 }
 
+export async function preparePriorityDiscoveryPlaylistCheckpoint(
+  db: RadarDatabase,
+  now = new Date(),
+): Promise<boolean> {
+  const [updated] = await db
+    .update(discoveryScheduleState)
+    .set({
+      phase: "playlist_inbox",
+      playlistInboxStatus: "ready",
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(discoveryScheduleState.id, discoveryScheduleStateId),
+        inArray(discoveryScheduleState.phase, ["apple_priority", "apple_catchup_priority"]),
+        inArray(discoveryScheduleState.playlistInboxStatus, ["pending", "completed"]),
+      ),
+    )
+    .returning({ id: discoveryScheduleState.id });
+  return Boolean(updated);
+}
+
 export async function prepareBroadDiscoveryPlaylistCheckpoint(
   db: RadarDatabase,
   now = new Date(),

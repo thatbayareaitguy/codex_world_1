@@ -1,21 +1,46 @@
 # AI Handoff
 
-Updated: 2026-08-18 21:10 PDT
+Updated: 2026-08-22 00:22 PDT
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`
-- Starting HEAD and upstream for this correction: `a8be3006f9d582e95cb11933684f48027ac6ee71`
+- Starting HEAD and upstream for this correction: `113d2a51db6030f8fe663e2667d752540b1dced3`
 - Unrelated `outputs/` remains untracked and excluded. No secret or `.env` file was changed.
 
 ## Fresh Backup
 
 - Created before code or production-state changes:
-  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-08-19T03-47-56-616Z.dump`
-- Size: 30,696,688 bytes
-- SHA-256: `94AD0F1C5C0C9448420D5B29C41EB745F29294893B8643F6124C99AA4EDBA17C`
-- `pg_restore --list` validated the PostgreSQL 17.10 custom archive with 514 table-of-contents entries.
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-08-22T06-28-47-302Z.dump`
+- Size: 33,770,922 bytes
+- SHA-256: `D66B89945F2F321F2B908BD4D6317EC3690E514CC169C78BFCE3AEF38F901AB7`
+- `pg_restore --list` validated the PostgreSQL custom archive with 525 table-of-contents entries.
 - `last-backup.json` references this archive.
+
+## Friday Playlist Sync Correction
+
+- The Friday playlist sync was blocked even after Spotify capacity returned. Six successfully
+  resolved ISRC repair rows had been scheduled for their normal 24-hour recheck but still retained
+  the `apple_priority` source. The priority phase counted those future rows as unfinished priority
+  work, so it never reached its playlist checkpoint. This was scheduler state, not a Spotify quota,
+  authentication, playlist, or provider failure.
+- A completed priority ISRC resolution now moves to the normal `repair` lane when it is scheduled for
+  its next-day recheck. Every scheduler tick also repairs legacy future-due rows left in a priority
+  lane. The first production tick moved all six affected rows without making a provider request.
+- Priority processing now performs a database-only playlist checkpoint before starting more catalog
+  requests. If additions or a legitimate reconciliation are pending, confirmed songs sync first. If
+  no work exists, no Spotify client, request, export run, or operation ledger is created.
+- This makes the Friday behavior explicit: when rolling Spotify capacity returns, already confirmed
+  playlist additions are attempted before new priority catalog work consumes that capacity. The
+  existing fixed playlist target, additions-only policy, Custom Order, snapshot checks, Date Added
+  and Added By preservation, user-added track handling, and idempotent resume behavior are unchanged.
+- Spotify and dormant MusicBrainz request gates now recheck an active 30-second safety lease every
+  250 ms. They still serialize requests and preserve the configured request-start interval, but a
+  completed request no longer makes another caller sleep until the abandoned-lease deadline.
+- The naturally scheduled 23:39 PDT tick opened export run
+  `681c5339-60ec-420b-b482-eeee2abb2bff` for 82 additions. All additions succeeded. Spotify then
+  accepted 33 snapshot-aware range moves to restore Custom Order. The run completed at 00:21 PDT
+  with zero failures, ordering conflicts, 429s, or cooldowns and without creating a duplicate run.
 
 ## Playlist Export Correction
 
@@ -59,7 +84,7 @@ Updated: 2026-08-18 21:10 PDT
 
 - The exports dashboard now calculates Ready, Exported, and Blocked from the complete database
   playlist plan instead of the currently loaded feed page.
-- The production dashboard now reports Ready 0, Exported 1,105, and Blocked 122.
+- The post-recovery production dashboard reports Ready 0, Exported 1,187, and Blocked 119.
 - Spotify `queue_depth` is reconciled only when an abandoned counter is stale, no live lease exists,
   and the request interval has elapsed. The stale production value changed from 1 to 0 naturally.
 - Ordering status now reports actual pending range-reorder moves. Production currently has 0 pending
@@ -67,39 +92,41 @@ Updated: 2026-08-18 21:10 PDT
 
 ## Thursday And Friday Workflows
 
-- Thursday, August 13 at 21:00 PDT: the full Apple workflow completed at 21:23. It processed 583 of
-  583 artists with zero failures and 1,270 requests. It discovered 240 candidates, inserted 132,
-  skipped 108, and sent 14 to review.
+- Thursday, August 20 at 21:00 PDT: the full Apple workflow completed at 21:24. It processed 583 of
+  583 artists with zero failures and 1,278 requests. It discovered 237 candidates, inserted 102,
+  skipped 135, and sent 10 to review.
 - Apple-priority Spotify work started automatically afterward. It used the configured 80 of 80
-  Artist Albums allowance and 21 release-detail requests without a 429 or provider cooldown.
-  Automatic exports ran only after eligible priority work reached its checkpoint.
-- Friday, August 14 at 09:00 PDT: catch-up completed at 09:22. It processed 583 of 583 artists with
-  zero failures and 1,214 requests. It discovered 127 candidates, inserted 0, skipped 127 existing
+  Artist Albums allowance without a 429 or provider cooldown. Confirmed playlist additions remained
+  pending when the phase-drain defect described above prevented its checkpoint.
+- Friday, August 21 at 09:00 PDT: catch-up completed at 09:22. It processed 583 of 583 artists with
+  zero failures and 1,210 requests. It discovered 103 candidates, inserted 1, skipped 102 existing
   records, and created 0 reviews.
-- The catch-up and its downstream priority/export routing completed under persisted scheduler state.
-  No manual provider scan or duplicate campaign was launched during this correction.
+- The Apple scans themselves and their persisted progress completed as designed. The downstream
+  Friday playlist checkpoint did not, until the corrected natural scheduler tick at 23:39 PDT. No
+  manual provider scan or duplicate campaign was launched during this correction.
 
 ## Current Production State
 
 - PostgreSQL is healthy on `127.0.0.1:5432`; all 30 migrations are applied. The Docker `db` service
-  has `restart: unless-stopped` and was up and healthy for more than 27 hours at final verification.
+  has `restart: unless-stopped` and was up and healthy for more than two days at final verification.
 - Authorized Spotify playlist: `4l6LaMPL6duulmFe3hRR4Y`.
-- Cached state: 1,164 tracks, 1,163 scanner-managed, 1 unmanaged user-added track, 0 duplicate track
-  IDs, 0 pending additions, 0 incomplete operations, and 0 pending reorder moves. The user-added
-  track remains preserved.
-- Current full plan: 1,105 exported eligible recordings, 122 blocked canonical recordings, and 207
-  duplicate feed appearances intentionally skipped.
+- Verified cached state after recovery: 1,246 tracks, 1,245 scanner-managed, 1 unmanaged user-added
+  track, 0 duplicate track IDs, 0 pending additions, and 0 incomplete export operations. The
+  user-added track remains preserved.
 - Spotify has no active lease or cooldown and no 429 in the last 24 hours. All-time telemetry retains
   five quota-classified and two legacy 429 events, with the latest on August 9. Artist Albums remains
-  78 of 80 for the current trailing window, with the configured priority reserve intact.
-- The broad scheduler backlog is 1,217 queued and 10 blocked work items. This is scheduled catalog
-  work, not a stuck lease. Playlist inbox status is completed with zero pending additions.
+  40 of 80 for the current trailing window after capacity returned naturally.
+- Scheduler state returned to `apple_priority` with the playlist inbox completed. It has 51 immediate
+  Apple-priority and catch-up items plus 1,229 queued recurring and repair items, for 1,280 total,
+  and 10 historical blocked initial items. The six future ISRC rechecks are now in `repair`; zero
+  future-due ISRC rows remain mislabeled as priority work.
 
 ## Windows And Web Recovery
 
 - `TS New Music Radar Recurring Discovery` remains enabled, hidden, direct, and non-overlapping. It
   runs every minute with `conhost.exe --headless node.exe --env-file=... --import tsx ... tick`.
-  Its 21:09 PDT execution returned 0 and the next minute was scheduled normally.
+  The 00:25 PDT execution after playlist recovery returned 0, no runs were missed, and the next
+  minute was scheduled normally.
 - `TS New Music Radar Web Application` remains enabled, hidden, non-overlapping, and running from its
   current-user logon trigger. Its direct action remains:
   `C:\Windows\System32\conhost.exe --headless "C:\Program Files\nodejs\node.exe" --import tsx "C:\Users\taysh\Documents\Codex\codex_world_1\apps\scanner\src\web-supervisor-cli.ts"`
@@ -114,20 +141,20 @@ Updated: 2026-08-18 21:10 PDT
 - `pnpm format:check`: passed
 - `pnpm lint`: passed with zero warnings
 - `pnpm typecheck`: passed across all six workspace projects
-- `pnpm test`: 67 files and 489 tests passed
-- `pnpm test:integration`: 27 files and 148 tests passed with all 30 migrations
+- `pnpm test`: 67 files and 491 tests passed
+- `pnpm test:integration -- --maxWorkers=1`: 27 files and 151 tests passed with all 30 migrations
 - `pnpm build`: production Next.js build passed with 27 pages and routes
 - `pnpm test:e2e`: 31 Playwright tests passed
 - `pnpm run doctor`: READY
-- In-app browser smoke: exports showed 0 ready, 1,105 exported, and 122 blocked; release review showed
-  one actionable uncertain Spotify match; Apple mapping review showed zero active unresolved artists;
-  browser console errors and warnings were empty.
+- Post-recovery dashboard summary: 0 ready, 1,187 exported, 119 blocked, and 0 pending reorder moves.
+  The prior in-app browser smoke showed the actionable uncertain-match review and zero active Apple
+  mapping decisions, with no browser console errors or warnings.
 
 ## Remaining Non-Blocking Work
 
-- The 1,217 broad Spotify jobs and 10 blocked jobs continue under the existing daily and trailing
-  budgets.
-- The 122 blocked playlist candidates require future provider evidence or human decisions where an
+- The 1,229 recurring and repair Spotify jobs, 51 immediate priority jobs, and 10 blocked historical
+  jobs continue under the existing daily and trailing budgets.
+- The 119 blocked playlist candidates require future provider evidence or human decisions where an
   uncertain candidate exists. They are not eligible for automatic export.
 - The intentional 24-hour playlist reconciliation may perform minimal Spotify metadata reads and
   record a reconciliation run even when it confirms no changes. Per-minute no-work churn is fixed.

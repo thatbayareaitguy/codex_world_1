@@ -11,6 +11,7 @@ import { spotifyProviderState, spotifyRequestEvents, spotifySchedulerWork } from
 
 const spotifyStateId = "global";
 const leaseDurationMs = 30_000;
+const leaseStateRecheckMs = 250;
 const trailing24HoursMs = 24 * 60 * 60_000;
 
 type SpotifyRequestGateTransaction = Parameters<Parameters<RadarDatabase["transaction"]>[0]>[0];
@@ -448,7 +449,10 @@ async function acquireSpotifyPermit(
         await activeLeaseExpiry(db, now),
       );
       if (waitUntil > now.getTime()) {
-        await cancellableDelay(waitUntil - now.getTime(), input.signal);
+        await cancellableDelay(
+          Math.min(waitUntil - now.getTime(), leaseStateRecheckMs),
+          input.signal,
+        );
         continue;
       }
 

@@ -10,6 +10,7 @@ import { musicbrainzProviderState, musicbrainzRequestEvents } from "./schema";
 
 const stateId = "global";
 const leaseDurationMs = 30_000;
+const leaseStateRecheckMs = 250;
 
 export function createMusicBrainzRequestGate(
   db: RadarDatabase,
@@ -53,7 +54,10 @@ async function acquirePermit(
         state?.leaseExpiresAt && state.leaseExpiresAt > now ? state.leaseExpiresAt.getTime() : 0,
       );
       if (waitUntil > now.getTime()) {
-        await cancellableDelay(waitUntil - now.getTime(), input.signal);
+        await cancellableDelay(
+          Math.min(waitUntil - now.getTime(), leaseStateRecheckMs),
+          input.signal,
+        );
         continue;
       }
 

@@ -7,7 +7,9 @@ import {
   ensureLocalOwner,
   markBroadDiscoveryPlaylistCheckpointPending,
   prepareBroadDiscoveryPlaylistCheckpoint,
+  preparePriorityDiscoveryPlaylistCheckpoint,
   reconcileDiscoveryScheduleAfterCooldown,
+  reconcileDeferredPriorityTrackResolutionWork,
   reconcileStaleSpotifyQueueDepth,
   surfaceUncertainSpotifyMatchesForReview,
   type DiscoveryAppleJobClaim,
@@ -186,6 +188,31 @@ export async function runReadyAutomaticPlaylistExport(
   return (dependencies.runExport ?? runAutomaticDiscoveryPlaylistExport)(db, configuration);
 }
 
+export async function runPriorityAutomaticPlaylistCheckpoint(
+  db: ReturnType<typeof createDatabase>["db"],
+  configuration: ReturnType<typeof loadProviderConfiguration>,
+  dependencies: {
+    inspect?: (
+      db: ReturnType<typeof createDatabase>["db"],
+      configuration: ReturnType<typeof loadProviderConfiguration>,
+    ) => Promise<{ reason: string; shouldRun: boolean }>;
+    prepare?: typeof preparePriorityDiscoveryPlaylistCheckpoint;
+    runExport?: (
+      db: ReturnType<typeof createDatabase>["db"],
+      configuration: ReturnType<typeof loadProviderConfiguration>,
+    ) => Promise<unknown>;
+  } = {},
+) {
+  const inspection = await (dependencies.inspect ?? inspectAutomaticDiscoveryPlaylistCheckpoint)(
+    db,
+    configuration,
+  );
+  if (!inspection.shouldRun) return { inspection, reason: "no_changes" as const };
+  const prepared = await (dependencies.prepare ?? preparePriorityDiscoveryPlaylistCheckpoint)(db);
+  if (!prepared) return null;
+  return (dependencies.runExport ?? runAutomaticDiscoveryPlaylistExport)(db, configuration);
+}
+
 type PriorityPhaseStatus = {
   phase: string;
   playlistInbox: { status: string };
@@ -202,7 +229,7 @@ export async function runDynamicSpotifyPriorityPhase(
   configuration: ReturnType<typeof loadProviderConfiguration>,
   dependencies: {
     getStatus?: (db: ReturnType<typeof createDatabase>["db"]) => Promise<PriorityPhaseStatus>;
-    runExport?: (
+    runCheckpoint?: (
       db: ReturnType<typeof createDatabase>["db"],
       configuration: ReturnType<typeof loadProviderConfiguration>,
     ) => Promise<unknown>;
@@ -213,11 +240,13 @@ export async function runDynamicSpotifyPriorityPhase(
   } = {},
 ): Promise<DynamicPriorityRunResult> {
   const getStatus = dependencies.getStatus ?? getRecurringDiscoveryScheduleStatus;
-  const runExport = dependencies.runExport ?? runReadyAutomaticPlaylistExport;
+  const runCheckpoint = dependencies.runCheckpoint ?? runPriorityAutomaticPlaylistCheckpoint;
   const runTick = dependencies.runTick ?? runSpotifyTick;
   const maximumItems = configuration.spotify.scheduler.priorityMaxItemsPerRun;
   let completedItems = 0;
   let requestsStarted = 0;
+
+  await runCheckpoint(db, configuration);
 
   while (completedItems < maximumItems) {
     const status = await getStatus(db);
@@ -253,7 +282,6 @@ export async function runDynamicSpotifyPriorityPhase(
     }
 
     completedItems += 1;
-    await runExport(db, configuration);
     if (result.status.endpointBudget.artistAlbums.priorityRemaining === 0) {
       return { completedItems, reason: "capacity_exhausted", requestsStarted };
     }
@@ -292,6 +320,7 @@ async function main(): Promise<void> {
     const userId = await ensureLocalOwner(connection.db);
     await surfaceUncertainSpotifyMatchesForReview(connection.db, userId);
     await reconcileStaleSpotifyQueueDepth(connection.db);
+    await reconcileDeferredPriorityTrackResolutionWork(connection.db);
 
     const action = await selectDiscoverySchedulerAction(connection.db);
     const route = action.route;

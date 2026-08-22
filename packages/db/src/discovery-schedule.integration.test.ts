@@ -9,6 +9,7 @@ import {
   markDiscoveryPlaylistInboxStatus,
   prepareBroadDiscoveryPlaylistCheckpoint,
   prepareDiscoveryPlaylistInboxExport,
+  preparePriorityDiscoveryPlaylistCheckpoint,
   reconcileDiscoveryScheduleAfterCooldown,
   transitionAppleFirstCampaignToRecurringSchedule,
 } from "./discovery-schedule";
@@ -275,5 +276,27 @@ describe.sequential("first-week discovery schedule transition", () => {
       phase: "cooldown_wait",
       playlistInboxStatus: "ready",
     });
+  });
+
+  it("opens a guarded playlist checkpoint without discarding remaining priority work", async () => {
+    const checkpointAt = new Date("2026-08-22T06:45:00.000Z");
+    await connection.db
+      .update(discoveryScheduleState)
+      .set({ phase: "apple_priority", playlistInboxStatus: "pending" })
+      .where(eq(discoveryScheduleState.id, "global"));
+
+    await expect(
+      preparePriorityDiscoveryPlaylistCheckpoint(connection.db, checkpointAt),
+    ).resolves.toBe(true);
+    expect((await getDiscoveryScheduleStatus(connection.db))?.state).toMatchObject({
+      phase: "playlist_inbox",
+      playlistInboxStatus: "ready",
+    });
+    await expect(
+      preparePriorityDiscoveryPlaylistCheckpoint(connection.db, checkpointAt),
+    ).resolves.toBe(false);
+
+    await markDiscoveryPlaylistInboxStatus(connection.db, { status: "completed" }, checkpointAt);
+    expect((await getDiscoveryScheduleStatus(connection.db))?.state.phase).toBe("apple_priority");
   });
 });
