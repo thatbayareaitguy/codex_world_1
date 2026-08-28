@@ -344,7 +344,7 @@ it("upgrades the pre-appearance schema through release repair and feed scaling",
     await admin.unsafe(`drop database if exists "${databaseName}"`);
     await admin.end();
   }
-});
+}, 15_000);
 
 async function applyMigration(client: postgres.Sql, index: number): Promise<void> {
   const prefix = String(index).padStart(4, "0");

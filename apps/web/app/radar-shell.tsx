@@ -306,14 +306,23 @@ interface SpotifySchedulerStatus {
     artistId: string | null;
     expiresAt: string;
     workId: string;
-    workType: "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation";
+    workType:
+      | "base_artist"
+      | "release_detail"
+      | "release_tracks"
+      | "artist_reconciliation"
+      | "track_resolution";
   } | null;
   artistsCheckedLast24Hours: number;
   artistsCheckedLastHour: number;
   appleCatchupPriorityCount: number;
   applePriorityCount: number;
   backlog: Record<
-    "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation",
+    | "base_artist"
+    | "release_detail"
+    | "release_tracks"
+    | "artist_reconciliation"
+    | "track_resolution",
     number
   >;
   blockedCount: number;
@@ -379,6 +388,7 @@ interface SpotifySchedulerStatus {
       base_artist?: number | undefined;
       release_detail?: number | undefined;
       release_tracks?: number | undefined;
+      track_resolution?: number | undefined;
     };
     last24Hours: number;
     last30Minutes: number;
@@ -387,7 +397,12 @@ interface SpotifySchedulerStatus {
     artistId: string | null;
     completedAt: string;
     workId: string;
-    workType: "base_artist" | "release_detail" | "release_tracks" | "artist_reconciliation";
+    workType:
+      | "base_artist"
+      | "release_detail"
+      | "release_tracks"
+      | "artist_reconciliation"
+      | "track_resolution";
   } | null;
   targetArtistCount: number;
 }
@@ -2216,6 +2231,10 @@ function FeedView({
                   <dd>{spotifyScheduler.backlog.artist_reconciliation}</dd>
                 </div>
                 <div>
+                  <dt>Track-resolution backlog</dt>
+                  <dd>{spotifyScheduler.backlog.track_resolution}</dd>
+                </div>
+                <div>
                   <dt>Blocked / partial</dt>
                   <dd>
                     {spotifyScheduler.blockedCount} / {spotifyScheduler.partialArtistCount}
@@ -2237,7 +2256,8 @@ function FeedView({
                     B {spotifyScheduler.requestCounts.byWorkType.base_artist ?? 0} | D{" "}
                     {spotifyScheduler.requestCounts.byWorkType.release_detail ?? 0} | T{" "}
                     {spotifyScheduler.requestCounts.byWorkType.release_tracks ?? 0} | R{" "}
-                    {spotifyScheduler.requestCounts.byWorkType.artist_reconciliation ?? 0}
+                    {spotifyScheduler.requestCounts.byWorkType.artist_reconciliation ?? 0} | X{" "}
+                    {spotifyScheduler.requestCounts.byWorkType.track_resolution ?? 0}
                   </dd>
                 </div>
                 <div>
@@ -6586,6 +6606,7 @@ const spotifySchedulerStatusSchema = z.object({
         "release_detail",
         "release_tracks",
         "artist_reconciliation",
+        "track_resolution",
       ]),
     })
     .nullable(),
@@ -6598,6 +6619,7 @@ const spotifySchedulerStatusSchema = z.object({
     base_artist: z.number().int().nonnegative(),
     release_detail: z.number().int().nonnegative(),
     release_tracks: z.number().int().nonnegative(),
+    track_resolution: z.number().int().nonnegative(),
   }),
   blockedCount: z.number().int().nonnegative(),
   blockedReasons: z.array(z.string()),
@@ -6667,6 +6689,7 @@ const spotifySchedulerStatusSchema = z.object({
         base_artist: z.number().int().nonnegative().optional(),
         release_detail: z.number().int().nonnegative().optional(),
         release_tracks: z.number().int().nonnegative().optional(),
+        track_resolution: z.number().int().nonnegative().optional(),
       })
       .default({}),
     last24Hours: z.number().int().nonnegative(),
@@ -6682,6 +6705,7 @@ const spotifySchedulerStatusSchema = z.object({
         "release_detail",
         "release_tracks",
         "artist_reconciliation",
+        "track_resolution",
       ]),
     })
     .nullable(),

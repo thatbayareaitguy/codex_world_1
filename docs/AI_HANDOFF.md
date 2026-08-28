@@ -1,12 +1,12 @@
 # AI Handoff
 
-Updated: 2026-08-28 16:23 PDT
+Updated: 2026-08-28 16:42 PDT
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`
-- Base HEAD and upstream before the watchlist-removal repair:
-  `8d3c8ffc8e341c6bf713ef68818388603e903e32`
+- Base HEAD and upstream before the system-status repair:
+  `b48830b387f731f1a67bb3fa612eb4e48c0957c2`
 - `outputs/` is unrelated, remains untracked, and is excluded from the intended commit.
 - No secret or `.env` file was changed.
 
@@ -345,6 +345,27 @@ backup, and this work did not make any live review decision.
 - No Apple Music or Spotify provider request, playlist write, provider schedule change, credential,
   or `.env` change was made for this repair.
 
+## System Status Contract Repair (2026-08-28)
+
+- Root cause: `/api/system/status` was healthy and returned HTTP 200, but the browser's shared
+  Spotify scheduler schema did not recognize the current `track_resolution` work type. Production
+  reported that value in `recentWork`, so Zod rejected the whole response and the page displayed
+  the generic load error.
+- The browser contract now accepts `track_resolution` in active and recent work, backlog counts,
+  and request counts. The detailed scheduler view also reports the track-resolution backlog and
+  request total.
+- Playwright now injects a production-shaped `track_resolution` status response and proves the
+  System status view loads without the error. The older scan-history fixture was updated to the
+  same complete scheduler contract.
+- The historical migration-upgrade integration test now has a 15-second timeout. Applying its 17
+  historical migrations consistently exceeded Vitest's five-second default on Windows Docker; the
+  assertions and production behavior are unchanged.
+- The verified build was deployed through the existing supervisor. The web child changed from PID
+  31996 to PID 45676, `/api/health` returned `ok`, and a cache-busted in-app browser load showed the
+  complete System status view with zero `Status could not be loaded.` messages and zero browser
+  error logs.
+- No database row, provider state, playlist, schedule, credential, or `.env` value was changed.
+
 ## Validation
 
 - `pnpm format:check`: passed
@@ -357,15 +378,15 @@ backup, and this work did not make any live review decision.
   near-term waits, and durable activation and release evidence.
 - `pnpm test:integration`: 28 files and 155 tests passed against an isolated PostgreSQL 17 service
   on port 5434 with all 31 migrations. Production port 5432 was not used by the tests.
-- `pnpm build`: passed, including the new guarded `/api/artists/[id]` route
-- `pnpm test:e2e`: 32 Playwright tests passed, including exact Spotify-link coverage for paired
-  Apple Music and Spotify review cards
+- `pnpm build`: passed, including the current API and system-status routes
+- `pnpm test:e2e`: 32 Playwright tests passed, including production-shaped
+  `track_resolution` status data and the complete scan-history scheduler contract
 - `pnpm run doctor`: READY, with PostgreSQL connected, all 31 migrations applied, no stale locks,
   no active provider lease or cooldown, and `127.0.0.1:3000` healthy. With pnpm 11, bare
   `pnpm doctor` invokes pnpm's package-manager diagnostic rather than the repository script.
 - `git diff --check`: passed
-- In-app browser smoke: a cache-busted full reload reports 582 followed artists; searching for
-  `barking continues` returns no rows and displays the empty-search state.
+- In-app browser smoke: a cache-busted System status reload rendered Database, provider, scanner,
+  and scheduling status with no load-error text and no browser error logs.
 
 ## Remaining Verification
 

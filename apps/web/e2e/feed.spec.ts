@@ -727,6 +727,7 @@ test("defaults scan history to the meaningful batch and inspects other run types
               base_artist: 593,
               release_detail: 0,
               release_tracks: 0,
+              track_resolution: 0,
             },
             blockedCount: 0,
             blockedReasons: [],
@@ -1459,13 +1460,45 @@ test("navigates every primary view and resolves manual review", async ({ page })
   await page.route("**/api/system/status", async (route) => {
     const response = await route.fetch();
     const status = (await response.json()) as {
-      spotify: { grantedScopes?: string[] };
+      spotify: {
+        grantedScopes?: string[];
+        scheduler?: {
+          backlog: Record<string, number>;
+          recentWork: unknown;
+          requestCounts: { byWorkType: Record<string, number> };
+        };
+      };
       [key: string]: unknown;
     };
+    const scheduler = status.spotify.scheduler;
     await route.fulfill({
       json: {
         ...status,
-        spotify: { ...status.spotify, grantedScopes: ["user-follow-read"] },
+        spotify: {
+          ...status.spotify,
+          grantedScopes: ["user-follow-read"],
+          ...(scheduler
+            ? {
+                scheduler: {
+                  ...scheduler,
+                  backlog: { ...scheduler.backlog, track_resolution: 3 },
+                  recentWork: {
+                    artistId: null,
+                    completedAt: "2026-08-28T23:13:39.539Z",
+                    workId: "00000000-0000-4000-8000-000000000188",
+                    workType: "track_resolution",
+                  },
+                  requestCounts: {
+                    ...scheduler.requestCounts,
+                    byWorkType: {
+                      ...scheduler.requestCounts.byWorkType,
+                      track_resolution: 44,
+                    },
+                  },
+                },
+              }
+            : {}),
+        },
       },
     });
   });
@@ -1496,6 +1529,7 @@ test("navigates every primary view and resolves manual review", async ({ page })
 
   await navigation.getByRole("link", { name: "System status" }).click();
   await expect(page.getByRole("heading", { name: "System status" })).toBeVisible();
+  await expect(page.getByText("Status could not be loaded.", { exact: true })).toHaveCount(0);
   await expect(page.getByText("External scheduler required", { exact: true })).toBeVisible();
   await expect(page.getByText("pnpm discovery:scheduler:tick", { exact: true })).toBeVisible();
 
