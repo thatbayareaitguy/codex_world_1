@@ -24,11 +24,13 @@ describe("discovery maintenance loop", () => {
 
   it("releases the power request after eligible work drains", async () => {
     const release = vi.fn(() => Promise.resolve());
+    const updateContext = vi.fn();
+    const acquirePower = vi.fn(() => ({ release, updateContext }));
     const decisions = [decision("priority_work", true, true), decision("no_work", false, false)];
     let clock = Date.parse("2026-08-27T20:00:00.000Z");
     const runTick = vi.fn(() => Promise.resolve());
     const result = await runDiscoveryMaintenanceLoop({
-      acquirePower: () => ({ release }),
+      acquirePower,
       maximumRuntimeMs: 60_000,
       now: () => new Date(clock),
       observe: () => Promise.resolve(decisions.shift()!),
@@ -38,9 +40,56 @@ describe("discovery maintenance loop", () => {
         return Promise.resolve();
       },
       updateWake: () => Promise.resolve(),
+      runId: "priority-run",
     });
     expect(result).toMatchObject({ finalReason: "no_work", ticks: 1 });
     expect(runTick).toHaveBeenCalledTimes(1);
+    expect(acquirePower).toHaveBeenCalledWith(60_000, {
+      phase: "due_work",
+      reason: "priority_work",
+      runId: "priority-run",
+    });
+    expect(updateContext).toHaveBeenCalledWith({
+      phase: "due_work",
+      reason: "priority_work",
+      runId: "priority-run",
+    });
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds power only for an explicitly bounded near-term wait", async () => {
+    const release = vi.fn(() => Promise.resolve());
+    const acquirePower = vi.fn(() => ({ release }));
+    let clock = Date.parse("2026-08-27T20:00:00.000Z");
+    const waitUntil = new Date(clock + 30_000);
+    const decisions: DiscoveryMaintenanceDecision[] = [
+      {
+        dynamicWakeAt: null,
+        holdPower: true,
+        reason: "priority_capacity_wait",
+        runNow: false,
+        waitUntil,
+      },
+      decision("no_work", false, false),
+    ];
+    await runDiscoveryMaintenanceLoop({
+      acquirePower,
+      maximumRuntimeMs: 60_000,
+      now: () => new Date(clock),
+      observe: () => Promise.resolve(decisions.shift()!),
+      runId: "capacity-wait-run",
+      runTick: () => Promise.resolve(),
+      sleep: (milliseconds) => {
+        clock += milliseconds;
+        return Promise.resolve();
+      },
+      updateWake: () => Promise.resolve(),
+    });
+    expect(acquirePower).toHaveBeenCalledWith(60_000, {
+      phase: "near_term_capacity_wait",
+      reason: "priority_capacity_wait",
+      runId: "capacity-wait-run",
+    });
     expect(release).toHaveBeenCalledTimes(1);
   });
 

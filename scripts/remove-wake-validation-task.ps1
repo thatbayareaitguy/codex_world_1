@@ -1,5 +1,6 @@
 param(
-  [string]$TaskName = "TS New Music Radar Maintenance Wake Validation 2026-08-28"
+  [Parameter(Mandatory = $true)]
+  [string]$TaskName
 )
 
 $ErrorActionPreference = "Stop"

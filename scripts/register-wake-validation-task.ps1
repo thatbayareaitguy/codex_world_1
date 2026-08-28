@@ -1,6 +1,7 @@
 param(
-  [string]$TaskName = "TS New Music Radar Maintenance Wake Validation 2026-08-28",
-  [datetime]$RunAt = "2026-08-28T02:50:00"
+  [Parameter(Mandatory = $true)]
+  [datetime]$RunAt,
+  [string]$TaskName = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,11 +14,14 @@ $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -
 if ($RunAt -le (Get-Date)) {
   throw "Wake validation time must be in the future."
 }
+if ([string]::IsNullOrWhiteSpace($TaskName)) {
+  $TaskName = "TS New Music Radar Maintenance Wake Validation $($RunAt.ToString('yyyy-MM-dd-HHmm'))"
+}
 
 $arguments = "--headless `"$node`" --import tsx `"$validationCli`""
 $action = New-ScheduledTaskAction -Execute $conhost -Argument $arguments -WorkingDirectory $repositoryRoot
 $trigger = New-ScheduledTaskTrigger -Once -At $RunAt
-$trigger.Id = "WakeValidation20260828"
+$trigger.Id = "WakeValidation$($RunAt.ToString('yyyyMMddHHmm'))"
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable -WakeToRun `
   -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -AllowStartIfOnBatteries `
   -DontStopIfGoingOnBatteries -Hidden

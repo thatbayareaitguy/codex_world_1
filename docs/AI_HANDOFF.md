@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-08-27 17:44 PDT
+Updated: 2026-08-28 14:05 PDT
 
 ## Repository
 
@@ -200,10 +200,10 @@ backup, and this work did not make any live review decision.
   Spotify lease, or active Spotify cooldown.
 - Spotify telemetry has 0 429s in the last 24 hours and retains five quota-classified plus two legacy
   historical 429s. The latest quota event was August 9.
-- Current scheduler status reports 1,192 queued and 11 blocked work rows. Artist Albums usage is
+- Current scheduler status reports 1,339 queued and 11 blocked work rows. Artist Albums usage is
   0 of 80 with the 20-request priority reserve intact. The playlist inbox is completed with zero
   pending operations.
-- The latest successful provider work remains August 26 at 17:38 PDT. No provider scan or playlist
+- The latest successful provider work is August 28 at 13:56 PDT. No provider scan or playlist
   write was manually triggered during this correction.
 - The authorized Spotify playlist target and all existing snapshot, additions-only, Custom Order,
   Date Added, Added By, user-added-track, ownership, collaboration, cooldown, quota, and idempotency
@@ -215,16 +215,56 @@ backup, and this work did not make any live review decision.
 - This review-link correction made no provider request, review decision, scheduler invocation,
   playlist write, database mutation, or credential change.
 
+## Keep-Awake Validation Correction (2026-08-28)
+
+- The one-time 02:50 PDT task woke Windows at 02:49:38, ran at 02:50 with result 0 and zero missed
+  runs, and the minute scheduler resumed. Normal production Spotify work then resumed without
+  overlap, cooldown, lease, 429, or provider errors. This live-validates wake from ordinary signed-in
+  sleep. The four normal maintenance triggers were not changed.
+- The missing validation JSON was caused by `wake-validation-cli.ts` running `powercfg /requests`
+  before it acquired the keep-awake helper. This PC restricts that query to administrators, although
+  `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` itself works for the normal limited
+  scheduled-task identity.
+- Keep-awake proof no longer depends on `powercfg`. Each owner now has a durable run ID and record
+  under `%LOCALAPPDATA%\TSNewMusicRadar\logs\keep-awake`. The record contains the owner and helper
+  process IDs, request reason and phase, requested and activated timestamps, release request and
+  completion timestamps, final released state, release reason, and abnormal-exit recovery fields.
+  A single exclusive owner record rejects overlap. An exited owner is recovered only after its old
+  helper is confirmed gone, so a replacement cannot overlap it.
+- Production maintenance passes the current work reason into the record. It acquires the helper only
+  for due work or a scheduler-approved wait of at most 15 minutes for known capacity, updates the
+  phase as the decision changes, and releases in `finally` as soon as work drains, becomes
+  non-runnable, fails, or reaches the four-hour ceiling.
+- The helper now uses a graceful release signal, records activation after the Windows API succeeds,
+  clears `ES_SYSTEM_REQUIRED` in `finally`, writes release evidence, and exits if its owner process
+  disappears. A stale owner record is marked `recovery_pending` while an old helper still exists and
+  `recovered_after_abnormal_exit` after it is safely gone.
+- `powercfg /requests` remains an optional secondary observation. Administrator or access-denied
+  results are recorded as informational and never prevent activation or make validation fail.
+- A two-second non-provider validation under the current non-admin identity passed at 14:02 PDT. Run
+  ID `6fe5b8e8-6bac-41c2-9e13-b948f5b0a170` recorded helper PID 42336, activation at
+  21:02:44.068Z, requested release at 21:02:45.611Z, completed release at 21:02:45.816Z, final state
+  `released`, and no remaining owner. Both optional `powercfg` observations reported informational
+  `access_denied`. No database, provider, scheduler, or playlist path was imported or invoked.
+- Task Scheduler Operational history remains disabled. Enabling it was attempted without elevation
+  and Windows returned access denied. From an Administrator Terminal, run:
+  `wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true`.
+- The reusable one-time validation registration now requires an explicit future `-RunAt` value and
+  keeps the direct hidden `conhost.exe --headless node.exe --import tsx` action, limited-user
+  principal, `WakeToRun`, `StartWhenAvailable`, and `IgnoreNew`. It does not alter production
+  triggers.
+
 ## Validation
 
 - `pnpm format:check`: passed
 - `pnpm lint`: passed with zero warnings
 - `pnpm typecheck`: passed across all six workspace projects
-- `pnpm test`: 73 files and 513 tests passed. Maintenance coverage directly asserts keep-awake
+- `pnpm test`: 73 files and 519 tests passed. Maintenance coverage directly asserts keep-awake
   release, failure cleanup, absolute runtime cutoff, dynamic-wake deduplication, Thursday and Friday
   broad-work suppression, Saturday broad eligibility, Apple-priority precedence, cooldown
-  enforcement, and isolated activation and release evidence for the one-time wake test.
-- `pnpm test:integration`: 27 files and 152 tests passed against the isolated `db-test` PostgreSQL
+  enforcement, optional `powercfg` denial, single-owner enforcement, crash recovery, bounded
+  near-term waits, and durable activation and release evidence.
+- `pnpm test:integration`: 27 files and 153 tests passed against the isolated `db-test` PostgreSQL
   service with all 31 migrations. Production port 5432 was not touched.
 - `pnpm build`: passed, including 28 generated pages and routes
 - `pnpm test:e2e`: 32 Playwright tests passed, including exact Spotify-link coverage for paired
@@ -239,11 +279,13 @@ backup, and this work did not make any live review decision.
 
 ## Remaining Verification
 
-- Complete the scheduled user-assisted signed-in sleep test at 02:50 PDT on August 28. Do not shut
-  down, sign out, or hibernate. The 02:56 read-only follow-up will inspect the task result, evidence
-  file, minute scheduler, `powercfg /lastwake`, and the System Power-Troubleshooter event.
-- Run `powercfg /waketimers` from an administrator-elevated prompt if direct pre-test wake-timer
-  enumeration is required. The non-elevated inspection is blocked by Windows.
-- Observe the first natural maintenance execution and record its result. The code-level early-exit,
-  no-overlap, idempotent dynamic-trigger, bounded-runtime, and keep-awake-release paths are covered by
-  tests, but the new task has not yet executed in production.
+- Wake from signed-in sleep and resumption of production work are live-validated. The corrected
+  non-admin helper activation, durable evidence, graceful release, optional access-denied handling,
+  and absence of a leftover owner are also live-validated while Windows remained awake.
+- One final sleep test is needed only to prove the corrected helper prevents sleep for the entire
+  hold interval under the scheduled Limited identity. Register a future one-time validation with an
+  explicit `-RunAt`, put the signed-in PC into ordinary sleep before it, and inspect
+  `wake-validation-latest.json` plus the matching keep-awake run record afterward. Do not change or
+  move the four production maintenance triggers.
+- Task Scheduler Operational history can be enabled only from an Administrator Terminal on this PC
+  with `wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true`.

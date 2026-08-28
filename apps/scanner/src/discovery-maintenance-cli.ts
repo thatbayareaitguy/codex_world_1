@@ -4,6 +4,7 @@ import {
   getSpotifySchedulerStatus,
 } from "@radar/db";
 import { loadProviderConfiguration } from "@radar/providers";
+import { randomUUID } from "node:crypto";
 import {
   decideDiscoveryMaintenance,
   maintenanceMaximumRuntimeMs,
@@ -23,6 +24,7 @@ export async function runDiscoveryMaintenanceWindow(
   dependencies: {
     maximumRuntimeMs?: number;
     now?: () => Date;
+    runId?: string;
     sleep?: (milliseconds: number) => Promise<void>;
   } = {},
 ) {
@@ -47,6 +49,7 @@ export async function runDiscoveryMaintenanceWindow(
       runTick: () => runDiscoverySchedulerTick(connection.db, configuration),
       sleep: dependencies.sleep ?? wait,
       updateWake: updateWindowsMaintenanceWake,
+      runId: dependencies.runId ?? randomUUID(),
     });
   } finally {
     await connection.client.end();
@@ -54,15 +57,20 @@ export async function runDiscoveryMaintenanceWindow(
 }
 
 export async function runDiscoveryMaintenanceLoop(input: {
-  acquirePower: (maximumRuntimeMs: number) => WindowsPowerRequest;
+  acquirePower: (
+    maximumRuntimeMs: number,
+    context: { phase: string; reason: string; runId: string },
+  ) => WindowsPowerRequest;
   maximumRuntimeMs: number;
   now: () => Date;
   observe: (now: Date) => Promise<DiscoveryMaintenanceDecision>;
   runTick: () => Promise<unknown>;
   sleep: (milliseconds: number) => Promise<void>;
   updateWake: (wakeAt: Date | null) => Promise<void>;
+  runId?: string;
 }) {
   const startedAt = input.now();
+  const runId = input.runId ?? randomUUID();
   const deadline = new Date(startedAt.getTime() + input.maximumRuntimeMs);
   let powerRequest: WindowsPowerRequest | null = null;
   let ticks = 0;
@@ -74,9 +82,16 @@ export async function runDiscoveryMaintenanceLoop(input: {
       finalDecision = decision;
       await input.updateWake(decision.dynamicWakeAt);
       if (!decision.holdPower) break;
+      const powerContext = {
+        phase: decision.waitUntil ? "near_term_capacity_wait" : "due_work",
+        reason: decision.reason,
+        runId,
+      };
       powerRequest ??= input.acquirePower(
         Math.max(60_000, deadline.getTime() - observedAt.getTime()),
+        powerContext,
       );
+      powerRequest.updateContext?.(powerContext);
       if (decision.waitUntil) {
         await input.sleep(
           Math.max(1_000, Math.min(60_000, decision.waitUntil.getTime() - observedAt.getTime())),
