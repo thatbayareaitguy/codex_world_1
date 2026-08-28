@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-08-27 17:55 PDT
+Updated: 2026-08-28 14:27 PDT
 
 ## Showcase Public Site Milestone
 
@@ -31,15 +31,15 @@ Updated: 2026-08-27 17:55 PDT
   never calls a provider. Detailed boundaries and the contract are in
   `docs/showcase-publication.md`.
 - The current local export contains 583 real active watched artists. All 583 have validated Apple
-  Music and confirmed Spotify artist URLs. The 17-tag Showcase taxonomy classifies 243 artists from
-  exact persisted Apple catalog genres; 340 remain unclassified rather than guessed. No reliable
+  Music and confirmed Spotify artist URLs. The new 18-tag Showcase taxonomy preserves 243 clean
+  persisted classifications; 340 artists remain unclassified for editorial review. No reliable
   label associations are present in the current persisted catalog.
-- The export still contains 371 real Apple-origin releases: 217 with confirmed Spotify album links
-  and 154 with Apple Music only. Thirteen releases have multiple linked published artist credits.
-  Two trackless releases remain visible without a track-list section. One collaborator reference
-  could not be assigned a persisted valid public name and was omitted. Releases inherit their linked
-  artists' Showcase genres unless a future editorial override is supplied. Neutral artwork
-  placeholders remain active.
+- The export contains 410 real Apple-origin releases: 217 with confirmed Spotify album links and 193
+  with Apple Music only. Thirteen releases have multiple linked published artist credits. The
+  current snapshot has no trackless release, while the route continues to support trackless records
+  without displaying a track-list section. One collaborator reference could not be assigned a
+  persisted valid public name and was omitted. Releases inherit linked-artist genres unless a future
+  release-specific override is supplied. Neutral artwork placeholders remain active.
 - Root scripts add `showcase:dev`, `showcase:build`, `showcase:publish`, and
   `test:e2e:showcase`. Local development uses
   `pnpm showcase:dev -- --hostname 127.0.0.1 --port 3200` and `http://127.0.0.1:3200`.
@@ -186,3 +186,74 @@ Updated: 2026-08-27 17:55 PDT
   uncertain candidate exists. They are not eligible for automatic export.
 - The intentional 24-hour playlist reconciliation may perform minimal Spotify metadata reads and
   record a reconciliation run even when it confirms no changes. Per-minute no-work churn is fixed.
+
+## Showcase Local Web Recovery
+
+- The dedicated Showcase worktree now includes a loopback-only development supervisor for
+  `127.0.0.1:3200`. It starts Next.js directly with Node, checks `/releases`, and restarts the exact
+  owned process after an exit or three consecutive health failures. Its `.next-dev` output is
+  separate from production and Playwright build output.
+- `Showcase Public Site Web Application` is registered as a hidden, non-overlapping current-user
+  logon task. Its direct action is `conhost.exe --headless node.exe --import tsx` targeting
+  `apps/showcase/ops/showcase-supervisor-cli.ts`; the recurring action does not use PowerShell,
+  `pnpm.cmd`, or a `.ps1` runner.
+- Runtime PID files and logs are isolated under `%LOCALAPPDATA%\ShowcasePublicSite`. No scanner
+  database, provider, scheduler, or production worktree state is read or changed by the supervisor.
+- Next.js rewrites `next-env.d.ts` to the active development type directory during startup. The
+  supervisor snapshots the file first and restores it only when the change matches that exact
+  generated `.next-dev` reference, avoiding a persistent generated worktree diff.
+- Live recovery was validated on August 28. Terminating verified owned Next process PID 3476 and
+  its listener PID 50800 caused the finalized supervisor to restore the site with owned PID 42368
+  and listener PID 5748. `/releases` returned HTTP 200 and the Windows task remained running.
+- Re-register and removal scripts send a stop request first, wait for normal shutdown, and will
+  force-stop only a PID whose command line matches the exact Showcase supervisor path. This avoids
+  leaving an orphaned Node supervisor when Windows stops or replaces the scheduled task.
+
+### Showcase Startup Validation
+
+- Formatting, lint, and TypeScript checks passed.
+- Unit tests: 70 files and 504 tests passed, including 5 supervisor tests.
+- Database integration tests: 28 files and 149 tests passed against the dedicated test database.
+- Showcase production build passed with 961 generated pages and routes.
+- Showcase Playwright: 6 tests passed.
+- The finalized task remained running, `/releases` on port 3200 returned HTTP 200, and the scanner
+  `/api/health` endpoint on port 3000 also returned HTTP 200.
+
+## Showcase Local Genre Review
+
+- The fixed taxonomy is Bass Music, Dubstep, Riddim, Melodic Dubstep, Experimental Bass, Midtempo
+  Bass, Trap, Future Bass, Drum & Bass, House, Bass House, Tech House, Progressive House, Electro
+  House, Trance, Techno, Hard Dance, and Other Electronic. Legacy clean assignments are migrated to
+  this list in both the publisher and public runtime.
+- The private editor is available only at `/local/genre-review` when
+  `SHOWCASE_GENRE_ADMIN_ENABLED=true` and the request host is loopback. Its API also requires a
+  same-origin loopback request for writes. The route is not included in public navigation or public
+  site metadata.
+- The review queue sorts unclassified artists first, supports artist and genre search, shows current
+  confirmed tags, allows multiple fixed-taxonomy toggles, supports Save & Next, and allows later
+  editing of every artist. Empty assignments are allowed when an editor needs to return an artist to
+  the unclassified queue.
+- Confirmed authoritative assignments use the public-safe
+  `apps/showcase/lib/confirmed-artist-genres.json` contract. The runtime overlays those assignments
+  on future generated snapshots and recomputes inherited release genres. Only artist public IDs,
+  genre slugs, contract version, and update time are stored there.
+- Suggestions are generated from selected cited public research, model-assisted editorial knowledge,
+  reliable label rules, and linked collaborator genres, in that priority order. They include genre
+  slugs, high/medium/low confidence, an evidence summary, and optional public source links. The 340
+  current unclassified artists receive 4 high-confidence, 57 medium-confidence, and 279 low-confidence
+  suggestions. Four currently unclassified suggestions have attached public sources.
+- Suggestion documents live outside source control under
+  `%LOCALAPPDATA%\ShowcasePublicSite\editorial\artist-genre-reviews.json`. They are private local
+  review state, are never imported by `public-catalog.ts`, and cannot publish until the user chooses
+  genres and saves. Focused tests inspect both files to prevent suggestion or evidence leakage.
+- No scanner architecture, provider flow, or production database schema changed. No Apple Music or
+  Spotify provider request was made. The existing publisher performed one read-only persisted-data
+  refresh through the production `.env` without copying or changing it.
+- Final validation passed: formatting, lint with zero warnings, all seven workspace type checks, 74
+  unit files with 513 tests, 28 database integration files with 149 tests, the Showcase production
+  build with 1,000 generated pages and routes, seven Showcase Playwright tests, and all 31 private
+  scanner Playwright regression tests in mock mode.
+- The persistent supervisor was re-registered with local genre administration enabled. `/releases`
+  and `/local/genre-review` returned HTTP 200 on `127.0.0.1:3200`, the same editor request with a
+  non-loopback Host header returned 404, the scheduled task was running, and the production scanner
+  health endpoint on port 3000 remained HTTP 200.

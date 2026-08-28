@@ -262,7 +262,7 @@ describe.sequential("Showcase persisted-data publication source", () => {
       "Matched Apple Release",
     ]);
     expect(result.catalog.artists[0]).toMatchObject({
-      genreSlugs: ["dance", "house"],
+      genreSlugs: ["house", "other-electronic"],
       labelAssociations: ["Persisted Label"],
       name: "Persisted Artist",
     });

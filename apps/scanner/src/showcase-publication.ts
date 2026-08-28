@@ -31,23 +31,24 @@ const publicReleaseTypes = [
 const artworkTones = ["violet", "citrus", "cyan", "rose", "blue", "sand"] as const;
 
 export const showcaseGenreSlugs = [
-  "ambient",
-  "bass",
-  "breaks",
-  "dance",
-  "downtempo",
-  "drum-and-bass",
+  "bass-music",
   "dubstep",
-  "electronic",
-  "electronica",
-  "experimental",
-  "garage",
-  "hardcore",
-  "house",
-  "industrial",
-  "techno",
-  "trance",
+  "riddim",
+  "melodic-dubstep",
+  "experimental-bass",
+  "midtempo-bass",
   "trap",
+  "future-bass",
+  "drum-and-bass",
+  "house",
+  "bass-house",
+  "tech-house",
+  "progressive-house",
+  "electro-house",
+  "trance",
+  "techno",
+  "hard-dance",
+  "other-electronic",
 ] as const;
 
 export type ShowcaseGenreSlug = (typeof showcaseGenreSlugs)[number];
@@ -56,48 +57,62 @@ export const showcaseGenreTaxonomy: readonly {
   readonly name: string;
   readonly slug: ShowcaseGenreSlug;
 }[] = [
-  { name: "Ambient", slug: "ambient" },
-  { name: "Bass", slug: "bass" },
-  { name: "Breaks", slug: "breaks" },
-  { name: "Dance", slug: "dance" },
-  { name: "Downtempo", slug: "downtempo" },
-  { name: "Drum & Bass", slug: "drum-and-bass" },
+  { name: "Bass Music", slug: "bass-music" },
   { name: "Dubstep", slug: "dubstep" },
-  { name: "Electronic", slug: "electronic" },
-  { name: "Electronica", slug: "electronica" },
-  { name: "Experimental", slug: "experimental" },
-  { name: "Garage", slug: "garage" },
-  { name: "Hardcore", slug: "hardcore" },
-  { name: "House", slug: "house" },
-  { name: "Industrial", slug: "industrial" },
-  { name: "Techno", slug: "techno" },
-  { name: "Trance", slug: "trance" },
+  { name: "Riddim", slug: "riddim" },
+  { name: "Melodic Dubstep", slug: "melodic-dubstep" },
+  { name: "Experimental Bass", slug: "experimental-bass" },
+  { name: "Midtempo Bass", slug: "midtempo-bass" },
   { name: "Trap", slug: "trap" },
+  { name: "Future Bass", slug: "future-bass" },
+  { name: "Drum & Bass", slug: "drum-and-bass" },
+  { name: "House", slug: "house" },
+  { name: "Bass House", slug: "bass-house" },
+  { name: "Tech House", slug: "tech-house" },
+  { name: "Progressive House", slug: "progressive-house" },
+  { name: "Electro House", slug: "electro-house" },
+  { name: "Trance", slug: "trance" },
+  { name: "Techno", slug: "techno" },
+  { name: "Hard Dance", slug: "hard-dance" },
+  { name: "Other Electronic", slug: "other-electronic" },
 ] as const;
 
 const providerGenreToShowcaseGenre: Readonly<Record<string, ShowcaseGenreSlug>> = {
-  ambient: "ambient",
-  bass: "bass",
-  breakbeat: "breaks",
-  breaks: "breaks",
-  dance: "dance",
-  downtempo: "downtempo",
+  ambient: "other-electronic",
+  bass: "bass-music",
+  "bass house": "bass-house",
+  "bass music": "bass-music",
+  breakbeat: "bass-music",
+  breaks: "bass-music",
+  dance: "other-electronic",
+  downtempo: "other-electronic",
   "drum & bass": "drum-and-bass",
   "drum and bass": "drum-and-bass",
   "jungle/drum'n'bass": "drum-and-bass",
   dubstep: "dubstep",
-  electronic: "electronic",
-  electronica: "electronica",
-  "idm/experimental": "experimental",
-  experimental: "experimental",
-  garage: "garage",
-  hardcore: "hardcore",
+  "electro house": "electro-house",
+  electronic: "other-electronic",
+  electronica: "other-electronic",
+  experimental: "experimental-bass",
+  "experimental bass": "experimental-bass",
+  "future bass": "future-bass",
+  garage: "bass-music",
+  hardcore: "hard-dance",
+  "hard dance": "hard-dance",
   house: "house",
-  industrial: "industrial",
+  industrial: "other-electronic",
+  "idm/experimental": "experimental-bass",
+  "melodic dubstep": "melodic-dubstep",
+  "midtempo bass": "midtempo-bass",
+  riddim: "riddim",
+  "progressive house": "progressive-house",
+  "tech house": "tech-house",
   techno: "techno",
   trance: "trance",
   trap: "trap",
 };
+
+const showcaseGenreOrder = new Map(showcaseGenreSlugs.map((slug, index) => [slug, index] as const));
 
 const publicTrackSchema = z
   .object({
@@ -672,9 +687,13 @@ export function buildShowcasePublicCatalog(
         const artist = artists.find((item) => item.slug === credit.artistSlug);
         return artist?.genreSlugs ?? [];
       });
-      const genreSlugs = [...new Set(release.genreOverrideSlugs ?? inheritedGenres)].filter(
-        isShowcaseGenreSlug,
-      );
+      const genreSlugs = [...new Set(release.genreOverrideSlugs ?? inheritedGenres)]
+        .filter(isShowcaseGenreSlug)
+        .sort(
+          (left, right) =>
+            (showcaseGenreOrder.get(left) ?? Number.MAX_SAFE_INTEGER) -
+            (showcaseGenreOrder.get(right) ?? Number.MAX_SAFE_INTEGER),
+        );
       const label = release.label === undefined ? undefined : sanitizePublicLabel(release.label);
       const publicRelease = {
         publicId: `release_${identityHash.slice(0, 20)}`,
@@ -740,7 +759,11 @@ export function mapProviderGenresToShowcase(
         return mapped === undefined ? [] : [mapped];
       }),
     ),
-  ].sort((left, right) => left.localeCompare(right));
+  ].sort(
+    (left, right) =>
+      (showcaseGenreOrder.get(left) ?? Number.MAX_SAFE_INTEGER) -
+      (showcaseGenreOrder.get(right) ?? Number.MAX_SAFE_INTEGER),
+  );
 }
 
 function groupBy<T>(rows: readonly T[], key: (row: T) => string): Map<string, T[]> {

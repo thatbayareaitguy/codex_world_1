@@ -68,15 +68,15 @@ describe("Showcase public catalog publication", () => {
       withoutSpotifyCount: 0,
     });
     expect(result.catalog.contractVersion).toBe("showcase-public-v2");
-    expect(result.catalog.genres).toHaveLength(17);
+    expect(result.catalog.genres).toHaveLength(18);
     expect(result.catalog.artists[0]).toMatchObject({
       name: "Confirmed Collaborator",
-      genreSlugs: ["electronic", "house"],
+      genreSlugs: ["house", "other-electronic"],
       links: { appleMusic: "https://music.apple.com/us/artist/collaborator/102" },
     });
     expect(result.catalog.artists[1]).toMatchObject({
       name: "Real Artist",
-      genreSlugs: ["dance", "dubstep"],
+      genreSlugs: ["dubstep", "other-electronic"],
       labelAssociations: ["Reliable Label"],
       links: {
         appleMusic: "https://music.apple.com/us/artist/real-artist/101",
@@ -93,7 +93,7 @@ describe("Showcase public catalog publication", () => {
     expect(publishedRelease?.artistCredits[1]?.artistSlug).toMatch(/^confirmed-collaborator-/);
     expect(publishedRelease).toMatchObject({
       firstDiscoveredDate: "2026-08-20",
-      genreSlugs: ["dance", "dubstep", "electronic", "house"],
+      genreSlugs: ["dubstep", "house", "other-electronic"],
       label: "Reliable Label",
       links: {
         appleMusic: "https://music.apple.com/us/album/real-release/1001",
@@ -119,7 +119,7 @@ describe("Showcase public catalog publication", () => {
           {
             ...appleOnlyRelease,
             appleProviderReleaseId: "apple-release-1002",
-            genreOverrideSlugs: ["ambient"],
+            genreOverrideSlugs: ["experimental-bass"],
             releaseDate: "2026-09-01",
             tracks: [],
           },
@@ -129,7 +129,7 @@ describe("Showcase public catalog publication", () => {
     );
 
     expect(result.catalog.releases[0]).toMatchObject({
-      genreSlugs: ["ambient"],
+      genreSlugs: ["experimental-bass"],
       status: "upcoming",
       tracks: [],
     });
@@ -178,7 +178,7 @@ describe("Showcase public catalog publication", () => {
         "Hip-Hop/Rap",
         "Dance",
       ]),
-    ).toEqual(["dance", "drum-and-bass", "experimental"]);
+    ).toEqual(["experimental-bass", "drum-and-bass", "other-electronic"]);
   });
 
   it("copies only allowlisted public fields from scanner source rows", () => {

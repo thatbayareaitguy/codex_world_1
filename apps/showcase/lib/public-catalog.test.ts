@@ -2,6 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { publicCatalog } from "./public-catalog";
+import { showcaseGenreTaxonomy } from "./genre-taxonomy";
 
 const releaseRequiredKeys = [
   "artistCredits",
@@ -42,6 +43,7 @@ describe("Showcase public catalog", () => {
 
   it("loads only strict v2 public artists, taxonomy, and Apple-origin releases", () => {
     expect(publicCatalog.contractVersion).toBe("showcase-public-v2");
+    expect(publicCatalog.genres).toEqual(showcaseGenreTaxonomy);
     const genreSlugs = new Set(publicCatalog.genres.map((genre) => genre.slug));
     expect(genreSlugs.size).toBe(publicCatalog.genres.length);
     for (const artist of publicCatalog.artists) {

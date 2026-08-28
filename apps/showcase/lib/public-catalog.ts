@@ -1,4 +1,6 @@
 import generatedCatalog from "./generated-public-catalog.json";
+import confirmedArtistGenres from "./confirmed-artist-genres.json";
+import { normalizeGenreSlugs, showcaseGenreTaxonomy, type PublicGenreSlug } from "./genre-taxonomy";
 
 export type PublicReleaseStatus = "upcoming" | "released";
 export type PublicReleaseType =
@@ -13,24 +15,7 @@ export type PublicReleaseType =
   | "Soundtrack"
   | "Other";
 export type ArtworkTone = "violet" | "citrus" | "cyan" | "rose" | "blue" | "sand";
-export type PublicGenreSlug =
-  | "ambient"
-  | "bass"
-  | "breaks"
-  | "dance"
-  | "downtempo"
-  | "drum-and-bass"
-  | "dubstep"
-  | "electronic"
-  | "electronica"
-  | "experimental"
-  | "garage"
-  | "hardcore"
-  | "house"
-  | "industrial"
-  | "techno"
-  | "trance"
-  | "trap";
+export type { PublicGenreSlug } from "./genre-taxonomy";
 
 export interface PublicProviderLinks {
   readonly spotify?: string;
@@ -87,7 +72,39 @@ export interface PublicCatalogSnapshot {
   readonly releases: readonly PublicRelease[];
 }
 
-export const publicCatalog = generatedCatalog as PublicCatalogSnapshot;
+interface ConfirmedArtistGenreAssignment {
+  readonly publicId: string;
+  readonly genreSlugs: readonly string[];
+}
+
+const confirmedGenresByArtistId = new Map(
+  (confirmedArtistGenres.assignments as readonly ConfirmedArtistGenreAssignment[]).map(
+    (assignment) => [assignment.publicId, normalizeGenreSlugs(assignment.genreSlugs)],
+  ),
+);
+
+const normalizedArtists = generatedCatalog.artists.map((artist) => ({
+  ...artist,
+  genreSlugs:
+    confirmedGenresByArtistId.get(artist.publicId) ?? normalizeGenreSlugs(artist.genreSlugs),
+})) as readonly PublicArtist[];
+const normalizedArtistBySlug = new Map(normalizedArtists.map((artist) => [artist.slug, artist]));
+
+export const publicCatalog: PublicCatalogSnapshot = {
+  ...(generatedCatalog as Omit<PublicCatalogSnapshot, "artists" | "genres" | "releases">),
+  genres: showcaseGenreTaxonomy,
+  artists: normalizedArtists,
+  releases: generatedCatalog.releases.map((release) => ({
+    ...release,
+    genreSlugs: normalizeGenreSlugs(
+      release.artistCredits.flatMap((credit) =>
+        credit.artistSlug === undefined
+          ? []
+          : (normalizedArtistBySlug.get(credit.artistSlug)?.genreSlugs ?? []),
+      ),
+    ),
+  })) as readonly PublicRelease[],
+};
 
 const genreNameBySlug = new Map(
   publicCatalog.genres.map((genre) => [genre.slug, genre.name] as const),

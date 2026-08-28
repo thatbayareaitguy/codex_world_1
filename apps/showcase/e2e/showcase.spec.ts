@@ -65,7 +65,7 @@ test("artist filtering and structured profile work", async ({ page }) => {
   );
 });
 
-test("collaboration credits link to artists and trackless releases stay visible", async ({
+test("collaboration credits link to artists and trackless releases stay visible when present", async ({
   page,
 }) => {
   const collaboration = generatedCatalog.releases.find(
@@ -74,7 +74,6 @@ test("collaboration credits link to artists and trackless releases stay visible"
   );
   const trackless = generatedCatalog.releases.find((release) => release.tracks.length === 0);
   expect(collaboration).toBeDefined();
-  expect(trackless).toBeDefined();
 
   await page.goto(`/releases/${collaboration!.slug}`);
   for (const credit of collaboration!.artistCredits) {
@@ -85,9 +84,11 @@ test("collaboration credits link to artists and trackless releases stay visible"
     );
   }
 
-  await page.goto(`/releases/${trackless!.slug}`);
-  await expect(page.getByRole("heading", { name: trackless!.title, level: 1 })).toBeVisible();
-  await expect(page.getByText("TRACK LIST", { exact: true })).toHaveCount(0);
+  if (trackless !== undefined) {
+    await page.goto(`/releases/${trackless.slug}`);
+    await expect(page.getByRole("heading", { name: trackless.title, level: 1 })).toBeVisible();
+    await expect(page.getByText("TRACK LIST", { exact: true })).toHaveCount(0);
+  }
 });
 
 test("mobile navigation and not-found state are usable", async ({ page }) => {
@@ -134,4 +135,33 @@ test("featured playlists and About Us pages are available from navigation", asyn
     page.getByText("Curated playlists, songs, and feeds, based on what we think is cool."),
   ).toBeVisible();
   await expect(page.getByText(/Just some wonky weird EDM fanatics/)).toBeVisible();
+});
+
+test("local genre review keeps suggestions private until they are saved", async ({ page }) => {
+  await page.goto("/local/genre-review");
+  await expect(page.getByRole("heading", { name: "Artist genre review" })).toBeVisible();
+  await expect(page.locator(".genre-admin-artist-list button").first()).toContainText(
+    "Needs review",
+  );
+
+  await page.getByPlaceholder("Search artists").fill("CloZee");
+  const clozee = page.locator(".genre-admin-artist-list button").filter({ hasText: "CloZee" });
+  await expect(clozee).toContainText("Needs review");
+  await clozee.click();
+  await expect(page.getByText("high confidence")).toBeVisible();
+  await expect(page.getByText("CloZee official biography")).toBeVisible();
+
+  await page.getByRole("button", { name: "Use suggestion as draft" }).click();
+  await expect(page.getByRole("button", { name: "Bass Music" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByRole("button", { name: "Experimental Bass" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(clozee).toContainText("Needs review");
+
+  await page.getByRole("button", { name: "Save & Next" }).click();
+  await expect(clozee).toContainText("2 confirmed");
 });
