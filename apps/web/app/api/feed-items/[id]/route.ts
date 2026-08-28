@@ -2,6 +2,7 @@ import {
   createDatabase,
   ensureLocalOwner,
   resolveFeedReview,
+  resolveFeedReviewGroup,
   updateFeedPreferences,
 } from "@radar/db";
 import { loadProviderConfiguration } from "@radar/providers";
@@ -26,6 +27,7 @@ const reviewUpdateSchema = z
       "retry",
       "separate",
     ]),
+    reviewScope: z.enum(["candidate", "group"]).default("candidate"),
     spotifyTrackId: z
       .string()
       .regex(/^[A-Za-z0-9]{22}$/)
@@ -55,7 +57,9 @@ export async function PATCH(
     try {
       const userId = await ensureLocalOwner(connection.db);
       if ("reviewDecision" in input) {
-        const resolution = await resolveFeedReview(
+        const resolution = await (
+          input.reviewScope === "group" ? resolveFeedReviewGroup : resolveFeedReview
+        )(
           connection.db,
           userId,
           id,

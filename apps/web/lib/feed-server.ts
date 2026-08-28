@@ -130,7 +130,12 @@ export async function loadDatabaseFeedPage(
           count(*) FILTER (
             WHERE "feed_items"."first_seen_at" >= date_trunc('week', current_timestamp)
           ) AS "new_this_week",
-          count(*) FILTER (WHERE "feed_items"."state" = 'needs_review') AS "needs_review",
+          count(DISTINCT CASE
+            WHEN "feed_items"."state" = 'needs_review' THEN COALESCE(
+              "feed_items"."release_id"::text || ':' || "release_candidates"."matched_track_id"::text,
+              'feed:' || "feed_items"."id"::text
+            )
+          END) AS "needs_review",
           count(*) FILTER (
             WHERE "feed_items"."state" = 'upcoming'
               AND COALESCE("releases"."release_date", "release_candidates"."release_date")
@@ -566,6 +571,10 @@ async function projectFeedItems(
                 ...(reviewDecision?.decision === "defer" && reviewDecision.deferredUntil
                   ? { deferredUntil: reviewDecision.deferredUntil.toISOString() }
                   : {}),
+                groupKey:
+                  release?.id && candidate.matchedTrackId
+                    ? `${release.id}:${candidate.matchedTrackId}`
+                    : `candidate:${candidate.id}`,
                 provider: reviewCandidateProvider,
                 ...(safeEvidence.find((row) => row.provider === reviewCandidateProvider)?.href
                   ? {

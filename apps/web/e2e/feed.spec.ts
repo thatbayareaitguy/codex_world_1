@@ -1643,10 +1643,12 @@ test("persists a manual review decision across feed refresh and page reload", as
   expect(decisionRequestCount).toBe(1);
 });
 
-test("shows the exact Spotify track link on every related release review card", async ({
-  page,
-}) => {
+test("groups mirrored provider records into one review decision", async ({ page }) => {
   const spotifyUrl = "https://open.spotify.com/track/1nxmfCTmExLxSPAsRSeqXh";
+  const reviewGroupKey =
+    "33333333-3333-4333-8333-333333333333:44444444-4444-4444-8444-444444444444";
+  let resolved = false;
+  let decisionRequestCount = 0;
   const shared = {
     ...feedFixtures[1]!,
     artist: "Anto",
@@ -1660,6 +1662,7 @@ test("shows the exact Spotify track link on every related release review card", 
     id: "992ec353-0e2f-42fa-bb11-3433fb7b6bd3",
     review: {
       candidateId: "11111111-1111-4111-8111-111111111111",
+      groupKey: reviewGroupKey,
       provider: "spotify" as const,
       providerUrl: spotifyUrl,
     },
@@ -1670,6 +1673,7 @@ test("shows the exact Spotify track link on every related release review card", 
     id: "bcba9560-d633-4a4e-a25f-df12b637a3f1",
     review: {
       candidateId: "22222222-2222-4222-8222-222222222222",
+      groupKey: reviewGroupKey,
       provider: "apple_music" as const,
       providerUrl: "https://music.apple.com/us/album/6791192063",
     },
@@ -1687,30 +1691,60 @@ test("shows the exact Spotify track link on every related release review card", 
   });
   await page.route("**/api/feed**", async (route) => {
     const url = new URL(route.request().url());
+    if (url.pathname.startsWith("/api/feed-items/")) {
+      decisionRequestCount += 1;
+      expect(route.request().postDataJSON()).toEqual({
+        reviewDecision: "confirm",
+        reviewScope: "group",
+      });
+      resolved = true;
+      await route.fulfill({
+        json: {
+          resolution: {
+            affectedFeedItemIds: [spotifyCandidate.id, appleCandidate.id],
+            decision: "confirm",
+            feedItemId: appleCandidate.id,
+            removed: false,
+            state: "new",
+          },
+        },
+      });
+      return;
+    }
     if (url.searchParams.get("mode") === "revision") {
-      await route.fulfill({ json: { count: 2, revision: "spotify-review-links" } });
+      await route.fulfill({
+        json: {
+          count: resolved ? 0 : 2,
+          revision: resolved ? "spotify-review-resolved" : "spotify-review-links",
+        },
+      });
       return;
     }
     await route.fulfill({
       json: {
-        count: 2,
+        count: resolved ? 0 : 2,
         hasMore: false,
-        items: [spotifyCandidate, appleCandidate],
+        items: resolved ? [] : [spotifyCandidate, appleCandidate],
         nextCursor: null,
-        revision: "spotify-review-links",
-        summary: { needsReview: 2, newThisWeek: 2, upcoming: 0 },
-        totalCount: 2,
+        revision: resolved ? "spotify-review-resolved" : "spotify-review-links",
+        summary: { needsReview: resolved ? 0 : 1, newThisWeek: 2, upcoming: 0 },
+        totalCount: resolved ? 0 : 2,
       },
     });
   });
 
   await page.goto("/?e2e-scan-status=database#review");
   const spotifyLinks = page.getByRole("link", { name: "Open Spotify track for NASTY" });
-  await expect(spotifyLinks).toHaveCount(2);
-  await expect(spotifyLinks.nth(0)).toHaveAttribute("href", spotifyUrl);
-  await expect(spotifyLinks.nth(1)).toHaveAttribute("href", spotifyUrl);
+  await expect(spotifyLinks).toHaveCount(1);
+  await expect(spotifyLinks).toHaveAttribute("href", spotifyUrl);
   await expect(page.getByRole("link", { name: "Open Apple Music candidate" })).toHaveCount(1);
+  await expect(page.getByRole("link", { name: "Open Spotify evidence" })).toHaveCount(1);
+  await expect(page.locator("article.release-review-card")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "No Spotify equivalent" })).toHaveCount(0);
   await expect(page.getByText("No stored Spotify track link is available yet.")).toHaveCount(0);
+  await page.getByRole("button", { name: "Confirm candidate" }).click();
+  await expect(page.getByText("No items need review.")).toBeVisible();
+  expect(decisionRequestCount).toBe(1);
 });
 
 test("Keep separate retains the existing and newly separated discoveries", async ({ page }) => {

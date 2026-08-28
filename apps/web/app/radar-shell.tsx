@@ -960,14 +960,17 @@ export function RadarShell({
     item: FeedFixtureItem,
     decision: ReleaseReviewDecision,
     spotifyTrackId?: string,
+    groupedItems: FeedFixtureItem[] = [item],
   ) => {
-    if (pendingReviewActions.includes(item.id)) return;
-    setPendingReviewActions((current) => [...current, item.id]);
+    const affectedIds = groupedItems.map((groupedItem) => groupedItem.id);
+    if (affectedIds.some((id) => pendingReviewActions.includes(id))) return;
+    setPendingReviewActions((current) => [...current, ...affectedIds]);
     try {
       if (feedMode === "database") {
         const response = await fetch(`/api/feed-items/${encodeURIComponent(item.id)}`, {
           body: JSON.stringify({
             reviewDecision: decision,
+            ...(groupedItems.length > 1 ? { reviewScope: "group" } : {}),
             ...(spotifyTrackId ? { spotifyTrackId } : {}),
           }),
           headers: { "Content-Type": "application/json" },
@@ -976,7 +979,8 @@ export function RadarShell({
         reviewResolutionResponseSchema.parse(await response.json());
         if (!response.ok) throw new Error("Unable to persist review decision");
       }
-      setItems((current) => current.filter((currentItem) => currentItem.id !== item.id));
+      const affectedIdSet = new Set(affectedIds);
+      setItems((current) => current.filter((currentItem) => !affectedIdSet.has(currentItem.id)));
       setNotice(
         decision === "confirm"
           ? `${item.title} was manually confirmed and removed from review.`
@@ -994,7 +998,8 @@ export function RadarShell({
     } catch {
       setNotice(`Unable to resolve ${item.title}. Try again.`);
     } finally {
-      setPendingReviewActions((current) => current.filter((id) => id !== item.id));
+      const affectedIdSet = new Set(affectedIds);
+      setPendingReviewActions((current) => current.filter((id) => !affectedIdSet.has(id)));
     }
   };
 
@@ -1447,8 +1452,8 @@ export function RadarShell({
             databaseMode={feedMode === "database"}
             items={reviewItems}
             musicbrainzEnabled={providerConfiguration.musicbrainz.enabled}
-            onDecision={(item, decision, spotifyTrackId) =>
-              void resolveReviewItem(item, decision, spotifyTrackId)
+            onDecision={(item, decision, spotifyTrackId, groupedItems) =>
+              void resolveReviewItem(item, decision, spotifyTrackId, groupedItems)
             }
             pendingItemIds={pendingReviewActions}
             query={query}
@@ -3962,11 +3967,36 @@ function findReviewSpotifyUrl(
   return siblingSpotifyUrls.length === 1 ? siblingSpotifyUrls[0] : undefined;
 }
 
-function findReviewProviderSource(item: FeedFixtureItem, provider: string) {
+function findReviewProviderSource(items: FeedFixtureItem[], provider: string) {
   const normalizedProvider = provider.replace("_", " ").toLocaleLowerCase("en-US");
-  return item.sources.find(
-    (source) => source.provider.replace("_", " ").toLocaleLowerCase("en-US") === normalizedProvider,
-  );
+  return items
+    .flatMap((item) => item.sources)
+    .find(
+      (source) =>
+        source.provider.replace("_", " ").toLocaleLowerCase("en-US") === normalizedProvider,
+    );
+}
+
+function groupReleaseReviewItems(items: FeedFixtureItem[]): Array<{
+  items: FeedFixtureItem[];
+  key: string;
+}> {
+  const groups = new Map<string, FeedFixtureItem[]>();
+  for (const item of items) {
+    const key = item.review?.groupKey ?? `candidate:${item.id}`;
+    groups.set(key, [...(groups.get(key) ?? []), item]);
+  }
+  return [...groups].map(([key, groupedItems]) => ({ items: groupedItems, key }));
+}
+
+function uniqueReviewSources(items: FeedFixtureItem[]): FeedFixtureItem["sources"] {
+  return [
+    ...new Map(
+      items
+        .flatMap((item) => item.sources)
+        .map((source) => [`${source.provider}:${source.href}`, source]),
+    ).values(),
+  ];
 }
 
 function sameReviewRelease(left: FeedFixtureItem, right: FeedFixtureItem): boolean {
@@ -4107,6 +4137,7 @@ function ReviewView({
     item: FeedFixtureItem,
     decision: ReleaseReviewDecision,
     spotifyTrackId?: string,
+    groupedItems?: FeedFixtureItem[],
   ) => void;
   pendingItemIds: string[];
   query: string;
@@ -4160,6 +4191,7 @@ function ReviewView({
   const visibleItems = items.filter((item) =>
     `${item.artist} ${item.title}`.toLocaleLowerCase("en-US").includes(normalizedQuery),
   );
+  const visibleItemGroups = groupReleaseReviewItems(visibleItems);
 
   const loadReleaseQueueStatus = useCallback(async () => {
     try {
@@ -4384,7 +4416,7 @@ function ReviewView({
           <section className="review-queue-overview" aria-label="Release review classification">
             <div className="review-queue-counts">
               <span>
-                <strong>{releaseQueueStatus.actionableCount}</strong> manual candidate records
+                <strong>{releaseQueueStatus.actionableCount}</strong> manual review decisions
               </span>
               <span>
                 <strong>{releaseQueueStatus.blockedExport.total}</strong> blocked export tracks
@@ -4739,21 +4771,29 @@ function ReviewView({
           )}
         {reviewFilter !== "musicbrainz_mappings" &&
         reviewFilter !== "apple_music_mappings" &&
-        visibleItems.length ? (
-          visibleItems.map((item) => {
-            const pending = pendingItemIds.includes(item.id);
+        visibleItemGroups.length ? (
+          visibleItemGroups.map((group) => {
+            const item =
+              group.items.find((candidate) => candidate.review?.provider === "apple_music") ??
+              group.items[0]!;
+            const pending = group.items.some((candidate) => pendingItemIds.includes(candidate.id));
             const candidateProvider = item.review?.provider ?? "mock";
-            const spotifyReviewUrl = findReviewSpotifyUrl(item, items);
+            const spotifyReviewUrl = findReviewSpotifyUrl(item, group.items);
+            const groupedSources = uniqueReviewSources(group.items);
             const candidateArtwork =
               candidateProvider === "apple_music"
-                ? item.appleMusicArtwork?.image.url
+                ? group.items.find((candidate) => candidate.appleMusicArtwork)?.appleMusicArtwork
+                    ?.image.url
                 : candidateProvider === "spotify"
-                  ? item.spotifyArtwork?.image.url
+                  ? group.items.find((candidate) => candidate.spotifyArtwork)?.spotifyArtwork?.image
+                      .url
                   : undefined;
             const comparisonArtwork =
               candidateProvider === "apple_music"
-                ? item.spotifyArtwork?.image.url
-                : item.appleMusicArtwork?.image.url;
+                ? group.items.find((candidate) => candidate.spotifyArtwork)?.spotifyArtwork?.image
+                    .url
+                : group.items.find((candidate) => candidate.appleMusicArtwork)?.appleMusicArtwork
+                    ?.image.url;
             const comparisonProvider =
               candidateProvider === "apple_music"
                 ? "spotify"
@@ -4761,10 +4801,10 @@ function ReviewView({
                   ? "apple_music"
                   : null;
             const comparisonSource = comparisonProvider
-              ? findReviewProviderSource(item, comparisonProvider)
+              ? findReviewProviderSource(group.items, comparisonProvider)
               : undefined;
             return (
-              <article className="review-card release-review-card" key={item.id}>
+              <article className="review-card release-review-card" key={group.key}>
                 <div className="release-review-heading">
                   <span className="state state-needs_review">Needs review</span>
                   <h2>{item.title}</h2>
@@ -4846,7 +4886,7 @@ function ReviewView({
                     <b>Evidence</b>
                     <p>{item.matchReason}</p>
                     <div className="review-provider-links">
-                      {item.sources.map((source) => (
+                      {groupedSources.map((source) => (
                         <a
                           key={`${source.provider}:${source.href}`}
                           href={source.href}
@@ -4863,7 +4903,7 @@ function ReviewView({
                   <button
                     className="secondary-button"
                     disabled={pending}
-                    onClick={() => onDecision(item, "defer")}
+                    onClick={() => onDecision(item, "defer", undefined, group.items)}
                     type="button"
                   >
                     Defer 7 days
@@ -4871,24 +4911,39 @@ function ReviewView({
                   <button
                     className="secondary-button"
                     disabled={pending}
-                    onClick={() => onDecision(item, "retry")}
+                    onClick={() => onDecision(item, "retry", undefined, group.items)}
                     type="button"
                   >
                     Retry matching
                   </button>
-                  <button
-                    className="secondary-button"
-                    disabled={pending}
-                    onClick={() => onDecision(item, "separate")}
-                    type="button"
-                  >
-                    Keep separate
-                  </button>
-                  {candidateProvider !== "spotify" && (
+                  {group.items.length === 1 ? (
                     <button
                       className="secondary-button"
                       disabled={pending}
-                      onClick={() => onDecision(item, "no_equivalent")}
+                      onClick={() => onDecision(item, "separate")}
+                      type="button"
+                    >
+                      Keep separate
+                    </button>
+                  ) : (
+                    group.items.map((candidate) => (
+                      <button
+                        className="secondary-button"
+                        disabled={pending}
+                        key={`separate:${candidate.id}`}
+                        onClick={() => onDecision(candidate, "separate")}
+                        type="button"
+                      >
+                        Keep {reviewProviderDisplayName(candidate.review?.provider ?? "mock")}{" "}
+                        separate
+                      </button>
+                    ))
+                  )}
+                  {!group.items.some((candidate) => candidate.review?.provider === "spotify") && (
+                    <button
+                      className="secondary-button"
+                      disabled={pending}
+                      onClick={() => onDecision(item, "no_equivalent", undefined, group.items)}
                       type="button"
                     >
                       No Spotify equivalent
@@ -4898,13 +4953,13 @@ function ReviewView({
                     disabled={pending}
                     item={item}
                     onConfirm={(spotifyTrackId) =>
-                      onDecision(item, "confirm_track", spotifyTrackId)
+                      onDecision(item, "confirm_track", spotifyTrackId, group.items)
                     }
                   />
                   <button
                     className="primary-button"
                     disabled={pending}
-                    onClick={() => onDecision(item, "confirm")}
+                    onClick={() => onDecision(item, "confirm", undefined, group.items)}
                     type="button"
                   >
                     <Check size={15} /> {pending ? "Resolving..." : "Confirm candidate"}
@@ -6306,6 +6361,7 @@ const feedItemResponseSchema = z.object({
     .object({
       candidateId: z.string().uuid(),
       deferredUntil: z.string().datetime().optional(),
+      groupKey: z.string().min(1).optional(),
       provider: z.enum([
         "mock",
         "spotify",

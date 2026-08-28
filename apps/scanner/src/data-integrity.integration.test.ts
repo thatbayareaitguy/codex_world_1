@@ -4,6 +4,7 @@ import {
   createSpotifyScanBatch,
   ensureLocalOwner,
   feedItems,
+  getReleaseReviewQueueStatus,
   loadSpotifyReleaseTrackResume,
   manualMatchDecisions,
   markSpotifyReleaseTrackInterrupted,
@@ -14,6 +15,7 @@ import {
   releaseTrackAppearanceSources,
   releases,
   resolveFeedReview,
+  resolveFeedReviewGroup,
   sourceEvidence,
   spotifyArtistScans,
   spotifyReleaseTrackCompletenessSummary,
@@ -22,6 +24,7 @@ import {
   spotifyReleaseTrackRetrievals,
   spotifyScanBatches,
   startSpotifyReleaseTrackRetrieval,
+  trackExternalIds,
   tracks,
 } from "@radar/db";
 import { asc, eq, inArray } from "drizzle-orm";
@@ -607,6 +610,193 @@ describe.sequential("Spotify mapping resume and Keep separate", () => {
     expect(
       await connection.db.query.feedItems.findFirst({ where: eq(feedItems.id, feed!.id) }),
     ).toMatchObject({ state: "needs_review", trackId: track!.id });
+  });
+
+  it("resolves mirrored Apple and Spotify reviews as one atomic canonical group", async () => {
+    const userId = await ensureLocalOwner(connection.db);
+    const beforeStatus = await getReleaseReviewQueueStatus(connection.db, userId);
+    const suffix = randomUUID();
+    const [release] = await connection.db
+      .insert(releases)
+      .values({
+        normalizedTitle: `mirrored release ${suffix}`,
+        releaseDate: "2026-08-28",
+        releaseDatePrecision: "day",
+        releaseType: "single",
+        title: `Mirrored Release ${suffix}`,
+      })
+      .returning({ id: releases.id });
+    const [track] = await connection.db
+      .insert(tracks)
+      .values({
+        normalizedTitle: `mirrored track ${suffix}`,
+        releaseId: release!.id,
+        title: `Mirrored Track ${suffix}`,
+      })
+      .returning({ id: tracks.id });
+    const spotifyPayload = candidate({
+      externalReleaseId: `spotify-mirrored-release-${suffix}`,
+      externalTrackId: `spotify-mirrored-track-${suffix}`,
+      releaseDate: "2026-08-28",
+      releaseTitle: `Mirrored Release ${suffix}`,
+      title: `Mirrored Track ${suffix}`,
+    });
+    const applePayload = candidate({
+      artistExternalId: `apple-artist-${suffix}`,
+      evidenceType: "apple_music_track",
+      evidenceUrl: `https://music.apple.com/us/album/mirrored-${suffix}`,
+      externalReleaseId: `apple-mirrored-release-${suffix}`,
+      externalTrackId: `apple-mirrored-track-${suffix}`,
+      payloadHash: `sha256:apple-${suffix}`,
+      provider: "apple_music",
+      providerUrl: `https://music.apple.com/us/album/mirrored-${suffix}`,
+      releaseDate: "2026-08-28",
+      releaseTitle: `Mirrored Release ${suffix}`,
+      sourceLabel: "Synthetic Apple Music",
+      title: `Mirrored Track ${suffix}`,
+    });
+    const insertedCandidates = [];
+    for (const payload of [spotifyPayload, applePayload]) {
+      const [inserted] = await connection.db
+        .insert(releaseCandidates)
+        .values({
+          artistExternalId: payload.artistExternalId,
+          firstSeenAt: new Date(payload.firstSeenAt),
+          matchConfidence: "0.700",
+          matchReasons: ["Synthetic mirrored review"],
+          matchRule: "metadata_review",
+          matchStatus: "needs_review",
+          matchedTrackId: track!.id,
+          normalizedTitle: payload.title.toLowerCase(),
+          payloadHash: payload.payloadHash,
+          provider: payload.provider,
+          providerReleaseId: payload.externalReleaseId,
+          providerTrackId: payload.externalTrackId,
+          rawPayload: payload,
+          releaseDate: payload.releaseDate,
+          title: payload.title,
+        })
+        .returning({ id: releaseCandidates.id });
+      insertedCandidates.push(inserted!);
+    }
+    const insertedFeedItems = [];
+    for (const [index, insertedCandidate] of insertedCandidates.entries()) {
+      const [inserted] = await connection.db
+        .insert(feedItems)
+        .values({
+          candidateId: insertedCandidate.id,
+          dedupeKey: `mirrored:${suffix}:${index}`,
+          firstSeenAt: new Date("2026-08-28T09:00:00.000Z"),
+          releaseId: release!.id,
+          state: "needs_review",
+          trackId: track!.id,
+          userId,
+        })
+        .returning({ id: feedItems.id });
+      insertedFeedItems.push(inserted!);
+    }
+    const groupedStatus = await getReleaseReviewQueueStatus(connection.db, userId);
+    expect(groupedStatus.actionableCount).toBe(beforeStatus.actionableCount + 1);
+
+    await connection.db
+      .update(releaseCandidates)
+      .set({ rawPayload: {} })
+      .where(eq(releaseCandidates.id, insertedCandidates[1]!.id));
+    await expect(
+      resolveFeedReviewGroup(connection.db, userId, insertedFeedItems[0]!.id, "confirm"),
+    ).rejects.toBeDefined();
+    expect(
+      await connection.db
+        .select({ matchStatus: releaseCandidates.matchStatus })
+        .from(releaseCandidates)
+        .where(
+          inArray(
+            releaseCandidates.id,
+            insertedCandidates.map((row) => row.id),
+          ),
+        ),
+    ).toEqual([{ matchStatus: "needs_review" }, { matchStatus: "needs_review" }]);
+    expect(
+      await connection.db
+        .select()
+        .from(manualMatchDecisions)
+        .where(
+          inArray(
+            manualMatchDecisions.candidateId,
+            insertedCandidates.map((row) => row.id),
+          ),
+        ),
+    ).toHaveLength(0);
+    await connection.db
+      .update(releaseCandidates)
+      .set({ rawPayload: applePayload })
+      .where(eq(releaseCandidates.id, insertedCandidates[1]!.id));
+
+    const resolution = await resolveFeedReviewGroup(
+      connection.db,
+      userId,
+      insertedFeedItems[1]!.id,
+      "confirm",
+    );
+    expect(resolution?.affectedFeedItemIds).toEqual([
+      insertedFeedItems[1]!.id,
+      insertedFeedItems[0]!.id,
+    ]);
+    expect(
+      await connection.db
+        .select({ matchStatus: releaseCandidates.matchStatus })
+        .from(releaseCandidates)
+        .where(
+          inArray(
+            releaseCandidates.id,
+            insertedCandidates.map((row) => row.id),
+          ),
+        ),
+    ).toEqual([{ matchStatus: "matched" }, { matchStatus: "matched" }]);
+    expect(
+      await connection.db
+        .select()
+        .from(manualMatchDecisions)
+        .where(
+          inArray(
+            manualMatchDecisions.candidateId,
+            insertedCandidates.map((row) => row.id),
+          ),
+        ),
+    ).toHaveLength(2);
+    expect(
+      await connection.db
+        .select({ externalId: trackExternalIds.externalId, provider: trackExternalIds.provider })
+        .from(trackExternalIds)
+        .where(eq(trackExternalIds.trackId, track!.id)),
+    ).toEqual(
+      expect.arrayContaining([
+        { externalId: spotifyPayload.externalTrackId, provider: "spotify" },
+        { externalId: applePayload.externalTrackId, provider: "apple_music" },
+      ]),
+    );
+    expect(
+      await connection.db
+        .select()
+        .from(releaseTrackAppearanceSources)
+        .where(
+          inArray(
+            releaseTrackAppearanceSources.candidateId,
+            insertedCandidates.map((row) => row.id),
+          ),
+        ),
+    ).toHaveLength(2);
+    const remainingGroupFeeds = await connection.db
+      .select()
+      .from(feedItems)
+      .where(
+        inArray(
+          feedItems.id,
+          insertedFeedItems.map((row) => row.id),
+        ),
+      );
+    expect(remainingGroupFeeds).toHaveLength(1);
+    expect(remainingGroupFeeds[0]).toMatchObject({ state: "new", trackId: track!.id });
   });
 });
 

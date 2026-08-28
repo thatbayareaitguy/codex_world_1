@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-08-28 14:33 PDT
+Updated: 2026-08-28 16:07 PDT
 
 ## Repository
 
@@ -214,6 +214,38 @@ backup, and this work did not make any live review decision.
   loopback-only.
 - This review-link correction made no provider request, review decision, scheduler invocation,
   playlist write, database mutation, or credential change.
+
+## Mirrored Release Review Repair (2026-08-28)
+
+- Apple Music and Spotify candidate rows that point to the same exact canonical release ID and
+  proposed canonical track ID now share one review group. Provider evidence rows remain separate
+  and are not merged or deleted.
+- The review page renders one card per exact canonical group, combines the stored Apple Music and
+  Spotify links, and counts the group as one human decision. Similar titles without the same two
+  canonical IDs remain separate.
+- Confirm, defer, retry, selected-Spotify-track confirmation, and no-equivalent decisions use the
+  grouped API scope. The database applies every member decision in one transaction, so a failure
+  rolls back the whole group. A group containing Spotify evidence cannot be marked as having no
+  Spotify equivalent.
+- Keep separate remains candidate-specific for grouped cards. The UI names the provider on each
+  separate action, preventing an ambiguous group-wide split.
+- Full verification passed: formatting, lint, type checking, 521 unit tests in 74 files, 154
+  integration tests in 28 files against a temporary PostgreSQL 17 database with all migrations, a
+  28-route production build, 32 Playwright tests, production doctor, and `git diff --check`. The
+  targeted browser test proved one card, both provider links, one grouped confirmation request, and
+  removal of both mirrored rows. Database verification proved two manual decisions and provider
+  mappings but only one canonical feed item after confirmation.
+- Production currently has zero raw actionable review rows and zero grouped review decisions, so no
+  live review decision was available or made. The optimized build was deployed through the existing
+  hidden `TS New Music Radar Web Application` task. Loopback health passed, and a cache-busted live
+  browser load displayed the new grouped-count wording.
+- Production doctor is READY: PostgreSQL is connected, all 31 migrations are applied, the loopback
+  application is healthy, and no provider lease, cooldown, stale lock, or recent Spotify 429 is
+  present. The shared Showcase test database on port 5433 lacks migration 0030 and can log a
+  missing-column warning on unmocked E2E status requests; scanner integration and production use
+  current databases, and all E2E tests passed.
+- No provider request, playlist write, review decision, scheduler invocation, credential change, or
+  `.env` change was made for this repair.
 
 ## Keep-Awake Validation Correction (2026-08-28)
 

@@ -221,6 +221,7 @@ export interface FeedFixtureItem {
   review?: {
     candidateId: string;
     deferredUntil?: string;
+    groupKey?: string;
     provider: ProviderName;
     providerUrl?: string;
   };

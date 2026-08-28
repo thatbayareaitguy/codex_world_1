@@ -1,17 +1,20 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { end, enforceRateLimit, resolveFeedReview, updateFeedPreferences } = vi.hoisted(() => ({
-  end: vi.fn(() => Promise.resolve()),
-  enforceRateLimit: vi.fn(),
-  resolveFeedReview: vi.fn(),
-  updateFeedPreferences: vi.fn(),
-}));
+const { end, enforceRateLimit, resolveFeedReview, resolveFeedReviewGroup, updateFeedPreferences } =
+  vi.hoisted(() => ({
+    end: vi.fn(() => Promise.resolve()),
+    enforceRateLimit: vi.fn(),
+    resolveFeedReview: vi.fn(),
+    resolveFeedReviewGroup: vi.fn(),
+    updateFeedPreferences: vi.fn(),
+  }));
 
 vi.mock("@radar/db", () => ({
   createDatabase: vi.fn(() => ({ client: { end }, db: {} })),
   ensureLocalOwner: vi.fn(() => Promise.resolve("11111111-1111-4111-8111-111111111111")),
   resolveFeedReview,
+  resolveFeedReviewGroup,
   updateFeedPreferences,
 }));
 vi.mock("@radar/providers", () => ({
@@ -45,6 +48,13 @@ beforeEach(() => {
     decision: "confirm",
     feedItemId,
     removed: true,
+    state: "new",
+  });
+  resolveFeedReviewGroup.mockResolvedValue({
+    affectedFeedItemIds: [feedItemId, "33333333-3333-4333-8333-333333333333"],
+    decision: "confirm",
+    feedItemId,
+    removed: false,
     state: "new",
   });
 });
@@ -95,6 +105,26 @@ describe("feed item preferences", () => {
       60_000,
       "/api/feed-items",
     );
+  });
+
+  it("resolves an exact canonical review group together", async () => {
+    const response = await PATCH(
+      request({ reviewDecision: "confirm", reviewScope: "group" }),
+      context,
+    );
+    expect(response.status).toBe(200);
+    expect(resolveFeedReviewGroup).toHaveBeenCalledWith(
+      expect.anything(),
+      "11111111-1111-4111-8111-111111111111",
+      feedItemId,
+      "confirm",
+      {},
+    );
+    expect(resolveFeedReview).not.toHaveBeenCalled();
+    const body = (await response.json()) as {
+      resolution: { affectedFeedItemIds: string[] };
+    };
+    expect(body.resolution.affectedFeedItemIds).toContain(feedItemId);
   });
 
   it("persists a decision to keep recordings separate", async () => {

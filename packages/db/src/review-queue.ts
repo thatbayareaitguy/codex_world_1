@@ -50,7 +50,9 @@ export async function getReleaseReviewQueueStatus(
       .select({
         candidateId: releaseCandidates.id,
         feedItemId: feedItems.id,
+        matchedTrackId: releaseCandidates.matchedTrackId,
         provider: releaseCandidates.provider,
+        releaseId: feedItems.releaseId,
         trackId: feedItems.trackId,
       })
       .from(feedItems)
@@ -158,7 +160,7 @@ export async function getReleaseReviewQueueStatus(
     actionableCount: new Set(
       reviewRows
         .filter((row) => !activeDeferrals.has(row.candidateId))
-        .map((row) => row.feedItemId),
+        .map((row) => reviewDecisionGroupKey(row)),
     ).size,
     blockedExport: {
       stale: staleTrackIds.length,
@@ -167,12 +169,26 @@ export async function getReleaseReviewQueueStatus(
       total: blockedTrackIds.size,
       userActionable: userActionableTrackIds.size,
     },
-    deferredCount: activeDeferrals.size,
+    deferredCount: new Set(
+      reviewRows
+        .filter((row) => activeDeferrals.has(row.candidateId))
+        .map((row) => reviewDecisionGroupKey(row)),
+    ).size,
     staleCount: staleTrackIds.length,
     systemWaiting: [...uniqueWaiting.values()],
     systemWaitingCount: uniqueWaiting.size,
     terminalCount: decisionRows.filter((row) => row.decision === "no_equivalent").length,
   };
+}
+
+function reviewDecisionGroupKey(row: {
+  feedItemId: string;
+  matchedTrackId: string | null;
+  releaseId: string | null;
+}): string {
+  return row.releaseId && row.matchedTrackId
+    ? `${row.releaseId}:${row.matchedTrackId}`
+    : `feed:${row.feedItemId}`;
 }
 
 function waitingReason(
