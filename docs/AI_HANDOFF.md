@@ -97,7 +97,7 @@ no priority or playlist work was waiting on capacity.
 Configuration verification is complete, but a live wake by the new maintenance task is not yet
 proven. `powercfg /waketimers` requires an administrator-elevated command prompt on this machine, and
 the maintenance task's first natural trigger is 20:50 PDT. A manual task invocation was not used
-because 575 broad artists are due and the safety reviewer correctly rejected any claim that such a
+because 577 broad artists are due and the safety reviewer correctly rejected any claim that such a
 run was guaranteed mutation-free. Do not force sleep. Use a user-assisted signed-in sleep test at a
 fixed maintenance trigger, then confirm the Power-Troubleshooter event names the maintenance task.
 
@@ -180,8 +180,10 @@ backup, and this work did not make any live review decision.
 - `pnpm format:check`: passed
 - `pnpm lint`: passed with zero warnings
 - `pnpm typecheck`: passed across all six workspace projects
-- `pnpm test`: 71 files and 504 tests passed, including four isolated Windows maintenance
-  lifecycle tests
+- `pnpm test`: 71 files and 510 tests passed. Maintenance coverage directly asserts keep-awake
+  release, failure cleanup, absolute runtime cutoff, dynamic-wake deduplication, Thursday and Friday
+  broad-work suppression, Saturday broad eligibility, Apple-priority precedence, and cooldown
+  enforcement.
 - `pnpm test:integration`: 27 files and 152 tests passed against the isolated `db-test` PostgreSQL
   service with all 31 migrations. Production port 5432 was not touched.
 - `pnpm build`: passed, including 28 generated pages and routes

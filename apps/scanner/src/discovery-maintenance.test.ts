@@ -65,6 +65,51 @@ describe("discovery maintenance decisions", () => {
       waitUntil: null,
     });
   });
+
+  it("keeps broad Spotify work out of Thursday and Friday priority windows", () => {
+    const snapshot = baseSnapshot();
+    snapshot.spotify.dueArtistCount = 10;
+    expect(
+      decideDiscoveryMaintenance(snapshot, new Date("2026-08-28T03:00:00.000Z")),
+    ).toMatchObject({ reason: "no_work", runNow: false });
+    expect(
+      decideDiscoveryMaintenance(snapshot, new Date("2026-08-29T03:00:00.000Z")),
+    ).toMatchObject({ reason: "no_work", runNow: false });
+  });
+
+  it("allows bounded broad work on Saturday", () => {
+    const snapshot = baseSnapshot();
+    snapshot.spotify.dueArtistCount = 10;
+    expect(
+      decideDiscoveryMaintenance(snapshot, new Date("2026-08-29T16:00:00.000Z")),
+    ).toMatchObject({ holdPower: true, reason: "broad_work", runNow: true });
+  });
+
+  it("runs Apple priority before an otherwise eligible broad backlog", () => {
+    const snapshot = baseSnapshot();
+    snapshot.discovery.phase = "apple_priority";
+    snapshot.spotify.applePriorityCount = 2;
+    snapshot.spotify.dueArtistCount = 10;
+    expect(
+      decideDiscoveryMaintenance(snapshot, new Date("2026-08-29T16:00:00.000Z")),
+    ).toMatchObject({ holdPower: true, reason: "priority_work", runNow: true });
+  });
+
+  it("never bypasses a priority cooldown and wakes ten minutes before it ends", () => {
+    const now = new Date("2026-08-28T03:00:00.000Z");
+    const cooldownUntil = new Date("2026-08-28T05:00:00.000Z");
+    const snapshot = baseSnapshot();
+    snapshot.discovery.phase = "apple_priority";
+    snapshot.spotify.applePriorityCount = 2;
+    snapshot.spotify.cooldownActive = true;
+    snapshot.spotify.cooldownUntil = cooldownUntil;
+    expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
+      dynamicWakeAt: new Date(cooldownUntil.getTime() - maintenanceWakeLeadMs),
+      holdPower: false,
+      reason: "cooldown_wait",
+      runNow: false,
+    });
+  });
 });
 
 function baseSnapshot(): DiscoveryMaintenanceSnapshot {
