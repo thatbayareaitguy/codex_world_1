@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-08-28 14:05 PDT
+Updated: 2026-08-28 14:33 PDT
 
 ## Repository
 
@@ -253,6 +253,43 @@ backup, and this work did not make any live review decision.
   keeps the direct hidden `conhost.exe --headless node.exe --import tsx` action, limited-user
   principal, `WakeToRun`, `StartWhenAvailable`, and `IgnoreNew`. It does not alter production
   triggers.
+
+## Upcoming Feed Maturity Correction (2026-08-28)
+
+- Root cause: `feed_items.state` captured `candidate.isUpcoming` only when a discovery was first
+  inserted. The conflict path was intentionally idempotent and never revisited that state, so an
+  item could remain `upcoming` after its effective canonical release date passed.
+- The recurring scheduler now matures only rows still in `upcoming` at the start of every normal
+  tick. It uses the Pacific production calendar date and moves a row to `new` when its effective
+  canonical release date has arrived or exact stored Spotify availability says the track is
+  playable in the US. Saved, listened, dismissed, and review states are never overwritten.
+- This also handles released preview tracks from future-dated albums without moving unreleased
+  siblings. The summary card now counts only actual `upcoming` rows within the next 30 days.
+- A fresh pre-correction backup is at
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-08-28T21-19-17-273Z.dump`.
+  It is 38,015,992 bytes with SHA-256
+  `077A459C4971AC2B727D3F25B4942B77E2B9C09D8BDEBE02F6689EC31B16B199`; PostgreSQL 17
+  `pg_restore --list` verified 525 table-of-contents lines.
+- The natural minute scheduler applied the correction without a manual provider scan. It moved 28
+  rows: 22 whose effective release dates had passed and 6 already-playable preview tracks. A second
+  pass was a no-op. Production now has 1,705 `new`, 6 `upcoming`, and zero eligible stale upcoming
+  rows.
+- The six retained rows are future-dated and not stored as playable: `Worship` and `Prayers`
+  (September 11), `More! More! More!` and `what do i have to do?` (September 25), and `LIEBE` and
+  `Stay` (October 23). The live API and in-app browser both report 6 total Upcoming items and 4
+  within the next 30 days.
+- No Apple Music or Spotify request was made solely for this repair. No playlist write, review
+  decision, provider schedule, maintenance wake trigger, credential, or `.env` value was changed.
+- The full validation result for this repository state is: formatting passed; lint passed with zero
+  warnings; typecheck passed across all six projects; 74 unit files and 521 tests passed; 28
+  integration files and 154 tests passed against a temporary PostgreSQL 17 instance on port 5434;
+  the production build generated all 28 pages and routes; and all 32 Playwright tests passed. The
+  broad navigation Playwright test was made self-contained after it exposed an existing dependency
+  on leftover OAuth state in the shared test database.
+- Doctor is READY with all 31 migrations applied, PostgreSQL connected, no stale lock, active
+  provider lease, or cooldown, and the web health endpoint responding on `127.0.0.1:3000`. The
+  production web build was restored through `TS New Music Radar Web Application`; the task remains
+  the hidden long-running supervisor with zero missed runs.
 
 ## Validation
 

@@ -1439,6 +1439,19 @@ test("hides manual SoundCloud controls by default", async ({ page }) => {
 });
 
 test("navigates every primary view and resolves manual review", async ({ page }) => {
+  await page.route("**/api/system/status", async (route) => {
+    const response = await route.fetch();
+    const status = (await response.json()) as {
+      spotify: { grantedScopes?: string[] };
+      [key: string]: unknown;
+    };
+    await route.fulfill({
+      json: {
+        ...status,
+        spotify: { ...status.spotify, grantedScopes: ["user-follow-read"] },
+      },
+    });
+  });
   await page.route("**/api/musicbrainz/mappings", async (route) => {
     await route.fulfill({ json: { mappings: [], reviews: [] } });
   });

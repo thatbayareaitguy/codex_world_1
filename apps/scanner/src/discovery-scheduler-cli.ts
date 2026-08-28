@@ -6,6 +6,7 @@ import {
   getSpotifySchedulerStatus,
   ensureLocalOwner,
   markBroadDiscoveryPlaylistCheckpointPending,
+  matureReleasedFeedItems,
   prepareBroadDiscoveryPlaylistCheckpoint,
   preparePriorityDiscoveryPlaylistCheckpoint,
   reconcileDiscoveryScheduleAfterCooldown,
@@ -325,6 +326,7 @@ export async function runDiscoverySchedulerTick(
   configuration: ReturnType<typeof loadProviderConfiguration>,
 ): Promise<unknown> {
   const userId = await ensureLocalOwner(db);
+  await matureReleasedFeedItems(db);
   await surfaceUncertainSpotifyMatchesForReview(db, userId);
   await reconcileStaleSpotifyQueueDepth(db);
   await reconcileDeferredPriorityTrackResolutionWork(db);

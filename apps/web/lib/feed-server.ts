@@ -132,7 +132,8 @@ export async function loadDatabaseFeedPage(
           ) AS "new_this_week",
           count(*) FILTER (WHERE "feed_items"."state" = 'needs_review') AS "needs_review",
           count(*) FILTER (
-            WHERE COALESCE("releases"."release_date", "release_candidates"."release_date")
+            WHERE "feed_items"."state" = 'upcoming'
+              AND COALESCE("releases"."release_date", "release_candidates"."release_date")
               BETWEEN current_date AND current_date + 30
           ) AS "upcoming"
         FROM "feed_items"
