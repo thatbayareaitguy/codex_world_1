@@ -23,10 +23,30 @@ describe("discovery maintenance Windows tasks", () => {
     expect(registration).toContain("-MultipleInstances IgnoreNew");
     expect(registration).toContain("-StartWhenAvailable");
     expect(registration).toContain("-WakeToRun");
+    const schedulerSettings = registration.slice(
+      registration.indexOf("$schedulerSettings ="),
+      registration.indexOf("Register-ScheduledTask -TaskName $SchedulerTaskName"),
+    );
+    const maintenanceSettings = registration.slice(
+      registration.indexOf("$maintenanceSettings ="),
+      registration.indexOf("Register-ScheduledTask -TaskName $MaintenanceTaskName"),
+    );
+    expect(schedulerSettings).not.toContain("-WakeToRun");
+    expect(maintenanceSettings).toContain("-WakeToRun");
     expect(registration).toContain("-ExecutionTimeLimit (New-TimeSpan -Hours 4)");
     expect(registration).toContain('$schedulerTrigger.Id = "MinuteScheduler"');
+    expect(registration).toContain(
+      '-DaysOfWeek Saturday, Sunday, Monday, Tuesday, Wednesday -At "08:50"',
+    );
+    expect(registration).toContain(
+      '-DaysOfWeek Saturday, Sunday, Monday, Tuesday, Wednesday -At "20:50"',
+    );
+    expect(registration).toContain('-DaysOfWeek Thursday -At "20:50"');
+    expect(registration).toContain('-DaysOfWeek Friday -At "08:50"');
     expect(registration).toContain('$maintenanceTriggers[2].Id = "ThursdayAppleWake"');
     expect(registration).toContain('$maintenanceTriggers[3].Id = "FridayCatchupWake"');
+    expect(registration).toContain('$_.Id -eq "DynamicCapacityWake"');
+    expect(registration).toContain("$maintenanceTriggers += $existingDynamicWake[0]");
     expect(registration).not.toMatch(/CLIENT_SECRET|ACCESS_TOKEN|REFRESH_TOKEN/);
     expect(removal).toContain("Unregister-ScheduledTask");
   });

@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-08-27 17:19 PDT
+Updated: 2026-08-27 17:26 PDT
 
 ## Repository
 
@@ -56,8 +56,8 @@ Two tasks are now registered for the current signed-in user:
    - `WakeToRun` is disabled, so this poller no longer creates a wake request every minute.
    - Direct action:
      `C:\Windows\System32\conhost.exe --headless "C:\Program Files\nodejs\node.exe" --env-file="C:\Users\taysh\AppData\Local\TSNewMusicRadar\production-scheduler.env" --import tsx "C:\Users\taysh\Documents\Codex\codex_world_1\apps\scanner\src\discovery-scheduler-cli.ts" tick`
-   - Natural post-registration executions returned 0 with zero missed runs. At final inspection, the
-     latest was 16:58 PDT and the next was 16:59 PDT.
+   - Natural post-registration executions returned 0 with zero missed runs. After the idempotent
+     re-registration check, the latest inspected run was 17:23 PDT and returned 0.
 
 2. `TS New Music Radar Maintenance Window`
    - Hidden, enabled, `IgnoreNew`, `StartWhenAvailable`, `WakeToRun`, restart 3 times at one-minute
@@ -77,6 +77,17 @@ holds a hidden Windows `ES_SYSTEM_REQUIRED` request only during runnable work or
 minutes or less, releases it in `finally`, exits immediately when no eligible work exists, and stops
 after four hours.
 
+Idempotent re-registration was live-verified at 17:23 PDT. After re-registration, the minute task
+still had exactly one `MinuteScheduler` trigger, `WakeToRun=false`, `IgnoreNew`, a three-minute
+limit, and last result 0 with zero missed runs. The maintenance task still had exactly the four
+fixed triggers, no duplicate `DynamicCapacityWake`, `WakeToRun=true`, `IgnoreNew`, a four-hour
+limit, and the next run at 20:50 PDT.
+
+Isolated tests now also verify that the keep-awake helper requests
+`ES_CONTINUOUS | ES_SYSTEM_REQUIRED`, runs hidden, and releases its child process; that non-Windows
+operation is a no-op; and that dynamic wake updates preserve fixed triggers, tolerate an unchanged
+time, keep at most one `DynamicCapacityWake`, and remove it cleanly.
+
 If priority or playlist work is blocked only by cooldown or rolling Artist Albums capacity, the
 ordinary tick updates one trigger named `DynamicCapacityWake`. The trigger is ten minutes before the
 database-calculated next runnable time. Re-registration preserves it, updates are idempotent, and a
@@ -89,6 +100,11 @@ the maintenance task's first natural trigger is 20:50 PDT. A manual task invocat
 because 575 broad artists are due and the safety reviewer correctly rejected any claim that such a
 run was guaranteed mutation-free. Do not force sleep. Use a user-assisted signed-in sleep test at a
 fixed maintenance trigger, then confirm the Power-Troubleshooter event names the maintenance task.
+
+The same safety restriction was re-confirmed at 17:24 PDT after current status showed 577 due broad
+artists. Although Thursday gating should return `no_work` before 20:50, the manual maintenance task
+was not invoked after the safety reviewer rejected it. No workaround was attempted. The first
+natural maintenance trigger remains the authoritative live test.
 
 ## Review Workflow
 
@@ -145,7 +161,7 @@ backup, and this work did not make any live review decision.
 - Spotify telemetry has 0 429s in the last 24 hours and retains five quota-classified plus two legacy
   historical 429s. The latest quota event was August 9.
 - Current scheduler status reports 1,192 queued and 10 blocked work rows. Artist Albums usage is
-  19 of 80 with the 20-request priority reserve intact. The playlist inbox is completed with zero
+  12 of 80 with the 20-request priority reserve intact. The playlist inbox is completed with zero
   pending operations.
 - The latest successful provider work remains August 26 at 17:38 PDT. No provider scan or playlist
   write was manually triggered during this correction.
@@ -164,7 +180,8 @@ backup, and this work did not make any live review decision.
 - `pnpm format:check`: passed
 - `pnpm lint`: passed with zero warnings
 - `pnpm typecheck`: passed across all six workspace projects
-- `pnpm test`: 70 files and 500 tests passed
+- `pnpm test`: 71 files and 504 tests passed, including four isolated Windows maintenance
+  lifecycle tests
 - `pnpm test:integration`: 27 files and 152 tests passed against the isolated `db-test` PostgreSQL
   service with all 31 migrations. Production port 5432 was not touched.
 - `pnpm build`: passed, including 28 generated pages and routes
