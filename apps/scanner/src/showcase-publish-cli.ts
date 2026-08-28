@@ -19,9 +19,14 @@ async function main(): Promise<void> {
     process.stdout.write(
       `${JSON.stringify({
         event: "showcase.catalog_published",
+        artistCount: result.artistCount,
+        artistsWithGenresCount: result.artistsWithGenresCount,
+        invalidActiveArtistCount: result.invalidActiveArtistCount,
         invalidAppleReleaseCount: result.invalidAppleReleaseCount,
+        multiCreditReleaseCount: result.multiCreditReleaseCount,
         outputPath,
         releaseCount: result.releaseCount,
+        unresolvedCollaboratorCount: result.unresolvedCollaboratorCount,
         withSpotifyCount: result.withSpotifyCount,
         withoutSpotifyCount: result.withoutSpotifyCount,
       })}\n`,

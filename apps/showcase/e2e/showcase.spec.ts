@@ -49,14 +49,45 @@ test("release filters and detail routes work", async ({ page }) => {
 });
 
 test("artist filtering and structured profile work", async ({ page }) => {
+  const artist = generatedCatalog.artists.find((item) => item.genreSlugs.length > 0);
+  expect(artist).toBeDefined();
   await page.goto("/artists");
 
-  await page.getByPlaceholder("Filter by artist or genre").fill("jungle");
-  await expect(page.getByText("Showing 1")).toBeVisible();
-  await page.getByRole("link", { name: /Night Service/i }).click();
-  await expect(page).toHaveURL(/\/artists\/night-service$/);
-  await expect(page.getByRole("heading", { name: "Night Service", level: 1 })).toBeVisible();
-  await expect(page.getByText("Subframe")).toBeVisible();
+  await page.getByPlaceholder("Filter by artist or genre").fill(artist!.name);
+  const artistCard = page.locator(".artist-card").filter({ hasText: artist!.name }).first();
+  await expect(artistCard.getByRole("heading", { name: artist!.name })).toBeVisible();
+  await artistCard.getByRole("link").click();
+  await expect(page).toHaveURL(new RegExp(`/artists/${artist!.slug}$`));
+  await expect(page.getByRole("heading", { name: artist!.name, level: 1 })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Apple Music/i })).toHaveAttribute(
+    "target",
+    "_blank",
+  );
+});
+
+test("collaboration credits link to artists and trackless releases stay visible", async ({
+  page,
+}) => {
+  const collaboration = generatedCatalog.releases.find(
+    (release) =>
+      release.artistCredits.filter((credit) => credit.artistSlug !== undefined).length > 1,
+  );
+  const trackless = generatedCatalog.releases.find((release) => release.tracks.length === 0);
+  expect(collaboration).toBeDefined();
+  expect(trackless).toBeDefined();
+
+  await page.goto(`/releases/${collaboration!.slug}`);
+  for (const credit of collaboration!.artistCredits) {
+    if (credit.artistSlug === undefined) continue;
+    await expect(page.getByRole("link", { name: credit.name, exact: true })).toHaveAttribute(
+      "href",
+      `/artists/${credit.artistSlug}`,
+    );
+  }
+
+  await page.goto(`/releases/${trackless!.slug}`);
+  await expect(page.getByRole("heading", { name: trackless!.title, level: 1 })).toBeVisible();
+  await expect(page.getByText("TRACK LIST", { exact: true })).toHaveCount(0);
 });
 
 test("mobile navigation and not-found state are usable", async ({ page }) => {

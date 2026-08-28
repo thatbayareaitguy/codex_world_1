@@ -5,7 +5,13 @@ import { notFound } from "next/navigation";
 import { Artwork } from "../../../components/artwork";
 import { ProviderLinks } from "../../../components/provider-links";
 import { ReleaseCard } from "../../../components/release-card";
-import { getArtist, getArtistReleases, publicCatalog } from "../../../lib/public-catalog";
+import {
+  getArtist,
+  getArtistGenreNames,
+  getArtistReleases,
+  getRelatedArtists,
+  publicCatalog,
+} from "../../../lib/public-catalog";
 
 interface ArtistPageProps {
   readonly params: Promise<{ slug: string }>;
@@ -19,7 +25,8 @@ export async function generateMetadata({ params }: ArtistPageProps): Promise<Met
   const artist = getArtist((await params).slug);
   if (artist === undefined)
     return { title: "Artist not found", openGraph: { images: [] }, twitter: { images: [] } };
-  const description = `${artist.name} on Showcase. Explore ${artist.genres.join(", ")} releases, labels, and collaborators.`;
+  const genres = getArtistGenreNames(artist);
+  const description = `${artist.name} on Showcase. Explore ${genres.length ? `${genres.join(", ")} music` : "new electronic music"}, releases, and collaborators.`;
   return {
     title: artist.name,
     description,
@@ -31,13 +38,11 @@ export async function generateMetadata({ params }: ArtistPageProps): Promise<Met
 export default async function ArtistDetailPage({ params }: ArtistPageProps) {
   const artist = getArtist((await params).slug);
   if (artist === undefined) notFound();
+  const genres = getArtistGenreNames(artist);
   const releases = getArtistReleases(artist.slug);
   const recent = releases.filter((release) => release.status !== "upcoming");
   const upcoming = releases.filter((release) => release.status === "upcoming");
-  const related = artist.relatedArtistSlugs.flatMap((slug) => {
-    const item = getArtist(slug);
-    return item === undefined ? [] : [item];
-  });
+  const related = getRelatedArtists(artist.slug);
 
   return (
     <div className="detail-page page-shell">
@@ -49,24 +54,24 @@ export default async function ArtistDetailPage({ params }: ArtistPageProps) {
         <div className="detail-copy">
           <p className="kicker">ARTIST PROFILE</p>
           <h1>{artist.name}</h1>
-          <div className="tag-list">
-            {artist.genres.map((genre) => (
-              <span key={genre}>{genre}</span>
-            ))}
-          </div>
+          {genres.length > 0 ? (
+            <div className="tag-list">
+              {genres.map((genre) => (
+                <span key={genre}>{genre}</span>
+              ))}
+            </div>
+          ) : null}
           <dl className="fact-grid artist-facts">
             <div>
               <dt>Featured releases</dt>
               <dd>{releases.length}</dd>
             </div>
-            <div>
-              <dt>Label associations</dt>
-              <dd>
-                {artist.labelAssociations.length > 0
-                  ? artist.labelAssociations.join(" / ")
-                  : "Independent"}
-              </dd>
-            </div>
+            {artist.labelAssociations?.length ? (
+              <div>
+                <dt>Label associations</dt>
+                <dd>{artist.labelAssociations.join(" / ")}</dd>
+              </div>
+            ) : null}
           </dl>
           <ProviderLinks links={artist.links} />
         </div>
@@ -113,7 +118,7 @@ export default async function ArtistDetailPage({ params }: ArtistPageProps) {
             {related.map((item) => (
               <Link href={`/artists/${item.slug}`} key={item.publicId}>
                 {item.name}
-                <span>{item.genres[0]}</span>
+                <span>{getArtistGenreNames(item)[0] ?? "Artist"}</span>
               </Link>
             ))}
           </div>

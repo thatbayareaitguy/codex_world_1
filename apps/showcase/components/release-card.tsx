@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Artwork } from "./artwork";
-import { formatPublicDate, type PublicRelease } from "../lib/public-catalog";
+import { formatArtistCredits, formatPublicDate, type PublicRelease } from "../lib/public-catalog";
 
 interface ReleaseCardProps {
   readonly release: PublicRelease;
@@ -16,7 +16,7 @@ export function ReleaseCard({ release }: ReleaseCardProps) {
           <time dateTime={release.releaseDate}>{formatPublicDate(release.releaseDate)}</time>
         </div>
         <h3>{release.title}</h3>
-        <p>{release.artistName}</p>
+        <p>{formatArtistCredits(release)}</p>
       </Link>
     </article>
   );

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { ArtistCard } from "./artist-card";
-import type { PublicArtist } from "../lib/public-catalog";
+import { getArtistGenreNames, type PublicArtist } from "../lib/public-catalog";
 
 interface ArtistExplorerProps {
   readonly artists: readonly PublicArtist[];
@@ -14,7 +14,9 @@ export function ArtistExplorer({ artists }: ArtistExplorerProps) {
   const visibleArtists = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return artists.filter((artist) =>
-      `${artist.name} ${artist.genres.join(" ")}`.toLowerCase().includes(normalizedQuery),
+      `${artist.name} ${getArtistGenreNames(artist).join(" ")}`
+        .toLowerCase()
+        .includes(normalizedQuery),
     );
   }, [artists, query]);
 
@@ -23,7 +25,7 @@ export function ArtistExplorer({ artists }: ArtistExplorerProps) {
       <div className="catalog-controls artist-controls">
         <div>
           <h2 id="artist-catalog-heading">Artist index</h2>
-          <p>{artists.length} artists in this sample catalog</p>
+          <p>{artists.length} published artists</p>
         </div>
         <label className="search-input">
           <span className="sr-only">Filter artists</span>

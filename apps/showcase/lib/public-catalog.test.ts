@@ -3,11 +3,11 @@ import { extname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { publicCatalog } from "./public-catalog";
 
-const releaseKeys = [
-  "artistName",
+const releaseRequiredKeys = [
+  "artistCredits",
   "artworkTone",
   "firstDiscoveredDate",
-  "genres",
+  "genreSlugs",
   "links",
   "publicId",
   "releaseDate",
@@ -16,7 +16,7 @@ const releaseKeys = [
   "title",
   "tracks",
   "type",
-].sort();
+];
 
 describe("Showcase public catalog", () => {
   it("uses unique Showcase-owned public IDs and slugs", () => {
@@ -25,45 +25,82 @@ describe("Showcase public catalog", () => {
 
     expect(new Set(ids).size).toBe(ids.length);
     expect(new Set(slugs).size).toBe(slugs.length);
-    expect(ids.every((id) => /^(artist|release)_[a-z0-9_]+$/.test(id))).toBe(true);
+    expect(ids.every((id) => /^(artist|release)_[a-f0-9]{20}$/.test(id))).toBe(true);
   });
 
-  it("keeps fixture artist relationships resolvable while releases carry real artist names", () => {
+  it("resolves every linked release credit to a real published artist page", () => {
     const artistSlugs = new Set(publicCatalog.artists.map((artist) => artist.slug));
-    for (const artist of publicCatalog.artists) {
-      expect(artist.relatedArtistSlugs.every((slug) => artistSlugs.has(slug))).toBe(true);
-    }
-    for (const release of publicCatalog.releases) expect(release.artistName.trim()).not.toBe("");
-  });
-
-  it("loads only strict v1 Apple-origin release records", () => {
-    expect(publicCatalog.contractVersion).toBe("showcase-public-v1");
     for (const release of publicCatalog.releases) {
-      expect(Object.keys(release).sort()).toEqual(releaseKeys);
-      expect(release.status === "released" || release.status === "upcoming").toBe(true);
-      expect(new URL(release.links.appleMusic).hostname).toBe("music.apple.com");
-      if (release.links.spotify !== undefined) {
-        const spotify = new URL(release.links.spotify);
-        expect(spotify.hostname).toBe("open.spotify.com");
-        expect(spotify.pathname.startsWith("/album/")).toBe(true);
+      expect(release.artistCredits.length).toBeGreaterThan(0);
+      expect(release.artistCredits[0]?.artistSlug).toBeDefined();
+      for (const credit of release.artistCredits) {
+        expect(credit.name.trim()).not.toBe("");
+        if (credit.artistSlug !== undefined) expect(artistSlugs.has(credit.artistSlug)).toBe(true);
       }
     }
   });
 
-  it("keeps the generated release contract free of private operational fields", () => {
-    const serialized = JSON.stringify(publicCatalog.releases).toLowerCase();
+  it("loads only strict v2 public artists, taxonomy, and Apple-origin releases", () => {
+    expect(publicCatalog.contractVersion).toBe("showcase-public-v2");
+    const genreSlugs = new Set(publicCatalog.genres.map((genre) => genre.slug));
+    expect(genreSlugs.size).toBe(publicCatalog.genres.length);
+    for (const artist of publicCatalog.artists) {
+      const expectedKeys = [
+        "artworkTone",
+        "genreSlugs",
+        "links",
+        "name",
+        "publicId",
+        "slug",
+        ...(artist.labelAssociations === undefined ? [] : ["labelAssociations"]),
+      ].sort();
+      expect(Object.keys(artist).sort()).toEqual(expectedKeys);
+      expect(artist.genreSlugs.every((slug) => genreSlugs.has(slug))).toBe(true);
+      const apple = new URL(artist.links.appleMusic);
+      expect(apple.hostname).toBe("music.apple.com");
+      expect(apple.pathname).toContain("/artist/");
+      if (artist.links.spotify !== undefined) {
+        const spotify = new URL(artist.links.spotify);
+        expect(spotify.hostname).toBe("open.spotify.com");
+        expect(spotify.pathname).toContain("/artist/");
+      }
+    }
+    for (const release of publicCatalog.releases) {
+      const expectedKeys = [
+        ...releaseRequiredKeys,
+        ...(release.label === undefined ? [] : ["label"]),
+      ].sort();
+      expect(Object.keys(release).sort()).toEqual(expectedKeys);
+      expect(release.genreSlugs.every((slug) => genreSlugs.has(slug))).toBe(true);
+      expect(release.status === "released" || release.status === "upcoming").toBe(true);
+      const apple = new URL(release.links.appleMusic);
+      expect(apple.hostname).toBe("music.apple.com");
+      expect(apple.pathname).toContain("/album/");
+      if (release.links.spotify !== undefined) {
+        const spotify = new URL(release.links.spotify);
+        expect(spotify.hostname).toBe("open.spotify.com");
+        expect(spotify.pathname).toContain("/album/");
+      }
+    }
+  });
+
+  it("keeps the entire generated contract free of private operational fields", () => {
+    const serialized = JSON.stringify(publicCatalog).toLowerCase();
     const forbiddenFields = [
       "credential",
       "scheduler",
       "quota",
       "cooldown",
-      "playlist",
-      "review",
-      "database",
+      "playlistexport",
+      "reviewinternal",
+      "databaseid",
       "identityevidence",
       "providererror",
       "rawpayload",
       "matchreason",
+      "canonicalartistid",
+      "providerartistid",
+      "providerreleaseid",
     ];
 
     for (const field of forbiddenFields) expect(serialized).not.toContain(field);

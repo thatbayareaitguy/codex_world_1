@@ -1,5 +1,7 @@
 import {
+  appleIdentityCandidateCatalogs,
   artistExternalIds,
+  artistFollows,
   artists,
   releaseCandidates,
   releaseExternalIds,
@@ -28,6 +30,75 @@ const publicReleaseTypes = [
 
 const artworkTones = ["violet", "citrus", "cyan", "rose", "blue", "sand"] as const;
 
+export const showcaseGenreSlugs = [
+  "ambient",
+  "bass",
+  "breaks",
+  "dance",
+  "downtempo",
+  "drum-and-bass",
+  "dubstep",
+  "electronic",
+  "electronica",
+  "experimental",
+  "garage",
+  "hardcore",
+  "house",
+  "industrial",
+  "techno",
+  "trance",
+  "trap",
+] as const;
+
+export type ShowcaseGenreSlug = (typeof showcaseGenreSlugs)[number];
+
+export const showcaseGenreTaxonomy: readonly {
+  readonly name: string;
+  readonly slug: ShowcaseGenreSlug;
+}[] = [
+  { name: "Ambient", slug: "ambient" },
+  { name: "Bass", slug: "bass" },
+  { name: "Breaks", slug: "breaks" },
+  { name: "Dance", slug: "dance" },
+  { name: "Downtempo", slug: "downtempo" },
+  { name: "Drum & Bass", slug: "drum-and-bass" },
+  { name: "Dubstep", slug: "dubstep" },
+  { name: "Electronic", slug: "electronic" },
+  { name: "Electronica", slug: "electronica" },
+  { name: "Experimental", slug: "experimental" },
+  { name: "Garage", slug: "garage" },
+  { name: "Hardcore", slug: "hardcore" },
+  { name: "House", slug: "house" },
+  { name: "Industrial", slug: "industrial" },
+  { name: "Techno", slug: "techno" },
+  { name: "Trance", slug: "trance" },
+  { name: "Trap", slug: "trap" },
+] as const;
+
+const providerGenreToShowcaseGenre: Readonly<Record<string, ShowcaseGenreSlug>> = {
+  ambient: "ambient",
+  bass: "bass",
+  breakbeat: "breaks",
+  breaks: "breaks",
+  dance: "dance",
+  downtempo: "downtempo",
+  "drum & bass": "drum-and-bass",
+  "drum and bass": "drum-and-bass",
+  "jungle/drum'n'bass": "drum-and-bass",
+  dubstep: "dubstep",
+  electronic: "electronic",
+  electronica: "electronica",
+  "idm/experimental": "experimental",
+  experimental: "experimental",
+  garage: "garage",
+  hardcore: "hardcore",
+  house: "house",
+  industrial: "industrial",
+  techno: "techno",
+  trance: "trance",
+  trap: "trap",
+};
+
 const publicTrackSchema = z
   .object({
     discNumber: z.number().int().positive(),
@@ -43,17 +114,46 @@ const publicLinksSchema = z
   })
   .strict();
 
+export const showcasePublicGenreSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100),
+    slug: z.enum(showcaseGenreSlugs),
+  })
+  .strict();
+
+export const showcasePublicArtistSchema = z
+  .object({
+    publicId: z.string().regex(/^artist_[a-f0-9]{20}$/),
+    slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+    name: z.string().trim().min(1).max(500),
+    genreSlugs: z.array(z.enum(showcaseGenreSlugs)).max(showcaseGenreSlugs.length),
+    labelAssociations: z.array(z.string().trim().min(1).max(300)).max(20).optional(),
+    links: publicLinksSchema,
+    artworkTone: z.enum(artworkTones),
+  })
+  .strict();
+
+const publicArtistCreditSchema = z
+  .object({
+    name: z.string().trim().min(1).max(500),
+    artistSlug: z
+      .string()
+      .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+      .optional(),
+  })
+  .strict();
+
 export const showcasePublicReleaseSchema = z
   .object({
     publicId: z.string().regex(/^release_[a-f0-9]{20}$/),
     slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-    artistName: z.string().trim().min(1).max(500),
+    artistCredits: z.array(publicArtistCreditSchema).min(1).max(50),
     title: z.string().trim().min(1).max(500),
     type: z.enum(publicReleaseTypes),
     status: z.enum(["upcoming", "released"]),
     releaseDate: z.iso.date(),
     firstDiscoveredDate: z.iso.date(),
-    genres: z.array(z.string().trim().min(1).max(100)).max(20),
+    genreSlugs: z.array(z.enum(showcaseGenreSlugs)).max(showcaseGenreSlugs.length),
     label: z.string().trim().min(1).max(300).optional(),
     tracks: z.array(publicTrackSchema).max(500),
     links: publicLinksSchema,
@@ -63,14 +163,31 @@ export const showcasePublicReleaseSchema = z
 
 export const showcasePublicCatalogSchema = z
   .object({
-    contractVersion: z.literal("showcase-public-v1"),
+    contractVersion: z.literal("showcase-public-v2"),
     generatedAt: z.iso.datetime({ offset: true }),
+    genres: z.array(showcasePublicGenreSchema),
+    artists: z.array(showcasePublicArtistSchema),
     releases: z.array(showcasePublicReleaseSchema),
   })
   .strict();
 
+export type ShowcasePublicArtist = z.infer<typeof showcasePublicArtistSchema>;
 export type ShowcasePublicCatalog = z.infer<typeof showcasePublicCatalogSchema>;
 export type ShowcasePublicRelease = z.infer<typeof showcasePublicReleaseSchema>;
+
+export interface ShowcaseSourceArtist {
+  readonly appleMusicUrl: string;
+  readonly appleProviderArtistId: string;
+  readonly labelAssociations: readonly string[];
+  readonly name: string;
+  readonly providerGenres: readonly string[];
+  readonly spotifyUrl?: string;
+}
+
+export interface ShowcaseSourceArtistCredit {
+  readonly appleProviderArtistId?: string;
+  readonly name: string;
+}
 
 export interface ShowcaseSourceTrack {
   readonly discNumber: number;
@@ -81,8 +198,11 @@ export interface ShowcaseSourceTrack {
 export interface ShowcaseSourceRelease {
   readonly appleProviderReleaseId: string;
   readonly appleMusicUrl: string;
-  readonly artistName: string;
+  readonly artistCredits: readonly ShowcaseSourceArtistCredit[];
   readonly firstDiscoveredAt: Date;
+  readonly genreOverrideSlugs?: readonly ShowcaseGenreSlug[];
+  readonly label?: string;
+  readonly primaryAppleArtistId: string;
   readonly releaseDate: string;
   readonly releaseType: string;
   readonly spotifyUrl?: string;
@@ -91,14 +211,22 @@ export interface ShowcaseSourceRelease {
 }
 
 export interface ShowcasePublicationSource {
+  readonly artists: readonly ShowcaseSourceArtist[];
+  readonly invalidActiveArtistCount: number;
   readonly invalidAppleReleaseCount: number;
   readonly releases: readonly ShowcaseSourceRelease[];
+  readonly unresolvedCollaboratorCount: number;
 }
 
 export interface ShowcasePublicationResult {
+  readonly artistCount: number;
+  readonly artistsWithGenresCount: number;
   readonly catalog: ShowcasePublicCatalog;
+  readonly invalidActiveArtistCount: number;
   readonly invalidAppleReleaseCount: number;
+  readonly multiCreditReleaseCount: number;
   readonly releaseCount: number;
+  readonly unresolvedCollaboratorCount: number;
   readonly withSpotifyCount: number;
   readonly withoutSpotifyCount: number;
 }
@@ -120,18 +248,142 @@ const strictSpotifyReconciliationStatuses = new Set(["matched", "missing_spotify
 export async function loadShowcasePublicationSource(
   db: RadarDatabase,
 ): Promise<ShowcasePublicationSource> {
-  const appleReleaseRows = await db
+  const activeRows = await db
+    .select({ artistId: artists.id, name: artists.name })
+    .from(artistFollows)
+    .innerJoin(artists, eq(artists.id, artistFollows.artistId))
+    .where(eq(artistFollows.active, true))
+    .orderBy(asc(artists.name), asc(artists.id));
+  const activeArtistsById = new Map(
+    activeRows.map((row) => [row.artistId, { artistId: row.artistId, name: row.name }]),
+  );
+  const activeArtistIds = [...activeArtistsById.keys()];
+  if (activeArtistIds.length === 0) {
+    return {
+      artists: [],
+      invalidActiveArtistCount: 0,
+      invalidAppleReleaseCount: 0,
+      releases: [],
+      unresolvedCollaboratorCount: 0,
+    };
+  }
+
+  const mappingRows = await db
     .select({
-      appleMusicUrl: releaseExternalIds.providerUrl,
-      appleProviderReleaseId: releaseExternalIds.externalId,
+      artistId: artistExternalIds.artistId,
+      externalId: artistExternalIds.externalId,
+      provider: artistExternalIds.provider,
+      providerUrl: artistExternalIds.providerUrl,
     })
-    .from(releaseExternalIds)
-    .where(eq(releaseExternalIds.provider, "apple_music"))
-    .orderBy(asc(releaseExternalIds.externalId));
+    .from(artistExternalIds)
+    .where(
+      and(
+        eq(artistExternalIds.confirmed, true),
+        inArray(artistExternalIds.artistId, activeArtistIds),
+        inArray(artistExternalIds.provider, ["apple_music", "spotify"]),
+      ),
+    )
+    .orderBy(asc(artistExternalIds.artistId), asc(artistExternalIds.provider));
+  const mappingsByArtistId = groupBy(mappingRows, (row) => row.artistId);
+  const appleProviderArtistIds = mappingRows
+    .filter((row) => row.provider === "apple_music")
+    .map((row) => row.externalId);
+  const primaryCatalogRows = appleProviderArtistIds.length
+    ? await db
+        .select({
+          appleArtistId: appleIdentityCandidateCatalogs.appleArtistId,
+          catalog: appleIdentityCandidateCatalogs.catalog,
+        })
+        .from(appleIdentityCandidateCatalogs)
+        .where(inArray(appleIdentityCandidateCatalogs.appleArtistId, appleProviderArtistIds))
+        .orderBy(asc(appleIdentityCandidateCatalogs.appleArtistId))
+    : [];
+  const primaryCatalogByAppleId = new Map(
+    primaryCatalogRows.map((row) => [row.appleArtistId, row.catalog]),
+  );
 
-  if (appleReleaseRows.length === 0) return { invalidAppleReleaseCount: 0, releases: [] };
+  const sourceArtists: ShowcaseSourceArtist[] = [];
+  let invalidActiveArtistCount = 0;
+  for (const activeArtist of activeArtistsById.values()) {
+    const mappings = mappingsByArtistId.get(activeArtist.artistId) ?? [];
+    const appleMapping = mappings.find((mapping) => mapping.provider === "apple_music");
+    if (appleMapping === undefined) {
+      invalidActiveArtistCount += 1;
+      continue;
+    }
+    const catalog = primaryCatalogByAppleId.get(appleMapping.externalId);
+    const appleMusicUrl = appleMapping.providerUrl ?? catalog?.artistUrl;
+    if (appleMusicUrl === null || appleMusicUrl === undefined) {
+      invalidActiveArtistCount += 1;
+      continue;
+    }
+    const spotifyMapping = mappings.find((mapping) => mapping.provider === "spotify");
+    const sourceArtist: ShowcaseSourceArtist = {
+      appleMusicUrl,
+      appleProviderArtistId: appleMapping.externalId,
+      labelAssociations:
+        catalog?.resourceStatus === "valid" ? uniquePublicLabels(catalog.labels) : [],
+      name: activeArtist.name,
+      providerGenres: catalog?.resourceStatus === "valid" ? catalog.genres : [],
+      ...(spotifyMapping?.providerUrl === null || spotifyMapping?.providerUrl === undefined
+        ? {}
+        : { spotifyUrl: spotifyMapping.providerUrl }),
+    };
+    sourceArtists.push(sourceArtist);
+  }
+  const sourceArtistByAppleId = new Map(
+    sourceArtists.map((artist) => [artist.appleProviderArtistId, artist]),
+  );
+  const sourceArtistByName = new Map(
+    sourceArtists.map((artist) => [normalizePublicName(artist.name), artist]),
+  );
 
-  const appleProviderReleaseIds = appleReleaseRows.map((row) => row.appleProviderReleaseId);
+  const releaseMetadataByAppleId = new Map<string, { artistIds: string[]; labels: Set<string> }>();
+  for (const row of primaryCatalogRows) {
+    if (row.catalog.resourceStatus !== "valid") continue;
+    for (const release of row.catalog.releases) {
+      const metadata = releaseMetadataByAppleId.get(release.appleReleaseId) ?? {
+        artistIds: [],
+        labels: new Set<string>(),
+      };
+      for (const artistId of release.artistIds) {
+        if (!metadata.artistIds.includes(artistId)) metadata.artistIds.push(artistId);
+      }
+      if (release.label) metadata.labels.add(release.label);
+      releaseMetadataByAppleId.set(release.appleReleaseId, metadata);
+    }
+  }
+  const collaboratorAppleIds = [
+    ...new Set([...releaseMetadataByAppleId.values()].flatMap((metadata) => metadata.artistIds)),
+  ].filter((artistId) => !sourceArtistByAppleId.has(artistId));
+  const collaboratorCatalogRows = collaboratorAppleIds.length
+    ? await db
+        .select({
+          appleArtistId: appleIdentityCandidateCatalogs.appleArtistId,
+          catalog: appleIdentityCandidateCatalogs.catalog,
+        })
+        .from(appleIdentityCandidateCatalogs)
+        .where(inArray(appleIdentityCandidateCatalogs.appleArtistId, collaboratorAppleIds))
+        .orderBy(asc(appleIdentityCandidateCatalogs.appleArtistId))
+    : [];
+  const collaboratorNameByAppleId = new Map(
+    collaboratorCatalogRows.flatMap((row) =>
+      row.catalog.resourceStatus === "valid" && row.catalog.artistName.trim()
+        ? [[row.appleArtistId, row.catalog.artistName.trim()] as const]
+        : [],
+    ),
+  );
+
+  if (sourceArtists.length === 0) {
+    return {
+      artists: [],
+      invalidActiveArtistCount,
+      invalidAppleReleaseCount: 0,
+      releases: [],
+      unresolvedCollaboratorCount: 0,
+    };
+  }
+
   const candidateRows = await db
     .select({
       artistExternalId: releaseCandidates.artistExternalId,
@@ -144,30 +396,34 @@ export async function loadShowcasePublicationSource(
     .where(
       and(
         eq(releaseCandidates.provider, "apple_music"),
-        inArray(releaseCandidates.providerReleaseId, appleProviderReleaseIds),
+        inArray(releaseCandidates.artistExternalId, [...sourceArtistByAppleId.keys()]),
       ),
     )
     .orderBy(asc(releaseCandidates.firstSeenAt));
+  const appleProviderReleaseIds = [...new Set(candidateRows.map((row) => row.providerReleaseId))];
+  if (appleProviderReleaseIds.length === 0) {
+    return {
+      artists: sourceArtists,
+      invalidActiveArtistCount,
+      invalidAppleReleaseCount: 0,
+      releases: [],
+      unresolvedCollaboratorCount: 0,
+    };
+  }
 
-  const artistExternalIdValues = [...new Set(candidateRows.map((row) => row.artistExternalId))];
-  const artistRows =
-    artistExternalIdValues.length === 0
-      ? []
-      : await db
-          .select({
-            externalId: artistExternalIds.externalId,
-            name: artists.name,
-          })
-          .from(artistExternalIds)
-          .innerJoin(artists, eq(artistExternalIds.artistId, artists.id))
-          .where(
-            and(
-              eq(artistExternalIds.provider, "apple_music"),
-              eq(artistExternalIds.confirmed, true),
-              inArray(artistExternalIds.externalId, artistExternalIdValues),
-            ),
-          );
-
+  const appleReleaseRows = await db
+    .select({
+      appleMusicUrl: releaseExternalIds.providerUrl,
+      appleProviderReleaseId: releaseExternalIds.externalId,
+    })
+    .from(releaseExternalIds)
+    .where(
+      and(
+        eq(releaseExternalIds.provider, "apple_music"),
+        inArray(releaseExternalIds.externalId, appleProviderReleaseIds),
+      ),
+    )
+    .orderBy(asc(releaseExternalIds.externalId));
   const trackRows = await db
     .select({
       discNumber: releaseTrackAppearances.discNumber,
@@ -193,7 +449,6 @@ export async function loadShowcasePublicationSource(
       asc(releaseTrackAppearances.discNumber),
       asc(releaseTrackAppearances.trackNumber),
     );
-
   const reconciliationRows = await db
     .select({
       appleProviderReleaseId: releaseProviderReconciliations.appleProviderReleaseId,
@@ -206,7 +461,6 @@ export async function loadShowcasePublicationSource(
       desc(releaseProviderReconciliations.updatedAt),
       desc(releaseProviderReconciliations.createdAt),
     );
-
   const latestReconciliationByAppleId = new Map<string, (typeof reconciliationRows)[number]>();
   for (const row of reconciliationRows) {
     if (
@@ -216,7 +470,6 @@ export async function loadShowcasePublicationSource(
       latestReconciliationByAppleId.set(row.appleProviderReleaseId, row);
     }
   }
-
   const confirmedSpotifyIds = [
     ...new Set(
       [...latestReconciliationByAppleId.values()].flatMap((row) =>
@@ -226,45 +479,83 @@ export async function loadShowcasePublicationSource(
       ),
     ),
   ];
-  const spotifyRows =
-    confirmedSpotifyIds.length === 0
-      ? []
-      : await db
-          .select({
-            externalId: releaseExternalIds.externalId,
-            providerUrl: releaseExternalIds.providerUrl,
-          })
-          .from(releaseExternalIds)
-          .where(
-            and(
-              eq(releaseExternalIds.provider, "spotify"),
-              inArray(releaseExternalIds.externalId, confirmedSpotifyIds),
-            ),
-          );
+  const spotifyRows = confirmedSpotifyIds.length
+    ? await db
+        .select({
+          externalId: releaseExternalIds.externalId,
+          providerUrl: releaseExternalIds.providerUrl,
+        })
+        .from(releaseExternalIds)
+        .where(
+          and(
+            eq(releaseExternalIds.provider, "spotify"),
+            inArray(releaseExternalIds.externalId, confirmedSpotifyIds),
+          ),
+        )
+    : [];
 
   const candidatesByReleaseId = groupBy(candidateRows, (row) => row.providerReleaseId);
   const tracksByReleaseId = groupBy(trackRows, (row) => row.providerReleaseId);
-  const artistNameByExternalId = new Map(artistRows.map((row) => [row.externalId, row.name]));
   const spotifyUrlByExternalId = new Map(
     spotifyRows.map((row) => [row.externalId, row.providerUrl]),
   );
   const sourceReleases: ShowcaseSourceRelease[] = [];
   let invalidAppleReleaseCount = 0;
+  let unresolvedCollaboratorCount = 0;
 
   for (const row of appleReleaseRows) {
     const candidates = candidatesByReleaseId.get(row.appleProviderReleaseId) ?? [];
     const firstCandidate = candidates[0];
-    const artistName =
+    const primaryArtist =
       firstCandidate === undefined
         ? undefined
-        : artistNameByExternalId.get(firstCandidate.artistExternalId);
+        : sourceArtistByAppleId.get(firstCandidate.artistExternalId);
     const appleMetadata =
       firstCandidate === undefined ? undefined : appleCandidateMetadata(firstCandidate.rawPayload);
-    if (firstCandidate === undefined || artistName === undefined || appleMetadata === undefined) {
+    if (
+      firstCandidate === undefined ||
+      primaryArtist === undefined ||
+      appleMetadata === undefined
+    ) {
       invalidAppleReleaseCount += 1;
       continue;
     }
 
+    const releaseMetadata = releaseMetadataByAppleId.get(row.appleProviderReleaseId);
+    const credits: ShowcaseSourceArtistCredit[] = [
+      {
+        appleProviderArtistId: primaryArtist.appleProviderArtistId,
+        name: primaryArtist.name,
+      },
+    ];
+    for (const appleArtistId of releaseMetadata?.artistIds ?? []) {
+      if (appleArtistId === primaryArtist.appleProviderArtistId) continue;
+      const publishedArtist = sourceArtistByAppleId.get(appleArtistId);
+      if (publishedArtist !== undefined) {
+        credits.push({
+          appleProviderArtistId: publishedArtist.appleProviderArtistId,
+          name: publishedArtist.name,
+        });
+        continue;
+      }
+      const collaboratorName = collaboratorNameByAppleId.get(appleArtistId);
+      if (collaboratorName === undefined) {
+        unresolvedCollaboratorCount += 1;
+        continue;
+      }
+      credits.push({ name: collaboratorName });
+    }
+    for (const rawCreditName of appleMetadata.creditNames) {
+      const publishedArtist = sourceArtistByName.get(normalizePublicName(rawCreditName));
+      credits.push(
+        publishedArtist === undefined
+          ? { name: rawCreditName }
+          : {
+              appleProviderArtistId: publishedArtist.appleProviderArtistId,
+              name: publishedArtist.name,
+            },
+      );
+    }
     const reconciliation = latestReconciliationByAppleId.get(row.appleProviderReleaseId);
     const spotifyUrl =
       reconciliation !== undefined &&
@@ -277,12 +568,18 @@ export async function loadShowcasePublicationSource(
       position: track.providerOrder ?? track.position,
       title: track.title,
     }));
+    const label = [...(releaseMetadata?.labels ?? [])]
+      .map((value) => sanitizePublicLabel(value))
+      .filter((value): value is string => value !== undefined)
+      .sort((left, right) => left.localeCompare(right))[0];
 
     sourceReleases.push({
       appleMusicUrl: row.appleMusicUrl,
       appleProviderReleaseId: row.appleProviderReleaseId,
-      artistName,
+      artistCredits: uniqueSourceCredits(credits),
       firstDiscoveredAt: firstCandidate.firstSeenAt,
+      ...(label === undefined ? {} : { label }),
+      primaryAppleArtistId: primaryArtist.appleProviderArtistId,
       releaseDate: firstCandidate.releaseDate,
       releaseType: appleMetadata.releaseType,
       ...(spotifyUrl === undefined ? {} : { spotifyUrl }),
@@ -291,32 +588,105 @@ export async function loadShowcasePublicationSource(
     });
   }
 
-  return { invalidAppleReleaseCount, releases: sourceReleases };
+  return {
+    artists: sourceArtists,
+    invalidActiveArtistCount,
+    invalidAppleReleaseCount,
+    releases: sourceReleases,
+    unresolvedCollaboratorCount,
+  };
 }
 
 export function buildShowcasePublicCatalog(
   source: ShowcasePublicationSource,
   generatedAt = new Date(),
 ): ShowcasePublicationResult {
+  const publicArtistByAppleId = new Map<string, ShowcasePublicArtist>();
+  const artists = source.artists
+    .flatMap((artist) => {
+      const appleMusicUrl = validatedProviderUrl(
+        artist.appleMusicUrl,
+        "music.apple.com",
+        "/artist/",
+      );
+      if (appleMusicUrl === undefined) return [];
+      const spotifyUrl =
+        artist.spotifyUrl === undefined
+          ? undefined
+          : validatedProviderUrl(artist.spotifyUrl, "open.spotify.com", "/artist/");
+      const identityHash = stableHash("artist", artist.appleProviderArtistId);
+      const labelAssociations = uniquePublicLabels(artist.labelAssociations);
+      const publicArtist = {
+        publicId: `artist_${identityHash.slice(0, 20)}`,
+        slug: `${slugify(artist.name)}-${identityHash.slice(0, 8)}`,
+        name: artist.name.trim(),
+        genreSlugs: mapProviderGenresToShowcase(artist.providerGenres),
+        ...(labelAssociations.length ? { labelAssociations } : {}),
+        links: {
+          appleMusic: appleMusicUrl,
+          ...(spotifyUrl === undefined ? {} : { spotify: spotifyUrl }),
+        },
+        artworkTone:
+          artworkTones[Number.parseInt(identityHash.slice(0, 2), 16) % artworkTones.length]!,
+      } satisfies ShowcasePublicArtist;
+      const parsed = showcasePublicArtistSchema.safeParse(publicArtist);
+      if (!parsed.success) return [];
+      publicArtistByAppleId.set(artist.appleProviderArtistId, parsed.data);
+      return [parsed.data];
+    })
+    .sort(
+      (left, right) => left.name.localeCompare(right.name) || left.slug.localeCompare(right.slug),
+    );
+
   const releases = source.releases
     .flatMap((release) => {
-      const appleMusicUrl = validatedProviderUrl(release.appleMusicUrl, "music.apple.com");
+      const primaryArtist = publicArtistByAppleId.get(release.primaryAppleArtistId);
+      if (primaryArtist === undefined) return [];
+      const appleMusicUrl = validatedProviderUrl(
+        release.appleMusicUrl,
+        "music.apple.com",
+        "/album/",
+      );
       if (appleMusicUrl === undefined) return [];
       const spotifyUrl =
         release.spotifyUrl === undefined
           ? undefined
           : validatedProviderUrl(release.spotifyUrl, "open.spotify.com", "/album/");
-      const identityHash = stableHash(release.appleProviderReleaseId);
+      const identityHash = stableHash("release", release.appleProviderReleaseId);
+      const artistCredits = uniquePublicCredits(
+        release.artistCredits.map((credit) => {
+          const publishedArtist =
+            credit.appleProviderArtistId === undefined
+              ? undefined
+              : publicArtistByAppleId.get(credit.appleProviderArtistId);
+          return publishedArtist === undefined
+            ? { name: credit.name.trim() }
+            : { artistSlug: publishedArtist.slug, name: publishedArtist.name };
+        }),
+      );
+      if (!artistCredits.some((credit) => credit.artistSlug === primaryArtist.slug)) {
+        artistCredits.unshift({ artistSlug: primaryArtist.slug, name: primaryArtist.name });
+      }
+      const inheritedGenres = artistCredits.flatMap((credit) => {
+        if (credit.artistSlug === undefined) return [];
+        const artist = artists.find((item) => item.slug === credit.artistSlug);
+        return artist?.genreSlugs ?? [];
+      });
+      const genreSlugs = [...new Set(release.genreOverrideSlugs ?? inheritedGenres)].filter(
+        isShowcaseGenreSlug,
+      );
+      const label = release.label === undefined ? undefined : sanitizePublicLabel(release.label);
       const publicRelease = {
         publicId: `release_${identityHash.slice(0, 20)}`,
-        slug: `${slugify(`${release.artistName}-${release.title}`)}-${identityHash.slice(0, 8)}`,
-        artistName: release.artistName.trim(),
+        slug: `${slugify(`${primaryArtist.name}-${release.title}`)}-${identityHash.slice(0, 8)}`,
+        artistCredits,
         title: release.title.trim(),
         type: publicTypeByCanonicalType[release.releaseType] ?? "Other",
         status: release.releaseDate > isoDate(generatedAt) ? "upcoming" : "released",
         releaseDate: release.releaseDate,
         firstDiscoveredDate: isoDate(release.firstDiscoveredAt),
-        genres: [],
+        genreSlugs,
+        ...(label === undefined ? {} : { label }),
         tracks: release.tracks.map((track) => ({
           discNumber: track.discNumber,
           position: track.position,
@@ -337,19 +707,40 @@ export function buildShowcasePublicCatalog(
         right.releaseDate.localeCompare(left.releaseDate) || left.slug.localeCompare(right.slug),
     );
   const catalog = showcasePublicCatalogSchema.parse({
-    contractVersion: "showcase-public-v1",
+    contractVersion: "showcase-public-v2",
     generatedAt: generatedAt.toISOString(),
+    genres: showcaseGenreTaxonomy,
+    artists,
     releases,
   });
   const withSpotifyCount = releases.filter((release) => release.links.spotify !== undefined).length;
   return {
+    artistCount: artists.length,
+    artistsWithGenresCount: artists.filter((artist) => artist.genreSlugs.length > 0).length,
     catalog,
+    invalidActiveArtistCount:
+      source.invalidActiveArtistCount + source.artists.length - artists.length,
     invalidAppleReleaseCount:
       source.invalidAppleReleaseCount + source.releases.length - releases.length,
+    multiCreditReleaseCount: releases.filter((release) => release.artistCredits.length > 1).length,
     releaseCount: releases.length,
+    unresolvedCollaboratorCount: source.unresolvedCollaboratorCount,
     withSpotifyCount,
     withoutSpotifyCount: releases.length - withSpotifyCount,
   };
+}
+
+export function mapProviderGenresToShowcase(
+  providerGenres: readonly string[],
+): ShowcaseGenreSlug[] {
+  return [
+    ...new Set(
+      providerGenres.flatMap((genre) => {
+        const mapped = providerGenreToShowcaseGenre[genre.trim().toLowerCase()];
+        return mapped === undefined ? [] : [mapped];
+      }),
+    ),
+  ].sort((left, right) => left.localeCompare(right));
 }
 
 function groupBy<T>(rows: readonly T[], key: (row: T) => string): Map<string, T[]> {
@@ -361,8 +752,8 @@ function groupBy<T>(rows: readonly T[], key: (row: T) => string): Map<string, T[
   return grouped;
 }
 
-function stableHash(value: string): string {
-  return createHash("sha256").update(`showcase-release-v1:${value}`).digest("hex");
+function stableHash(kind: "artist" | "release", value: string): string {
+  return createHash("sha256").update(`showcase-${kind}-v1:${value}`).digest("hex");
 }
 
 function slugify(value: string): string {
@@ -374,7 +765,7 @@ function slugify(value: string): string {
     .replace(/^-|-$/g, "")
     .slice(0, 120)
     .replace(/-$/g, "");
-  return slug || "release";
+  return slug || "record";
 }
 
 function isoDate(value: Date): string {
@@ -383,19 +774,26 @@ function isoDate(value: Date): string {
 
 function appleCandidateMetadata(
   value: unknown,
-): { releaseTitle: string; releaseType: string } | undefined {
+): { creditNames: string[]; releaseTitle: string; releaseType: string } | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
   if (typeof record.releaseTitle !== "string" || typeof record.releaseType !== "string") {
     return undefined;
   }
-  return { releaseTitle: record.releaseTitle, releaseType: record.releaseType };
+  const creditNames = Array.isArray(record.credits)
+    ? record.credits.flatMap((credit) => {
+        if (typeof credit !== "object" || credit === null || Array.isArray(credit)) return [];
+        const name = (credit as Record<string, unknown>).name;
+        return typeof name === "string" && name.trim() ? [name.trim()] : [];
+      })
+    : [];
+  return { creditNames, releaseTitle: record.releaseTitle, releaseType: record.releaseType };
 }
 
 function validatedProviderUrl(
   value: string,
   expectedHost: string,
-  requiredPathPrefix?: string,
+  requiredPathSegment: string,
 ): string | undefined {
   try {
     const url = new URL(value);
@@ -403,15 +801,69 @@ function validatedProviderUrl(
       url.protocol !== "https:" ||
       url.hostname !== expectedHost ||
       url.username !== "" ||
-      url.password !== ""
+      url.password !== "" ||
+      !url.pathname.includes(requiredPathSegment)
     ) {
-      return undefined;
-    }
-    if (requiredPathPrefix !== undefined && !url.pathname.startsWith(requiredPathPrefix)) {
       return undefined;
     }
     return url.toString();
   } catch {
     return undefined;
   }
+}
+
+function uniqueSourceCredits(
+  credits: readonly ShowcaseSourceArtistCredit[],
+): ShowcaseSourceArtistCredit[] {
+  const seen = new Set<string>();
+  return credits.flatMap((credit) => {
+    const name = credit.name.trim();
+    if (!name) return [];
+    const key = credit.appleProviderArtistId ?? normalizePublicName(name);
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [
+      credit.appleProviderArtistId === undefined
+        ? { name }
+        : { appleProviderArtistId: credit.appleProviderArtistId, name },
+    ];
+  });
+}
+
+function uniquePublicCredits<T extends { readonly artistSlug?: string; readonly name: string }>(
+  credits: readonly T[],
+): T[] {
+  const seen = new Set<string>();
+  return credits.flatMap((credit) => {
+    if (!credit.name) return [];
+    const key = credit.artistSlug ?? normalizePublicName(credit.name);
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [credit];
+  });
+}
+
+function uniquePublicLabels(labels: readonly string[]): string[] {
+  return [
+    ...new Set(
+      labels
+        .map((label) => sanitizePublicLabel(label))
+        .filter((label): label is string => label !== undefined),
+    ),
+  ]
+    .sort((left, right) => left.localeCompare(right))
+    .slice(0, 20);
+}
+
+function sanitizePublicLabel(value: string): string | undefined {
+  const label = value.trim();
+  return label && label.length <= 300 ? label : undefined;
+}
+
+function normalizePublicName(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function isShowcaseGenreSlug(value: string): value is ShowcaseGenreSlug {
+  return (showcaseGenreSlugs as readonly string[]).includes(value);
 }

@@ -1,5 +1,7 @@
 import {
+  appleIdentityCandidateCatalogs,
   artistExternalIds,
+  artistFollows,
   artists,
   createDatabase,
   discoveryReconciliationCampaigns,
@@ -7,6 +9,7 @@ import {
   releaseExternalIds,
   releaseProviderReconciliations,
   releases,
+  users,
 } from "@radar/db";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
@@ -18,6 +21,7 @@ const databaseUrl =
 
 describe.sequential("Showcase persisted-data publication source", () => {
   const connection = createDatabase(databaseUrl);
+  const userId = randomUUID();
   const artistId = randomUUID();
   const matchedAppleReleaseId = randomUUID();
   const appleOnlyReleaseId = randomUUID();
@@ -27,6 +31,11 @@ describe.sequential("Showcase persisted-data publication source", () => {
     await connection.db.execute(
       sql`truncate table users, artists, scan_runs restart identity cascade`,
     );
+    await connection.db.insert(users).values({
+      id: userId,
+      email: "showcase-publication@example.com",
+      displayName: "Showcase Publication",
+    });
     await connection.db.insert(artists).values({
       id: artistId,
       name: "Persisted Artist",
@@ -38,6 +47,52 @@ describe.sequential("Showcase persisted-data publication source", () => {
       externalId: "apple-artist-1",
       provider: "apple_music",
       providerUrl: "https://music.apple.com/us/artist/persisted-artist/1",
+    });
+    await connection.db.insert(artistExternalIds).values({
+      artistId,
+      confirmed: true,
+      externalId: "spotify-artist-1",
+      provider: "spotify",
+      providerUrl: "https://open.spotify.com/artist/spotify-artist-1",
+    });
+    await connection.db.insert(artistFollows).values({
+      userId,
+      artistId,
+      active: true,
+      source: "synthetic_fixture",
+    });
+    await connection.db.insert(appleIdentityCandidateCatalogs).values({
+      appleArtistId: "apple-artist-1",
+      catalog: {
+        appleArtistId: "apple-artist-1",
+        artistName: "Persisted Artist",
+        artistUrl: "https://music.apple.com/us/artist/persisted-artist/1",
+        genres: ["Dance", "House"],
+        labels: ["Persisted Label"],
+        releases: [
+          {
+            appleReleaseId: "apple-release-matched",
+            artistIds: ["apple-artist-1"],
+            artistName: "Persisted Artist",
+            label: "Persisted Label",
+            title: "Matched Apple Release",
+          },
+          {
+            appleReleaseId: "apple-release-only",
+            artistIds: ["apple-artist-1"],
+            artistName: "Persisted Artist",
+            title: "Apple Only Release",
+          },
+        ],
+        resourceStatus: "valid",
+        songs: [],
+        source: "apple_music_api",
+      },
+      fetchedAt: new Date("2026-08-20T12:00:00Z"),
+      requestIdentity: "synthetic-showcase-publication",
+      responseHash: "synthetic-showcase-publication-hash",
+      resourceStatus: "valid",
+      source: "apple_music_api",
     });
     await connection.db.insert(releases).values([
       {
@@ -195,6 +250,8 @@ describe.sequential("Showcase persisted-data publication source", () => {
     const result = buildShowcasePublicCatalog(source, new Date("2026-08-27T12:00:00Z"));
 
     expect(result).toMatchObject({
+      artistCount: 1,
+      artistsWithGenresCount: 1,
       invalidAppleReleaseCount: 0,
       releaseCount: 2,
       withSpotifyCount: 1,
@@ -204,6 +261,11 @@ describe.sequential("Showcase persisted-data publication source", () => {
       "Apple Only Release",
       "Matched Apple Release",
     ]);
+    expect(result.catalog.artists[0]).toMatchObject({
+      genreSlugs: ["dance", "house"],
+      labelAssociations: ["Persisted Label"],
+      name: "Persisted Artist",
+    });
     expect(
       result.catalog.releases.find((release) => release.title === "Matched Apple Release")?.links,
     ).toEqual({
@@ -212,5 +274,6 @@ describe.sequential("Showcase persisted-data publication source", () => {
     });
     expect(JSON.stringify(result.catalog)).not.toContain("privateScannerField");
     expect(JSON.stringify(result.catalog)).not.toContain(matchedAppleReleaseId);
+    expect(JSON.stringify(result.catalog)).not.toContain(artistId);
   });
 });
