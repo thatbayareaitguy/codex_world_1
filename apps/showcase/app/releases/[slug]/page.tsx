@@ -5,12 +5,7 @@ import { notFound } from "next/navigation";
 import { Artwork } from "../../../components/artwork";
 import { ProviderLinks } from "../../../components/provider-links";
 import { ReleaseCard } from "../../../components/release-card";
-import {
-  formatPublicDate,
-  getRelease,
-  getReleaseArtists,
-  publicCatalog,
-} from "../../../lib/public-catalog";
+import { formatPublicDate, getRelease, publicCatalog } from "../../../lib/public-catalog";
 
 interface ReleasePageProps {
   readonly params: Promise<{ slug: string }>;
@@ -24,10 +19,7 @@ export async function generateMetadata({ params }: ReleasePageProps): Promise<Me
   const release = getRelease((await params).slug);
   if (release === undefined)
     return { title: "Release not found", openGraph: { images: [] }, twitter: { images: [] } };
-  const artists = getReleaseArtists(release)
-    .map((artist) => artist.name)
-    .join(" & ");
-  const description = `${release.title} by ${artists}. ${release.type}, released ${formatPublicDate(release.releaseDate)}.`;
+  const description = `${release.title} by ${release.artistName}. ${release.type}, released ${formatPublicDate(release.releaseDate)}.`;
   return {
     title: release.title,
     description,
@@ -39,7 +31,9 @@ export async function generateMetadata({ params }: ReleasePageProps): Promise<Me
 export default async function ReleaseDetailPage({ params }: ReleasePageProps) {
   const release = getRelease((await params).slug);
   if (release === undefined) notFound();
-  const artists = getReleaseArtists(release);
+  const artist = publicCatalog.artists.find(
+    (item) => item.name.localeCompare(release.artistName, undefined, { sensitivity: "base" }) === 0,
+  );
   const related = publicCatalog.releases
     .filter(
       (item) =>
@@ -61,12 +55,11 @@ export default async function ReleaseDetailPage({ params }: ReleasePageProps) {
           </p>
           <h1>{release.title}</h1>
           <p className="detail-artists">
-            {artists.map((artist, index) => (
-              <span key={artist.publicId}>
-                {index > 0 ? " & " : ""}
-                <Link href={`/artists/${artist.slug}`}>{artist.name}</Link>
-              </span>
-            ))}
+            {artist === undefined ? (
+              release.artistName
+            ) : (
+              <Link href={`/artists/${artist.slug}`}>{artist.name}</Link>
+            )}
           </p>
           <dl className="fact-grid">
             <div>
@@ -85,14 +78,12 @@ export default async function ReleaseDetailPage({ params }: ReleasePageProps) {
             </div>
             <div>
               <dt>Label</dt>
-              <dd>{release.label ?? "Independent"}</dd>
+              <dd>{release.label ?? "Not listed"}</dd>
             </div>
-            {release.discoveredDate !== undefined ? (
-              <div>
-                <dt>Discovered</dt>
-                <dd>{formatPublicDate(release.discoveredDate)}</dd>
-              </div>
-            ) : null}
+            <div>
+              <dt>Discovered</dt>
+              <dd>{formatPublicDate(release.firstDiscoveredDate)}</dd>
+            </div>
           </dl>
           <ProviderLinks links={release.links} />
         </div>
@@ -106,7 +97,7 @@ export default async function ReleaseDetailPage({ params }: ReleasePageProps) {
         </div>
         <ol>
           {release.tracks.map((track) => (
-            <li key={track.position}>
+            <li key={`${track.discNumber}-${track.position}`}>
               <span>{String(track.position).padStart(2, "0")}</span>
               <strong>{track.title}</strong>
             </li>

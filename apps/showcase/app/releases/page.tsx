@@ -12,7 +12,7 @@ export default function ReleasesPage() {
     <div className="listing-page page-shell">
       <header className="listing-hero">
         <p className="kicker">
-          <span /> RELEASE RADAR
+          <span /> NEW MUSIC RADAR
         </p>
         <h1>
           What is landing

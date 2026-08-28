@@ -32,6 +32,7 @@
     "discovery:scheduler:tick": "tsx apps/scanner/src/discovery-scheduler-cli.ts tick",
     "showcase:dev": "pnpm --filter @showcase/web dev",
     "showcase:build": "pnpm --filter @showcase/web build",
+    "showcase:publish": "tsx apps/scanner/src/showcase-publish-cli.ts",
     "scan:reconcile": "tsx apps/scanner/src/cli.ts --full",
     "scan:status": "tsx apps/scanner/src/scan-status.ts status",
     "scan:unlock-stale": "tsx apps/scanner/src/scan-status.ts unlock-stale",

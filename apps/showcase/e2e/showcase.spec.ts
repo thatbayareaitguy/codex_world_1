@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import generatedCatalog from "../lib/generated-public-catalog.json";
 
 test("homepage introduces release and artist discovery", async ({ page }) => {
   await page.goto("/");
@@ -18,16 +19,33 @@ test("homepage introduces release and artist discovery", async ({ page }) => {
 });
 
 test("release filters and detail routes work", async ({ page }) => {
+  const upcomingReleases = generatedCatalog.releases.filter(
+    (release) => release.status === "upcoming",
+  );
+  const upcomingRelease = upcomingReleases[0];
+  expect(upcomingRelease).toBeDefined();
   await page.goto("/releases");
 
   await expect(page.getByRole("heading", { name: /What is landing right now/i })).toBeVisible();
   await page.getByRole("button", { name: "Upcoming" }).click();
-  await expect(page.getByText("2 releases")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Phase Lines" })).toBeVisible();
-  await page.getByRole("link", { name: /Phase Lines/i }).click();
-  await expect(page).toHaveURL(/\/releases\/phase-lines$/);
-  await expect(page.getByRole("heading", { name: "Phase Lines", level: 1 })).toBeVisible();
-  await expect(page.getByRole("link", { name: /Spotify/i })).toHaveAttribute("target", "_blank");
+  await expect(
+    page.getByText(
+      `${upcomingReleases.length} ${upcomingReleases.length === 1 ? "release" : "releases"}`,
+      { exact: true },
+    ),
+  ).toBeVisible();
+  const releaseCard = page
+    .locator(".release-card")
+    .filter({ hasText: upcomingRelease!.title })
+    .first();
+  await expect(releaseCard.getByRole("heading", { name: upcomingRelease!.title })).toBeVisible();
+  await releaseCard.getByRole("link").click();
+  await expect(page).toHaveURL(new RegExp(`/releases/${upcomingRelease!.slug}$`));
+  await expect(page.getByRole("heading", { name: upcomingRelease!.title, level: 1 })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Apple Music/i })).toHaveAttribute(
+    "target",
+    "_blank",
+  );
 });
 
 test("artist filtering and structured profile work", async ({ page }) => {
@@ -60,10 +78,29 @@ test("featured playlists and About Us pages are available from navigation", asyn
   await expect(
     page.getByRole("heading", { name: /Featured playlists for every frequency/i }),
   ).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Afterhours Signal" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Showcase New Release Radar" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "What we're listening to" })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Open Showcase New Release Radar on Spotify" }),
+  ).toHaveAttribute(
+    "href",
+    "https://open.spotify.com/playlist/4l6LaMPL6duulmFe3hRR4Y?si=ebd8c808bcff40f9",
+  );
+  await expect(
+    page.getByRole("link", { name: "Open Showcase New Release Radar on Spotify" }),
+  ).toHaveAttribute("target", "_blank");
+  await expect(
+    page.getByRole("link", { name: "Open Showcase New Release Radar on Spotify" }).locator("img"),
+  ).toHaveAttribute("src", /showcase-new-release-radar/);
 
   await page.getByRole("link", { name: "About Us" }).click();
   await expect(page).toHaveURL(/\/about$/);
   await expect(page.getByRole("heading", { name: /Built around discovery/i })).toBeVisible();
-  await expect(page.getByText("The full About Us content will be added later.")).toBeVisible();
+  await expect(
+    page.getByText('"Showcase" new music, artists, playlists, and happenings in the EDM world.'),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Curated playlists, songs, and feeds, based on what we think is cool."),
+  ).toBeVisible();
+  await expect(page.getByText(/Just some wonky weird EDM fanatics/)).toBeVisible();
 });

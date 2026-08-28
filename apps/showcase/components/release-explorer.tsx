@@ -5,20 +5,20 @@ import { Search, SlidersHorizontal } from "lucide-react";
 import { ReleaseCard } from "./release-card";
 import type { PublicRelease, PublicReleaseStatus } from "../lib/public-catalog";
 
-type ReleaseFilter = Extract<PublicReleaseStatus, "new" | "upcoming"> | "all";
+type ReleaseFilter = PublicReleaseStatus | "all";
 
 interface ReleaseExplorerProps {
   readonly releases: readonly PublicRelease[];
 }
 
 const filters: readonly { label: string; value: ReleaseFilter }[] = [
-  { label: "New", value: "new" },
+  { label: "Released", value: "released" },
   { label: "Upcoming", value: "upcoming" },
   { label: "All", value: "all" },
 ];
 
 export function ReleaseExplorer({ releases }: ReleaseExplorerProps) {
-  const [activeFilter, setActiveFilter] = useState<ReleaseFilter>("new");
+  const [activeFilter, setActiveFilter] = useState<ReleaseFilter>("released");
   const [query, setQuery] = useState("");
   const [genre, setGenre] = useState("all");
   const genres = useMemo(
@@ -32,7 +32,9 @@ export function ReleaseExplorer({ releases }: ReleaseExplorerProps) {
       const matchesGenre = genre === "all" || release.genres.includes(genre);
       const matchesQuery =
         normalizedQuery.length === 0 ||
-        `${release.title} ${release.genres.join(" ")}`.toLowerCase().includes(normalizedQuery);
+        `${release.artistName} ${release.title} ${release.genres.join(" ")}`
+          .toLowerCase()
+          .includes(normalizedQuery);
       return matchesStatus && matchesGenre && matchesQuery;
     });
   }, [activeFilter, genre, query, releases]);

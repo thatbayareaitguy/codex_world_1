@@ -6,9 +6,14 @@ import { ReleaseCard } from "../components/release-card";
 import { publicCatalog } from "../lib/public-catalog";
 
 export default function HomePage() {
-  const newReleases = publicCatalog.releases
-    .filter((release) => release.status === "new")
-    .slice(0, 3);
+  const weekCutoff = new Date(publicCatalog.generatedAt);
+  weekCutoff.setUTCDate(weekCutoff.getUTCDate() - 7);
+  const newReleasesThisWeek = publicCatalog.releases.filter(
+    (release) =>
+      release.status === "released" &&
+      release.firstDiscoveredDate >= weekCutoff.toISOString().slice(0, 10),
+  );
+  const newReleases = newReleasesThisWeek.slice(0, 3);
   const upcomingReleases = publicCatalog.releases
     .filter((release) => release.status === "upcoming")
     .slice(0, 2);
@@ -50,7 +55,7 @@ export default function HomePage() {
           />
           <div className="release-stamp">
             <span>NEW THIS WEEK</span>
-            <strong>24</strong>
+            <strong>{newReleasesThisWeek.length}</strong>
             <small>RELEASES</small>
           </div>
         </div>
