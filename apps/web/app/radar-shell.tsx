@@ -3936,6 +3936,50 @@ function reviewProviderDisplayName(
   return provider === "mock" ? "Mock provider" : provider;
 }
 
+function findReviewSpotifyUrl(
+  item: FeedFixtureItem,
+  reviewItems: FeedFixtureItem[],
+): string | undefined {
+  const directEvidence = item.sources.find(
+    (source) => source.provider.toLocaleLowerCase("en-US") === "spotify",
+  )?.href;
+  if (directEvidence) return directEvidence;
+  if (item.review?.provider === "spotify" && item.review.providerUrl) {
+    return item.review.providerUrl;
+  }
+
+  const siblingSpotifyUrls = [
+    ...new Set(
+      reviewItems.flatMap((candidate) =>
+        candidate.review?.provider === "spotify" &&
+        candidate.review.providerUrl &&
+        sameReviewRelease(item, candidate)
+          ? [candidate.review.providerUrl]
+          : [],
+      ),
+    ),
+  ];
+  return siblingSpotifyUrls.length === 1 ? siblingSpotifyUrls[0] : undefined;
+}
+
+function findReviewProviderSource(item: FeedFixtureItem, provider: string) {
+  const normalizedProvider = provider.replace("_", " ").toLocaleLowerCase("en-US");
+  return item.sources.find(
+    (source) => source.provider.replace("_", " ").toLocaleLowerCase("en-US") === normalizedProvider,
+  );
+}
+
+function sameReviewRelease(left: FeedFixtureItem, right: FeedFixtureItem): boolean {
+  const normalize = (value: string) =>
+    value.normalize("NFKC").trim().toLocaleLowerCase("en-US").replace(/\s+/g, " ");
+  return (
+    normalize(left.title) === normalize(right.title) &&
+    normalize(left.artist) === normalize(right.artist) &&
+    left.releaseDate === right.releaseDate &&
+    left.releaseType === right.releaseType
+  );
+}
+
 function summarizeMappingReviews(reviews: Array<{ artistId: string }>): {
   pendingCandidates: number;
   unresolvedArtists: number;
@@ -4699,6 +4743,7 @@ function ReviewView({
           visibleItems.map((item) => {
             const pending = pendingItemIds.includes(item.id);
             const candidateProvider = item.review?.provider ?? "mock";
+            const spotifyReviewUrl = findReviewSpotifyUrl(item, items);
             const candidateArtwork =
               candidateProvider === "apple_music"
                 ? item.appleMusicArtwork?.image.url
@@ -4716,7 +4761,7 @@ function ReviewView({
                   ? "apple_music"
                   : null;
             const comparisonSource = comparisonProvider
-              ? item.sources.find((source) => source.provider === comparisonProvider)
+              ? findReviewProviderSource(item, comparisonProvider)
               : undefined;
             return (
               <article className="review-card release-review-card" key={item.id}>
@@ -4727,6 +4772,21 @@ function ReviewView({
                   <small>
                     {Math.round(item.confidence * 100)}% confidence | {item.matchReason}
                   </small>
+                  {spotifyReviewUrl ? (
+                    <a
+                      className="review-spotify-link"
+                      href={spotifyReviewUrl}
+                      rel="noopener noreferrer"
+                      target="_blank"
+                    >
+                      Open Spotify track for {item.title} <ExternalLink size={13} />
+                    </a>
+                  ) : (
+                    <span className="review-spotify-link-missing">
+                      No stored Spotify track link is available yet. Retry matching or paste the
+                      verified track link below.
+                    </span>
+                  )}
                 </div>
                 <div className="release-review-comparison">
                   <section>
@@ -4745,7 +4805,8 @@ function ReviewView({
                     </ol>
                     {item.review?.providerUrl && (
                       <a href={item.review.providerUrl} rel="noopener noreferrer" target="_blank">
-                        Open candidate <ExternalLink size={12} />
+                        Open {reviewProviderDisplayName(candidateProvider)} candidate{" "}
+                        <ExternalLink size={12} />
                       </a>
                     )}
                   </section>
@@ -4767,12 +4828,21 @@ function ReviewView({
                     <ol>
                       <li>{item.title}</li>
                     </ol>
-                    {comparisonProvider && comparisonSource && (
-                      <a href={comparisonSource.href} rel="noopener noreferrer" target="_blank">
-                        Open {reviewProviderDisplayName(comparisonProvider)} evidence{" "}
-                        <ExternalLink size={12} />
-                      </a>
-                    )}
+                    {comparisonProvider &&
+                      (comparisonProvider === "spotify" ? spotifyReviewUrl : comparisonSource) && (
+                        <a
+                          href={
+                            comparisonProvider === "spotify"
+                              ? spotifyReviewUrl
+                              : comparisonSource?.href
+                          }
+                          rel="noopener noreferrer"
+                          target="_blank"
+                        >
+                          Open {reviewProviderDisplayName(comparisonProvider)} evidence{" "}
+                          <ExternalLink size={12} />
+                        </a>
+                      )}
                     <b>Evidence</b>
                     <p>{item.matchReason}</p>
                     <div className="review-provider-links">

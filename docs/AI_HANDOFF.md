@@ -1,11 +1,11 @@
 # AI Handoff
 
-Updated: 2026-08-27 17:05 PDT
+Updated: 2026-08-27 17:19 PDT
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`
-- Starting HEAD and upstream for this work: `89c06e6671be9d66a3f00e016e69c3619deba8dc`
+- HEAD and upstream before the review-link correction: `46217ef2c0bb956910760bbfacbb81fac064afe2`
 - `outputs/` is unrelated, remains untracked, and is excluded from the intended commit.
 - No secret or `.env` file was changed.
 
@@ -111,6 +111,17 @@ fixed maintenance trigger, then confirm the Power-Troubleshooter event names the
   eligibility checks. No direct or duplicate export path was added.
 - System-waiting tracks are shown separately with status, due time, attempt count, source, and exact
   queue or retry reason. They expose no misleading manual action.
+- Every visible release-review card now places a specifically named `Open Spotify track for ...`
+  link above the provider comparison. It uses the card's stored Spotify evidence or Spotify
+  candidate first. An Apple card can reuse a sibling Spotify candidate only when there is exactly
+  one unique stored Spotify URL with the same normalized artist, title, release date, and release
+  type. Zero or multiple candidates remain explicitly unresolved rather than linking to a guessed
+  track.
+- Provider candidate links now identify their destination, such as `Open Apple Music candidate`,
+  and the provider-label comparison accepts the display labels returned by the feed API.
+- Live browser verification after the controlled restart found 21 review cards, 21 exact Spotify
+  track links, and zero missing-link notices. The previously unlinked Apple Music `NASTY` card now
+  exposes the same stored Spotify candidate URL as its uniquely matching Spotify review card.
 
 Current production classification:
 
@@ -142,8 +153,11 @@ backup, and this work did not make any live review decision.
   Date Added, Added By, user-added-track, ownership, collaboration, cooldown, quota, and idempotency
   safeguards are unchanged.
 - The hidden web supervisor is running the validated production build on `127.0.0.1:3000`. A
-  controlled stop replaced Next child PID 3360 with PID 23696 under the same supervisor PID 55768 in
-  about ten seconds. `/api/health` returned `ok`, and the command line remains loopback-only.
+  controlled stop for this correction replaced Next child PID 51568 with PID 54388 under supervisor
+  PID 55768 in under nine seconds. `/api/health` returned `ok`, and the command line remains
+  loopback-only.
+- This review-link correction made no provider request, review decision, scheduler invocation,
+  playlist write, database mutation, or credential change.
 
 ## Validation
 
@@ -151,16 +165,16 @@ backup, and this work did not make any live review decision.
 - `pnpm lint`: passed with zero warnings
 - `pnpm typecheck`: passed across all six workspace projects
 - `pnpm test`: 70 files and 500 tests passed
-- `pnpm test:integration`: the normal command correctly failed because the unrelated Showcase test
-  database owned port 5433. The same unmodified 27-file suite then passed against an isolated
-  PostgreSQL 17 container on port 55433: 152 tests passed with all 31 migrations. Production port
-  5432 was not touched.
+- `pnpm test:integration`: 27 files and 152 tests passed against the isolated `db-test` PostgreSQL
+  service with all 31 migrations. Production port 5432 was not touched.
 - `pnpm build`: passed, including 28 generated pages and routes
-- `pnpm test:e2e`: 31 Playwright tests passed
+- `pnpm test:e2e`: 32 Playwright tests passed, including exact Spotify-link coverage for paired
+  Apple Music and Spotify review cards
 - `pnpm doctor`: READY
 - `git diff --check`: passed
 - In-app browser smoke: the live page reports 21 manual records and the 2/102/0/1 blocked
-  classification, identifies Spotify and Apple candidates correctly, and exposes all durable actions.
+  classification, identifies Spotify and Apple candidates correctly, exposes all durable actions,
+  and shows one exact Spotify track link on each of the 21 review cards.
 
 ## Remaining Verification
 
