@@ -30,6 +30,8 @@
     "discovery:bootstrap": "tsx apps/scanner/src/discovery-bootstrap-cli.ts",
     "discovery:scheduler:status": "tsx apps/scanner/src/discovery-scheduler-cli.ts status",
     "discovery:scheduler:tick": "tsx apps/scanner/src/discovery-scheduler-cli.ts tick",
+    "discovery:scheduler:register": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/register-discovery-scheduler-tasks.ps1",
+    "discovery:scheduler:remove": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/remove-discovery-scheduler-tasks.ps1",
     "scan:reconcile": "tsx apps/scanner/src/cli.ts --full",
     "scan:status": "tsx apps/scanner/src/scan-status.ts status",
     "scan:unlock-stale": "tsx apps/scanner/src/scan-status.ts unlock-stale",

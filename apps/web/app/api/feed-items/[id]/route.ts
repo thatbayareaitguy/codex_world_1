@@ -16,7 +16,25 @@ const preferenceUpdateSchema = z
     saved: z.boolean().optional(),
   })
   .refine((value) => value.saved !== undefined || value.listened !== undefined);
-const reviewUpdateSchema = z.object({ reviewDecision: z.enum(["confirm", "separate"]) });
+const reviewUpdateSchema = z
+  .object({
+    reviewDecision: z.enum([
+      "confirm",
+      "confirm_track",
+      "defer",
+      "no_equivalent",
+      "retry",
+      "separate",
+    ]),
+    spotifyTrackId: z
+      .string()
+      .regex(/^[A-Za-z0-9]{22}$/)
+      .optional(),
+  })
+  .refine((value) => value.reviewDecision !== "confirm_track" || value.spotifyTrackId, {
+    message: "A Spotify track ID is required for selected-track confirmation",
+    path: ["spotifyTrackId"],
+  });
 const updateSchema = z.union([preferenceUpdateSchema, reviewUpdateSchema]);
 
 export async function PATCH(
@@ -37,7 +55,13 @@ export async function PATCH(
     try {
       const userId = await ensureLocalOwner(connection.db);
       if ("reviewDecision" in input) {
-        const resolution = await resolveFeedReview(connection.db, userId, id, input.reviewDecision);
+        const resolution = await resolveFeedReview(
+          connection.db,
+          userId,
+          id,
+          input.reviewDecision,
+          input.spotifyTrackId ? { spotifyTrackId: input.spotifyTrackId } : {},
+        );
         if (!resolution) {
           return NextResponse.json({ error: "Review item not found" }, { status: 404 });
         }

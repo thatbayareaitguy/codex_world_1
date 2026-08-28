@@ -2184,6 +2184,7 @@ export const manualMatchDecisions = pgTable(
       onDelete: "set null",
     }),
     reason: text("reason").notNull(),
+    deferredUntil: timestamp("deferred_until", { withTimezone: true }),
     decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex("manual_match_candidate_unique").on(table.candidateId)],

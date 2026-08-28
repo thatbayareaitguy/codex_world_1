@@ -218,6 +218,12 @@ export interface FeedFixtureItem {
     mode: "automatic" | "manual";
     status: "queued" | "verifying" | "mismatch";
   };
+  review?: {
+    candidateId: string;
+    deferredUntil?: string;
+    provider: ProviderName;
+    providerUrl?: string;
+  };
   spotifyArtwork?: SpotifyReleaseArtwork;
   appleMusicArtwork?: AppleMusicReleaseArtwork;
   soundcloudState: SoundCloudLinkState;

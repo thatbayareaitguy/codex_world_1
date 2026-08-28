@@ -7,6 +7,7 @@ export * from "./discovery-schedule";
 export * from "./repositories";
 export * from "./feed-preferences";
 export * from "./review-decisions";
+export * from "./review-queue";
 export * from "./reddit-repositories";
 export * from "./operations";
 export * from "./provider-mappings";

@@ -1,11 +1,14 @@
 import {
   parseAppleMusicReleaseArtwork,
   parseSpotifyReleaseArtwork,
+  providerNames,
   safeProviderEvidenceUrl,
   type FeedFixtureItem,
+  type ProviderName,
 } from "@radar/core";
 import {
   createDatabase,
+  manualMatchDecisions,
   playlistExports,
   releaseCandidates,
   releaseExternalIds,
@@ -395,6 +398,7 @@ async function projectFeedItems(
     releaseTrackRetrievalRows,
     spotifyResolutionRows,
     trackExternalIdRows,
+    reviewDecisionRows,
   ] = await Promise.all([
     resolvedReleaseIds.length
       ? db.select().from(releases).where(inArray(releases.id, resolvedReleaseIds))
@@ -435,6 +439,12 @@ async function projectFeedItems(
     trackIds.length
       ? db.select().from(trackExternalIds).where(inArray(trackExternalIds.trackId, trackIds))
       : [],
+    directCandidateIds.length
+      ? db
+          .select()
+          .from(manualMatchDecisions)
+          .where(inArray(manualMatchDecisions.candidateId, directCandidateIds))
+      : [],
   ]);
 
   const candidateById = mapBy(candidateRows, (row) => row.id);
@@ -452,6 +462,7 @@ async function projectFeedItems(
   );
   const resolutionByTrack = groupBy(spotifyResolutionRows, (row) => row.targetTrackId ?? "");
   const externalIdsByTrack = groupBy(trackExternalIdRows, (row) => row.trackId);
+  const reviewDecisionByCandidate = mapBy(reviewDecisionRows, (row) => row.candidateId);
 
   return feedRows.flatMap((feed) => {
     const candidate = feed.candidateId ? candidateById.get(feed.candidateId) : undefined;
@@ -505,6 +516,12 @@ async function projectFeedItems(
       hasSpotifyEvidence || spotify?.state === "playable"
         ? "playable"
         : (spotify?.state ?? "unavailable");
+    const reviewDecision = reviewDecisionByCandidate.get(candidate.id);
+    const rawCandidateProvider = providerField(candidate.rawPayload, "provider");
+    const reviewCandidateProvider: ProviderName =
+      typeof rawCandidateProvider === "string" && isProviderName(rawCandidateProvider)
+        ? rawCandidateProvider
+        : candidate.provider;
     const resolution = [...(feed.trackId ? (resolutionByTrack.get(feed.trackId) ?? []) : [])]
       .filter((row) => ["queued", "leased", "blocked"].includes(row.status))
       .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0];
@@ -541,6 +558,24 @@ async function projectFeedItems(
         matchReason: candidate.matchReasons.join("; "),
         ...(appearance?.providerOrder != null ? { providerOrder: appearance.providerOrder } : {}),
         region: spotify?.region ?? availabilities[0]?.region ?? "ZZ",
+        ...(feed.state === "needs_review"
+          ? {
+              review: {
+                candidateId: candidate.id,
+                ...(reviewDecision?.decision === "defer" && reviewDecision.deferredUntil
+                  ? { deferredUntil: reviewDecision.deferredUntil.toISOString() }
+                  : {}),
+                provider: reviewCandidateProvider,
+                ...(safeEvidence.find((row) => row.provider === reviewCandidateProvider)?.href
+                  ? {
+                      providerUrl: safeEvidence.find(
+                        (row) => row.provider === reviewCandidateProvider,
+                      )!.href,
+                    }
+                  : {}),
+              },
+            }
+          : {}),
         ...(release ? { releaseId: release.id } : {}),
         ...(completeness
           ? {
@@ -632,6 +667,10 @@ function providerField(value: unknown, key: string): unknown {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isProviderName(value: string): value is ProviderName {
+  return providerNames.some((provider) => provider === value);
 }
 
 function providerLabel(provider: string): string {

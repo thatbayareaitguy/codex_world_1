@@ -1457,7 +1457,7 @@ test("navigates every primary view and resolves manual review", async ({ page })
   await navigation.getByRole("link", { name: "Review queue 1" }).click();
   await expect(page.getByRole("heading", { name: "Review queue" })).toBeVisible();
   await expect(page.getByText(/90% confidence/)).toBeVisible();
-  await page.getByRole("button", { name: "Confirm match" }).click();
+  await page.getByRole("button", { name: "Confirm candidate" }).click();
   await expect(page.getByText("No items need review.")).toBeVisible();
 
   await navigation.getByRole("link", { name: "History and Schedules" }).click();
@@ -1620,7 +1620,7 @@ test("persists a manual review decision across feed refresh and page reload", as
 
   await page.goto("/?e2e-scan-status=database#review");
   await expect(page.getByRole("heading", { name: "Static Bloom" })).toBeVisible();
-  await page.getByRole("button", { name: "Confirm match" }).click();
+  await page.getByRole("button", { name: "Confirm candidate" }).click();
   await expect(page.getByText("No items need review.")).toBeVisible();
   expect(decisionRequestCount).toBe(1);
 

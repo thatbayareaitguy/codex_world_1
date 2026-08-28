@@ -529,6 +529,85 @@ describe.sequential("Spotify mapping resume and Keep separate", () => {
     expect(repeated).toMatchObject({ decision: "separate", removed: false, state: "new" });
     expect(await connection.db.select().from(tracks)).toHaveLength(afterTracks.length);
   });
+
+  it("persists a seven-day review deferral without changing canonical identity", async () => {
+    const userId = await ensureLocalOwner(connection.db);
+    const suffix = randomUUID();
+    const [release] = await connection.db
+      .insert(releases)
+      .values({
+        normalizedTitle: `deferred release ${suffix}`,
+        releaseDate: "2026-08-27",
+        releaseDatePrecision: "day",
+        releaseType: "single",
+        title: `Deferred Release ${suffix}`,
+      })
+      .returning({ id: releases.id });
+    const [track] = await connection.db
+      .insert(tracks)
+      .values({
+        normalizedTitle: `deferred track ${suffix}`,
+        releaseId: release!.id,
+        title: `Deferred Track ${suffix}`,
+      })
+      .returning({ id: tracks.id });
+    const payload = candidate({
+      externalReleaseId: `deferred-release-${suffix}`,
+      externalTrackId: `deferred-track-${suffix}`,
+      releaseTitle: `Deferred Release ${suffix}`,
+      title: `Deferred Track ${suffix}`,
+    });
+    const [reviewCandidate] = await connection.db
+      .insert(releaseCandidates)
+      .values({
+        artistExternalId: payload.artistExternalId,
+        firstSeenAt: new Date(payload.firstSeenAt),
+        matchConfidence: "0.700",
+        matchReasons: ["Synthetic ambiguous match"],
+        matchRule: "metadata_review",
+        matchStatus: "needs_review",
+        matchedTrackId: track!.id,
+        normalizedTitle: payload.title.toLowerCase(),
+        payloadHash: payload.payloadHash,
+        provider: "spotify",
+        providerReleaseId: payload.externalReleaseId,
+        providerTrackId: payload.externalTrackId,
+        rawPayload: payload,
+        releaseDate: payload.releaseDate,
+        title: payload.title,
+      })
+      .returning({ id: releaseCandidates.id });
+    const [feed] = await connection.db
+      .insert(feedItems)
+      .values({
+        candidateId: reviewCandidate!.id,
+        dedupeKey: `spotify:${payload.externalReleaseId}:${payload.externalTrackId}`,
+        firstSeenAt: new Date(payload.firstSeenAt),
+        releaseId: release!.id,
+        state: "needs_review",
+        trackId: track!.id,
+        userId,
+      })
+      .returning({ id: feedItems.id });
+    const now = new Date("2026-08-27T20:00:00.000Z");
+    const result = await resolveFeedReview(connection.db, userId, feed!.id, "defer", {}, now);
+    expect(result).toMatchObject({
+      decision: "defer",
+      deferredUntil: new Date("2026-09-03T20:00:00.000Z"),
+      state: "needs_review",
+    });
+    const persisted = await connection.db.query.manualMatchDecisions.findFirst({
+      where: eq(manualMatchDecisions.candidateId, reviewCandidate!.id),
+    });
+    expect(persisted).toMatchObject({
+      decision: "defer",
+      deferredUntil: new Date("2026-09-03T20:00:00.000Z"),
+      selectedTrackId: track!.id,
+    });
+    expect(
+      await connection.db.query.feedItems.findFirst({ where: eq(feedItems.id, feed!.id) }),
+    ).toMatchObject({ state: "needs_review", trackId: track!.id });
+  });
 });
 
 function candidate(overrides: Partial<TrackCandidate> = {}): TrackCandidate {

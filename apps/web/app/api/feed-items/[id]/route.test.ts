@@ -84,6 +84,7 @@ describe("feed item preferences", () => {
       "11111111-1111-4111-8111-111111111111",
       feedItemId,
       "confirm",
+      {},
     );
     await expect(response.json()).resolves.toMatchObject({
       resolution: { decision: "confirm", removed: true },
@@ -104,6 +105,29 @@ describe("feed item preferences", () => {
       "11111111-1111-4111-8111-111111111111",
       feedItemId,
       "separate",
+      {},
     );
+  });
+
+  it("queues a user-selected Spotify track through guarded resolution", async () => {
+    const spotifyTrackId = "0M6v8qTwT7wfiEsAmLQKdd";
+    const response = await PATCH(
+      request({ reviewDecision: "confirm_track", spotifyTrackId }),
+      context,
+    );
+    expect(response.status).toBe(200);
+    expect(resolveFeedReview).toHaveBeenCalledWith(
+      expect.anything(),
+      "11111111-1111-4111-8111-111111111111",
+      feedItemId,
+      "confirm_track",
+      { spotifyTrackId },
+    );
+  });
+
+  it("rejects selected-track confirmation without a Spotify track ID", async () => {
+    const response = await PATCH(request({ reviewDecision: "confirm_track" }), context);
+    expect(response.status).toBe(400);
+    expect(resolveFeedReview).not.toHaveBeenCalled();
   });
 });

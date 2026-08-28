@@ -27,6 +27,8 @@ import {
 } from "./spotify-playlist-export-runtime";
 import { schedulerLimitsFromConfiguration } from "./spotify-scheduler-cli";
 import type { SpotifySchedulerTickResult } from "./spotify-scheduler";
+import { decideDiscoveryMaintenance } from "./discovery-maintenance";
+import { updateWindowsMaintenanceWake } from "./windows-maintenance";
 
 loadLocalEnvironment();
 
@@ -290,26 +292,17 @@ export async function runDynamicSpotifyPriorityPhase(
   return { completedItems, reason: "limit_reached", requestsStarted };
 }
 
-async function main(): Promise<void> {
-  const command = parseDiscoverySchedulerCommand(process.argv.slice(2));
-  const configuration = loadProviderConfiguration();
+export async function runDiscoverySchedulerCommand(
+  command: "status" | "tick",
+  configuration = loadProviderConfiguration(),
+): Promise<unknown> {
   if (!configuration.databaseUrl) throw new Error("DATABASE_URL is required.");
   const connection = createDatabase(configuration.databaseUrl);
   try {
     if (command === "status") {
       const discovery = await getRecurringDiscoveryScheduleStatus(connection.db);
       const spotify = await getSpotifySchedulerStatus(connection.db);
-      process.stdout.write(
-        `${JSON.stringify(
-          {
-            discovery,
-            spotify,
-          },
-          null,
-          2,
-        )}\n`,
-      );
-      return;
+      return { discovery, spotify };
     }
     if (!configuration.discoverySchedulerEnabled) {
       throw new Error(
@@ -317,47 +310,57 @@ async function main(): Promise<void> {
       );
     }
 
-    const userId = await ensureLocalOwner(connection.db);
-    await surfaceUncertainSpotifyMatchesForReview(connection.db, userId);
-    await reconcileStaleSpotifyQueueDepth(connection.db);
-    await reconcileDeferredPriorityTrackResolutionWork(connection.db);
-
-    const action = await selectDiscoverySchedulerAction(connection.db);
-    const route = action.route;
-    if (route === "apple_scan") {
-      await runClaimedAppleJob(connection.db, configuration, action.appleClaim);
-      return;
+    try {
+      return await runDiscoverySchedulerTick(connection.db, configuration);
+    } finally {
+      await refreshDynamicMaintenanceWake(connection.db);
     }
-    if (route === "playlist_export") {
-      const playlist = await runAutomaticDiscoveryPlaylistExport(connection.db, configuration);
-      process.stdout.write(`${JSON.stringify({ playlist }, null, 2)}\n`);
-      return;
-    }
-    if (route === "spotify_priority") {
-      const spotifyPriority = await runDynamicSpotifyPriorityPhase(connection.db, configuration);
-      process.stdout.write(`${JSON.stringify({ spotifyPriority }, null, 2)}\n`);
-      return;
-    }
-
-    const spotify = await runSpotifyTick(connection.db, configuration);
-    const playlist = await runBroadAutomaticPlaylistCheckpoint(
-      connection.db,
-      configuration,
-      spotify,
-    );
-    process.stdout.write(
-      `${JSON.stringify({ spotify, ...(playlist ? { playlist } : {}) }, null, 2)}\n`,
-    );
   } finally {
     await connection.client.end();
   }
+}
+
+export async function runDiscoverySchedulerTick(
+  db: ReturnType<typeof createDatabase>["db"],
+  configuration: ReturnType<typeof loadProviderConfiguration>,
+): Promise<unknown> {
+  const userId = await ensureLocalOwner(db);
+  await surfaceUncertainSpotifyMatchesForReview(db, userId);
+  await reconcileStaleSpotifyQueueDepth(db);
+  await reconcileDeferredPriorityTrackResolutionWork(db);
+
+  const action = await selectDiscoverySchedulerAction(db);
+  const route = action.route;
+  if (route === "apple_scan") return runClaimedAppleJob(db, configuration, action.appleClaim);
+  if (route === "playlist_export") {
+    return { playlist: await runAutomaticDiscoveryPlaylistExport(db, configuration) };
+  }
+  if (route === "spotify_priority") {
+    return { spotifyPriority: await runDynamicSpotifyPriorityPhase(db, configuration) };
+  }
+  const spotify = await runSpotifyTick(db, configuration);
+  const playlist = await runBroadAutomaticPlaylistCheckpoint(db, configuration, spotify);
+  return { spotify, ...(playlist ? { playlist } : {}) };
+}
+
+export async function refreshDynamicMaintenanceWake(
+  db: ReturnType<typeof createDatabase>["db"],
+  now = new Date(),
+): Promise<Date | null> {
+  const [discovery, spotify] = await Promise.all([
+    getRecurringDiscoveryScheduleStatus(db, now),
+    getSpotifySchedulerStatus(db, now),
+  ]);
+  const decision = decideDiscoveryMaintenance({ discovery, spotify }, now);
+  await updateWindowsMaintenanceWake(decision.dynamicWakeAt);
+  return decision.dynamicWakeAt;
 }
 
 async function runClaimedAppleJob(
   db: ReturnType<typeof createDatabase>["db"],
   configuration: ReturnType<typeof loadProviderConfiguration>,
   appleClaim: DiscoveryAppleJobClaim,
-): Promise<void> {
+): Promise<unknown> {
   if (!configuration.appleMusic.configured) {
     await finishDiscoveryScheduleAppleJob(db, appleClaim, {
       errorClassification: "apple_music_not_configured",
@@ -383,16 +386,14 @@ async function runClaimedAppleJob(
     });
     if (!finished) throw new Error("The scheduled Apple Music job lease was lost.");
     const playlist = await runReadyAutomaticPlaylistExport(db, configuration);
-    process.stdout.write(
-      `${JSON.stringify({
-        appleMusicBatchId: batch.id,
-        completedArtists: batch.completedArtists,
-        jobType: appleClaim.jobType,
-        ...(playlist ? { playlist } : {}),
-        status: "completed",
-        totalArtists: batch.totalArtists,
-      })}\n`,
-    );
+    return {
+      appleMusicBatchId: batch.id,
+      completedArtists: batch.completedArtists,
+      jobType: appleClaim.jobType,
+      ...(playlist ? { playlist } : {}),
+      status: "completed",
+      totalArtists: batch.totalArtists,
+    };
   } catch (error) {
     await finishDiscoveryScheduleAppleJob(db, appleClaim, {
       errorClassification: safeClassification(error),
@@ -428,9 +429,13 @@ function safeClassification(error: unknown): string {
     : "scheduled_apple_scan_failed";
 }
 
-if (process.env.VITEST !== "true") {
-  main().then(
-    () => process.exit(0),
+if (process.env.VITEST !== "true" && process.argv[1]?.endsWith("discovery-scheduler-cli.ts")) {
+  const command = parseDiscoverySchedulerCommand(process.argv.slice(2));
+  runDiscoverySchedulerCommand(command).then(
+    (result) => {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      process.exit(0);
+    },
     (error) => {
       process.stderr.write(`${error instanceof Error ? error.message : "Scheduler failed."}\n`);
       process.exit(1);

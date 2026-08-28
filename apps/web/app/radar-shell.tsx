@@ -97,6 +97,8 @@ type AppView =
 type ArtistSort = "name-asc" | "name-desc" | "recent";
 type ThemePreference = "system" | "light" | "dark";
 type FeedPreference = "saved" | "listened";
+type ReleaseReviewDecision =
+  "confirm" | "confirm_track" | "defer" | "no_equivalent" | "retry" | "separate";
 
 interface StreamingSourceDefinition {
   id: string;
@@ -819,7 +821,11 @@ export function RadarShell({
       });
   }, [activeFilter, advancedFilters, exactOnly, feedMode, items, query]);
 
-  const reviewItems = items.filter((item) => item.state === "needs_review");
+  const reviewItems = items.filter(
+    (item) =>
+      item.state === "needs_review" &&
+      (!item.review?.deferredUntil || Date.parse(item.review.deferredUntil) <= Date.now()),
+  );
   const verifiedSoundCloudLinks = Object.values(soundCloudLinks).filter(
     (link) => link.state === "USER_LINKED_VERIFIED",
   );
@@ -950,13 +956,20 @@ export function RadarShell({
     }
   };
 
-  const resolveReviewItem = async (item: FeedFixtureItem, decision: "confirm" | "separate") => {
+  const resolveReviewItem = async (
+    item: FeedFixtureItem,
+    decision: ReleaseReviewDecision,
+    spotifyTrackId?: string,
+  ) => {
     if (pendingReviewActions.includes(item.id)) return;
     setPendingReviewActions((current) => [...current, item.id]);
     try {
       if (feedMode === "database") {
         const response = await fetch(`/api/feed-items/${encodeURIComponent(item.id)}`, {
-          body: JSON.stringify({ reviewDecision: decision }),
+          body: JSON.stringify({
+            reviewDecision: decision,
+            ...(spotifyTrackId ? { spotifyTrackId } : {}),
+          }),
           headers: { "Content-Type": "application/json" },
           method: "PATCH",
         });
@@ -967,7 +980,15 @@ export function RadarShell({
       setNotice(
         decision === "confirm"
           ? `${item.title} was manually confirmed and removed from review.`
-          : `${item.title} was kept separate and removed from review.`,
+          : decision === "confirm_track"
+            ? `${item.title} was queued for guarded verification against the selected Spotify track.`
+            : decision === "retry"
+              ? `${item.title} was queued for a fresh Spotify resolution attempt.`
+              : decision === "defer"
+                ? `${item.title} was deferred for seven days.`
+                : decision === "no_equivalent"
+                  ? `${item.title} was marked as having no Spotify equivalent.`
+                  : `${item.title} was kept separate and removed from review.`,
       );
       if (feedMode === "database") await refreshDatabaseFeed({ force: true });
     } catch {
@@ -1423,9 +1444,12 @@ export function RadarShell({
           )}
         {activeView === "review" && (
           <ReviewView
+            databaseMode={feedMode === "database"}
             items={reviewItems}
             musicbrainzEnabled={providerConfiguration.musicbrainz.enabled}
-            onDecision={(item, decision) => void resolveReviewItem(item, decision)}
+            onDecision={(item, decision, spotifyTrackId) =>
+              void resolveReviewItem(item, decision, spotifyTrackId)
+            }
             pendingItemIds={pendingReviewActions}
             query={query}
           />
@@ -3898,6 +3922,20 @@ function providerDisplayName(provider: "apple_music" | "musicbrainz" | "spotify"
   return provider === "musicbrainz" ? "MusicBrainz" : "Spotify";
 }
 
+function reviewProviderDisplayName(
+  provider: FeedFixtureItem["review"] extends infer Review
+    ? Review extends { provider: infer Provider }
+      ? Provider
+      : never
+    : never,
+): string {
+  if (provider === "apple_music") return "Apple Music";
+  if (provider === "musicbrainz") return "MusicBrainz";
+  if (provider === "spotify") return "Spotify";
+  if (provider === "reddit") return "Reddit";
+  return provider === "mock" ? "Mock provider" : provider;
+}
+
 function summarizeMappingReviews(reviews: Array<{ artistId: string }>): {
   pendingCandidates: number;
   unresolvedArtists: number;
@@ -3983,16 +4021,49 @@ interface AppleMappingCandidateEvidence {
   }>;
 }
 
+interface ReleaseReviewQueueStatusView {
+  actionableCount: number;
+  blockedExport: {
+    stale: number;
+    systemWaiting: number;
+    terminal: number;
+    total: number;
+    userActionable: number;
+  };
+  deferredCount: number;
+  staleCount: number;
+  systemWaiting: Array<{
+    attemptCount: number;
+    dueAt: string;
+    id: string;
+    notBefore: string | null;
+    reason: string;
+    releaseTitle: string;
+    source: string;
+    status: string;
+    title: string;
+    trackId: string;
+  }>;
+  systemWaitingCount: number;
+  terminalCount: number;
+}
+
 function ReviewView({
+  databaseMode,
   items,
   musicbrainzEnabled,
   onDecision,
   pendingItemIds,
   query,
 }: {
+  databaseMode: boolean;
   items: FeedFixtureItem[];
   musicbrainzEnabled: boolean;
-  onDecision: (item: FeedFixtureItem, decision: "confirm" | "separate") => void;
+  onDecision: (
+    item: FeedFixtureItem,
+    decision: ReleaseReviewDecision,
+    spotifyTrackId?: string,
+  ) => void;
   pendingItemIds: string[];
   query: string;
 }) {
@@ -4037,10 +4108,30 @@ function ReviewView({
   const [mappingDecisionIds, setMappingDecisionIds] = useState<string[]>([]);
   const [mappingDecisionError, setMappingDecisionError] = useState<string | null>(null);
   const [splitSelections, setSplitSelections] = useState<Record<string, string[]>>({});
+  const [releaseQueueStatus, setReleaseQueueStatus] = useState<ReleaseReviewQueueStatusView | null>(
+    null,
+  );
+  const [releaseQueueStatusError, setReleaseQueueStatusError] = useState(false);
   const normalizedQuery = query.trim().toLocaleLowerCase("en-US");
   const visibleItems = items.filter((item) =>
     `${item.artist} ${item.title}`.toLocaleLowerCase("en-US").includes(normalizedQuery),
   );
+
+  const loadReleaseQueueStatus = useCallback(async () => {
+    try {
+      const response = await fetch("/api/reviews/status", { cache: "no-store" });
+      if (!response.ok) throw new Error("Review status unavailable");
+      const parsed = releaseReviewQueueStatusResponseSchema.parse(await response.json());
+      setReleaseQueueStatus(parsed.status);
+      setReleaseQueueStatusError(false);
+    } catch {
+      setReleaseQueueStatusError(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (databaseMode) void loadReleaseQueueStatus();
+  }, [databaseMode, loadReleaseQueueStatus]);
 
   const loadMappingReviews = useCallback(async () => {
     setMappingReviewState("loading");
@@ -4245,6 +4336,63 @@ function ReviewView({
         </select>
       </label>
       <div className="review-list">
+        {(reviewFilter === "all" || reviewFilter === "matches") && releaseQueueStatus && (
+          <section className="review-queue-overview" aria-label="Release review classification">
+            <div className="review-queue-counts">
+              <span>
+                <strong>{releaseQueueStatus.actionableCount}</strong> manual candidate records
+              </span>
+              <span>
+                <strong>{releaseQueueStatus.blockedExport.total}</strong> blocked export tracks
+              </span>
+              <span>
+                <strong>{releaseQueueStatus.blockedExport.userActionable}</strong> user-actionable
+                blocks
+              </span>
+              <span>
+                <strong>{releaseQueueStatus.blockedExport.systemWaiting}</strong> system-waiting
+                blocks
+              </span>
+              <span>
+                <strong>{releaseQueueStatus.blockedExport.terminal}</strong> no-equivalent blocks
+              </span>
+              <span>
+                <strong>{releaseQueueStatus.deferredCount}</strong> deferred
+              </span>
+              <span>
+                <strong>{releaseQueueStatus.blockedExport.stale}</strong> stale blocks
+              </span>
+            </div>
+            {releaseQueueStatus.systemWaitingCount > 0 && (
+              <details className="system-waiting-reviews">
+                <summary>System-waiting records</summary>
+                <p>
+                  These do not need a manual decision. The scanner will retry them through the
+                  existing Spotify request gate when queue order, cooldown, and capacity allow.
+                </p>
+                <div className="system-waiting-list">
+                  {releaseQueueStatus.systemWaiting.map((waiting) => (
+                    <article key={waiting.trackId}>
+                      <div>
+                        <strong>{waiting.title}</strong>
+                        <span>{waiting.releaseTitle}</span>
+                      </div>
+                      <div>
+                        <span>{waiting.status.replaceAll("_", " ")}</span>
+                        <small>{waiting.reason}</small>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </details>
+            )}
+          </section>
+        )}
+        {(reviewFilter === "all" || reviewFilter === "matches") && releaseQueueStatusError && (
+          <div className="form-error" role="alert">
+            System-waiting review status is temporarily unavailable.
+          </div>
+        )}
         {reviewFilter !== "matches" &&
           mappingReviewState === "loading" &&
           mappingReviews.length === 0 && (
@@ -4550,32 +4698,146 @@ function ReviewView({
         visibleItems.length ? (
           visibleItems.map((item) => {
             const pending = pendingItemIds.includes(item.id);
+            const candidateProvider = item.review?.provider ?? "mock";
+            const candidateArtwork =
+              candidateProvider === "apple_music"
+                ? item.appleMusicArtwork?.image.url
+                : candidateProvider === "spotify"
+                  ? item.spotifyArtwork?.image.url
+                  : undefined;
+            const comparisonArtwork =
+              candidateProvider === "apple_music"
+                ? item.spotifyArtwork?.image.url
+                : item.appleMusicArtwork?.image.url;
+            const comparisonProvider =
+              candidateProvider === "apple_music"
+                ? "spotify"
+                : candidateProvider === "spotify"
+                  ? "apple_music"
+                  : null;
+            const comparisonSource = comparisonProvider
+              ? item.sources.find((source) => source.provider === comparisonProvider)
+              : undefined;
             return (
-              <article className="review-card" key={item.id}>
-                <div>
+              <article className="review-card release-review-card" key={item.id}>
+                <div className="release-review-heading">
                   <span className="state state-needs_review">Needs review</span>
                   <h2>{item.title}</h2>
                   <p>{item.artist}</p>
                   <small>
-                    {Math.round(item.confidence * 100)}% confidence · {item.matchReason}
+                    {Math.round(item.confidence * 100)}% confidence | {item.matchReason}
                   </small>
                 </div>
+                <div className="release-review-comparison">
+                  <section>
+                    <span>{reviewProviderDisplayName(candidateProvider)} candidate</span>
+                    {candidateArtwork && (
+                      <img alt="Candidate release artwork" src={candidateArtwork} />
+                    )}
+                    <strong>{item.releaseTitle}</strong>
+                    <p>{item.artist}</p>
+                    <small>
+                      {item.releaseType} | {item.releaseDate}
+                    </small>
+                    <b>Track list</b>
+                    <ol>
+                      <li>{item.title}</li>
+                    </ol>
+                    {item.review?.providerUrl && (
+                      <a href={item.review.providerUrl} rel="noopener noreferrer" target="_blank">
+                        Open candidate <ExternalLink size={12} />
+                      </a>
+                    )}
+                  </section>
+                  <section>
+                    <span>
+                      {comparisonProvider
+                        ? `${reviewProviderDisplayName(comparisonProvider)} comparison`
+                        : "Canonical comparison"}
+                    </span>
+                    {comparisonArtwork && (
+                      <img alt="Comparison release artwork" src={comparisonArtwork} />
+                    )}
+                    <strong>{item.artist}</strong>
+                    <p>{item.releaseTitle}</p>
+                    <small>
+                      {item.releaseType} | {item.releaseDate}
+                    </small>
+                    <b>Track list</b>
+                    <ol>
+                      <li>{item.title}</li>
+                    </ol>
+                    {comparisonProvider && comparisonSource && (
+                      <a href={comparisonSource.href} rel="noopener noreferrer" target="_blank">
+                        Open {reviewProviderDisplayName(comparisonProvider)} evidence{" "}
+                        <ExternalLink size={12} />
+                      </a>
+                    )}
+                    <b>Evidence</b>
+                    <p>{item.matchReason}</p>
+                    <div className="review-provider-links">
+                      {item.sources.map((source) => (
+                        <a
+                          key={`${source.provider}:${source.href}`}
+                          href={source.href}
+                          rel="noopener noreferrer"
+                          target="_blank"
+                        >
+                          {source.provider} <ExternalLink size={12} />
+                        </a>
+                      ))}
+                    </div>
+                  </section>
+                </div>
                 <div className="review-actions">
+                  <button
+                    className="secondary-button"
+                    disabled={pending}
+                    onClick={() => onDecision(item, "defer")}
+                    type="button"
+                  >
+                    Defer 7 days
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={pending}
+                    onClick={() => onDecision(item, "retry")}
+                    type="button"
+                  >
+                    Retry matching
+                  </button>
                   <button
                     className="secondary-button"
                     disabled={pending}
                     onClick={() => onDecision(item, "separate")}
                     type="button"
                   >
-                    {pending ? "Resolving..." : "Keep separate"}
+                    Keep separate
                   </button>
+                  {candidateProvider !== "spotify" && (
+                    <button
+                      className="secondary-button"
+                      disabled={pending}
+                      onClick={() => onDecision(item, "no_equivalent")}
+                      type="button"
+                    >
+                      No Spotify equivalent
+                    </button>
+                  )}
+                  <ManualSpotifyTrackReviewAction
+                    disabled={pending}
+                    item={item}
+                    onConfirm={(spotifyTrackId) =>
+                      onDecision(item, "confirm_track", spotifyTrackId)
+                    }
+                  />
                   <button
                     className="primary-button"
                     disabled={pending}
                     onClick={() => onDecision(item, "confirm")}
                     type="button"
                   >
-                    <Check size={15} /> {pending ? "Resolving..." : "Confirm match"}
+                    <Check size={15} /> {pending ? "Resolving..." : "Confirm candidate"}
                   </button>
                 </div>
               </article>
@@ -4592,6 +4854,46 @@ function ReviewView({
         ) : null}
       </div>
     </section>
+  );
+}
+
+function ManualSpotifyTrackReviewAction({
+  disabled,
+  item,
+  onConfirm,
+}: {
+  disabled: boolean;
+  item: FeedFixtureItem;
+  onConfirm: (spotifyTrackId: string) => void;
+}) {
+  const [value, setValue] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const confirm = () => {
+    const match = value.trim().match(/(?:open\.spotify\.com\/track\/)?([A-Za-z0-9]{22})/);
+    if (!match?.[1]) {
+      setError("Enter a Spotify track link or 22-character track ID.");
+      return;
+    }
+    setError(null);
+    onConfirm(match[1]);
+  };
+  return (
+    <div className="manual-track-review-action">
+      <label>
+        <span className="sr-only">Spotify track link for {item.title}</span>
+        <input
+          aria-label={`Spotify track link for ${item.title}`}
+          disabled={disabled}
+          onChange={(event) => setValue(event.target.value)}
+          placeholder="Spotify track link"
+          value={value}
+        />
+      </label>
+      <button className="secondary-button" disabled={disabled} onClick={confirm} type="button">
+        Confirm track mapping
+      </button>
+      {error && <small className="form-error">{error}</small>}
+    </div>
   );
 }
 
@@ -5930,6 +6232,23 @@ const feedItemResponseSchema = z.object({
   releaseId: z.string().optional(),
   releaseTitle: z.string(),
   releaseType: z.enum(releaseTypes),
+  review: z
+    .object({
+      candidateId: z.string().uuid(),
+      deferredUntil: z.string().datetime().optional(),
+      provider: z.enum([
+        "mock",
+        "spotify",
+        "musicbrainz",
+        "reddit",
+        "youtube",
+        "soundcloud",
+        "apple_music",
+        "tidal",
+      ]),
+      providerUrl: z.string().url().optional(),
+    })
+    .optional(),
   saved: z.boolean(),
   soundcloudState: z.enum(soundCloudLinkStates),
   sources: z.array(
@@ -6358,10 +6677,42 @@ const feedPreferenceResponseSchema = z.object({
 
 const reviewResolutionResponseSchema = z.object({
   resolution: z.object({
-    decision: z.enum(["confirm", "separate"]),
+    decision: z.enum(["confirm", "confirm_track", "defer", "no_equivalent", "retry", "separate"]),
+    deferredUntil: z.coerce.date().optional(),
     feedItemId: z.string().uuid(),
     removed: z.boolean(),
-    state: z.enum(["dismissed", "new"]),
+    state: z.enum(["needs_review", "new"]),
+  }),
+});
+
+const releaseReviewQueueStatusResponseSchema = z.object({
+  status: z.object({
+    actionableCount: z.number().int().nonnegative(),
+    blockedExport: z.object({
+      stale: z.number().int().nonnegative(),
+      systemWaiting: z.number().int().nonnegative(),
+      terminal: z.number().int().nonnegative(),
+      total: z.number().int().nonnegative(),
+      userActionable: z.number().int().nonnegative(),
+    }),
+    deferredCount: z.number().int().nonnegative(),
+    staleCount: z.number().int().nonnegative(),
+    systemWaiting: z.array(
+      z.object({
+        attemptCount: z.number().int().nonnegative(),
+        dueAt: z.string().datetime(),
+        id: z.string().uuid(),
+        notBefore: z.string().datetime().nullable(),
+        reason: z.string(),
+        releaseTitle: z.string(),
+        source: z.string(),
+        status: z.string(),
+        title: z.string(),
+        trackId: z.string().uuid(),
+      }),
+    ),
+    systemWaitingCount: z.number().int().nonnegative(),
+    terminalCount: z.number().int().nonnegative(),
   }),
 });
 

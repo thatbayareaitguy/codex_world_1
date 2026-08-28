@@ -1,8 +1,10 @@
 import { normalizeIdentifier, normalizeText } from "@radar/core";
 import { trackCandidateSchema } from "@radar/providers";
-import { and, eq, ne } from "drizzle-orm";
+import { and, asc, eq, ne } from "drizzle-orm";
 import type { RadarDatabase } from "./client";
+import { queueSpotifyTrackResolutionWork } from "./spotify-scheduler";
 import {
+  artistExternalIds,
   artists,
   feedItems,
   manualMatchDecisions,
@@ -17,13 +19,15 @@ import {
   tracks,
 } from "./schema";
 
-export type FeedReviewDecision = "confirm" | "separate";
+export type FeedReviewDecision =
+  "confirm" | "confirm_track" | "defer" | "no_equivalent" | "retry" | "separate";
 
 export interface FeedReviewResolution {
   decision: FeedReviewDecision;
   feedItemId: string;
   removed: boolean;
-  state: "new";
+  state: "needs_review" | "new";
+  deferredUntil?: Date;
 }
 
 type ReviewCandidate = ReturnType<(typeof trackCandidateSchema)["parse"]>;
@@ -33,6 +37,7 @@ export async function resolveFeedReview(
   userId: string,
   feedItemId: string,
   decision: FeedReviewDecision,
+  options: { spotifyTrackId?: string } = {},
   now = new Date(),
 ): Promise<FeedReviewResolution | undefined> {
   return db.transaction(async (tx) => {
@@ -48,13 +53,96 @@ export async function resolveFeedReview(
     const existingDecision = await tx.query.manualMatchDecisions.findFirst({
       where: eq(manualMatchDecisions.candidateId, candidate.id),
     });
-    if (candidate.matchStatus !== "needs_review") {
+    if (candidate.matchStatus !== "needs_review" && decision !== "retry") {
       return existingDecision?.decision === decision && feed.state !== "needs_review"
         ? { decision, feedItemId, removed: false, state: "new" }
         : undefined;
     }
 
     const payload = trackCandidateSchema.parse(candidate.rawPayload);
+
+    if (decision === "defer") {
+      const deferredUntil = new Date(now.getTime() + 7 * 24 * 60 * 60_000);
+      await upsertDecision(
+        tx,
+        candidate.id,
+        userId,
+        decision,
+        candidate.matchedTrackId,
+        "Deferred for seven days",
+        now,
+        deferredUntil,
+      );
+      return {
+        decision,
+        deferredUntil,
+        feedItemId,
+        removed: false,
+        state: "needs_review",
+      };
+    }
+
+    if (decision === "no_equivalent") {
+      if (payload.provider === "spotify") {
+        throw new Error("A Spotify candidate cannot be marked as having no Spotify equivalent");
+      }
+      await upsertDecision(
+        tx,
+        candidate.id,
+        userId,
+        decision,
+        candidate.matchedTrackId,
+        "Manually confirmed that no Spotify equivalent exists",
+        now,
+      );
+      await tx
+        .update(releaseCandidates)
+        .set({
+          matchConfidence: "1.000",
+          matchReasons: ["Manually confirmed that no Spotify equivalent exists"],
+          matchRule: "manual_no_spotify_equivalent",
+          matchStatus: "rejected",
+        })
+        .where(eq(releaseCandidates.id, candidate.id));
+      await tx
+        .update(feedItems)
+        .set({ state: "new", updatedAt: now })
+        .where(eq(feedItems.id, feedItemId));
+      return { decision, feedItemId, removed: false, state: "new" };
+    }
+
+    if (decision === "retry" || decision === "confirm_track") {
+      if (!candidate.matchedTrackId) {
+        throw new Error("Review candidate has no canonical track to resolve");
+      }
+      await queueReviewTrackResolution(
+        tx,
+        candidate.matchedTrackId,
+        decision === "confirm_track" ? options.spotifyTrackId : undefined,
+        now,
+      );
+      await upsertDecision(
+        tx,
+        candidate.id,
+        userId,
+        decision,
+        candidate.matchedTrackId,
+        decision === "confirm_track"
+          ? "User selected a specific Spotify track for guarded verification"
+          : "User requested a fresh Spotify resolution attempt",
+        now,
+      );
+      await tx
+        .update(releaseCandidates)
+        .set({ matchStatus: "new" })
+        .where(eq(releaseCandidates.id, candidate.id));
+      await tx
+        .update(feedItems)
+        .set({ state: "new", updatedAt: now })
+        .where(eq(feedItems.id, feedItemId));
+      return { decision, feedItemId, removed: false, state: "new" };
+    }
+
     const releaseId = await ensureReviewRelease(tx, payload, feed.releaseId);
 
     if (decision === "confirm") {
@@ -377,12 +465,46 @@ async function upsertDecision(
   selectedTrackId: string | null,
   reason: string,
   decidedAt: Date,
+  deferredUntil: Date | null = null,
 ) {
   await tx
     .insert(manualMatchDecisions)
-    .values({ candidateId, decidedAt, decision, reason, selectedTrackId, userId })
+    .values({ candidateId, decidedAt, decision, deferredUntil, reason, selectedTrackId, userId })
     .onConflictDoUpdate({
       target: manualMatchDecisions.candidateId,
-      set: { decidedAt, decision, reason, selectedTrackId, userId },
+      set: { decidedAt, decision, deferredUntil, reason, selectedTrackId, userId },
     });
+}
+
+async function queueReviewTrackResolution(
+  tx: ReviewTransaction,
+  trackId: string,
+  spotifyTrackId: string | undefined,
+  now: Date,
+): Promise<void> {
+  const track = await tx.query.tracks.findFirst({ where: eq(tracks.id, trackId) });
+  if (!track?.isrc) throw new Error("Spotify retry requires a canonical ISRC");
+  const credit = await tx.query.trackCredits.findFirst({
+    orderBy: [asc(trackCredits.creditOrder)],
+    where: eq(trackCredits.trackId, trackId),
+  });
+  if (!credit) throw new Error("Spotify retry requires a canonical artist credit");
+  const spotifyArtist = await tx.query.artistExternalIds.findFirst({
+    where: and(
+      eq(artistExternalIds.artistId, credit.artistId),
+      eq(artistExternalIds.provider, "spotify"),
+      eq(artistExternalIds.confirmed, true),
+    ),
+  });
+  if (!spotifyArtist) throw new Error("Spotify retry requires a confirmed Spotify artist mapping");
+  await queueSpotifyTrackResolutionWork(tx, {
+    artistId: credit.artistId,
+    dueAt: now,
+    expectedSpotifyArtistId: spotifyArtist.externalId,
+    mode: spotifyTrackId ? "manual" : "isrc",
+    source: "repair",
+    ...(spotifyTrackId ? { spotifyTrackId } : {}),
+    targetIsrc: track.isrc,
+    targetTrackId: trackId,
+  });
 }

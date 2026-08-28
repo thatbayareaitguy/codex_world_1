@@ -256,12 +256,42 @@ most one due Apple job or one bounded broad Spotify work unit and exits. During 
 resolution, one process may handle up to `SPOTIFY_PRIORITY_MAX_ITEMS_PER_RUN` committed priority work
 items, default 10. It immediately claims the next priority item after the previous item commits; the
 shared Spotify request gate supplies the required 10-second request spacing and rolling-capacity
-check. Register the entry point through the same hidden
-`conhost.exe --headless node.exe --import tsx` action pattern at a one-minute wake-up interval. The
-Windows interval is not the artist pacing mechanism. The actual Thursday 9:00 PM Apple scan, Friday
-9:00 AM catch-up, Saturday-Wednesday Spotify window,
-recovery deadlines, daily ceilings, and provider cooldowns are enforced from PostgreSQL state in
-`America/Los_Angeles`, not by the Windows trigger time.
+check.
+
+Register the Windows scheduler tasks together:
+
+```powershell
+pnpm discovery:scheduler:register
+```
+
+This creates two hidden, direct `conhost.exe --headless node.exe --import tsx` tasks. The recurring
+task checks once per minute only while Windows is already awake and has `WakeToRun` disabled. The
+separate maintenance task uses `WakeToRun`, `StartWhenAvailable`, `IgnoreNew`, bounded restart
+settings, and a four-hour execution limit. Its fixed Pacific-time triggers are Saturday through
+Wednesday at 8:50 AM and 8:50 PM, Thursday at 8:50 PM, and Friday at 8:50 AM. The maintenance process
+calls the same scheduler tick and does not implement a second scanner.
+
+If pending priority or playlist work is blocked by a stored Spotify cooldown or rolling capacity,
+the scheduler maintains at most one `DynamicCapacityWake` trigger on the maintenance task. It is set
+for ten minutes before the database-calculated next runnable time. A wait of fifteen minutes or less
+holds a hidden Windows system-required power request; a longer wait releases power and relies on the
+one-time trigger. The request is released immediately when no eligible work remains, on failure, or
+at the absolute runtime limit. Quota, cooldown, queue, playlist-target, and ordering safeguards are
+unchanged.
+
+The Windows interval is not the artist pacing mechanism. The actual Thursday 9:00 PM Apple scan,
+Friday 9:00 AM catch-up, Saturday-Wednesday Spotify window, recovery deadlines, daily ceilings, and
+provider cooldowns are enforced from PostgreSQL state in `America/Los_Angeles`, not by the Windows
+trigger time. These tasks intentionally use the current signed-in user. They can wake sleep or
+hibernation, but they do not power on a shut-down computer and do not provide signed-out post-reboot
+execution. Docker, PostgreSQL, credentials, and permissions must be separately proven before using a
+different task identity.
+
+Remove both discovery tasks with:
+
+```powershell
+pnpm discovery:scheduler:remove
+```
 
 `DISCOVERY_SCHEDULER_ENABLED` and `SPOTIFY_SCHEDULER_ENABLED` both default to `false`. The first
 enables the unified tick and the second enables its Spotify executor. Keep both disabled during
