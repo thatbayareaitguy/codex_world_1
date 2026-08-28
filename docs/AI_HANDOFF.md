@@ -1,11 +1,12 @@
 # AI Handoff
 
-Updated: 2026-08-27 17:26 PDT
+Updated: 2026-08-27 17:44 PDT
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`
-- HEAD and upstream before the review-link correction: `46217ef2c0bb956910760bbfacbb81fac064afe2`
+- HEAD and upstream before the one-time wake-test commit:
+  `0b77bcabd14ff063e7899efe20916f0e60f5d448`
 - `outputs/` is unrelated, remains untracked, and is excluded from the intended commit.
 - No secret or `.env` file was changed.
 
@@ -47,7 +48,7 @@ Registration is through:
 pnpm discovery:scheduler:register
 ```
 
-Two tasks are now registered for the current signed-in user:
+Two production tasks are registered for the current signed-in user:
 
 1. `TS New Music Radar Recurring Discovery`
    - Hidden, enabled, `IgnoreNew`, `StartWhenAvailable`, restart 3 times at one-minute intervals, and
@@ -82,6 +83,45 @@ still had exactly one `MinuteScheduler` trigger, `WakeToRun=false`, `IgnoreNew`,
 limit, and last result 0 with zero missed runs. The maintenance task still had exactly the four
 fixed triggers, no duplicate `DynamicCapacityWake`, `WakeToRun=true`, `IgnoreNew`, a four-hour
 limit, and the next run at 20:50 PDT.
+
+## One-Time Wake Validation
+
+A separate temporary task named
+`TS New Music Radar Maintenance Wake Validation 2026-08-28` is registered for Friday, August 28 at
+02:50 PDT. It is hidden, enabled, `WakeToRun`, `StartWhenAvailable`, `IgnoreNew`, limited to five
+minutes, and runs only for the current interactive user. Its one trigger is
+`WakeValidation20260828` with start boundary `2026-08-28T02:50:00-07:00`.
+
+Its direct action is:
+
+`C:\Windows\System32\conhost.exe --headless "C:\Program Files\nodejs\node.exe" --import tsx "C:\Users\taysh\Documents\Codex\codex_world_1\apps\scanner\src\wake-validation-cli.ts"`
+
+The validation CLI does not import database, provider, scheduler, or playlist modules. It takes a
+Windows `ES_SYSTEM_REQUIRED` request, records independent activation evidence, holds it for 90
+seconds, releases it, verifies that the helper and power request have ended, and writes the result
+atomically to
+`C:\Users\taysh\AppData\Local\TSNewMusicRadar\logs\wake-validation-20260828.json`.
+It cannot start Apple Music or Spotify work, mutate the database, or write a playlist.
+
+A one-run Codex thread follow-up named `Verify 2:50 AM scanner wake test` is active for 02:56 PDT on
+August 28. Its ID is `verify-2-50-am-scanner-wake-test`. The follow-up is explicitly read-only and
+checks the task result, missed-run and overlap state, the evidence JSON, Windows wake evidence,
+minute-scheduler resumption, keep-awake release, leases and errors, and the unchanged production
+triggers. It does not start or stop any task and does not remove the temporary validation task.
+
+At the 17:42 PDT pre-test inspection, the validation task was Ready with next run 02:50, zero missed
+runs, and Windows never-run result `267011`. The production maintenance task still had only
+`BroadMorningWake`, `BroadEveningWake`, `ThursdayAppleWake`, and `FridayCatchupWake`; its next normal
+run remained 20:50 PDT. The minute scheduler remained Ready with `WakeToRun=false`, last result 0,
+and zero missed runs. `powercfg /waketimers` still required administrator elevation, so the task's
+`WakeToRun=true` setting is configured evidence, not yet live wake proof.
+
+The active High Performance plan is configured to sleep after 7,200 seconds on AC power and never
+automatically sleep on battery. The 90-second helper can therefore release promptly while the PC
+remains awake for the 02:56 follow-up under the current power-plan settings.
+
+For the live test, remain signed in and put the PC into ordinary sleep before 02:50. Do not shut
+down, sign out, or hibernate. Those states are outside this signed-in sleep validation.
 
 Isolated tests now also verify that the keep-awake helper requests
 `ES_CONTINUOUS | ES_SYSTEM_REQUIRED`, runs hidden, and releases its child process; that non-Windows
@@ -160,8 +200,8 @@ backup, and this work did not make any live review decision.
   Spotify lease, or active Spotify cooldown.
 - Spotify telemetry has 0 429s in the last 24 hours and retains five quota-classified plus two legacy
   historical 429s. The latest quota event was August 9.
-- Current scheduler status reports 1,192 queued and 10 blocked work rows. Artist Albums usage is
-  12 of 80 with the 20-request priority reserve intact. The playlist inbox is completed with zero
+- Current scheduler status reports 1,192 queued and 11 blocked work rows. Artist Albums usage is
+  0 of 80 with the 20-request priority reserve intact. The playlist inbox is completed with zero
   pending operations.
 - The latest successful provider work remains August 26 at 17:38 PDT. No provider scan or playlist
   write was manually triggered during this correction.
@@ -180,16 +220,18 @@ backup, and this work did not make any live review decision.
 - `pnpm format:check`: passed
 - `pnpm lint`: passed with zero warnings
 - `pnpm typecheck`: passed across all six workspace projects
-- `pnpm test`: 71 files and 510 tests passed. Maintenance coverage directly asserts keep-awake
+- `pnpm test`: 73 files and 513 tests passed. Maintenance coverage directly asserts keep-awake
   release, failure cleanup, absolute runtime cutoff, dynamic-wake deduplication, Thursday and Friday
-  broad-work suppression, Saturday broad eligibility, Apple-priority precedence, and cooldown
-  enforcement.
+  broad-work suppression, Saturday broad eligibility, Apple-priority precedence, cooldown
+  enforcement, and isolated activation and release evidence for the one-time wake test.
 - `pnpm test:integration`: 27 files and 152 tests passed against the isolated `db-test` PostgreSQL
   service with all 31 migrations. Production port 5432 was not touched.
 - `pnpm build`: passed, including 28 generated pages and routes
 - `pnpm test:e2e`: 32 Playwright tests passed, including exact Spotify-link coverage for paired
   Apple Music and Spotify review cards
-- `pnpm doctor`: READY
+- `pnpm run doctor`: READY, with PostgreSQL connected, all 31 migrations applied, no stale locks,
+  no active provider lease or cooldown, and `127.0.0.1:3000` healthy. With pnpm 11, bare
+  `pnpm doctor` invokes pnpm's package-manager diagnostic rather than the repository script.
 - `git diff --check`: passed
 - In-app browser smoke: the live page reports 21 manual records and the 2/102/0/1 blocked
   classification, identifies Spotify and Apple candidates correctly, exposes all durable actions,
@@ -197,10 +239,11 @@ backup, and this work did not make any live review decision.
 
 ## Remaining Verification
 
-- Run `powercfg /waketimers` from an administrator-elevated prompt to confirm Windows has armed the
-  maintenance task's next fixed trigger.
-- Complete one user-assisted signed-in sleep test. Do not shut down or sign out. After wake, inspect
-  `powercfg /lastwake` and the System Power-Troubleshooter event.
+- Complete the scheduled user-assisted signed-in sleep test at 02:50 PDT on August 28. Do not shut
+  down, sign out, or hibernate. The 02:56 read-only follow-up will inspect the task result, evidence
+  file, minute scheduler, `powercfg /lastwake`, and the System Power-Troubleshooter event.
+- Run `powercfg /waketimers` from an administrator-elevated prompt if direct pre-test wake-timer
+  enumeration is required. The non-elevated inspection is blocked by Windows.
 - Observe the first natural maintenance execution and record its result. The code-level early-exit,
   no-overlap, idempotent dynamic-trigger, bounded-runtime, and keep-awake-release paths are covered by
   tests, but the new task has not yet executed in production.

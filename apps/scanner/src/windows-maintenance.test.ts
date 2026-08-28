@@ -27,6 +27,7 @@ describe("Windows discovery maintenance integration", () => {
     expect(invocation?.options.windowsHide).toBe(true);
     expect(invocation?.options.stdio).toBe("ignore");
     expect(invocation?.options.env).toMatchObject({ RADAR_POWER_MAX_SECONDS: "90" });
+    expect(invocation?.options.env).toMatchObject({ RADAR_POWER_ACTIVATION_MARKER: "" });
 
     await request.release();
     expect(kill).toHaveBeenCalledTimes(1);

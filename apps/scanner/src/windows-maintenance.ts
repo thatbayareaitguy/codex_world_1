@@ -2,10 +2,12 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { maintenanceDynamicTriggerId, maintenanceTaskName } from "./discovery-maintenance";
 
 export interface WindowsPowerRequest {
+  processId?: number;
   release(): Promise<void>;
 }
 
 interface SpawnDependencies {
+  activationMarkerPath?: string;
   platform?: NodeJS.Platform;
   spawnProcess?: typeof spawn;
 }
@@ -24,6 +26,7 @@ export function acquireWindowsSystemPowerRequest(
     "$continuous=0x80000000",
     "$systemRequired=0x00000001",
     "[void][Radar.PowerRequest]::SetThreadExecutionState($continuous -bor $systemRequired)",
+    "if ($env:RADAR_POWER_ACTIVATION_MARKER) { Set-Content -LiteralPath $env:RADAR_POWER_ACTIVATION_MARKER -Value ([DateTimeOffset]::UtcNow.ToString('O')) -Encoding ascii }",
     "$deadline=[DateTime]::UtcNow.AddSeconds([int]$env:RADAR_POWER_MAX_SECONDS)",
     "$parentId=[int]$env:RADAR_POWER_PARENT_PID",
     "try { while ([DateTime]::UtcNow -lt $deadline -and (Get-Process -Id $parentId -ErrorAction SilentlyContinue)) { Start-Sleep -Seconds 1 } } finally { [void][Radar.PowerRequest]::SetThreadExecutionState($continuous) }",
@@ -34,6 +37,7 @@ export function acquireWindowsSystemPowerRequest(
     {
       env: {
         ...process.env,
+        RADAR_POWER_ACTIVATION_MARKER: dependencies.activationMarkerPath ?? "",
         RADAR_POWER_MAX_SECONDS: String(maximumSeconds),
         RADAR_POWER_PARENT_PID: String(process.pid),
       },
@@ -41,7 +45,10 @@ export function acquireWindowsSystemPowerRequest(
       windowsHide: true,
     },
   );
-  return { release: () => stopPowerRequest(child) };
+  return {
+    ...(child.pid === undefined ? {} : { processId: child.pid }),
+    release: () => stopPowerRequest(child),
+  };
 }
 
 export async function updateWindowsMaintenanceWake(
