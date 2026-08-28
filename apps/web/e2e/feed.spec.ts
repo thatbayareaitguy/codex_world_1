@@ -1153,6 +1153,7 @@ test("shows a confirmed Spotify import from the persisted watchlist response", a
   const importRunId = "00000000-0000-4000-8000-000000000101";
   const candidateId = "00000000-0000-4000-8000-000000000102";
   const artistId = "00000000-0000-4000-8000-000000000103";
+  let removedArtistId: string | null = null;
 
   await page.route("**/api/spotify/status", async (route) => {
     await route.fulfill({
@@ -1221,6 +1222,15 @@ test("shows a confirmed Spotify import from the persisted watchlist response", a
       },
     });
   });
+  await page.route("**/api/artists/*", async (route) => {
+    removedArtistId = new URL(route.request().url()).pathname.split("/").at(-1) ?? null;
+    await route.fulfill({
+      json: {
+        removed: true,
+        result: { alreadyInactive: false, artistId, blockedSpotifyWork: 1 },
+      },
+    });
+  });
 
   await page.goto("/#settings");
   await expect(page.getByText("Connected: Synthetic Spotify account")).toBeVisible();
@@ -1234,6 +1244,13 @@ test("shows a confirmed Spotify import from the persisted watchlist response", a
   await expect(page.getByText("Imported from Spotify", { exact: true })).toBeVisible();
   await expect(page.getByText("Partial catalog", { exact: true })).toBeVisible();
   await expect(page.getByRole("status")).toContainText("Spotify import persisted 1 active artists");
+
+  await page.getByRole("button", { name: "Remove Regression Artist" }).click();
+  await expect(page.getByText("Regression Artist", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("status")).toContainText(
+    "Regression Artist was removed from the watchlist.",
+  );
+  expect(removedArtistId).toBe(artistId);
 });
 
 test("hides MusicBrainz mapping by default and preserves advanced mapping coverage", async ({

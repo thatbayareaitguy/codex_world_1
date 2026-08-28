@@ -517,6 +517,7 @@ export function RadarShell({
   const [addedArtists, setAddedArtists] = useState<WatchedArtist[]>([]);
   const [artistNames, setArtistNames] = useState<Record<string, string>>({});
   const [removedArtistIds, setRemovedArtistIds] = useState<string[]>([]);
+  const [removingArtistIds, setRemovingArtistIds] = useState<string[]>([]);
   const [artistProfiles, setArtistProfiles] = useState<Record<string, string>>({});
   const [soundCloudLinks, setSoundCloudLinks] = useState<Record<string, SoundCloudLinkRecord>>({});
 
@@ -1045,14 +1046,37 @@ export function RadarShell({
     return true;
   };
 
-  const removeArtist = (id: string, name: string) => {
-    setRemovedArtistIds((current) => [...current, id]);
-    setArtistProfiles((current) => {
-      const next = { ...current };
-      delete next[id];
-      return next;
-    });
-    setNotice(`${name} was removed from the watchlist.`);
+  const removeArtist = async (id: string, name: string) => {
+    if (removingArtistIds.includes(id)) return;
+
+    if (activeWatchlistMode !== "database" || !z.string().uuid().safeParse(id).success) {
+      setRemovedArtistIds((current) => [...current, id]);
+      setArtistProfiles((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      setNotice(`${name} was removed from the watchlist.`);
+      return;
+    }
+
+    setRemovingArtistIds((current) => [...current, id]);
+    try {
+      const response = await fetch(`/api/artists/${id}`, { method: "DELETE" });
+      const body = artistRemovalResponseSchema.parse(await response.json());
+      if (!response.ok || !body.removed) throw new Error("Unable to remove followed artist");
+      setPersistedArtists((current) => current.filter((artist) => artist.id !== id));
+      setArtistProfiles((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      setNotice(`${name} was removed from the watchlist.`);
+    } catch {
+      setNotice(`${name} could not be removed. It remains in the watchlist.`);
+    } finally {
+      setRemovingArtistIds((current) => current.filter((artistId) => artistId !== id));
+    }
   };
 
   const saveArtistProfile = (id: string, url: string) => {
@@ -1431,6 +1455,7 @@ export function RadarShell({
             onScanArtist={(artistId) => void runFeedScan({ artistId, provider: "musicbrainz" })}
             musicbrainzConfigured={providerConfiguration.musicbrainz.configured}
             musicbrainzEnabled={providerConfiguration.musicbrainz.enabled}
+            removingArtistIds={removingArtistIds}
             soundCloudManualLinksEnabled={providerConfiguration.soundcloudManualLinksEnabled}
             watchlistMode={activeWatchlistMode}
           />
@@ -2941,6 +2966,7 @@ function ArtistsView({
   onScanArtist,
   musicbrainzConfigured,
   musicbrainzEnabled,
+  removingArtistIds,
   soundCloudManualLinksEnabled,
   watchlistMode,
 }: {
@@ -2950,12 +2976,13 @@ function ArtistsView({
   onEditArtist: (id: string, name: string) => boolean;
   onNotice: (message: string) => void;
   onRefreshArtists: () => Promise<void>;
-  onRemoveArtist: (id: string, name: string) => void;
+  onRemoveArtist: (id: string, name: string) => Promise<void>;
   onRemoveProfile: (id: string) => void;
   onSaveProfile: (id: string, url: string) => void;
   onScanArtist: (id: string) => void;
   musicbrainzConfigured: boolean;
   musicbrainzEnabled: boolean;
+  removingArtistIds: string[];
   soundCloudManualLinksEnabled: boolean;
   watchlistMode: "database" | "error" | "mock";
 }) {
@@ -3523,7 +3550,8 @@ function ArtistsView({
               <button
                 aria-label={`Remove ${artist.name}`}
                 className="icon-button small destructive"
-                onClick={() => onRemoveArtist(artist.id, artist.name)}
+                disabled={removingArtistIds.includes(artist.id)}
+                onClick={() => void onRemoveArtist(artist.id, artist.name)}
                 title="Remove artist"
               >
                 <Trash2 size={15} />
@@ -6865,6 +6893,15 @@ const watchlistResponseSchema = z.object({
         .nullable(),
     }),
   ),
+});
+
+const artistRemovalResponseSchema = z.object({
+  removed: z.boolean(),
+  result: z.object({
+    alreadyInactive: z.boolean(),
+    artistId: z.string().uuid(),
+    blockedSpotifyWork: z.number().int().nonnegative(),
+  }),
 });
 
 function formatScanTime(value: string): string {

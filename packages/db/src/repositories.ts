@@ -12,6 +12,7 @@ import {
   oauthAccounts,
   oauthStates,
   spotifyArtistCoverage,
+  spotifySchedulerWork,
   users,
 } from "./schema";
 
@@ -214,7 +215,7 @@ export async function listFollowedArtists(
     })
     .from(artistFollows)
     .innerJoin(artists, eq(artists.id, artistFollows.artistId))
-    .where(eq(artistFollows.userId, userId))
+    .where(and(eq(artistFollows.userId, userId), eq(artistFollows.active, true)))
     .orderBy(desc(artistFollows.followedAt), artists.name);
 
   if (!followed.length) return [];
@@ -250,6 +251,53 @@ export async function listFollowedArtists(
     providers: providersByArtist.get(artist.artistId) ?? [],
     spotifyCoverage: coverageByArtist.get(artist.artistId) ?? null,
   }));
+}
+
+export interface DeactivateFollowedArtistResult {
+  alreadyInactive: boolean;
+  artistId: string;
+  blockedSpotifyWork: number;
+}
+
+export async function deactivateFollowedArtist(
+  db: RadarDatabase,
+  userId: string,
+  artistId: string,
+): Promise<DeactivateFollowedArtistResult | undefined> {
+  return db.transaction(async (tx) => {
+    const follow = await tx.query.artistFollows.findFirst({
+      where: and(eq(artistFollows.userId, userId), eq(artistFollows.artistId, artistId)),
+      columns: { active: true },
+    });
+    if (!follow) return undefined;
+
+    if (follow.active) {
+      await tx
+        .update(artistFollows)
+        .set({ active: false })
+        .where(and(eq(artistFollows.userId, userId), eq(artistFollows.artistId, artistId)));
+    }
+
+    const blocked = await tx
+      .update(spotifySchedulerWork)
+      .set({
+        blockedReason: "artist_not_followed",
+        leaseExpiresAt: null,
+        leaseOwner: null,
+        status: "blocked",
+        updatedAt: new Date(),
+      })
+      .where(
+        and(eq(spotifySchedulerWork.artistId, artistId), eq(spotifySchedulerWork.status, "queued")),
+      )
+      .returning({ id: spotifySchedulerWork.id });
+
+    return {
+      alreadyInactive: !follow.active,
+      artistId,
+      blockedSpotifyWork: blocked.length,
+    };
+  });
 }
 
 export interface ImportDecision {

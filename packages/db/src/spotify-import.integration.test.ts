@@ -2,13 +2,19 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabase, type RadarDatabase } from "./client";
-import { confirmSpotifyImport, createSpotifyImportRun, listFollowedArtists } from "./repositories";
+import {
+  confirmSpotifyImport,
+  createSpotifyImportRun,
+  deactivateFollowedArtist,
+  listFollowedArtists,
+} from "./repositories";
 import {
   artistExternalIds,
   artistFollows,
   artistImportCandidates,
   artistImportRuns,
   artists,
+  spotifySchedulerWork,
   users,
 } from "./schema";
 
@@ -49,6 +55,53 @@ afterAll(async () => {
 });
 
 describe("Spotify followed-artist persistence", () => {
+  it("durably removes a followed artist and blocks its queued Spotify work", async () => {
+    const userId = await createTestUser("remove-follow-owner");
+    const [artist] = await db
+      .insert(artists)
+      .values({ name: "Removed Artist", normalizedName: "removed artist", sortName: null })
+      .returning({ id: artists.id });
+    if (!artist) throw new Error("Failed to create removable artist fixture");
+    await db
+      .insert(artistFollows)
+      .values({ artistId: artist.id, source: "spotify_import", userId });
+    await db.insert(spotifySchedulerWork).values({
+      artistId: artist.id,
+      dueAt: new Date(),
+      expectedSpotifyArtistId: "spotify-removed-artist",
+      source: "recurring",
+      workKey: `base_artist:${artist.id}`,
+      workType: "base_artist",
+    });
+
+    const first = await deactivateFollowedArtist(db, userId, artist.id);
+    expect(first).toEqual({
+      alreadyInactive: false,
+      artistId: artist.id,
+      blockedSpotifyWork: 1,
+    });
+    expect(await listFollowedArtists(db, userId)).toEqual([]);
+    expect(
+      await db.query.artistFollows.findFirst({
+        where: and(eq(artistFollows.userId, userId), eq(artistFollows.artistId, artist.id)),
+      }),
+    ).toMatchObject({ active: false });
+    expect(await db.query.artists.findFirst({ where: eq(artists.id, artist.id) })).toMatchObject({
+      name: "Removed Artist",
+    });
+    expect(
+      await db.query.spotifySchedulerWork.findFirst({
+        where: eq(spotifySchedulerWork.artistId, artist.id),
+      }),
+    ).toMatchObject({ blockedReason: "artist_not_followed", status: "blocked" });
+
+    await expect(deactivateFollowedArtist(db, userId, artist.id)).resolves.toEqual({
+      alreadyInactive: true,
+      artistId: artist.id,
+      blockedSpotifyWork: 0,
+    });
+  });
+
   it("persists, lists, reloads, and idempotently reimports canonical watchlist artists", async () => {
     const userId = await createTestUser("spotify-import-owner");
     const [manualArtist] = await db

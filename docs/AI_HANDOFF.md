@@ -1,12 +1,12 @@
 # AI Handoff
 
-Updated: 2026-08-28 16:07 PDT
+Updated: 2026-08-28 16:23 PDT
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`
-- HEAD and upstream before the one-time wake-test commit:
-  `0b77bcabd14ff063e7899efe20916f0e60f5d448`
+- Base HEAD and upstream before the watchlist-removal repair:
+  `8d3c8ffc8e341c6bf713ef68818388603e903e32`
 - `outputs/` is unrelated, remains untracked, and is excluded from the intended commit.
 - No secret or `.env` file was changed.
 
@@ -323,28 +323,49 @@ backup, and this work did not make any live review decision.
   production web build was restored through `TS New Music Radar Web Application`; the task remains
   the hidden long-running supervisor with zero missed runs.
 
+## Followed-Artist Removal Repair (2026-08-28)
+
+- Root cause: the trash button changed only browser memory and never called a server route or
+  updated `artist_follows`. The watchlist query also returned inactive follow rows, so a reload
+  restored both newly removed artists and ten historical inactive rows.
+- `DELETE /api/artists/[id]` now idempotently sets the local follow inactive while preserving the
+  canonical artist, provider mappings, releases, evidence, and history. Queued Spotify scheduler
+  work for that artist is blocked with `artist_not_followed`; leased work is not interrupted.
+- The watchlist API now returns only active follows. A Spotify followed-artist import leaves an
+  inactive canonical artist unselected by default, preventing a routine import from silently
+  reactivating a local removal. The user can still explicitly select that candidate to re-add it.
+- A fresh backup made before the live removal is at
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-08-28T23-21-56-143Z.dump`.
+- The previously requested `barking continues` removal was applied through the new loopback route.
+  Active follows changed from 583 to 582, the artist is absent from a fresh API response and full
+  browser reload, and one queued Spotify work item was blocked. No canonical evidence was deleted.
+- The existing hidden web supervisor recovered from a controlled web-process stop and started the
+  verified production build with a new PID. Loopback health and production doctor are READY with
+  all 31 migrations, no stale lock, provider lease, cooldown, or recent Spotify 429.
+- No Apple Music or Spotify provider request, playlist write, provider schedule change, credential,
+  or `.env` change was made for this repair.
+
 ## Validation
 
 - `pnpm format:check`: passed
 - `pnpm lint`: passed with zero warnings
 - `pnpm typecheck`: passed across all six workspace projects
-- `pnpm test`: 73 files and 519 tests passed. Maintenance coverage directly asserts keep-awake
+- `pnpm test`: 75 files and 525 tests passed. Maintenance coverage directly asserts keep-awake
   release, failure cleanup, absolute runtime cutoff, dynamic-wake deduplication, Thursday and Friday
   broad-work suppression, Saturday broad eligibility, Apple-priority precedence, cooldown
   enforcement, optional `powercfg` denial, single-owner enforcement, crash recovery, bounded
   near-term waits, and durable activation and release evidence.
-- `pnpm test:integration`: 27 files and 153 tests passed against the isolated `db-test` PostgreSQL
-  service with all 31 migrations. Production port 5432 was not touched.
-- `pnpm build`: passed, including 28 generated pages and routes
+- `pnpm test:integration`: 28 files and 155 tests passed against an isolated PostgreSQL 17 service
+  on port 5434 with all 31 migrations. Production port 5432 was not used by the tests.
+- `pnpm build`: passed, including the new guarded `/api/artists/[id]` route
 - `pnpm test:e2e`: 32 Playwright tests passed, including exact Spotify-link coverage for paired
   Apple Music and Spotify review cards
 - `pnpm run doctor`: READY, with PostgreSQL connected, all 31 migrations applied, no stale locks,
   no active provider lease or cooldown, and `127.0.0.1:3000` healthy. With pnpm 11, bare
   `pnpm doctor` invokes pnpm's package-manager diagnostic rather than the repository script.
 - `git diff --check`: passed
-- In-app browser smoke: the live page reports 21 manual records and the 2/102/0/1 blocked
-  classification, identifies Spotify and Apple candidates correctly, exposes all durable actions,
-  and shows one exact Spotify track link on each of the 21 review cards.
+- In-app browser smoke: a cache-busted full reload reports 582 followed artists; searching for
+  `barking continues` returns no rows and displays the empty-search state.
 
 ## Remaining Verification
 
