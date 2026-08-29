@@ -20,6 +20,15 @@ const releaseRequiredKeys = [
 ];
 
 describe("Showcase public catalog", () => {
+  it("applies durable public artist exclusions and removes their linked releases", () => {
+    expect(publicCatalog.artists.some((artist) => artist.name === "CODENAME:NIOCELL")).toBe(false);
+    expect(
+      publicCatalog.releases.some((release) =>
+        release.artistCredits.some((credit) => credit.artistSlug === "codename-niocell-f450f3a2"),
+      ),
+    ).toBe(false);
+  });
+
   it("uses unique Showcase-owned public IDs and slugs", () => {
     const ids = [...publicCatalog.artists, ...publicCatalog.releases].map((item) => item.publicId);
     const slugs = [...publicCatalog.artists, ...publicCatalog.releases].map((item) => item.slug);
@@ -41,8 +50,8 @@ describe("Showcase public catalog", () => {
     }
   });
 
-  it("loads only strict v2 public artists, taxonomy, and Apple-origin releases", () => {
-    expect(publicCatalog.contractVersion).toBe("showcase-public-v2");
+  it("loads only strict v3 public artists, taxonomy, and Apple-origin releases", () => {
+    expect(publicCatalog.contractVersion).toBe("showcase-public-v3");
     expect(publicCatalog.genres).toEqual(showcaseGenreTaxonomy);
     const genreSlugs = new Set(publicCatalog.genres.map((genre) => genre.slug));
     expect(genreSlugs.size).toBe(publicCatalog.genres.length);
@@ -70,6 +79,7 @@ describe("Showcase public catalog", () => {
     for (const release of publicCatalog.releases) {
       const expectedKeys = [
         ...releaseRequiredKeys,
+        ...(release.artwork === undefined ? [] : ["artwork"]),
         ...(release.label === undefined ? [] : ["label"]),
       ].sort();
       expect(Object.keys(release).sort()).toEqual(expectedKeys);
@@ -78,6 +88,15 @@ describe("Showcase public catalog", () => {
       const apple = new URL(release.links.appleMusic);
       expect(apple.hostname).toBe("music.apple.com");
       expect(apple.pathname).toContain("/album/");
+      if (release.artwork !== undefined) {
+        const artwork = new URL(release.artwork.url);
+        expect(release.artwork.source).toBe("apple_music");
+        expect(artwork.protocol).toBe("https:");
+        expect(artwork.hostname).toMatch(/^is[1-5]-ssl\.mzstatic\.com$/);
+        expect(artwork.pathname).toMatch(/^\/image\/thumb\//);
+        expect(release.artwork.width).toBeGreaterThan(0);
+        expect(release.artwork.height).toBeGreaterThan(0);
+      }
       if (release.links.spotify !== undefined) {
         const spotify = new URL(release.links.spotify);
         expect(spotify.hostname).toBe("open.spotify.com");
@@ -117,6 +136,7 @@ describe("Showcase public catalog", () => {
     expect(source).not.toMatch(/@radar\/(?:db|providers)/);
     expect(source).not.toContain("DATABASE_URL");
     expect(source).not.toContain("api.music.apple.com");
+    expect(source).not.toContain("api.media.apple.com");
     expect(source).not.toContain("api.spotify.com");
     expect(source).not.toMatch(/from ["']postgres["']/);
   });

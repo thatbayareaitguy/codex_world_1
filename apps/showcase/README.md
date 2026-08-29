@@ -47,14 +47,40 @@ The prior acid-lime theme and social preview are preserved in `docs/showcase-the
 `lib/generated-public-catalog.json` is produced by the local scanner-to-Showcase publisher. Its
 top-level snapshot has a contract version, a public generation timestamp, artists, releases, and a
 fixed Showcase-owned genre taxonomy. `lib/public-catalog.ts` applies public-safe manual genre
-confirmations without importing private suggestion evidence.
+confirmations and durable public artist exclusions without importing private suggestion evidence.
+Public exclusions are stored by Showcase-owned artist ID in `lib/excluded-public-artists.json`, so
+they survive future catalog refreshes without deleting private scanner history.
 
 Public artist records contain only Showcase-owned IDs and slugs, display names, Showcase genre
 tags, optional label associations, outbound provider links, and a placeholder-art direction.
 
-Public release records contain only Showcase-owned IDs and slugs, display metadata, public artist references, release and discovery dates, genres, an optional label, track titles and positions, outbound provider links, status, and a placeholder-art direction.
+Public release records contain only Showcase-owned IDs and slugs, display metadata, public artist references, release and discovery dates, genres, an optional label, track titles and positions, outbound provider links, status, a placeholder-art direction, and optional Apple Music artwork with its source URL and original dimensions.
 
 The contract excludes provider payloads, credentials, internal database IDs, identity evidence,
 review and suggestion evidence, scheduler and queue state, quota or cooldown state, playlist
-operations, and internal failures. The publisher reads persisted scanner data locally and makes no
-provider requests. The Showcase application makes no database or provider requests.
+operations, and internal failures. The publisher reads persisted scanner data locally, closes the
+database connection, and then matches existing numeric Apple release identities against the Apple
+Music Feed album export. It reads Feed Parquet files by bounded byte ranges and stores no raw Feed
+response. The Showcase application makes no database or provider API requests at runtime.
+
+## Apple Music Feed artwork publication
+
+Showcase Feed credentials are local-only and loaded from
+`%LOCALAPPDATA%\ShowcasePublicSite\apple-music-feed.env`. The referenced `.p8` key also stays outside
+the repository. The required variable names are `SHOWCASE_APPLE_FEED_TEAM_ID`,
+`SHOWCASE_APPLE_FEED_KEY_ID`, and `SHOWCASE_APPLE_FEED_PRIVATE_KEY_PATH`. Never copy their values into
+the repository or scanner `.env`.
+
+To regenerate the catalog from the dedicated Showcase worktree, point only the publication process
+at the production scanner environment file:
+
+```powershell
+$env:SHOWCASE_SCANNER_ENV_PATH = 'C:\path\to\scanner\.env'
+pnpm showcase:publish
+```
+
+The publisher authenticates to `api.media.apple.com`, requests the latest album Feed export, accepts
+parts only from `media-feed.cdn-apple.com`, and accepts artwork only from Apple's validated
+`is1-ssl` through `is5-ssl.mzstatic.com` image hosts. Artwork remains unchanged, is never downloaded,
+proxied, cropped, or overlaid, and always links to the corresponding Apple Music album. Releases
+without an exact Feed match retain the neutral placeholder.

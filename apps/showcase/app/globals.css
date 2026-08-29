@@ -411,6 +411,40 @@ summary:focus-visible {
   margin-bottom: 20px;
   transition: transform 0.25s ease;
 }
+.apple-artwork {
+  width: 100%;
+  margin: 0 0 20px;
+}
+.apple-artwork-image-link {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  transition: transform 0.25s ease;
+}
+.apple-artwork-image {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.release-card:hover .apple-artwork-image-link {
+  transform: translateY(-5px);
+  box-shadow: 0 20px 45px rgba(118, 34, 197, 0.18);
+}
+.apple-artwork figcaption {
+  margin-top: 8px;
+  color: var(--muted);
+  font:
+    500 9px "DM Mono",
+    monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.apple-artwork figcaption a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 .release-card:hover .artwork {
   transform: translateY(-5px);
   box-shadow: 0 20px 45px rgba(118, 34, 197, 0.18);
@@ -488,6 +522,13 @@ summary:focus-visible {
   margin: 0;
   font-size: 19px;
   letter-spacing: -0.03em;
+}
+.release-card .release-card-genres {
+  color: #92978d;
+  font:
+    400 10px "DM Mono",
+    monospace;
+  letter-spacing: 0.03em;
 }
 
 .site-footer {
@@ -922,6 +963,63 @@ summary:focus-visible {
   font-size: 13px;
   line-height: 1.65;
 }
+.contact-hero {
+  padding-bottom: 90px;
+}
+.contact-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.72fr) minmax(420px, 1.28fr);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.contact-grid article {
+  min-height: 340px;
+  padding: 34px;
+}
+.contact-grid article:first-child {
+  border-right: 1px solid var(--line);
+}
+.contact-grid article > span {
+  color: var(--accent-pink);
+  font:
+    500 10px "DM Mono",
+    monospace;
+}
+.contact-grid .kicker {
+  margin-top: 48px;
+}
+.contact-grid h2 {
+  max-width: 520px;
+  margin: 14px 0 12px;
+  font-size: 30px;
+  letter-spacing: -0.045em;
+}
+.contact-grid article > p:last-child {
+  max-width: 390px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.email-template {
+  margin-top: 28px;
+  padding: 24px;
+  color: #d8d3df;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 1.75;
+}
+.email-template p {
+  margin: 0 0 18px;
+}
+.email-template p:last-child {
+  margin-bottom: 0;
+}
+.email-template strong {
+  color: var(--ink);
+  font-weight: 600;
+}
 .artist-listing-hero {
   max-width: 1100px;
 }
@@ -1068,6 +1166,10 @@ summary:focus-visible {
   aspect-ratio: 1;
   position: relative;
   overflow: hidden;
+}
+.apple-artwork-detail {
+  width: 100%;
+  margin: 0;
 }
 .artwork-detail::before {
   box-shadow:
@@ -1665,6 +1767,14 @@ summary:focus-visible {
   }
   .about-placeholder-grid h2 {
     margin-top: 45px;
+  }
+  .contact-grid {
+    grid-template-columns: 1fr;
+  }
+  .contact-grid article:first-child {
+    min-height: 245px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
   }
   .genre-admin-layout {
     grid-template-columns: 1fr;

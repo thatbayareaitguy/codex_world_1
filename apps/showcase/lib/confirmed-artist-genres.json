@@ -1,5 +1,30 @@
 {
   "contractVersion": "showcase-confirmed-artist-genres-v1",
-  "updatedAt": null,
-  "assignments": []
+  "updatedAt": "2026-08-28T23:06:34.068Z",
+  "assignments": [
+    {
+      "publicId": "artist_20521040b44813a3e2a6",
+      "genreSlugs": ["bass-music", "dubstep"]
+    },
+    {
+      "publicId": "artist_30291aafddcbdcd7e739",
+      "genreSlugs": ["drum-and-bass"]
+    },
+    {
+      "publicId": "artist_3801d6b769d34aff0199",
+      "genreSlugs": ["bass-music", "dubstep", "experimental-bass"]
+    },
+    {
+      "publicId": "artist_5fa94d1954a1a3a10aac",
+      "genreSlugs": ["bass-music", "experimental-bass", "trap"]
+    },
+    {
+      "publicId": "artist_6a2e7e1b8223ccd69778",
+      "genreSlugs": ["bass-music", "dubstep", "melodic-dubstep"]
+    },
+    {
+      "publicId": "artist_8457b143b4415a5d853e",
+      "genreSlugs": ["bass-music", "dubstep"]
+    }
+  ]
 }

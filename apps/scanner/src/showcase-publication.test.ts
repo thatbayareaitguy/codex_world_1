@@ -27,6 +27,12 @@ const sourceArtists = [
 const sourceRelease = {
   appleMusicUrl: "https://music.apple.com/us/album/real-release/1001",
   appleProviderReleaseId: "apple-release-1001",
+  artwork: {
+    height: 3000,
+    source: "apple_music",
+    url: "https://is1-ssl.mzstatic.com/image/thumb/real-release.jpg",
+    width: 3000,
+  },
   artistCredits: [
     { appleProviderArtistId: "apple-artist-101", name: "Real Artist" },
     { appleProviderArtistId: "apple-artist-102", name: "Confirmed Collaborator" },
@@ -66,8 +72,10 @@ describe("Showcase public catalog publication", () => {
       releaseCount: 1,
       withSpotifyCount: 1,
       withoutSpotifyCount: 0,
+      withArtworkCount: 1,
+      withoutArtworkCount: 0,
     });
-    expect(result.catalog.contractVersion).toBe("showcase-public-v2");
+    expect(result.catalog.contractVersion).toBe("showcase-public-v3");
     expect(result.catalog.genres).toHaveLength(18);
     expect(result.catalog.artists[0]).toMatchObject({
       name: "Confirmed Collaborator",
@@ -98,6 +106,12 @@ describe("Showcase public catalog publication", () => {
       links: {
         appleMusic: "https://music.apple.com/us/album/real-release/1001",
         spotify: "https://open.spotify.com/album/spotify-release-1001",
+      },
+      artwork: {
+        height: 3000,
+        source: "apple_music",
+        url: "https://is1-ssl.mzstatic.com/image/thumb/real-release.jpg",
+        width: 3000,
       },
       releaseDate: "2026-08-25",
       status: "released",
@@ -169,6 +183,24 @@ describe("Showcase public catalog publication", () => {
     });
   });
 
+  it("omits artwork that is not an unchanged trusted Apple artwork URL", () => {
+    const result = buildShowcasePublicCatalog({
+      ...source,
+      releases: [
+        {
+          ...sourceRelease,
+          artwork: {
+            ...sourceRelease.artwork,
+            url: "https://i.scdn.co/image/not-apple-artwork",
+          },
+        },
+      ],
+    });
+
+    expect(result.catalog.releases[0]?.artwork).toBeUndefined();
+    expect(result).toMatchObject({ withArtworkCount: 0, withoutArtworkCount: 1 });
+  });
+
   it("maps only the controlled Showcase taxonomy and ignores unrelated provider genres", () => {
     expect(
       mapProviderGenresToShowcase([
@@ -222,6 +254,7 @@ describe("Showcase public catalog publication", () => {
     expect(Object.keys(result.catalog.releases[0] ?? {}).sort()).toEqual(
       [
         "artistCredits",
+        "artwork",
         "artworkTone",
         "firstDiscoveredDate",
         "genreSlugs",

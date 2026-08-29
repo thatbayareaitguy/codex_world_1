@@ -21,8 +21,8 @@ export default function ArtistsPage() {
           <em>behind the sound.</em>
         </h1>
         <p>
-          Explore electronic artists through the releases they make, the scenes they move through,
-          and the collaborators around them.
+          Explore the electronic artists we are following through the releases they make, the scenes
+          they move through, and the genres they love.
         </p>
       </header>
       <ArtistExplorer artists={publicCatalog.artists} />

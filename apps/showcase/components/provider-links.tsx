@@ -13,14 +13,14 @@ export function ProviderLinks({ links, compact = false }: ProviderLinksProps) {
 
   return (
     <div className={compact ? "provider-links provider-links-compact" : "provider-links"}>
-      {links.spotify !== undefined ? (
-        <a href={links.spotify} target="_blank" rel="noreferrer">
-          Spotify <ExternalLink size={13} aria-hidden="true" />
+      {links.appleMusic !== undefined ? (
+        <a className="provider-link-apple" href={links.appleMusic} target="_blank" rel="noreferrer">
+          Open in Apple Music <ExternalLink size={13} aria-hidden="true" />
         </a>
       ) : null}
-      {links.appleMusic !== undefined ? (
-        <a href={links.appleMusic} target="_blank" rel="noreferrer">
-          Apple Music <ExternalLink size={13} aria-hidden="true" />
+      {links.spotify !== undefined ? (
+        <a href={links.spotify} target="_blank" rel="noreferrer">
+          Open in Spotify <ExternalLink size={13} aria-hidden="true" />
         </a>
       ) : null}
     </div>

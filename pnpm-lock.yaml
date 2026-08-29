@@ -19,6 +19,12 @@ importers:
       eslint:
         specifier: ^9.38.0
         version: 9.39.5(supports-color@7.2.0)
+      hyparquet:
+        specifier: 1.29.2
+        version: 1.29.2
+      hyparquet-compressors:
+        specifier: 1.1.1
+        version: 1.1.1
       prettier:
         specifier: ^3.6.2
         version: 3.9.5
@@ -2154,6 +2160,12 @@ packages:
     engines: { node: ^8.16.0 || ^10.6.0 || >=11.0.0 }
     os: [darwin]
 
+  fzstd@0.1.1:
+    resolution:
+      {
+        integrity: sha512-dkuVSOKKwh3eas5VkJy1AW1vFpet8TA/fGmVA5krThl8YcOVE/8ZIoEA1+U1vEn5ckxxhLirSdY837azmbaNHA==,
+      }
+
   get-tsconfig@4.14.0:
     resolution:
       {
@@ -2180,6 +2192,24 @@ packages:
         integrity: sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ==,
       }
     engines: { node: ">=8" }
+
+  hyparquet-compressors@1.1.1:
+    resolution:
+      {
+        integrity: sha512-yx7aA3Rhj0YycbdV71+XznQSLAefa4cT0urpgNXy4aM6eSeCknaVDNne8y45Uz74Fb15yyXUzOStlceOJBan7A==,
+      }
+
+  hyparquet@1.29.2:
+    resolution:
+      {
+        integrity: sha512-2LxinZ8X0JqToST+9OXcy9t3t5Q7ZneMTkSqUx/36Hv18pCTk/N71IWZc7APTSNG1Me39l/jjEvzZSZ0R+Knbw==,
+      }
+
+  hysnappy@1.0.0:
+    resolution:
+      {
+        integrity: sha512-MNrC4NfwDGPb889O6gIfEtbvEZCSWUsSEhsz4Oq2FRcpGtXHfeVz3KciSPp5Pnnz1NjFMgDQNfxdJozymJEDDA==,
+      }
 
   ignore@5.3.2:
     resolution:
@@ -3900,6 +3930,8 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
+  fzstd@0.1.1: {}
+
   get-tsconfig@4.14.0:
     dependencies:
       resolve-pkg-maps: 1.0.0
@@ -3911,6 +3943,15 @@ snapshots:
   globals@14.0.0: {}
 
   has-flag@4.0.0: {}
+
+  hyparquet-compressors@1.1.1:
+    dependencies:
+      fzstd: 0.1.1
+      hysnappy: 1.0.0
+
+  hyparquet@1.29.2: {}
+
+  hysnappy@1.0.0: {}
 
   ignore@5.3.2: {}
 

@@ -52,7 +52,13 @@ export default async function ReleaseDetailPage({ params }: ReleasePageProps) {
         <ArrowLeft size={14} /> All releases
       </Link>
       <section className="release-detail-hero">
-        <Artwork label={release.title} tone={release.artworkTone} size="detail" />
+        <Artwork
+          appleMusicUrl={release.links.appleMusic}
+          artwork={release.artwork}
+          label={release.title}
+          tone={release.artworkTone}
+          size="detail"
+        />
         <div className="detail-copy">
           <p className="kicker">
             {release.status === "upcoming" ? "UPCOMING RELEASE" : release.type.toUpperCase()}

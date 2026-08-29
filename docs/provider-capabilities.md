@@ -43,7 +43,7 @@ The owner's Spotify Premium subscription and explicitly approved Apple Developer
 
 ## Apple Music Verification
 
-Verified 2026-08-06 against current official Apple documentation:
+Verified 2026-08-29 against current official Apple documentation:
 
 - [MusicKit and Apple Music API](https://developer.apple.com/musickit/): Apple documents public catalog access for songs, albums, artists, playlists, music videos, stations, and charts. This implementation uses only artist and album catalog resources.
 - [MusicKit framework overview](https://developer.apple.com/documentation/musickit): Apple Music API is the catalog web service. Playback and subscriber capabilities exist in MusicKit but are not implemented here.
@@ -54,10 +54,21 @@ Verified 2026-08-06 against current official Apple documentation:
 - [Create a media identifier and private key](https://developer.apple.com/help/account/capabilities/create-a-media-identifier-and-private-key): a Media ID and Media Services private key sign developer tokens. The private key remains server-only and outside source control.
 - [User authentication for MusicKit](https://developer.apple.com/documentation/applemusicapi/user-authentication-for-musickit): a Music User Token is required for subscriber-specific data. This implementation does not request one and therefore has no personal library, recommendation, playback, favorite, or playlist capability.
 - [Apple Developer Program membership](https://developer.apple.com/programs/whats-included/): membership is currently 99 USD per year or local equivalent. The user explicitly accepted this paid prerequisite for Apple catalog discovery.
+- [Apple Music Feed](https://developer.apple.com/documentation/applemusicfeed): Feed supplies daily bulk Apple Music catalog exports for offline catalog processing and public Apple Music promotion. Showcase uses only the album export during its local publication step.
+- [Requesting a Feed export](https://developer.apple.com/documentation/applemusicfeed/requesting-a-feed-export): the latest album export and its part manifests use `https://api.media.apple.com/v1`. Showcase accepts signed export parts only from Apple's Feed CDN and reads them through bounded byte ranges.
+- [Generating developer tokens](https://developer.apple.com/documentation/applemusicfeed/generating-developer-tokens): Feed requests use a server-generated ES256 developer token signed by a Media Services private key. Showcase has a dedicated Media ID, key, and ignored local credential file separate from scanner credentials.
 
 Authentication uses a short-lived ES256 developer token containing only the Apple team and key identifiers. Public catalog reads do not require an Apple Music consumer subscription under the documented user-token boundary. Apple does not publish a numeric Apple Music API request limit in the cited documentation, so the application makes no quota claim. It serializes requests through a PostgreSQL gate at a verified minimum of 1100 ms, honors `Retry-After`, and persists a global cooldown after 429.
 
 Production scope is first-page `singles` and `full-albums` views for confirmed mapped artists, a 30-day or last-success window, and targeted album-track retrieval. Missing optional views are treated as empty only when another view or a direct artist lookup proves the artist exists. Catalog 400/404 and invalid record failures remain safe telemetry and do not stop unrelated artists. Apple artwork is stored as a validated provider URL only, displayed only with Apple evidence, and linked to the corresponding Apple release.
+
+Showcase artwork publication is a separate offline path. It reuses already-published numeric Apple
+release identities, never changes scanner discovery, and never submits Spotify data. The public
+runtime does not authenticate to Feed or call a provider. The generated contract stores only
+`source`, `url`, `width`, and `height`; it does not store Feed export IDs, signed part URLs, raw Feed
+records, tokens, scanner IDs, or provider telemetry. Artwork is rendered unchanged from Apple's
+validated image host and linked to the matching Apple Music album. This repository does not claim
+that Apple has reviewed or approved the public presentation.
 
 Identity-resolution scope is narrower than discovery. Numeric candidate IDs may be enriched with
 Apple artist views or Apple's iTunes lookup endpoint. Apple genres, labels, activity, titles, and

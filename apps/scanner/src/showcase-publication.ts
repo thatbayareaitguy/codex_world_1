@@ -129,6 +129,15 @@ const publicLinksSchema = z
   })
   .strict();
 
+const publicArtworkSchema = z
+  .object({
+    height: z.number().int().positive().max(10_000),
+    source: z.literal("apple_music"),
+    url: z.url(),
+    width: z.number().int().positive().max(10_000),
+  })
+  .strict();
+
 export const showcasePublicGenreSchema = z
   .object({
     name: z.string().trim().min(1).max(100),
@@ -172,13 +181,14 @@ export const showcasePublicReleaseSchema = z
     label: z.string().trim().min(1).max(300).optional(),
     tracks: z.array(publicTrackSchema).max(500),
     links: publicLinksSchema,
+    artwork: publicArtworkSchema.optional(),
     artworkTone: z.enum(artworkTones),
   })
   .strict();
 
 export const showcasePublicCatalogSchema = z
   .object({
-    contractVersion: z.literal("showcase-public-v2"),
+    contractVersion: z.literal("showcase-public-v3"),
     generatedAt: z.iso.datetime({ offset: true }),
     genres: z.array(showcasePublicGenreSchema),
     artists: z.array(showcasePublicArtistSchema),
@@ -210,9 +220,17 @@ export interface ShowcaseSourceTrack {
   readonly title: string;
 }
 
+export interface ShowcaseSourceArtwork {
+  readonly height: number;
+  readonly source: "apple_music";
+  readonly url: string;
+  readonly width: number;
+}
+
 export interface ShowcaseSourceRelease {
   readonly appleProviderReleaseId: string;
   readonly appleMusicUrl: string;
+  readonly artwork?: ShowcaseSourceArtwork;
   readonly artistCredits: readonly ShowcaseSourceArtistCredit[];
   readonly firstDiscoveredAt: Date;
   readonly genreOverrideSlugs?: readonly ShowcaseGenreSlug[];
@@ -244,6 +262,8 @@ export interface ShowcasePublicationResult {
   readonly unresolvedCollaboratorCount: number;
   readonly withSpotifyCount: number;
   readonly withoutSpotifyCount: number;
+  readonly withArtworkCount: number;
+  readonly withoutArtworkCount: number;
 }
 
 const publicTypeByCanonicalType: Readonly<Record<string, (typeof publicReleaseTypes)[number]>> = {
@@ -695,6 +715,7 @@ export function buildShowcasePublicCatalog(
             (showcaseGenreOrder.get(right) ?? Number.MAX_SAFE_INTEGER),
         );
       const label = release.label === undefined ? undefined : sanitizePublicLabel(release.label);
+      const artwork = validatedAppleArtwork(release.artwork);
       const publicRelease = {
         publicId: `release_${identityHash.slice(0, 20)}`,
         slug: `${slugify(`${primaryArtist.name}-${release.title}`)}-${identityHash.slice(0, 8)}`,
@@ -715,6 +736,7 @@ export function buildShowcasePublicCatalog(
           appleMusic: appleMusicUrl,
           ...(spotifyUrl === undefined ? {} : { spotify: spotifyUrl }),
         },
+        ...(artwork === undefined ? {} : { artwork }),
         artworkTone:
           artworkTones[Number.parseInt(identityHash.slice(0, 2), 16) % artworkTones.length]!,
       } satisfies ShowcasePublicRelease;
@@ -726,13 +748,14 @@ export function buildShowcasePublicCatalog(
         right.releaseDate.localeCompare(left.releaseDate) || left.slug.localeCompare(right.slug),
     );
   const catalog = showcasePublicCatalogSchema.parse({
-    contractVersion: "showcase-public-v2",
+    contractVersion: "showcase-public-v3",
     generatedAt: generatedAt.toISOString(),
     genres: showcaseGenreTaxonomy,
     artists,
     releases,
   });
   const withSpotifyCount = releases.filter((release) => release.links.spotify !== undefined).length;
+  const withArtworkCount = releases.filter((release) => release.artwork !== undefined).length;
   return {
     artistCount: artists.length,
     artistsWithGenresCount: artists.filter((artist) => artist.genreSlugs.length > 0).length,
@@ -746,6 +769,8 @@ export function buildShowcasePublicCatalog(
     unresolvedCollaboratorCount: source.unresolvedCollaboratorCount,
     withSpotifyCount,
     withoutSpotifyCount: releases.length - withSpotifyCount,
+    withArtworkCount,
+    withoutArtworkCount: releases.length - withArtworkCount,
   };
 }
 
@@ -830,6 +855,39 @@ function validatedProviderUrl(
       return undefined;
     }
     return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function validatedAppleArtwork(
+  artwork: ShowcaseSourceArtwork | undefined,
+): ShowcaseSourceArtwork | undefined {
+  if (artwork === undefined || artwork.source !== "apple_music") return undefined;
+  if (
+    !Number.isInteger(artwork.width) ||
+    artwork.width < 1 ||
+    artwork.width > 10_000 ||
+    !Number.isInteger(artwork.height) ||
+    artwork.height < 1 ||
+    artwork.height > 10_000
+  ) {
+    return undefined;
+  }
+  try {
+    const url = new URL(artwork.url);
+    if (
+      url.protocol !== "https:" ||
+      !/^is[1-5]-ssl\.mzstatic\.com$/.test(url.hostname) ||
+      !url.pathname.startsWith("/image/thumb/") ||
+      url.username !== "" ||
+      url.password !== "" ||
+      url.port !== "" ||
+      url.hash !== ""
+    ) {
+      return undefined;
+    }
+    return { ...artwork, url: url.toString() };
   } catch {
     return undefined;
   }

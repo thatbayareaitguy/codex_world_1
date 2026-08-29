@@ -1,5 +1,6 @@
 import generatedCatalog from "./generated-public-catalog.json";
 import confirmedArtistGenres from "./confirmed-artist-genres.json";
+import excludedPublicArtists from "./excluded-public-artists.json";
 import { normalizeGenreSlugs, showcaseGenreTaxonomy, type PublicGenreSlug } from "./genre-taxonomy";
 
 export type PublicReleaseStatus = "upcoming" | "released";
@@ -38,6 +39,13 @@ export interface PublicTrack {
   readonly title: string;
 }
 
+export interface PublicArtwork {
+  readonly height: number;
+  readonly source: "apple_music";
+  readonly url: string;
+  readonly width: number;
+}
+
 export interface PublicRelease {
   readonly publicId: `release_${string}`;
   readonly slug: string;
@@ -51,6 +59,7 @@ export interface PublicRelease {
   readonly label?: string;
   readonly tracks: readonly PublicTrack[];
   readonly links: PublicProviderLinks;
+  readonly artwork?: PublicArtwork;
   readonly artworkTone: ArtworkTone;
 }
 
@@ -65,7 +74,7 @@ export interface PublicArtist {
 }
 
 export interface PublicCatalogSnapshot {
-  readonly contractVersion: "showcase-public-v2";
+  readonly contractVersion: "showcase-public-v3";
   readonly generatedAt: string;
   readonly genres: readonly PublicGenre[];
   readonly artists: readonly PublicArtist[];
@@ -82,28 +91,43 @@ const confirmedGenresByArtistId = new Map(
     (assignment) => [assignment.publicId, normalizeGenreSlugs(assignment.genreSlugs)],
   ),
 );
+const excludedArtistPublicIds = new Set(excludedPublicArtists.artistPublicIds);
+const excludedArtistSlugs = new Set(
+  generatedCatalog.artists.flatMap((artist) =>
+    excludedArtistPublicIds.has(artist.publicId) ? [artist.slug] : [],
+  ),
+);
 
-const normalizedArtists = generatedCatalog.artists.map((artist) => ({
-  ...artist,
-  genreSlugs:
-    confirmedGenresByArtistId.get(artist.publicId) ?? normalizeGenreSlugs(artist.genreSlugs),
-})) as readonly PublicArtist[];
+const normalizedArtists = generatedCatalog.artists
+  .filter((artist) => !excludedArtistPublicIds.has(artist.publicId))
+  .map((artist) => ({
+    ...artist,
+    genreSlugs:
+      confirmedGenresByArtistId.get(artist.publicId) ?? normalizeGenreSlugs(artist.genreSlugs),
+  })) as readonly PublicArtist[];
 const normalizedArtistBySlug = new Map(normalizedArtists.map((artist) => [artist.slug, artist]));
 
 export const publicCatalog: PublicCatalogSnapshot = {
   ...(generatedCatalog as Omit<PublicCatalogSnapshot, "artists" | "genres" | "releases">),
   genres: showcaseGenreTaxonomy,
   artists: normalizedArtists,
-  releases: generatedCatalog.releases.map((release) => ({
-    ...release,
-    genreSlugs: normalizeGenreSlugs(
-      release.artistCredits.flatMap((credit) =>
-        credit.artistSlug === undefined
-          ? []
-          : (normalizedArtistBySlug.get(credit.artistSlug)?.genreSlugs ?? []),
+  releases: generatedCatalog.releases
+    .filter(
+      (release) =>
+        !release.artistCredits.some(
+          (credit) => credit.artistSlug !== undefined && excludedArtistSlugs.has(credit.artistSlug),
+        ),
+    )
+    .map((release) => ({
+      ...release,
+      genreSlugs: normalizeGenreSlugs(
+        release.artistCredits.flatMap((credit) =>
+          credit.artistSlug === undefined
+            ? []
+            : (normalizedArtistBySlug.get(credit.artistSlug)?.genreSlugs ?? []),
+        ),
       ),
-    ),
-  })) as readonly PublicRelease[],
+    })) as readonly PublicRelease[],
 };
 
 const genreNameBySlug = new Map(

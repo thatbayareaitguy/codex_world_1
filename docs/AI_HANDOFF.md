@@ -257,3 +257,35 @@ Updated: 2026-08-28 14:27 PDT
   and `/local/genre-review` returned HTTP 200 on `127.0.0.1:3200`, the same editor request with a
   non-loopback Host header returned 404, the scheduled task was running, and the production scanner
   health endpoint on port 3000 remained HTTP 200.
+- Showcase public artist exclusions are now durable editorial data in
+  `apps/showcase/lib/excluded-public-artists.json`. CODENAME:NIOCELL
+  (`artist_f450f3a20160dbaf576f`) is excluded from the public artist catalog, genre review queue, and
+  any linked public releases. The current snapshot has no linked releases for this artist. Private
+  scanner history was preserved.
+
+## Showcase Apple Music Feed Artwork
+
+- Showcase now uses a dedicated Apple Music Feed Media ID and Media Services key only during the
+  local publication step. Credentials and the `.p8` file remain ignored under
+  `%LOCALAPPDATA%\ShowcasePublicSite`; no values, tokens, or signed Feed URLs are stored in source.
+- A bounded authentication request to `https://api.media.apple.com/v1/feed/album/latest` returned
+  HTTP 200 on 2026-08-29 after the Key ID was corrected. Scanner Apple credentials and provider
+  behavior were not changed.
+- The publisher reads persisted scanner data, closes PostgreSQL, then scans the latest Apple album
+  Feed export by byte range. Existing numeric Apple release IDs are exact match keys. Feed parts are
+  accepted only from `media-feed.cdn-apple.com`; public artwork is accepted only from Apple's
+  `is1-ssl` through `is5-ssl.mzstatic.com` image hosts.
+- Public contract `showcase-public-v3` adds optional release `artwork` with only `source`, `url`,
+  `width`, and `height`. Raw Feed records, export metadata, private IDs, signed part URLs, and
+  operational state are excluded. The public runtime has no database or provider API dependency.
+- Current publication contains 409 Apple-origin releases. 406 have exact Feed artwork matches
+  (99.3%) and 3 use the neutral placeholder: Heyz, `Something Different - Single`; Sub Zero,
+  `You Had It Remix - EP`; and Dabin, `Good job today, me - Single`.
+- Artwork is rendered unchanged and links directly to the matching Apple Music album, with visible
+  `Artwork via Apple Music` attribution. Spotify remains an outbound link only and is never an
+  artwork source.
+- Final validation passed: formatting, lint with zero warnings, all seven workspace type checks, 75
+  unit files with 519 tests, 28 database integration files with 149 tests, the Showcase production
+  build with 998 generated pages, and eight Showcase Playwright tests. Browser inspection also
+  confirmed the exact Apple image URL/dimensions/link on a matched release and the neutral hero
+  placeholder on an unmatched release.

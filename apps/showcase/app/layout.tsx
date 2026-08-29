@@ -38,6 +38,7 @@ const navigation = [
   { href: "/artists", label: "Artists" },
   { href: "/playlists", label: "Featured Playlists" },
   { href: "/about", label: "About Us" },
+  { href: "/contact", label: "Contact Us" },
 ];
 
 function BrandLockup({ compact = false }: Readonly<{ compact?: boolean }>) {

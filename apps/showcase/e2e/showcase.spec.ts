@@ -51,13 +51,40 @@ test("release filters and detail routes work", async ({ page }) => {
     .filter({ hasText: upcomingRelease!.title })
     .first();
   await expect(releaseCard.getByRole("heading", { name: upcomingRelease!.title })).toBeVisible();
-  await releaseCard.getByRole("link").click();
+  await releaseCard.locator(".release-card-copy").click();
   await expect(page).toHaveURL(new RegExp(`/releases/${upcomingRelease!.slug}$`));
   await expect(page.getByRole("heading", { name: upcomingRelease!.title, level: 1 })).toBeVisible();
-  await expect(page.getByRole("link", { name: /Apple Music/i })).toHaveAttribute(
+  await expect(page.getByRole("link", { name: "Open in Apple Music" })).toHaveAttribute(
     "target",
     "_blank",
   );
+});
+
+test("release artwork uses Apple links and unmatched releases retain placeholders", async ({
+  page,
+}) => {
+  const withArtwork = generatedCatalog.releases.find((release) => release.artwork !== undefined);
+  const withoutArtwork = generatedCatalog.releases.find((release) => release.artwork === undefined);
+  expect(withArtwork).toBeDefined();
+  expect(withoutArtwork).toBeDefined();
+
+  await page.goto(`/releases/${withArtwork!.slug}`);
+  const artworkLink = page.getByRole("link", {
+    name: `Open ${withArtwork!.title} on Apple Music`,
+  });
+  await expect(artworkLink).toHaveAttribute("href", withArtwork!.links.appleMusic);
+  await expect(artworkLink).toHaveAttribute("target", "_blank");
+  await expect(artworkLink.locator("img")).toHaveAttribute("src", withArtwork!.artwork.url);
+  await expect(page.getByRole("link", { name: "Artwork via Apple Music" })).toHaveAttribute(
+    "href",
+    withArtwork!.links.appleMusic,
+  );
+
+  await page.goto(`/releases/${withoutArtwork!.slug}`);
+  await expect(
+    page.getByRole("img", { name: `Placeholder artwork for ${withoutArtwork!.title}` }),
+  ).toBeVisible();
+  await expect(page.locator(".release-detail-hero .apple-artwork-image")).toHaveCount(0);
 });
 
 test("artist filtering and structured profile work", async ({ page }) => {
@@ -65,7 +92,17 @@ test("artist filtering and structured profile work", async ({ page }) => {
   expect(artist).toBeDefined();
   await page.goto("/artists");
 
-  await page.getByPlaceholder("Filter by artist or genre").fill(artist!.name);
+  await expect(
+    page.getByText(
+      "Explore the electronic artists we are following through the releases they make, the scenes they move through, and the genres they love.",
+    ),
+  ).toBeVisible();
+  const genreSelect = page.getByRole("combobox", { name: "Filter artists by genre" });
+  await genreSelect.selectOption({ index: 1 });
+  await expect(page.locator(".artist-card").first()).toBeVisible();
+
+  await page.getByPlaceholder("Search").fill(artist!.name);
+  await genreSelect.selectOption("all");
   const artistCard = page.locator(".artist-card").filter({ hasText: artist!.name }).first();
   await expect(artistCard.getByRole("heading", { name: artist!.name })).toBeVisible();
   await artistCard.getByRole("link").click();
@@ -147,6 +184,12 @@ test("featured playlists and About Us pages are available from navigation", asyn
     page.getByText("Curated playlists, songs, and feeds, based on what we think is cool."),
   ).toBeVisible();
   await expect(page.getByText(/Just some wonky weird EDM fanatics/)).toBeVisible();
+
+  await page.getByRole("link", { name: "Contact Us" }).click();
+  await expect(page).toHaveURL(/\/contact$/);
+  await expect(page.getByRole("heading", { name: /Send us a signal/i })).toBeVisible();
+  await expect(page.getByText("Contact email coming soon.")).toBeVisible();
+  await expect(page.getByText("Subject: Showcase inquiry: [topic]")).toBeVisible();
 });
 
 test("local genre review keeps suggestions private until they are saved", async ({ page }) => {
