@@ -989,6 +989,14 @@ summary:focus-visible {
   outline: 0;
   font-size: 12px;
 }
+.select-input select option {
+  color: var(--ink);
+  background-color: var(--surface);
+}
+.select-input select option:checked {
+  color: #fff;
+  background-color: #35283f;
+}
 .result-count {
   margin: 24px 0 18px;
   color: #777b73;

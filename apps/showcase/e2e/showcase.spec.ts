@@ -27,6 +27,18 @@ test("release filters and detail routes work", async ({ page }) => {
   await page.goto("/releases");
 
   await expect(page.getByRole("heading", { name: /What is landing right now/i })).toBeVisible();
+  const genreSelect = page.getByRole("combobox", { name: "Filter by genre" });
+  const optionColors = await genreSelect
+    .locator("option")
+    .nth(1)
+    .evaluate((option) => {
+      const style = window.getComputedStyle(option);
+      return { backgroundColor: style.backgroundColor, color: style.color };
+    });
+  expect(optionColors).toEqual({
+    backgroundColor: "rgb(16, 13, 20)",
+    color: "rgb(247, 245, 251)",
+  });
   await page.getByRole("button", { name: "Upcoming" }).click();
   await expect(
     page.getByText(
