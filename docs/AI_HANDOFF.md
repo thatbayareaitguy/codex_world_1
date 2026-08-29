@@ -1,14 +1,114 @@
 # AI Handoff
 
-Updated: 2026-08-28 16:42 PDT
+Updated: 2026-08-29 14:25 PDT
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`
-- Base HEAD and upstream before the system-status repair:
-  `b48830b387f731f1a67bb3fa612eb4e48c0957c2`
+- Goal starting HEAD and upstream:
+  `37c45603d046183fe8ce0b4aa8f3243f758a98d8`
+- The tracked worktree was clean at goal start. The feed/review work described as uncommitted in the
+  goal had already been coherently committed in `8d3c8ffc8e341c6bf713ef68818388603e903e32`
+  (`fix: group mirrored release reviews`). It was preserved and extended, not reverted or
+  duplicated.
 - `outputs/` is unrelated, remains untracked, and is excluded from the intended commit.
 - No secret or `.env` file was changed.
+
+## Review Completion And Broad Spotify Coverage Audit (2026-08-29)
+
+### Review classification and workflow
+
+- Production currently has 6 user-actionable review groups, all Spotify candidate records for
+  Fairlane: `Back 2 Life`, `Everybody Knows`, `Hero`, `Euphoria`, `Best You Could`, and `Colors`.
+  Each already has an exported Spotify track, so these are durable match-quality decisions but are
+  not currently blocking a playlist addition.
+- The current export classification is 114 blocked tracks waiting on guarded Spotify resolution,
+  0 user-actionable export blocks, 0 terminal or no-equivalent blocks, 0 deferred groups, and 0
+  stale blocks. Before the repair, 113 were waiting and one historical `SEROTONIN` record was stale.
+- `SEROTONIN` had an ISRC, active followed artist, and confirmed Spotify artist identity but no
+  Spotify track and no resolution work. Its evidence originated from a historical non-Apple path,
+  while automatic repair seeding required an Apple candidate. Repair seeding now preserves the
+  Apple path and also accepts any canonical, non-dismissed followed track with a valid ISRC and a
+  confirmed Spotify artist mapping. It does not enable or call MusicBrainz. The natural scheduler
+  reconciled `SEROTONIN` into the guarded queue; no manual provider command was run.
+- Needs Review now contains only human decisions. System-waiting, terminal, and stale records have
+  separate expandable classifications with explicit reasons. Each human card shows the recommended
+  candidate, stored Spotify and Apple artwork or an honest missing-artwork placeholder, artist,
+  release, type, date, track list, provider links, blocking reason, evidence, and confidence.
+- Durable actions are `Confirm recommended candidate`, `Choose another candidate` through a verified
+  Spotify track URL, `Retry matching`, provider-specific `Keep separate`, `No Spotify equivalent`
+  when no Spotify candidate exists, and `Defer 7 days`.
+- Confirming stored Spotify evidence changes the candidate to a manual exact match and marks a
+  completed broad playlist checkpoint pending. The existing scheduler performs the later guarded
+  preview and fixed-target export. The browser request never writes the playlist. Exact track-link
+  confirmation and retry still queue guarded resolver work first.
+- No review decision was made during this goal, so 0 tracks became newly eligible. The six Fairlane
+  groups remain for the user to decide.
+
+### Artist Albums request breakdown
+
+The 759 Artist Albums requests in the audited August 14 through August 29 window all succeeded with
+zero 429s and zero failed requests:
+
+| Queue                        | Requests |             Unique artists |   Repeated-artist requests | Work rows |
+| ---------------------------- | -------: | -------------------------: | -------------------------: | --------: |
+| Apple priority and catch-up  |      324 |                        145 |                        179 |       307 |
+| Broad recurring artist scans |      182 |                        182 |                          0 |       182 |
+| Artist reconciliation        |       25 |                         25 |                          0 |        25 |
+| Release and track repair     |      228 |                         15 |                        213 |       120 |
+| Total                        |      759 | not additive across queues | not additive across queues |       634 |
+
+Daily Artist Albums use was: Aug 14 61, Aug 15 69, Aug 16 38, Aug 17 72, Aug 18
+80, Aug 19 80, Aug 20 49, Aug 21 60, Aug 22 39, Aug 25 71, Aug 26 60, Aug 28
+15, and Aug 29 65. Broad completed artists were: Aug 15 10, Aug 16 17, Aug 17 36,
+Aug 18 33, Aug 19 34, Aug 25 26, and Aug 26 26. Aug 22 and Aug 29 were eligible
+broad days but priority work consumed the available Artist Albums capacity. Aug 23 and Aug 24 were
+the previously documented host-sleep gap. Thursday and Friday broad exclusion remains intentional.
+
+- The base broad scan itself used 182 Artist Albums requests plus 10 OAuth requests for 182 artists,
+  or 1.05 requests per completed broad artist. Including 11 downstream recurring release-detail
+  calls gives about 1.12. Broad scanning is not intrinsically request-heavy.
+- The main displacement was repair work. Daily ISRC misses correctly requeue for a later exact check,
+  but each miss also reopened already completed `single` and `album` fallback searches. In this
+  window, `single` used 124 requests for 63 work rows and `album` used 89 for 57, exposing 93 repeated
+  fallback Artist Albums calls.
+- Automatic ISRC cascades now leave completed fallback work completed. An explicit user `Retry
+matching` still reopens it. This removes the proven daily fallback churn while keeping manual
+  recovery and the daily exact-ISRC check.
+- The +24-hour base due-date calculation is correct as a due-order mechanism. It does not guarantee
+  that every due artist can run within 24 hours when higher-priority queues consume the same
+  endpoint budget.
+- The observed rate is about 26 artists per broad day that actually ran, or about 20.2 across all
+  eligible operating days including zero-capacity days. At those rates, full 582-artist coverage is
+  about 31 to 40 calendar days. A two-week cycle requires about 59 artists on each of ten broad days,
+  nearly the 60-call daily broad Artist Albums ceiling, so it is not realistic while priority and
+  repair queues share that capacity.
+- Ranked next options by safety are: first, keep the implemented completed-fallback guard; second,
+  consider a longer backoff such as three to seven days for repeated ISRC no-match rows; third,
+  consider a protected base-scan capacity share. The second option offers the next clearest request
+  saving but adds delayed detection risk and was not implemented without a product decision. Budgets,
+  queue priorities, provider cadence, and production schedules were not changed.
+
+### Verification and operational state
+
+- The development runners now honor an explicit `TEST_DATABASE_URL` without also starting the
+  default Compose test service. Playwright accepts `RADAR_E2E_DATABASE_URL`. This allowed the full
+  test suites to use a temporary PostgreSQL 17 container on `127.0.0.1:5434` without touching the
+  Showcase database on port 5433.
+- A controlled application restart activated the new build. `app:down` also stopped the production
+  database service by design; `app:up` immediately restored PostgreSQL and the web supervisor. The
+  persistent database volume was preserved, health returned `ok`, doctor reports all 31 migrations,
+  and there is no evidence of data loss or a stale lock.
+- Production doctor is READY. Current scheduler evidence at 14:25 PDT shows automatic mode, no
+  active lease or cooldown, no Spotify 429 in the last 24 hours, Artist Albums at 80 of 80, priority
+  reserve at 0 of 20 remaining, playlist inbox completed, and zero pending playlist operations.
+- Browser smoke verified 6 human review cards, recommended-candidate labels, Spotify links, stored
+  artwork, Apple comparison placeholders where Apple evidence is absent, all durable action controls,
+  114 separate system-waiting rows with guarded-queue reasons, and zero stale rows.
+- Validation passed: formatting, lint with zero warnings, TypeScript across six projects, 75 unit
+  files with 525 tests, 28 PostgreSQL integration files with 157 tests, the 28-route production
+  build, 32 Chromium tests, production doctor, migration inspection, browser smoke, and
+  `git diff --check`.
 
 ## Fresh Backup And Database
 

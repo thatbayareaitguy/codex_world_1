@@ -1805,6 +1805,19 @@ select:focus-visible {
   object-fit: cover;
   border-radius: 4px;
 }
+.review-artwork-placeholder {
+  width: 96px;
+  height: 96px;
+  display: grid;
+  place-items: center;
+  padding: 8px;
+  color: var(--muted);
+  background: var(--control);
+  border: 1px dashed var(--control-line);
+  border-radius: 4px;
+  font-size: 9px;
+  text-align: center;
+}
 .release-review-comparison > section > span,
 .release-review-comparison b {
   color: var(--muted);
@@ -1848,6 +1861,12 @@ select:focus-visible {
   background: var(--control);
   border: 1px solid var(--control-line);
   border-radius: 4px;
+}
+.manual-track-review-action label {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 9px;
 }
 .manual-track-review-action .form-error {
   flex-basis: 100%;

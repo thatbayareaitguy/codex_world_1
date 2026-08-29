@@ -2,6 +2,7 @@ import type { TrackCandidate } from "@radar/core";
 import {
   createDatabase,
   createSpotifyScanBatch,
+  discoveryScheduleState,
   ensureLocalOwner,
   feedItems,
   getReleaseReviewQueueStatus,
@@ -615,6 +616,16 @@ describe.sequential("Spotify mapping resume and Keep separate", () => {
   it("resolves mirrored Apple and Spotify reviews as one atomic canonical group", async () => {
     const userId = await ensureLocalOwner(connection.db);
     const beforeStatus = await getReleaseReviewQueueStatus(connection.db, userId);
+    const priorSchedule = await connection.db.query.discoveryScheduleState.findFirst({
+      where: eq(discoveryScheduleState.id, "global"),
+    });
+    await connection.db
+      .insert(discoveryScheduleState)
+      .values({ id: "global", phase: "broad_spotify", playlistInboxStatus: "completed" })
+      .onConflictDoUpdate({
+        target: discoveryScheduleState.id,
+        set: { phase: "broad_spotify", playlistInboxStatus: "completed" },
+      });
     const suffix = randomUUID();
     const [release] = await connection.db
       .insert(releases)
@@ -797,6 +808,34 @@ describe.sequential("Spotify mapping resume and Keep separate", () => {
       );
     expect(remainingGroupFeeds).toHaveLength(1);
     expect(remainingGroupFeeds[0]).toMatchObject({ state: "new", trackId: track!.id });
+    expect(
+      await connection.db.query.discoveryScheduleState.findFirst({
+        where: eq(discoveryScheduleState.id, "global"),
+      }),
+    ).toMatchObject({ phase: "broad_spotify", playlistInboxStatus: "pending" });
+    if (priorSchedule) {
+      await connection.db
+        .update(discoveryScheduleState)
+        .set({
+          activeCampaignId: priorSchedule.activeCampaignId,
+          applePriorityQueuedCount: priorSchedule.applePriorityQueuedCount,
+          broadSpotifyQueuedCount: priorSchedule.broadSpotifyQueuedCount,
+          lastAppleCampaignId: priorSchedule.lastAppleCampaignId,
+          lastAppleScanCompletedAt: priorSchedule.lastAppleScanCompletedAt,
+          nextAppleScanAt: priorSchedule.nextAppleScanAt,
+          phase: priorSchedule.phase,
+          playlistInboxExportRunId: priorSchedule.playlistInboxExportRunId,
+          playlistInboxStatus: priorSchedule.playlistInboxStatus,
+          timezone: priorSchedule.timezone,
+          transitionedAt: priorSchedule.transitionedAt,
+          updatedAt: priorSchedule.updatedAt,
+        })
+        .where(eq(discoveryScheduleState.id, "global"));
+    } else {
+      await connection.db
+        .delete(discoveryScheduleState)
+        .where(eq(discoveryScheduleState.id, "global"));
+    }
   });
 });
 

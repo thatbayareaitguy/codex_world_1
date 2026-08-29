@@ -4153,6 +4153,12 @@ interface ReleaseReviewQueueStatusView {
     userActionable: number;
   };
   deferredCount: number;
+  stale: Array<{
+    reason: string;
+    releaseTitle: string;
+    title: string;
+    trackId: string;
+  }>;
   staleCount: number;
   systemWaiting: Array<{
     attemptCount: number;
@@ -4167,6 +4173,12 @@ interface ReleaseReviewQueueStatusView {
     trackId: string;
   }>;
   systemWaitingCount: number;
+  terminal: Array<{
+    reason: string;
+    releaseTitle: string;
+    title: string;
+    trackId: string;
+  }>;
   terminalCount: number;
 }
 
@@ -4441,9 +4453,12 @@ function ReviewView({
     <section className="content standard-view">
       <div className="page-heading">
         <div>
-          <p className="eyebrow">AUTOMATION BLOCKED</p>
+          <p className="eyebrow">MANUAL REVIEW</p>
           <h1>Review queue</h1>
-          <p>Ambiguous matches require an explicit decision before playlist export.</p>
+          <p>
+            Ambiguous matches require an explicit decision. Unresolved tracks stay excluded from
+            future playlist export.
+          </p>
         </div>
       </div>
       <label className="sort-control">
@@ -4505,6 +4520,46 @@ function ReviewView({
                         <span>{waiting.status.replaceAll("_", " ")}</span>
                         <small>{waiting.reason}</small>
                       </div>
+                    </article>
+                  ))}
+                </div>
+              </details>
+            )}
+            {releaseQueueStatus.terminal.length > 0 && (
+              <details className="system-waiting-reviews">
+                <summary>Confirmed no-equivalent records</summary>
+                <p>
+                  These are durable decisions. They remain excluded from Spotify export unless a
+                  future manual retry finds an exact track.
+                </p>
+                <div className="system-waiting-list">
+                  {releaseQueueStatus.terminal.map((record) => (
+                    <article key={record.trackId}>
+                      <div>
+                        <strong>{record.title}</strong>
+                        <span>{record.releaseTitle}</span>
+                      </div>
+                      <small>{record.reason}</small>
+                    </article>
+                  ))}
+                </div>
+              </details>
+            )}
+            {releaseQueueStatus.stale.length > 0 && (
+              <details className="system-waiting-reviews">
+                <summary>Stale or invalid records requiring repair</summary>
+                <p>
+                  These are blocked without an active provider-resolution job or a saved terminal
+                  decision. They are operational defects, not match choices.
+                </p>
+                <div className="system-waiting-list">
+                  {releaseQueueStatus.stale.map((record) => (
+                    <article key={record.trackId}>
+                      <div>
+                        <strong>{record.title}</strong>
+                        <span>{record.releaseTitle}</span>
+                      </div>
+                      <small>{record.reason}</small>
                     </article>
                   ))}
                 </div>
@@ -4858,7 +4913,8 @@ function ReviewView({
                   <h2>{item.title}</h2>
                   <p>{item.artist}</p>
                   <small>
-                    {Math.round(item.confidence * 100)}% confidence | {item.matchReason}
+                    <strong>Blocking reason:</strong> {item.matchReason} | Confidence:{" "}
+                    {Math.round(item.confidence * 100)}%
                   </small>
                   {spotifyReviewUrl ? (
                     <a
@@ -4878,9 +4934,15 @@ function ReviewView({
                 </div>
                 <div className="release-review-comparison">
                   <section>
-                    <span>{reviewProviderDisplayName(candidateProvider)} candidate</span>
-                    {candidateArtwork && (
+                    <span>
+                      Recommended candidate | {reviewProviderDisplayName(candidateProvider)}
+                    </span>
+                    {candidateArtwork ? (
                       <img alt="Candidate release artwork" src={candidateArtwork} />
+                    ) : (
+                      <div className="review-artwork-placeholder">
+                        No stored {reviewProviderDisplayName(candidateProvider)} artwork
+                      </div>
                     )}
                     <strong>{item.releaseTitle}</strong>
                     <p>{item.artist}</p>
@@ -4904,8 +4966,12 @@ function ReviewView({
                         ? `${reviewProviderDisplayName(comparisonProvider)} comparison`
                         : "Canonical comparison"}
                     </span>
-                    {comparisonArtwork && (
+                    {comparisonArtwork ? (
                       <img alt="Comparison release artwork" src={comparisonArtwork} />
+                    ) : (
+                      <div className="review-artwork-placeholder">
+                        No stored {reviewProviderDisplayName(comparisonProvider ?? "mock")} artwork
+                      </div>
                     )}
                     <strong>{item.artist}</strong>
                     <p>{item.releaseTitle}</p>
@@ -5010,7 +5076,7 @@ function ReviewView({
                     onClick={() => onDecision(item, "confirm", undefined, group.items)}
                     type="button"
                   >
-                    <Check size={15} /> {pending ? "Resolving..." : "Confirm candidate"}
+                    <Check size={15} /> {pending ? "Resolving..." : "Confirm recommended candidate"}
                   </button>
                 </div>
               </article>
@@ -5053,7 +5119,7 @@ function ManualSpotifyTrackReviewAction({
   return (
     <div className="manual-track-review-action">
       <label>
-        <span className="sr-only">Spotify track link for {item.title}</span>
+        <span>Choose another candidate</span>
         <input
           aria-label={`Spotify track link for ${item.title}`}
           disabled={disabled}
@@ -5063,7 +5129,7 @@ function ManualSpotifyTrackReviewAction({
         />
       </label>
       <button className="secondary-button" disabled={disabled} onClick={confirm} type="button">
-        Confirm track mapping
+        Confirm another Spotify track
       </button>
       {error && <small className="form-error">{error}</small>}
     </div>
@@ -6874,6 +6940,14 @@ const releaseReviewQueueStatusResponseSchema = z.object({
       userActionable: z.number().int().nonnegative(),
     }),
     deferredCount: z.number().int().nonnegative(),
+    stale: z.array(
+      z.object({
+        reason: z.string(),
+        releaseTitle: z.string(),
+        title: z.string(),
+        trackId: z.string().uuid(),
+      }),
+    ),
     staleCount: z.number().int().nonnegative(),
     systemWaiting: z.array(
       z.object({
@@ -6890,6 +6964,14 @@ const releaseReviewQueueStatusResponseSchema = z.object({
       }),
     ),
     systemWaitingCount: z.number().int().nonnegative(),
+    terminal: z.array(
+      z.object({
+        reason: z.string(),
+        releaseTitle: z.string(),
+        title: z.string(),
+        trackId: z.string().uuid(),
+      }),
+    ),
     terminalCount: z.number().int().nonnegative(),
   }),
 });

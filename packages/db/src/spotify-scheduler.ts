@@ -23,6 +23,8 @@ import {
 import {
   artistExternalIds,
   artistFollows,
+  feedItems,
+  manualMatchDecisions,
   releaseCandidates,
   spotifyArtistCoverage,
   spotifyCatalogReleases,
@@ -34,6 +36,7 @@ import {
   spotifySchedulerDailyArtists,
   spotifySchedulerState,
   spotifySchedulerWork,
+  trackCredits,
   trackExternalIds,
   tracks,
 } from "./schema";
@@ -334,40 +337,93 @@ export async function reconcileSpotifySchedulerWork(
         work_key, work_type, status, source, artist_id, expected_spotify_artist_id,
         target_track_id, target_isrc, track_resolution_mode, priority, due_at
       )
-      select distinct on (candidate.matched_track_id)
-        'track_resolution:isrc:' || candidate.matched_track_id::text,
+      select distinct on (resolution.target_track_id)
+        'track_resolution:isrc:' || resolution.target_track_id::text,
         'track_resolution'::spotify_scheduler_work_type,
         'queued'::spotify_scheduler_work_status,
         'repair'::spotify_scheduler_work_source,
-        apple_mapping.artist_id,
-        spotify_mapping.external_id,
-        candidate.matched_track_id,
-        upper(regexp_replace(${tracks.isrc}, '[^A-Za-z0-9]', '', 'g')),
+        resolution.artist_id,
+        resolution.expected_spotify_artist_id,
+        resolution.target_track_id,
+        resolution.target_isrc,
         'isrc'::spotify_track_resolution_mode,
         -20,
-        candidate.first_seen_at
-      from ${releaseCandidates} candidate
-      inner join ${tracks} on ${tracks.id} = candidate.matched_track_id
-      inner join ${artistExternalIds} apple_mapping
-        on apple_mapping.provider = 'apple_music'
-       and apple_mapping.external_id = candidate.artist_external_id
-       and apple_mapping.confirmed = true
-      inner join ${artistFollows}
-        on ${artistFollows.artistId} = apple_mapping.artist_id
-       and ${artistFollows.active} = true
-      inner join ${artistExternalIds} spotify_mapping
-        on spotify_mapping.artist_id = apple_mapping.artist_id
-       and spotify_mapping.provider = 'spotify'
-       and spotify_mapping.confirmed = true
-      where candidate.provider = 'apple_music'
-        and candidate.matched_track_id is not null
-        and ${tracks.isrc} is not null
-        and not exists (
-          select 1 from ${trackExternalIds} external_track
-          where external_track.track_id = candidate.matched_track_id
-            and external_track.provider = 'spotify'
-        )
-      order by candidate.matched_track_id, candidate.first_seen_at desc
+        resolution.due_at
+      from (
+        select
+          apple_mapping.artist_id,
+          spotify_mapping.external_id as expected_spotify_artist_id,
+          candidate.matched_track_id as target_track_id,
+          upper(regexp_replace(${tracks.isrc}, '[^A-Za-z0-9]', '', 'g')) as target_isrc,
+          candidate.first_seen_at as due_at,
+          0 as source_rank,
+          0 as credit_order
+        from ${releaseCandidates} candidate
+        inner join ${tracks} on ${tracks.id} = candidate.matched_track_id
+        inner join ${artistExternalIds} apple_mapping
+          on apple_mapping.provider = 'apple_music'
+         and apple_mapping.external_id = candidate.artist_external_id
+         and apple_mapping.confirmed = true
+        inner join ${artistFollows}
+          on ${artistFollows.artistId} = apple_mapping.artist_id
+         and ${artistFollows.active} = true
+        inner join ${artistExternalIds} spotify_mapping
+          on spotify_mapping.artist_id = apple_mapping.artist_id
+         and spotify_mapping.provider = 'spotify'
+         and spotify_mapping.confirmed = true
+        where candidate.provider = 'apple_music'
+          and candidate.matched_track_id is not null
+          and ${tracks.isrc} is not null
+          and upper(regexp_replace(${tracks.isrc}, '[^A-Za-z0-9]', '', 'g')) ~ '^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$'
+          and not exists (
+            select 1 from ${trackExternalIds} external_track
+            where external_track.track_id = candidate.matched_track_id
+              and external_track.provider = 'spotify'
+          )
+          and not exists (
+            select 1 from ${manualMatchDecisions} decision
+            where decision.selected_track_id = candidate.matched_track_id
+              and decision.decision = 'no_equivalent'
+          )
+
+        union all
+
+        select
+          ${trackCredits.artistId},
+          spotify_mapping.external_id as expected_spotify_artist_id,
+          ${tracks.id} as target_track_id,
+          upper(regexp_replace(${tracks.isrc}, '[^A-Za-z0-9]', '', 'g')) as target_isrc,
+          ${feedItems.firstSeenAt} as due_at,
+          1 as source_rank,
+          ${trackCredits.creditOrder}
+        from ${feedItems}
+        inner join ${tracks} on ${tracks.id} = ${feedItems.trackId}
+        inner join ${trackCredits}
+          on ${trackCredits.trackId} = ${tracks.id}
+        inner join ${artistFollows}
+          on ${artistFollows.artistId} = ${trackCredits.artistId}
+         and ${artistFollows.userId} = ${feedItems.userId}
+         and ${artistFollows.active} = true
+        inner join ${artistExternalIds} spotify_mapping
+          on spotify_mapping.artist_id = ${trackCredits.artistId}
+         and spotify_mapping.provider = 'spotify'
+         and spotify_mapping.confirmed = true
+        where ${tracks.isrc} is not null
+          and upper(regexp_replace(${tracks.isrc}, '[^A-Za-z0-9]', '', 'g')) ~ '^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$'
+          and ${feedItems.state} <> 'dismissed'
+          and not exists (
+            select 1 from ${trackExternalIds} external_track
+            where external_track.track_id = ${tracks.id}
+              and external_track.provider = 'spotify'
+          )
+          and not exists (
+            select 1 from ${manualMatchDecisions} decision
+            where decision.selected_track_id = ${tracks.id}
+              and decision.user_id = ${feedItems.userId}
+              and decision.decision = 'no_equivalent'
+          )
+      ) resolution
+      order by resolution.target_track_id, resolution.source_rank, resolution.credit_order, resolution.due_at
       on conflict (work_key) do nothing
     `);
 
@@ -515,6 +571,7 @@ export async function queueSpotifyTrackResolutionWork(
     dueAt?: Date;
     expectedSpotifyArtistId: string;
     mode: SpotifyTrackResolutionMode;
+    requeueCompleted?: boolean;
     source?: "initial" | "recurring" | "validation" | "repair" | "apple_priority" | "apple_catchup";
     spotifyTrackId?: string | null;
     targetIsrc: string;
@@ -551,7 +608,10 @@ export async function queueSpotifyTrackResolutionWork(
         blockedReason: null,
         dueAt: input.dueAt ?? new Date(),
         source: input.source ?? "repair",
-        status: sql`case when ${spotifySchedulerWork.status} in ('blocked', 'completed', 'cancelled') then 'queued'::spotify_scheduler_work_status else ${spotifySchedulerWork.status} end`,
+        status:
+          input.requeueCompleted === false
+            ? sql`case when ${spotifySchedulerWork.status} in ('blocked', 'cancelled') then 'queued'::spotify_scheduler_work_status else ${spotifySchedulerWork.status} end`
+            : sql`case when ${spotifySchedulerWork.status} in ('blocked', 'completed', 'cancelled') then 'queued'::spotify_scheduler_work_status else ${spotifySchedulerWork.status} end`,
         targetSpotifyTrackId: input.spotifyTrackId ?? null,
         updatedAt: new Date(),
       },

@@ -6,6 +6,7 @@ import { queueSpotifyTrackResolutionWork } from "./spotify-scheduler";
 import {
   artistExternalIds,
   artists,
+  discoveryScheduleState,
   feedItems,
   manualMatchDecisions,
   releaseCandidates,
@@ -278,6 +279,21 @@ async function resolveFeedReviewInTransaction(
       })
       .where(eq(releaseCandidates.id, candidate.id));
     await upsertProviderTrack(tx, payload, candidate.matchedTrackId, now);
+    const spotifyTrack =
+      payload.provider === "spotify"
+        ? true
+        : Boolean(
+            await tx.query.trackExternalIds.findFirst({
+              columns: { id: true },
+              where: and(
+                eq(trackExternalIds.trackId, candidate.matchedTrackId),
+                eq(trackExternalIds.provider, "spotify"),
+              ),
+            }),
+          );
+    if (spotifyTrack) {
+      await queueGuardedPlaylistCheckpoint(tx, now);
+    }
 
     const existingCanonicalFeed = await tx.query.feedItems.findFirst({
       columns: { id: true },
@@ -337,6 +353,19 @@ async function resolveFeedReviewInTransaction(
     .set({ appearanceId, releaseId, state: "new", trackId, updatedAt: now })
     .where(eq(feedItems.id, feedItemId));
   return { decision, feedItemId, removed: false, state: "new" };
+}
+
+async function queueGuardedPlaylistCheckpoint(tx: ReviewTransaction, now: Date): Promise<void> {
+  await tx
+    .update(discoveryScheduleState)
+    .set({ playlistInboxStatus: "pending", updatedAt: now })
+    .where(
+      and(
+        eq(discoveryScheduleState.id, "global"),
+        eq(discoveryScheduleState.phase, "broad_spotify"),
+        eq(discoveryScheduleState.playlistInboxStatus, "completed"),
+      ),
+    );
 }
 
 async function ensureReviewRelease(

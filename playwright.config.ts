@@ -11,7 +11,8 @@ export default defineConfig({
     env: {
       APP_BASE_URL: "http://127.0.0.1:3100",
       APP_ENCRYPTION_KEY: "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
-      DATABASE_URL: "postgres://radar:radar@127.0.0.1:5433/radar_test",
+      DATABASE_URL:
+        process.env.RADAR_E2E_DATABASE_URL ?? "postgres://radar:radar@127.0.0.1:5433/radar_test",
       MUSICBRAINZ_CONTACT_EMAIL: "e2e@example.com",
       MUSICBRAINZ_ENABLED: "false",
       NEXT_DIST_DIR: ".next-e2e",

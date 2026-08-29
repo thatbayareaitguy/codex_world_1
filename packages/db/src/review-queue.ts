@@ -24,6 +24,13 @@ export interface SystemWaitingReviewItem {
   trackId: string;
 }
 
+export interface ClassifiedReviewItem {
+  reason: string;
+  releaseTitle: string;
+  title: string;
+  trackId: string;
+}
+
 export interface ReleaseReviewQueueStatus {
   actionableCount: number;
   blockedExport: {
@@ -34,9 +41,11 @@ export interface ReleaseReviewQueueStatus {
     userActionable: number;
   };
   deferredCount: number;
+  stale: ClassifiedReviewItem[];
   staleCount: number;
   systemWaiting: SystemWaitingReviewItem[];
   systemWaitingCount: number;
+  terminal: ClassifiedReviewItem[];
   terminalCount: number;
 }
 
@@ -156,6 +165,45 @@ export async function getReleaseReviewQueueStatus(
       !uniqueWaiting.has(trackId) &&
       !terminalTrackIds.has(trackId),
   );
+  const exportCandidateByTrack = new Map(
+    exportCandidates.map((candidate) => [candidate.trackId, candidate]),
+  );
+  const terminalDecisionByTrack = new Map(
+    decisionRows.flatMap((row) =>
+      row.decision === "no_equivalent" && row.selectedTrackId
+        ? [[row.selectedTrackId, row] as const]
+        : [],
+    ),
+  );
+  const stale = staleTrackIds.flatMap((trackId) => {
+    const candidate = exportCandidateByTrack.get(trackId);
+    return candidate
+      ? [
+          {
+            reason:
+              "No manual decision or active Spotify resolution work exists for this blocked track.",
+            releaseTitle: candidate.releaseTitle,
+            title: candidate.title,
+            trackId,
+          },
+        ]
+      : [];
+  });
+  const terminal = [...terminalTrackIds].flatMap((trackId) => {
+    if (!blockedTrackIds.has(trackId)) return [];
+    const candidate = exportCandidateByTrack.get(trackId);
+    const decision = terminalDecisionByTrack.get(trackId);
+    return candidate
+      ? [
+          {
+            reason: decision?.reason ?? "Manually confirmed that no Spotify equivalent exists.",
+            releaseTitle: candidate.releaseTitle,
+            title: candidate.title,
+            trackId,
+          },
+        ]
+      : [];
+  });
   return {
     actionableCount: new Set(
       reviewRows
@@ -174,9 +222,11 @@ export async function getReleaseReviewQueueStatus(
         .filter((row) => activeDeferrals.has(row.candidateId))
         .map((row) => reviewDecisionGroupKey(row)),
     ).size,
+    stale,
     staleCount: staleTrackIds.length,
     systemWaiting: [...uniqueWaiting.values()],
     systemWaitingCount: uniqueWaiting.size,
+    terminal,
     terminalCount: decisionRows.filter((row) => row.decision === "no_equivalent").length,
   };
 }

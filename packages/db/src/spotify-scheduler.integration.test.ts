@@ -21,6 +21,9 @@ import {
   artists,
   discoveryReconciliationCampaigns,
   discoveryScheduleState,
+  feedItems,
+  releaseTrackAppearances,
+  releases,
   spotifyProviderState,
   spotifyArtistCoverage,
   spotifyCatalogReleases,
@@ -30,6 +33,7 @@ import {
   spotifySchedulerState,
   spotifySchedulerWork,
   releaseCandidates,
+  trackCredits,
   trackExternalIds,
   tracks,
   users,
@@ -205,6 +209,105 @@ describe("Spotify rolling scheduler persistence", () => {
       targetSpotifyTrackId: "0M6v8qTwT7wfiEsAmLQKdd",
       trackResolutionMode: "manual",
     });
+  });
+
+  it("queues canonical followed tracks even when their source was not Apple Music", async () => {
+    const now = new Date("2026-08-29T12:30:00.000Z");
+    const artistId = await createArtist("Historical canonical resolver", true, true);
+    const [release] = await db
+      .insert(releases)
+      .values({
+        normalizedTitle: "historical canonical release",
+        releaseDate: "2026-08-28",
+        releaseDatePrecision: "day",
+        releaseType: "single",
+        title: "Historical Canonical Release",
+      })
+      .returning({ id: releases.id });
+    const [track] = await db
+      .insert(tracks)
+      .values({
+        isrc: "USABC2600015",
+        normalizedTitle: "historical canonical track",
+        releaseId: release!.id,
+        title: "Historical Canonical Track",
+      })
+      .returning({ id: tracks.id });
+    await db.insert(trackCredits).values({
+      artistId,
+      creditedName: "Historical canonical resolver",
+      creditOrder: 0,
+      role: "primary",
+      trackId: track!.id,
+    });
+    const [appearance] = await db
+      .insert(releaseTrackAppearances)
+      .values({ releaseId: release!.id, trackId: track!.id })
+      .returning({ id: releaseTrackAppearances.id });
+    await db.insert(feedItems).values({
+      appearanceId: appearance!.id,
+      dedupeKey: `historical:${track!.id}`,
+      firstSeenAt: now,
+      releaseId: release!.id,
+      state: "new",
+      trackId: track!.id,
+      userId,
+    });
+
+    await reconcileSpotifySchedulerWork(db, now);
+
+    expect(
+      await db.query.spotifySchedulerWork.findFirst({
+        where: eq(spotifySchedulerWork.workKey, `track_resolution:isrc:${track!.id}`),
+      }),
+    ).toMatchObject({
+      artistId,
+      expectedSpotifyArtistId: `spotify-${artistId}`,
+      source: "repair",
+      status: "queued",
+      targetIsrc: "USABC2600015",
+      targetTrackId: track!.id,
+      trackResolutionMode: "isrc",
+    });
+  });
+
+  it("does not reopen completed automatic fallback work unless a user explicitly retries it", async () => {
+    const now = new Date("2026-08-29T12:00:00.000Z");
+    const artistId = await createArtist("Fallback retry guard", true, true);
+    const [track] = await db
+      .insert(tracks)
+      .values({ isrc: "USABC2600014", normalizedTitle: "fallback-guard", title: "Fallback Guard" })
+      .returning({ id: tracks.id });
+    if (!track) throw new Error("Fallback guard target was not created.");
+    const work = {
+      artistId,
+      dueAt: now,
+      expectedSpotifyArtistId: `spotify-${artistId}`,
+      mode: "single" as const,
+      source: "repair" as const,
+      targetIsrc: "USABC2600014",
+      targetTrackId: track.id,
+    };
+
+    await queueSpotifyTrackResolutionWork(db, work);
+    await db
+      .update(spotifySchedulerWork)
+      .set({ status: "completed" })
+      .where(eq(spotifySchedulerWork.targetTrackId, track.id));
+
+    await queueSpotifyTrackResolutionWork(db, { ...work, requeueCompleted: false });
+    expect(
+      await db.query.spotifySchedulerWork.findFirst({
+        where: eq(spotifySchedulerWork.targetTrackId, track.id),
+      }),
+    ).toMatchObject({ status: "completed" });
+
+    await queueSpotifyTrackResolutionWork(db, work);
+    expect(
+      await db.query.spotifySchedulerWork.findFirst({
+        where: eq(spotifySchedulerWork.targetTrackId, track.id),
+      }),
+    ).toMatchObject({ status: "queued" });
   });
 
   it("moves completed Apple-priority ISRC retries into normal repair work", async () => {
