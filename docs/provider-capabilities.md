@@ -30,6 +30,34 @@ live validation. The capability notes below document the preserved adapter, not 
 
 The owner's Spotify Premium subscription and explicitly approved Apple Developer Program membership are the only permitted paid prerequisites. No other provider adapter may require a paid developer membership, API subscription, or commercial plan without a new product decision.
 
+## Showcase Genre Evidence Research
+
+Verified 2026-08-30. This is a private, local editorial research path, not scanner discovery and not
+a public runtime provider.
+
+- [Discogs Database API](https://www.discogs.com/developers/#page:database,header:database-search)
+  is the only automated source enabled in this milestone. The local command makes one read-only
+  release search per unclassified artist, uses a descriptive contactable User-Agent, paces starts at
+  least 2.6 seconds apart, validates an exact normalized artist prefix, and summarizes repeated
+  release styles. Raw responses are neither committed nor copied into the public catalog.
+- [Last.fm API](https://www.last.fm/api) documents `artist.getTopTags`, but requires an API account
+  and asks commercial or research users to contact Last.fm. It is not enabled pending a product and
+  terms decision.
+- [MusicBrainz API](https://musicbrainz.org/doc/MusicBrainz_API) exposes artist genres and tags, but
+  the repository's MusicBrainz adapter remains disabled and approval-gated. The Showcase pipeline
+  does not bypass its feature flag or database-backed global gate.
+- [Beatport API](https://api.beatport.com/v4/docs/) has a developer portal, but no Showcase access
+  credential or approval is configured. It is not called.
+- Official artist sites, official label biographies, and AllMusic profiles are accepted only as
+  explicitly curated source records. There is no bulk scraping path. Bandcamp remains supporting
+  evidence only with no automated adapter. SoundCloud fetching remains prohibited by repository
+  policy.
+
+Discogs-only evidence can reach MEDIUM but is never automatically published. HIGH requires at least
+one official artist, official label, or AllMusic source plus an independent corroborating source,
+genre agreement, and no recorded conflict. Manual decisions and skipped artists are excluded from
+automatic confirmation.
+
 | Provider     | Decision                            | Discovery                                                                                 | Account import                                          | Playlist writing                                                                                                           | Playback | Upcoming                                      | Required account and payment                                                             | Authentication                                           | Limits and policy                                                                                                                        |
 | ------------ | ----------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------- | --------------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | MockProvider | Active                              | Synthetic typed releases                                                                  | Synthetic only                                          | Synthetic planning                                                                                                         | None     | Synthetic                                     | None                                                                                     | None                                                     | Fixtures must never be represented as live data                                                                                          |

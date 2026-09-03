@@ -11,9 +11,6 @@ export default function ReleasesPage() {
   return (
     <div className="listing-page page-shell">
       <header className="listing-hero">
-        <p className="kicker">
-          <span /> NEW MUSIC RADAR
-        </p>
         <h1>
           What is landing
           <br />

@@ -21,14 +21,10 @@ export default async function GenreReviewPage() {
   return (
     <div className="genre-admin-page">
       <header className="genre-admin-page-header page-shell">
-        <p className="kicker">
-          <span />
-          PRIVATE LOCAL TOOL
-        </p>
         <h1>Artist genre review</h1>
         <p>
-          Confirm Showcase-owned genre tags. Research suggestions remain private until you save
-          them.
+          Review evidence-backed Showcase genre suggestions. Sources remain private, and only strict
+          independently corroborated HIGH suggestions are eligible for bulk confirmation.
         </p>
       </header>
       <GenreReviewManager initialDataset={dataset} />

@@ -22,10 +22,14 @@ const filters: readonly { label: string; value: ReleaseFilter }[] = [
   { label: "All", value: "all" },
 ];
 
+const RELEASES_PER_PAGE = 50;
+
 export function ReleaseExplorer({ releases }: ReleaseExplorerProps) {
   const [activeFilter, setActiveFilter] = useState<ReleaseFilter>("released");
   const [query, setQuery] = useState("");
   const [genre, setGenre] = useState("all");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [isPagePickerOpen, setIsPagePickerOpen] = useState(false);
   const genres = useMemo(
     () => [...new Set(releases.flatMap((release) => getReleaseGenreNames(release)))].sort(),
     [releases],
@@ -44,6 +48,25 @@ export function ReleaseExplorer({ releases }: ReleaseExplorerProps) {
       return matchesStatus && matchesGenre && matchesQuery;
     });
   }, [activeFilter, genre, query, releases]);
+  const pageCount = Math.max(1, Math.ceil(visibleReleases.length / RELEASES_PER_PAGE));
+  const pageStart = (currentPage - 1) * RELEASES_PER_PAGE;
+  const paginatedReleases = visibleReleases.slice(pageStart, pageStart + RELEASES_PER_PAGE);
+  const firstVisibleRelease = visibleReleases.length === 0 ? 0 : pageStart + 1;
+  const lastVisibleRelease = Math.min(pageStart + RELEASES_PER_PAGE, visibleReleases.length);
+
+  function selectStatus(filter: ReleaseFilter) {
+    setActiveFilter(filter);
+    setCurrentPage(1);
+    setIsPagePickerOpen(false);
+  }
+
+  function selectPage(page: number) {
+    setCurrentPage(Math.min(Math.max(page, 1), pageCount));
+    setIsPagePickerOpen(false);
+    requestAnimationFrame(() => {
+      document.getElementById("release-catalog-results")?.scrollIntoView({ block: "start" });
+    });
+  }
 
   return (
     <section id="catalog" className="catalog-section" aria-labelledby="release-catalog-heading">
@@ -58,7 +81,7 @@ export function ReleaseExplorer({ releases }: ReleaseExplorerProps) {
               key={filter.value}
               type="button"
               aria-pressed={activeFilter === filter.value}
-              onClick={() => setActiveFilter(filter.value)}
+              onClick={() => selectStatus(filter.value)}
             >
               {filter.label}
             </button>
@@ -70,14 +93,25 @@ export function ReleaseExplorer({ releases }: ReleaseExplorerProps) {
             <Search size={15} aria-hidden="true" />
             <input
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setCurrentPage(1);
+                setIsPagePickerOpen(false);
+              }}
               placeholder="Filter releases"
             />
           </label>
           <label className="select-input">
             <SlidersHorizontal size={14} aria-hidden="true" />
             <span className="sr-only">Filter by genre</span>
-            <select value={genre} onChange={(event) => setGenre(event.target.value)}>
+            <select
+              value={genre}
+              onChange={(event) => {
+                setGenre(event.target.value);
+                setCurrentPage(1);
+                setIsPagePickerOpen(false);
+              }}
+            >
               <option value="all">All genres</option>
               {genres.map((item) => (
                 <option key={item} value={item}>
@@ -88,15 +122,88 @@ export function ReleaseExplorer({ releases }: ReleaseExplorerProps) {
           </label>
         </div>
       </div>
-      <p className="result-count" aria-live="polite">
-        {visibleReleases.length} {visibleReleases.length === 1 ? "release" : "releases"}
+      <p id="release-catalog-results" className="result-count" aria-live="polite">
+        {visibleReleases.length === 0
+          ? "0 releases"
+          : `Showing ${firstVisibleRelease} to ${lastVisibleRelease} of ${visibleReleases.length} ${
+              visibleReleases.length === 1 ? "release" : "releases"
+            }`}
       </p>
       {visibleReleases.length > 0 ? (
-        <div className="release-grid catalog-grid">
-          {visibleReleases.map((release) => (
-            <ReleaseCard key={release.publicId} release={release} />
-          ))}
-        </div>
+        <>
+          <div className="release-grid catalog-grid">
+            {paginatedReleases.map((release) => (
+              <ReleaseCard key={release.publicId} release={release} />
+            ))}
+          </div>
+          {pageCount > 1 ? (
+            <nav className="catalog-pagination" aria-label="Release catalog pages">
+              <p>
+                Page {currentPage} of {pageCount}
+              </p>
+              <div className="pagination-pages">
+                <button
+                  type="button"
+                  onClick={() => selectPage(currentPage - 1)}
+                  disabled={currentPage === 1}
+                >
+                  Previous
+                </button>
+                {Array.from({ length: pageCount }, (_, index) => index + 1).map((page) => (
+                  <button
+                    className={currentPage === page ? "active" : ""}
+                    key={page}
+                    type="button"
+                    aria-current={currentPage === page ? "page" : undefined}
+                    aria-label={`Go to page ${page}`}
+                    onClick={() => selectPage(page)}
+                  >
+                    {page}
+                  </button>
+                ))}
+                <div className="pagination-jump">
+                  <button
+                    className="pagination-more"
+                    type="button"
+                    aria-expanded={isPagePickerOpen}
+                    aria-controls="release-page-picker"
+                    aria-label="Choose a page"
+                    onClick={() => setIsPagePickerOpen((isOpen) => !isOpen)}
+                  >
+                    ...
+                  </button>
+                  {isPagePickerOpen ? (
+                    <div id="release-page-picker" className="pagination-page-picker">
+                      <label>
+                        <span>Choose page</span>
+                        <select
+                          aria-label="Choose page"
+                          value={currentPage}
+                          onChange={(event) => selectPage(Number(event.target.value))}
+                        >
+                          {Array.from({ length: pageCount }, (_, index) => index + 1).map(
+                            (page) => (
+                              <option key={page} value={page}>
+                                Page {page}
+                              </option>
+                            ),
+                          )}
+                        </select>
+                      </label>
+                    </div>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => selectPage(currentPage + 1)}
+                  disabled={currentPage === pageCount}
+                >
+                  Next
+                </button>
+              </div>
+            </nav>
+          ) : null}
+        </>
       ) : (
         <div className="empty-state">
           <p className="kicker">NO MATCHES</p>

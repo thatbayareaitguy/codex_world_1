@@ -1,10 +1,12 @@
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { saveArtistGenreReviewSchema } from "../../../../lib/genre-editorial-contract";
+import { genreReviewMutationSchema } from "../../../../lib/genre-editorial-contract";
 import {
+  autoConfirmEligibleHighGenres,
   getGenreReviewDataset,
   saveArtistGenreReview,
+  skipArtistGenreReview,
 } from "../../../../lib/genre-editorial-store";
 import {
   isLocalGenreAdminMutation,
@@ -28,12 +30,17 @@ export async function POST(request: Request) {
   if (!isLocalGenreAdminMutation(requestHeaders)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  const result = saveArtistGenreReviewSchema.safeParse(await request.json().catch(() => null));
+  const result = genreReviewMutationSchema.safeParse(await request.json().catch(() => null));
   if (!result.success) {
     return NextResponse.json({ error: "Invalid genre assignment" }, { status: 400 });
   }
   try {
-    const dataset = await saveArtistGenreReview(result.data);
+    const dataset =
+      result.data.action === "bulk-confirm-high"
+        ? await autoConfirmEligibleHighGenres()
+        : result.data.action === "skip"
+          ? await skipArtistGenreReview(result.data.publicId)
+          : await saveArtistGenreReview(result.data);
     return NextResponse.json(dataset, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "The genre assignment failed.";

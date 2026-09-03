@@ -17,6 +17,7 @@ export default defineConfig({
       SHOWCASE_GENRE_ADMIN_ENABLED: "true",
       SHOWCASE_CONFIRMED_GENRES_PATH: resolve(e2eRuntimeDirectory, "e2e-confirmed-genres.json"),
       SHOWCASE_GENRE_REVIEW_PATH: resolve(e2eRuntimeDirectory, "e2e-genre-reviews.json"),
+      SHOWCASE_GENRE_EVIDENCE_PATH: resolve(e2eRuntimeDirectory, "e2e-genre-evidence.json"),
     },
     url: "http://127.0.0.1:3201",
     reuseExistingServer: false,

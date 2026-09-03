@@ -11,8 +11,7 @@ const featuredPlaylists = [
     number: "01",
     title: "Showcase New Release Radar",
     description:
-      "Melodic, progressive, and late-night records for the hours after the room goes dark.",
-    genres: "Progressive house · Melodic techno",
+      "Find new releases from all of our followed artists, all available in one playlist. Updated weekly.",
     artworkClass: "playlist-artwork-pink",
     artworkImage: "/showcase-new-release-radar.png",
     spotifyUrl: "https://open.spotify.com/playlist/4l6LaMPL6duulmFe3hRR4Y?si=ebd8c808bcff40f9",
@@ -20,8 +19,7 @@ const featuredPlaylists = [
   {
     number: "02",
     title: "What we're listening to",
-    description: "Fast-moving bass selections built around jungle breaks and drum & bass momentum.",
-    genres: "Drum & bass · Jungle",
+    description: "Collection of the things we are liking the most.",
     artworkClass: "playlist-artwork-blue",
     artworkImage: null,
     spotifyUrl: null,
@@ -31,7 +29,6 @@ const featuredPlaylists = [
     title: "Low Light / High Energy",
     description:
       "Club-focused cuts that move between garage swing, breaks, and bass-heavy pressure.",
-    genres: "UK garage · Breaks · Bass",
     artworkClass: "playlist-artwork-orange",
     artworkImage: null,
     spotifyUrl: null,
@@ -42,9 +39,6 @@ export default function FeaturedPlaylistsPage() {
   return (
     <div className="listing-page page-shell editorial-page">
       <header className="listing-hero editorial-hero">
-        <p className="kicker">
-          <span /> CURATED LISTENING
-        </p>
         <h1>
           Featured playlists
           <br />
@@ -99,7 +93,6 @@ export default function FeaturedPlaylistsPage() {
               <p className="meta">FEATURED PLAYLIST {playlist.number}</p>
               <h2>{playlist.title}</h2>
               <p>{playlist.description}</p>
-              <p className="playlist-genres">{playlist.genres}</p>
             </article>
           );
         })}

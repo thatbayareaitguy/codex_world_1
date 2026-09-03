@@ -12,9 +12,6 @@ export default function ArtistsPage() {
   return (
     <div className="listing-page page-shell">
       <header className="listing-hero artist-listing-hero">
-        <p className="kicker">
-          <span /> ARTIST DISCOVERY
-        </p>
         <h1>
           Follow the people
           <br />

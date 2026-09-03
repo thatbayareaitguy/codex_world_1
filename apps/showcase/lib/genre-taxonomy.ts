@@ -45,6 +45,20 @@ export const showcaseGenreTaxonomy: readonly {
   { name: "Other Electronic", slug: "other-electronic" },
 ] as const;
 
+export const showcaseGenreParents: Readonly<
+  Partial<Record<PublicGenreSlug, readonly PublicGenreSlug[]>>
+> = {
+  dubstep: ["bass-music"],
+  riddim: ["dubstep", "bass-music"],
+  "melodic-dubstep": ["dubstep", "bass-music"],
+  "experimental-bass": ["bass-music"],
+  "midtempo-bass": ["bass-music"],
+  "bass-house": ["house"],
+  "tech-house": ["house"],
+  "progressive-house": ["house"],
+  "electro-house": ["house"],
+} as const;
+
 const genreOrder = new Map(showcaseGenreSlugs.map((slug, index) => [slug, index] as const));
 
 const legacyGenreMap: Readonly<Record<string, PublicGenreSlug>> = {
@@ -68,12 +82,70 @@ const legacyGenreMap: Readonly<Record<string, PublicGenreSlug>> = {
   trap: "trap",
 };
 
+const evidenceGenreMap: Readonly<Record<string, readonly PublicGenreSlug[]>> = {
+  "bass house": ["bass-house"],
+  "bass music": ["bass-music"],
+  bassline: ["bass-music"],
+  dnb: ["drum-and-bass"],
+  "d&b": ["drum-and-bass"],
+  "drum & bass": ["drum-and-bass"],
+  "drum and bass": ["drum-and-bass"],
+  "drum n bass": ["drum-and-bass"],
+  drumandbass: ["drum-and-bass"],
+  dubstep: ["dubstep"],
+  "electro house": ["electro-house"],
+  "electro-house": ["electro-house"],
+  electronica: ["other-electronic"],
+  electronic: ["other-electronic"],
+  "experimental bass": ["experimental-bass"],
+  "future bass": ["future-bass"],
+  gabber: ["hard-dance"],
+  hardcore: ["hard-dance"],
+  "hard dance": ["hard-dance"],
+  hardstyle: ["hard-dance"],
+  house: ["house"],
+  "leftfield bass": ["experimental-bass"],
+  "melodic dubstep": ["melodic-dubstep"],
+  "midtempo bass": ["midtempo-bass"],
+  midtempo: ["midtempo-bass"],
+  "progressive house": ["progressive-house"],
+  riddim: ["riddim"],
+  "riddim dubstep": ["riddim"],
+  "tech house": ["tech-house"],
+  techno: ["techno"],
+  trance: ["trance"],
+  trap: ["trap"],
+};
+
 export function isPublicGenreSlug(value: string): value is PublicGenreSlug {
   return genreOrder.has(value as PublicGenreSlug);
 }
 
+export function expandGenreParents(values: readonly PublicGenreSlug[]): PublicGenreSlug[] {
+  const expanded = new Set<PublicGenreSlug>();
+  const visit = (slug: PublicGenreSlug): void => {
+    if (expanded.has(slug)) return;
+    expanded.add(slug);
+    for (const parent of showcaseGenreParents[slug] ?? []) visit(parent);
+  };
+  for (const value of values) visit(value);
+  return [...expanded].sort(
+    (left, right) => (genreOrder.get(left) ?? 999) - (genreOrder.get(right) ?? 999),
+  );
+}
+
+export function normalizeEvidenceTerm(value: string): PublicGenreSlug[] {
+  const normalized = value.trim().toLowerCase().replaceAll("_", " ").replaceAll(/\s+/g, " ");
+  const direct = evidenceGenreMap[normalized];
+  if (direct !== undefined) return expandGenreParents(direct);
+  if (normalized.includes("riddim") && normalized.includes("dubstep")) {
+    return expandGenreParents(["riddim"]);
+  }
+  return [];
+}
+
 export function normalizeGenreSlugs(values: readonly string[]): PublicGenreSlug[] {
-  return [
+  const normalized = [
     ...new Set(
       values.flatMap((value) => {
         const normalized = value.trim().toLowerCase();
@@ -83,4 +155,5 @@ export function normalizeGenreSlugs(values: readonly string[]): PublicGenreSlug[
       }),
     ),
   ].sort((left, right) => (genreOrder.get(left) ?? 999) - (genreOrder.get(right) ?? 999));
+  return expandGenreParents(normalized);
 }

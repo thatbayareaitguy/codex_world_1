@@ -27,9 +27,6 @@ export default function AboutPage() {
   return (
     <div className="listing-page page-shell editorial-page">
       <header className="listing-hero editorial-hero about-hero">
-        <p className="kicker">
-          <span /> OUR STORY
-        </p>
         <h1>
           Built around
           <br />

@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-08-28 14:27 PDT
+Updated: 2026-09-02 PDT
 
 ## Showcase Public Site Milestone
 
@@ -12,13 +12,24 @@ Updated: 2026-08-28 14:27 PDT
   `apps/showcase/lib/generated-public-catalog.json`. All fictional release and artist fixtures have
   been removed.
 - Public routes are `/`, `/releases`, `/releases/[slug]`, `/artists`, `/artists/[slug]`,
-  `/playlists`, and `/about`, with responsive navigation, local filters, loading states, empty
-  states, not-found handling, public record metadata, neutral CSS placeholder artwork, and a
+  `/playlists`, `/about`, and `/contact`, with responsive navigation, local filters, loading states,
+  empty states, not-found handling, public record metadata, neutral CSS placeholder artwork, and a
   generated site-wide social preview. The navigation now exposes Featured Playlists and About Us.
   Featured Playlists has three initial editorial cards. The Showcase New Release Radar uses the
   supplied Spotify-sized logo at `apps/showcase/public/showcase-new-release-radar.png` and links to
   the supplied authorized Spotify playlist in a new tab; the remaining cards are static. About Us
   now includes the supplied mission, selection, and team copy.
+- Decorative dot-prefixed eyebrow labels were removed from every top-level Showcase hero, including
+  the private local genre-review page. Section-level labels remain where they identify content.
+- The public release catalog renders 50 matching releases per page while preserving the generated
+  newest-first order. Wide desktop layouts use five cards per row, then fall back to four, three,
+  two, and one column at narrower breakpoints. The bottom pager includes Previous, Next, direct
+  numbered page controls, and an ellipsis button that opens a complete page-picker dropdown.
+  Status, search, and genre changes reset to page 1. The live catalog has 406 released records,
+  which currently produces nine released pages.
+- The public Contact Us page places the working `showcasedmhq@gmail.com` email link directly beneath
+  the introductory copy. The former numbered contact cards, helper sentence, and email-format
+  template have been removed.
 - Checkpoint `b400ad3` (`feat: publish real Showcase release catalog`) contains the completed first
   real-data release bridge plus the requested About Us and playlist edits. It was pushed to
   `origin/codex/showcase-public-site` before artist and genre work began.
@@ -41,7 +52,7 @@ Updated: 2026-08-28 14:27 PDT
   persisted valid public name and was omitted. Releases inherit linked-artist genres unless a future
   release-specific override is supplied. Neutral artwork placeholders remain active.
 - Root scripts add `showcase:dev`, `showcase:build`, `showcase:publish`, and
-  `test:e2e:showcase`. Local development uses
+  `test:e2e:showcase`. The private evidence pass uses `showcase:genre-research`. Local development uses
   `pnpm showcase:dev -- --hostname 127.0.0.1 --port 3200` and `http://127.0.0.1:3200`.
 - Final validation passed: formatting, lint with zero warnings, all seven workspace type checks, 69
   unit files with 499 tests, 28 database integration files with 149 tests, the Showcase production
@@ -55,6 +66,66 @@ Updated: 2026-08-28 14:27 PDT
   placeholders, and link-preview metadata use its orange, pink, violet, and blue palette. Manrope
   and DM Mono remain unchanged. The former acid-lime page and social preview are stored under
   `docs/showcase-theme-archive`.
+
+## Showcase Genre Evidence Pipeline
+
+- `pnpm showcase:genre-research` performs a resumable, local-only evidence pass for unclassified
+  Showcase artists. It currently queries the official Discogs database search endpoint at a
+  conservative 2.6-second interval and combines those release styles with a small set of curated
+  official artist, official label, and AllMusic sources. It makes no Spotify or Apple request and
+  does not change scanner discovery, providers, playlists, or scheduling.
+- The completed August 30 pass researched all 324 artists that were unclassified when it started:
+  one HIGH, 196 MEDIUM, and 127 LOW. Source coverage was Discogs 324, official label 2, AllMusic 1,
+  and official artist 1. Last.fm requires separate API authorization, Beatport access was not
+  configured, MusicBrainz remains disabled under repository policy, and AllMusic plus official
+  sites do not provide a suitable bulk API. No SoundCloud or Bandcamp request was made.
+- The strict automation rule requires a reputable official, label, or AllMusic source plus an
+  independent corroborating source, overlapping normalized genres, no conflict, and no
+  `Other Electronic` placeholder. Only Camo & Krooked qualified; Drum & Bass was automatically
+  confirmed. The editor now reports 258 classified and 323 unclassified artists.
+- Seven Lions remains MEDIUM because Ophelia's melodic dubstep and trance evidence did not fully
+  overlap the Discogs release-style result. It is retained for editorial review, not published.
+  Discogs-only matches remain at most MEDIUM, and sparse or missing matches remain LOW.
+- Private evidence, URLs, summaries, conflicts, skips, and confirmation provenance are stored under
+  `%LOCALAPPDATA%\ShowcasePublicSite\editorial`. Only normalized genre assignments enter
+  `apps/showcase/lib/confirmed-artist-genres.json`; private evidence cannot reach public artist
+  pages. Existing manual decisions are never overwritten.
+- The private `/local/genre-review` UI now filters unclassified and classified artists separately,
+  filters HIGH, MEDIUM, and LOW evidence, displays source terms and conflicts, supports strict HIGH
+  bulk confirmation, individual multi-genre editing, Skip & Next, Save & Next, and labels manual,
+  automated, and catalog confirmation origins.
+- Genre normalization includes dnb, d&b, drum n bass, drum and bass, and riddim dubstep synonyms.
+  Deterministic parents are Riddim to Dubstep and Bass Music; Melodic Dubstep to Dubstep and Bass
+  Music; Experimental Bass and Midtempo Bass to Bass Music; and Bass House, Tech House,
+  Progressive House, and Electro House to House. Trap and Future Bass do not imply Bass Music.
+- Current verification: formatting and lint pass; all seven workspace type checks pass; 77 unit
+  files with 531 tests pass; 28 database integration files with 149 tests pass; the Showcase
+  production build generates 998 routes/pages; and all eight Showcase Playwright tests pass,
+  including the complete private genre-review workflow.
+
+## Showcase Neon Foundation
+
+- The owner credential at `%LOCALAPPDATA%\Showcase\neon-owner.env` was read only by the one-time
+  bootstrap. Its value was not printed, copied, committed, or placed in another environment file.
+- Neon now has a `showcase` schema, immutable `catalog_snapshots` table, `current_catalog` view, and
+  validated `publish_catalog` security-definer function for `showcase-public-v2` snapshots. The live
+  permission probe was rolled back, so setup added no catalog fixture or placeholder row.
+- `showcase_schema_owner` is a non-login object owner. `showcase_publisher` can read the current view
+  and execute only the validated publishing function; direct base-table writes and schema creation
+  are denied. `showcase_web_readonly` can select only from the current view; base-table reads and
+  publishing are denied. Both login roles are non-superuser, cannot create roles or databases, do
+  not bypass row-level security, and have bounded connection limits.
+- The direct publisher credential is stored at
+  `%LOCALAPPDATA%\Showcase\neon-publisher.env`. The pooled website credential is stored at
+  `%LOCALAPPDATA%\Showcase\neon-public-web.env`. ACL inheritance is disabled; only the current
+  Windows user and `SYSTEM` have explicit access. Neither file is inside a Git worktree.
+- `pnpm showcase:neon:verify` rechecks both application credentials without reading the owner file.
+  All twelve permission and rollback checks passed after setup. The public runtime and publisher are
+  not connected to Neon yet; the local generated JSON path remains active until a separate
+  integration milestone.
+- Schema, storage, rotation, and deployment-secret guidance is in `docs/showcase-neon.md`. The
+  website value must remain server-side and must never use a `NEXT_PUBLIC_*` variable. Only the
+  website credential should be copied into a future hosting secret manager.
 
 ## Production Baseline Repository
 
@@ -229,19 +300,21 @@ Updated: 2026-08-28 14:27 PDT
   `SHOWCASE_GENRE_ADMIN_ENABLED=true` and the request host is loopback. Its API also requires a
   same-origin loopback request for writes. The route is not included in public navigation or public
   site metadata.
-- The review queue sorts unclassified artists first, supports artist and genre search, shows current
-  confirmed tags, allows multiple fixed-taxonomy toggles, supports Save & Next, and allows later
-  editing of every artist. Empty assignments are allowed when an editor needs to return an artist to
-  the unclassified queue.
+- The review queue has selectable Unclassified and Classified tabs, with Unclassified as the
+  default. Search is scoped to the selected tab, confirmed artists can be reopened for editing, and
+  Save & Next stays within the active queue after an assignment changes classification. The tabs
+  support arrow, Home, and End key navigation. The current snapshot has 324 unclassified and 257
+  classified artists.
+- The editor shows current confirmed tags, allows multiple fixed-taxonomy toggles, and permits empty
+  assignments when an editor needs to return an artist to the unclassified queue.
 - Confirmed authoritative assignments use the public-safe
   `apps/showcase/lib/confirmed-artist-genres.json` contract. The runtime overlays those assignments
   on future generated snapshots and recomputes inherited release genres. Only artist public IDs,
   genre slugs, contract version, and update time are stored there.
 - Suggestions are generated from selected cited public research, model-assisted editorial knowledge,
   reliable label rules, and linked collaborator genres, in that priority order. They include genre
-  slugs, high/medium/low confidence, an evidence summary, and optional public source links. The 340
-  current unclassified artists receive 4 high-confidence, 57 medium-confidence, and 279 low-confidence
-  suggestions. Four currently unclassified suggestions have attached public sources.
+  slugs, high/medium/low confidence, an evidence summary, and optional public source links. All 324
+  currently unclassified artists have private suggestions.
 - Suggestion documents live outside source control under
   `%LOCALAPPDATA%\ShowcasePublicSite\editorial\artist-genre-reviews.json`. They are private local
   review state, are never imported by `public-catalog.ts`, and cannot publish until the user chooses
@@ -289,3 +362,14 @@ Updated: 2026-08-28 14:27 PDT
   build with 998 generated pages, and eight Showcase Playwright tests. Browser inspection also
   confirmed the exact Apple image URL/dimensions/link on a matched release and the neutral hero
   placeholder on an unmatched release.
+- Release pagination validation passed on 2026-08-30: formatting, lint with zero warnings, all seven
+  workspace type checks, 75 unit files with 519 tests, 28 database integration files with 149 tests,
+  the Showcase production build embedded in the Playwright run, and all eight Showcase Playwright
+  tests. Live browser inspection confirmed 50 rendered cards, five computed desktop columns at
+  1400px, direct navigation to page 2 beginning at release 51, filter reset to page 1, and the
+  two-column responsive fallback at 760px.
+- Genre review tab validation passed on 2026-08-30: formatting, lint with zero warnings, all seven
+  workspace type checks, 75 unit files with 519 tests, 28 database integration files with 149 tests,
+  a 998-page Showcase production build, and all eight Showcase Playwright tests. Live browser
+  inspection confirmed both tabs, classified-only search results, and reopening AHEE with its four
+  saved genre assignments available for editing.

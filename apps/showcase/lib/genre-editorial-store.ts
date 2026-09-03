@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
 
@@ -10,6 +11,7 @@ import {
   type GenreReviewDataset,
   type SaveArtistGenreReview,
 } from "./genre-editorial-contract";
+import { getGenreEvidencePath, readGenreEvidenceDocument } from "./genre-evidence-store";
 import { suggestArtistGenres } from "./genre-suggestions";
 import { normalizeGenreSlugs, showcaseGenreTaxonomy, showcaseGenreSlugs } from "./genre-taxonomy";
 import { publicCatalog, type PublicArtist } from "./public-catalog";
@@ -30,6 +32,18 @@ const privateReviewsSchema = z.object({
   updatedAt: z.string().datetime().nullable(),
   suggestions: z.record(z.string(), artistGenreSuggestionSchema),
   reviewedAtByArtistId: z.record(z.string(), z.string().datetime()),
+  confirmationOrigins: z
+    .record(
+      z.string(),
+      z.object({
+        mode: z.enum(["manual", "automated"]),
+        confirmedAt: z.string().datetime(),
+        evidenceResearchedAt: z.string().datetime().optional(),
+        evidenceSnapshot: artistGenreSuggestionSchema.optional(),
+      }),
+    )
+    .default({}),
+  skippedAtByArtistId: z.record(z.string(), z.string().datetime()).default({}),
 });
 
 type ConfirmedGenresDocument = z.infer<typeof confirmedGenresSchema>;
@@ -38,13 +52,14 @@ type PrivateReviewsDocument = z.infer<typeof privateReviewsSchema>;
 export interface GenreEditorialStoreOptions {
   readonly confirmedGenresPath?: string;
   readonly privateReviewsPath?: string;
+  readonly evidencePath?: string;
   readonly now?: () => Date;
 }
 
-function getDefaultConfirmedGenresPath(): string {
+export function getDefaultConfirmedGenresPath(): string {
   return (
     process.env.SHOWCASE_CONFIRMED_GENRES_PATH ??
-    resolve(process.cwd(), "lib", "confirmed-artist-genres.json")
+    resolve(dirname(fileURLToPath(import.meta.url)), "confirmed-artist-genres.json")
   );
 }
 
@@ -89,16 +104,20 @@ function emptyPrivateDocument(): PrivateReviewsDocument {
     updatedAt: null,
     suggestions: {},
     reviewedAtByArtistId: {},
+    confirmationOrigins: {},
+    skippedAtByArtistId: {},
   };
 }
 
 function paths(options: GenreEditorialStoreOptions): {
   confirmedGenresPath: string;
   privateReviewsPath: string;
+  evidencePath: string;
 } {
   return {
     confirmedGenresPath: options.confirmedGenresPath ?? getDefaultConfirmedGenresPath(),
     privateReviewsPath: options.privateReviewsPath ?? getDefaultPrivateReviewsPath(),
+    evidencePath: options.evidencePath ?? getGenreEvidencePath(),
   };
 }
 
@@ -169,11 +188,23 @@ export async function getGenreReviewDataset(
   options: GenreEditorialStoreOptions = {},
 ): Promise<GenreReviewDataset> {
   const { confirmed, privateReviews } = await loadDocuments(options);
+  const evidence = await readGenreEvidenceDocument(paths(options).evidencePath);
   const artists = applyConfirmations(publicCatalog.artists, confirmed);
   const reviewsWithSuggestions = await ensureSuggestions(artists, privateReviews, options);
   const editorialArtists = artists
     .map((artist) => {
-      const suggestion = reviewsWithSuggestions.suggestions[artist.publicId];
+      const evidenceSuggestion = evidence.records[artist.publicId]?.suggestion;
+      const confirmationRecord = reviewsWithSuggestions.confirmationOrigins[artist.publicId];
+      const suggestion =
+        evidenceSuggestion ??
+        confirmationRecord?.evidenceSnapshot ??
+        (artist.genreSlugs.length === 0
+          ? reviewsWithSuggestions.suggestions[artist.publicId]
+          : undefined);
+      const storedOrigin = reviewsWithSuggestions.confirmationOrigins[artist.publicId]?.mode;
+      const hasConfirmedAssignment = confirmed.assignments.some(
+        (assignment) => assignment.publicId === artist.publicId,
+      );
       return {
         publicId: artist.publicId,
         slug: artist.slug,
@@ -181,6 +212,9 @@ export async function getGenreReviewDataset(
         labelAssociations: artist.labelAssociations ?? [],
         genreSlugs: artist.genreSlugs,
         ...(suggestion === undefined ? {} : { suggestion }),
+        confirmationOrigin:
+          storedOrigin ?? (hasConfirmedAssignment ? "manual" : ("catalog" as const)),
+        skipped: reviewsWithSuggestions.skippedAtByArtistId[artist.publicId] !== undefined,
       };
     })
     .sort((left, right) => {
@@ -191,11 +225,20 @@ export async function getGenreReviewDataset(
         : left.name.localeCompare(right.name);
     });
   const classifiedCount = editorialArtists.filter((artist) => artist.genreSlugs.length > 0).length;
+  const confidenceCounts = { high: 0, medium: 0, low: 0 };
+  let eligibleHighCount = 0;
+  for (const artist of editorialArtists) {
+    if (artist.genreSlugs.length > 0 || artist.suggestion === undefined) continue;
+    confidenceCounts[artist.suggestion.confidence] += 1;
+    if (artist.suggestion.automationEligible === true) eligibleHighCount += 1;
+  }
   return {
     taxonomy: showcaseGenreTaxonomy,
     artists: editorialArtists,
     classifiedCount,
     unclassifiedCount: editorialArtists.length - classifiedCount,
+    eligibleHighCount,
+    confidenceCounts,
   };
 }
 
@@ -230,6 +273,102 @@ export async function saveArtistGenreReview(
       ...privateReviews.reviewedAtByArtistId,
       [parsed.publicId]: timestamp,
     },
+    confirmationOrigins: {
+      ...privateReviews.confirmationOrigins,
+      [parsed.publicId]: { mode: "manual", confirmedAt: timestamp },
+    },
+    skippedAtByArtistId: Object.fromEntries(
+      Object.entries(privateReviews.skippedAtByArtistId).filter(
+        ([publicId]) => publicId !== parsed.publicId,
+      ),
+    ),
+  };
+  await Promise.all([
+    writeJsonAtomically(resolved.confirmedGenresPath, nextConfirmed),
+    writeJsonAtomically(resolved.privateReviewsPath, nextPrivate),
+  ]);
+  return getGenreReviewDataset(options);
+}
+
+export async function skipArtistGenreReview(
+  publicId: string,
+  options: GenreEditorialStoreOptions = {},
+): Promise<GenreReviewDataset> {
+  if (!/^artist_[a-z0-9]+$/.test(publicId)) throw new Error("Invalid Showcase artist ID.");
+  if (!publicCatalog.artists.some((artist) => artist.publicId === publicId)) {
+    throw new Error("Unknown Showcase artist.");
+  }
+  const resolved = paths(options);
+  const { privateReviews } = await loadDocuments(options);
+  const timestamp = (options.now ?? (() => new Date()))().toISOString();
+  await writeJsonAtomically(resolved.privateReviewsPath, {
+    ...privateReviews,
+    updatedAt: timestamp,
+    skippedAtByArtistId: {
+      ...privateReviews.skippedAtByArtistId,
+      [publicId]: timestamp,
+    },
+  } satisfies PrivateReviewsDocument);
+  return getGenreReviewDataset(options);
+}
+
+export async function autoConfirmEligibleHighGenres(
+  options: GenreEditorialStoreOptions = {},
+): Promise<GenreReviewDataset> {
+  const resolved = paths(options);
+  const [{ confirmed, privateReviews }, evidence] = await Promise.all([
+    loadDocuments(options),
+    readGenreEvidenceDocument(resolved.evidencePath),
+  ]);
+  const currentlyAssigned = new Map<string, readonly string[]>(
+    applyConfirmations(publicCatalog.artists, confirmed).map((artist) => [
+      artist.publicId,
+      artist.genreSlugs,
+    ]),
+  );
+  const manuallyDecidedIds = new Set(
+    confirmed.assignments.flatMap((assignment) =>
+      privateReviews.confirmationOrigins[assignment.publicId]?.mode === "automated"
+        ? []
+        : [assignment.publicId],
+    ),
+  );
+  const candidates = Object.values(evidence.records).filter(
+    (record) =>
+      record.suggestion.confidence === "high" &&
+      record.suggestion.automationEligible === true &&
+      !manuallyDecidedIds.has(record.publicId) &&
+      privateReviews.skippedAtByArtistId[record.publicId] === undefined &&
+      (currentlyAssigned.get(record.publicId)?.length ?? 0) === 0,
+  );
+  if (candidates.length === 0) return getGenreReviewDataset(options);
+
+  const timestamp = (options.now ?? (() => new Date()))().toISOString();
+  const candidateIds = new Set(candidates.map((candidate) => candidate.publicId));
+  const nextConfirmed: ConfirmedGenresDocument = {
+    ...confirmed,
+    updatedAt: timestamp,
+    assignments: [
+      ...confirmed.assignments.filter((assignment) => !candidateIds.has(assignment.publicId)),
+      ...candidates.map((candidate) => ({
+        publicId: candidate.publicId,
+        genreSlugs: normalizeGenreSlugs(candidate.suggestion.genreSlugs),
+      })),
+    ].sort((left, right) => left.publicId.localeCompare(right.publicId)),
+  };
+  const nextOrigins = { ...privateReviews.confirmationOrigins };
+  for (const candidate of candidates) {
+    nextOrigins[candidate.publicId] = {
+      mode: "automated",
+      confirmedAt: timestamp,
+      evidenceResearchedAt: candidate.researchedAt,
+      evidenceSnapshot: candidate.suggestion,
+    };
+  }
+  const nextPrivate: PrivateReviewsDocument = {
+    ...privateReviews,
+    updatedAt: timestamp,
+    confirmationOrigins: nextOrigins,
   };
   await Promise.all([
     writeJsonAtomically(resolved.confirmedGenresPath, nextConfirmed),

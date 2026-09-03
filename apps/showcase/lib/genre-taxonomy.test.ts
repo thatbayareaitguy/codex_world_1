@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeGenreSlugs, showcaseGenreTaxonomy } from "./genre-taxonomy";
+import {
+  normalizeEvidenceTerm,
+  normalizeGenreSlugs,
+  showcaseGenreTaxonomy,
+} from "./genre-taxonomy";
 
 const expectedTaxonomy = [
   ["Bass Music", "bass-music"],
@@ -38,5 +42,24 @@ describe("Showcase genre taxonomy", () => {
       "hard-dance",
       "other-electronic",
     ]);
+  });
+
+  it("expands only explicit conservative parent relationships", () => {
+    expect(normalizeGenreSlugs(["riddim", "bass-house", "experimental-bass"])).toEqual([
+      "bass-music",
+      "dubstep",
+      "riddim",
+      "experimental-bass",
+      "house",
+      "bass-house",
+    ]);
+    expect(normalizeGenreSlugs(["trap", "future-bass"])).toEqual(["trap", "future-bass"]);
+  });
+
+  it("normalizes common public-source terminology", () => {
+    expect(normalizeEvidenceTerm("dnb")).toEqual(["drum-and-bass"]);
+    expect(normalizeEvidenceTerm("riddim dubstep")).toEqual(["bass-music", "dubstep", "riddim"]);
+    expect(normalizeEvidenceTerm("bass house")).toEqual(["house", "bass-house"]);
+    expect(normalizeEvidenceTerm("psychedelic rock")).toEqual([]);
   });
 });

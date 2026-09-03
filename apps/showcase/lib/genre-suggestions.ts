@@ -263,33 +263,76 @@ function findCollaboratorSuggestion(
   };
 }
 
+function evidenceSourceKind(
+  source: ArtistGenreSuggestion["sources"][number],
+): ArtistGenreSuggestion["sources"][number]["kind"] {
+  const hostname = new URL(source.url).hostname.toLowerCase();
+  if (hostname.endsWith("allmusic.com")) return "allmusic";
+  if (hostname.endsWith("monstercat.com") || hostname.endsWith("opheliarecords.com")) {
+    return "official-label";
+  }
+  if (source.title.toLowerCase().includes("official")) return "official-artist";
+  return "editorial-knowledge";
+}
+
+export function getCuratedGenreSuggestion(artist: PublicArtist): ArtistGenreSuggestion | undefined {
+  const editorialSlug = artist.slug.replace(/-[a-f0-9]{8}$/, "");
+  const sourced = sourcedSeeds[editorialSlug];
+  if (sourced === undefined) return undefined;
+  const genreSlugs = normalizeGenreSlugs(sourced.genreSlugs);
+  return {
+    ...sourced,
+    genreSlugs,
+    confidence: "medium",
+    sources: sourced.sources.map((source) => ({
+      ...source,
+      kind: evidenceSourceKind(source),
+      terms: genreSlugs,
+      normalizedGenreSlugs: genreSlugs,
+      evidenceCount: 1,
+    })),
+    conflicts: [],
+    automationEligible: false,
+    researchStatus: "partial",
+  };
+}
+
 export function suggestArtistGenres(
   artist: PublicArtist,
   releases: readonly PublicRelease[],
   artistsBySlug: ReadonlyMap<string, PublicArtist>,
 ): ArtistGenreSuggestion {
   const editorialSlug = artist.slug.replace(/-[a-f0-9]{8}$/, "");
-  const sourced = sourcedSeeds[editorialSlug];
-  if (sourced !== undefined)
-    return { ...sourced, genreSlugs: normalizeGenreSlugs(sourced.genreSlugs) };
+  const sourced = getCuratedGenreSuggestion(artist);
+  if (sourced !== undefined) return sourced;
   const knowledge = knowledgeSeeds[editorialSlug];
   if (knowledge !== undefined) {
     return {
       genreSlugs: normalizeGenreSlugs(knowledge),
-      confidence: "medium",
+      confidence: "low",
       evidenceSummary:
         "Model-assisted editorial suggestion based on generally recognized artist style. No source has been attached yet, so verify before publishing.",
       sources: [],
+      conflicts: [],
+      automationEligible: false,
+      researchStatus: "legacy",
     };
   }
-  return (
+  const fallback =
     findLabelSuggestion(artist) ??
-    findCollaboratorSuggestion(artist, releases, artistsBySlug) ?? {
+    findCollaboratorSuggestion(artist, releases, artistsBySlug) ??
+    ({
       genreSlugs: ["other-electronic"],
       confidence: "low",
       evidenceSummary:
         "No sufficiently specific public evidence is available in the local catalog. Other Electronic is a review placeholder, not a published classification.",
       sources: [],
-    }
-  );
+    } satisfies ArtistGenreSuggestion);
+  return {
+    ...fallback,
+    confidence: "low",
+    conflicts: [],
+    automationEligible: false,
+    researchStatus: "legacy",
+  };
 }

@@ -23,9 +23,6 @@ export default function HomePage() {
     <>
       <section className="hero page-shell">
         <div className="hero-copy">
-          <p className="kicker">
-            <span /> UPDATED WEEKLY
-          </p>
           <h1>
             Find your next
             <br />

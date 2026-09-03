@@ -33,8 +33,21 @@ from public navigation.
 The editor shows unclassified artists first, supports search and multi-genre assignments, and
 offers a Save & Next workflow. Confirmed public-safe assignments are stored in
 `lib/confirmed-artist-genres.json`. Research suggestions and evidence are stored only under
-`%LOCALAPPDATA%\ShowcasePublicSite\editorial` and never enter the public catalog unless an editor
-chooses genres and saves them.
+`%LOCALAPPDATA%\ShowcasePublicSite\editorial` and enter the public catalog only through a manual
+save or the strict, independently corroborated HIGH-confidence automation rule.
+
+Run the resumable local evidence pass from the repository root:
+
+```powershell
+pnpm showcase:genre-research
+```
+
+The command uses only the official Discogs database endpoint, makes no Spotify or Apple request,
+checkpoints after every artist, and keeps source evidence in the ignored local editorial directory.
+Use `--refresh` to replace cached research. `--apply-high` applies only independently corroborated,
+conflict-free HIGH records; manually decided and skipped artists are never overwritten. The editor
+can filter HIGH, MEDIUM, and LOW suggestions, show source terms and conflicts, skip an artist, and
+bulk-confirm only eligible HIGH records.
 
 ## Branding
 
@@ -84,3 +97,15 @@ parts only from `media-feed.cdn-apple.com`, and accepts artwork only from Apple'
 `is1-ssl` through `is5-ssl.mzstatic.com` image hosts. Artwork remains unchanged, is never downloaded,
 proxied, cropped, or overlaid, and always links to the corresponding Apple Music album. Releases
 without an exact Feed match retain the neutral placeholder.
+
+## Neon database foundation
+
+The owner-only Neon bootstrap and least-privilege design are documented in
+`docs/showcase-neon.md`. The local publisher credential can only execute the validated snapshot
+publishing function and read the current public view. The website credential can only read that
+view and uses Neon's pooled endpoint. Both credentials live under `%LOCALAPPDATA%\Showcase` with
+restricted Windows ACLs and never enter the repository.
+
+This milestone creates the remote schema and roles only. Showcase still serves the generated local
+JSON catalog until a separate database-integration milestone deliberately changes the runtime and
+publisher paths.

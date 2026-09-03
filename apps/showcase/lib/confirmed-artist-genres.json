@@ -1,10 +1,18 @@
 {
   "contractVersion": "showcase-confirmed-artist-genres-v1",
-  "updatedAt": "2026-08-28T23:06:34.068Z",
+  "updatedAt": "2026-08-31T00:04:56.575Z",
   "assignments": [
+    {
+      "publicId": "artist_000d51e410f587182126",
+      "genreSlugs": ["bass-music", "dubstep"]
+    },
     {
       "publicId": "artist_20521040b44813a3e2a6",
       "genreSlugs": ["bass-music", "dubstep"]
+    },
+    {
+      "publicId": "artist_2f92326507cb9a18a3ec",
+      "genreSlugs": ["bass-music", "dubstep", "melodic-dubstep"]
     },
     {
       "publicId": "artist_30291aafddcbdcd7e739",
@@ -12,6 +20,10 @@
     },
     {
       "publicId": "artist_3801d6b769d34aff0199",
+      "genreSlugs": ["bass-music", "dubstep", "experimental-bass"]
+    },
+    {
+      "publicId": "artist_3c2cf5aef0b0428ccf70",
       "genreSlugs": ["bass-music", "dubstep", "experimental-bass"]
     },
     {
@@ -25,6 +37,30 @@
     {
       "publicId": "artist_8457b143b4415a5d853e",
       "genreSlugs": ["bass-music", "dubstep"]
+    },
+    {
+      "publicId": "artist_9172a47b386269fa4afe",
+      "genreSlugs": ["house"]
+    },
+    {
+      "publicId": "artist_9df24714a4bb16fa264c",
+      "genreSlugs": ["bass-music", "drum-and-bass"]
+    },
+    {
+      "publicId": "artist_a9c6281d5f9237f312fe",
+      "genreSlugs": ["bass-music", "dubstep", "midtempo-bass"]
+    },
+    {
+      "publicId": "artist_aee8aabe9fe88ee2d85b",
+      "genreSlugs": ["drum-and-bass"]
+    },
+    {
+      "publicId": "artist_b85b5b791472cf20f8c2",
+      "genreSlugs": ["bass-music", "trap"]
+    },
+    {
+      "publicId": "artist_f0bc47b6481b90befd40",
+      "genreSlugs": ["bass-music", "dubstep", "melodic-dubstep", "experimental-bass"]
     }
   ]
 }
