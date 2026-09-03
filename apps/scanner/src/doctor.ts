@@ -20,7 +20,8 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { accessSync, constants, existsSync, readdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
-import { backupDirectory, logDirectory } from "./paths";
+import { spawnSync } from "node:child_process";
+import { applicationDataDirectory, backupDirectory, logDirectory } from "./paths";
 
 export type DoctorState = "READY" | "OPTIONAL_PROVIDER_DISABLED" | "ACTION_REQUIRED" | "ERROR";
 
@@ -109,6 +110,12 @@ export interface DoctorDependencies {
   now?: () => Date;
   portProbe?: (port: number) => Promise<"available" | "application" | "occupied">;
   pnpmVersion?: string;
+  webRuntimeProbe?: (environment: NodeJS.ProcessEnv) => WebRuntimeStatus;
+}
+
+export interface WebRuntimeStatus {
+  supervisor: "running" | "stopped" | "unknown";
+  task: "disabled" | "missing" | "registered" | "unknown";
 }
 
 export async function collectDoctorReport(
@@ -394,15 +401,26 @@ export async function collectDoctorReport(
 
   const port = Number(environment.PORT ?? "3000");
   const portState = await (dependencies.portProbe ?? probePort)(port);
+  const webRuntime =
+    portState === "application"
+      ? undefined
+      : (dependencies.webRuntimeProbe ?? probeWebRuntime)(environment);
+  const runtimeSummary = webRuntime
+    ? ` Supervisor ${webRuntime.supervisor}; startup task ${webRuntime.task}.`
+    : "";
   checks.push(
     portState === "application"
-      ? ready("Application port", `TS New Music Scanner is responding on 127.0.0.1:${port}.`)
+      ? ready("Application health", `TS New Music Scanner is responding on 127.0.0.1:${port}.`)
       : portState === "available"
-        ? ready("Application port", `Port ${port} is available on loopback.`)
+        ? action(
+            "Application health",
+            `TS New Music Scanner is offline; loopback port ${port} is available.${runtimeSummary}`,
+            "Wait up to five minutes for the web watchdog, then inspect the web supervisor task and logs if health does not recover.",
+          )
         : error(
-            "Application port",
-            `Port ${port} is occupied by another process.`,
-            "Stop the conflicting process or configure another local port.",
+            "Application health",
+            `TS New Music Scanner health is offline and loopback port ${port} is occupied.${runtimeSummary}`,
+            "Inspect the process using the port and the web supervisor task before restarting the application.",
           ),
   );
 
@@ -820,6 +838,38 @@ async function probePort(port: number): Promise<"available" | "application" | "o
     server.once("error", () => resolvePromise("occupied"));
     server.listen(port, "127.0.0.1", () => server.close(() => resolvePromise("available")));
   });
+}
+
+function probeWebRuntime(environment: NodeJS.ProcessEnv): WebRuntimeStatus {
+  const pidPath = join(applicationDataDirectory(environment), "runtime", "web-supervisor.pid");
+  let supervisor: WebRuntimeStatus["supervisor"] = "stopped";
+  try {
+    const pid = Number.parseInt(readFileSync(pidPath, "utf8").trim(), 10);
+    if (Number.isSafeInteger(pid) && pid > 0) {
+      try {
+        process.kill(pid, 0);
+        supervisor = "running";
+      } catch {
+        supervisor = "stopped";
+      }
+    }
+  } catch {
+    if (existsSync(pidPath)) supervisor = "unknown";
+  }
+
+  if (process.platform !== "win32") return { supervisor, task: "unknown" };
+  try {
+    const result = spawnSync(
+      "schtasks.exe",
+      ["/Query", "/TN", "TS New Music Radar Web Application", "/XML"],
+      { encoding: "utf8", windowsHide: true },
+    );
+    if (result.status !== 0) return { supervisor, task: "missing" };
+    const task = /<Enabled>\s*false\s*<\/Enabled>/i.test(result.stdout) ? "disabled" : "registered";
+    return { supervisor, task };
+  } catch {
+    return { supervisor, task: "unknown" };
+  }
 }
 
 function safeDiagnosticError(value: unknown): string {

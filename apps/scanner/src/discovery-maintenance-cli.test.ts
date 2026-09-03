@@ -93,6 +93,41 @@ describe("discovery maintenance loop", () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
+  it("uses the shared keep-awake owner for a near-term broad capacity wait", async () => {
+    const release = vi.fn(() => Promise.resolve());
+    const acquirePower = vi.fn(() => ({ release }));
+    let clock = Date.parse("2026-08-29T16:00:00.000Z");
+    const decisions: DiscoveryMaintenanceDecision[] = [
+      {
+        dynamicWakeAt: null,
+        holdPower: true,
+        reason: "broad_capacity_wait",
+        runNow: false,
+        waitUntil: new Date(clock + 30_000),
+      },
+      decision("no_work", false, false),
+    ];
+    await runDiscoveryMaintenanceLoop({
+      acquirePower,
+      maximumRuntimeMs: 60_000,
+      now: () => new Date(clock),
+      observe: () => Promise.resolve(decisions.shift()!),
+      runId: "broad-capacity-run",
+      runTick: () => Promise.resolve(),
+      sleep: (milliseconds) => {
+        clock += milliseconds;
+        return Promise.resolve();
+      },
+      updateWake: () => Promise.resolve(),
+    });
+    expect(acquirePower).toHaveBeenCalledWith(60_000, {
+      phase: "near_term_capacity_wait",
+      reason: "broad_capacity_wait",
+      runId: "broad-capacity-run",
+    });
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
   it("stops at the absolute runtime deadline and releases power", async () => {
     const release = vi.fn(() => Promise.resolve());
     const acquirePower = vi.fn(() => ({ release }));

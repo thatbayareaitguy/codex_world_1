@@ -1,18 +1,111 @@
 # AI Handoff
 
-Updated: 2026-08-29 14:25 PDT
+Updated: 2026-09-02 21:14 PDT
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`
-- Goal starting HEAD and upstream:
-  `37c45603d046183fe8ce0b4aa8f3243f758a98d8`
+- Current reliability-goal starting HEAD and upstream:
+  `5845943310cd0e6430b52009952feec78e8b2351`
 - The tracked worktree was clean at goal start. The feed/review work described as uncommitted in the
   goal had already been coherently committed in `8d3c8ffc8e341c6bf713ef68818388603e903e32`
   (`fix: group mirrored release reviews`). It was preserved and extended, not reverted or
   duplicated.
 - `outputs/` is unrelated, remains untracked, and is excluded from the intended commit.
 - No secret or `.env` file was changed.
+
+## Production Reliability Completion (2026-09-02)
+
+### Web application watchdog
+
+- Root cause of the August 29 through September 2 dashboard outage: the web supervisor and child
+  process had both ended without a logged application crash, leaving stale PID files. The existing
+  Windows task had only an at-logon trigger, so Task Scheduler had no reason to launch the
+  supervisor again while the same login session remained active.
+- `TS New Music Radar Web Application` now has `WebAtLogon` plus an awake-only `WebWatchdog` trigger
+  every five minutes. It remains hidden, `IgnoreNew`, `StartWhenAvailable`, restart-on-failure, and
+  `WakeToRun=false`. Its action remains direct:
+  `C:\Windows\System32\conhost.exe --headless "C:\Program Files\nodejs\node.exe" --import tsx "C:\Users\taysh\Documents\Codex\codex_world_1\apps\scanner\src\web-supervisor-cli.ts"`.
+- Registration at 20:53 PDT recovered the already-offline application at 20:54:25 without a login.
+  A controlled stop then terminated only the verified supervisor PID 62232 and web PID 42640.
+  Doctor correctly changed to `ACTION_REQUIRED`, reported the app offline and port 3000 free, and
+  identified the supervisor as stopped and task as registered. The 20:59:21 watchdog run restored
+  health at 20:59:27 without manual task invocation. The recovered tree contained one headless
+  console host, one supervisor PID 50436, and one Next.js child PID 65372 bound to
+  `127.0.0.1:3000`; there was no duplicate supervisor.
+- Doctor now calls the health endpoint first. A free port without a responding application is
+  `ACTION_REQUIRED`, not `READY`; a non-health process occupying the port is an error. Offline
+  diagnostics include the stale/live supervisor PID state and whether the Windows startup task is
+  registered, disabled, missing, or unavailable.
+
+### Capacity-aware broad Spotify wake
+
+- The maintenance decision now treats broad Spotify work that is otherwise eligible but blocked
+  only by the rolling Artist Albums allowance the same way as priority capacity waits. If capacity
+  returns within 15 minutes, the existing single keep-awake owner holds
+  `ES_SYSTEM_REQUIRED`. For a longer wait it releases power and maintains one
+  `DynamicCapacityWake` ten minutes before the database-calculated next capacity time. Daily artist
+  and request ceilings, provider cooldowns, the 80-call trailing allowance, 20-call priority
+  reserve, queue priority, discovery behavior, and playlist safeguards are unchanged.
+- The capacity time must itself fall on Saturday through Wednesday in Pacific time. A natural
+  Wednesday-night tick initially exposed that the first implementation would schedule a Thursday
+  morning wake even though broad work is disabled Thursday and Friday. The guard was added before
+  commit, and the next ordinary minute tick removed that trigger at 21:10:26 with result 0. The
+  maintenance task returned to exactly its four fixed triggers and next runs Thursday at 20:50.
+- A live task-only test used future times and made no provider request: the first update created one
+  `DynamicCapacityWake`, the second replaced it while the count remained one, and cleanup removed
+  it. Throughout the test the fixed IDs remained `BroadMorningWake`, `BroadEveningWake`,
+  `ThursdayAppleWake`, and `FridayCatchupWake`. Final state has zero temporary dynamic wakes,
+  `WakeToRun=true`, `IgnoreNew`, and `StartWhenAvailable=true`.
+- Offline loop tests prove a near-term broad wait acquires the shared keep-awake owner with reason
+  `broad_capacity_wait`, releases it when work becomes non-runnable, and uses the same durable
+  activation, owner, helper, reason, phase, release, and abnormal-recovery evidence as the already
+  live-validated maintenance helper. A natural capacity-bound sleep cycle is still needed to prove
+  this new broad decision end to end; no provider work was started solely for validation.
+
+### Current task and production evidence
+
+- At final task inspection the maintenance task was enabled and had last result 0 at 20:50 PDT with
+  zero missed runs. The recurring minute task was enabled, awake-only, and returning 0. One minute
+  trigger was reported missed while another bounded invocation was active; `IgnoreNew` prevented
+  overlap and later ticks continued normally. The web task was enabled and running with zero missed
+  runs. While its long-running supervisor is healthy, later five-minute triggers are intentionally
+  rejected by `IgnoreNew`; Windows exposes that no-overlap decision as `0x800710E0` even though the
+  supervisor remains running and health is `ok`. This is not a child-process failure or missed run.
+- Production PostgreSQL remains healthy on `127.0.0.1:5432`, all 31 migrations are applied, and the
+  Compose `db` service still has `restart: unless-stopped`. Doctor is `READY` after watchdog
+  recovery. There are no stale locks, active provider leases, active cooldowns, or Spotify 429s in
+  the last 24 hours.
+- Read-only scheduler status at 20:59 PDT showed phase `broad_spotify`, 582 target artists, 561 due,
+  21 checked in the prior 24 hours, 52 of 80 trailing Artist Albums calls used, 8 broad calls then
+  available, and zero pending playlist additions. The last full Apple workflow completed 583 of
+  583 with zero failures; the last catch-up also completed 583 of 583 with zero failures. The next
+  normal workflows remain Thursday September 3 at 21:00 and Friday September 4 at 09:00 Pacific.
+- The exports dashboard reported 0 ready, 1,278 exported feed records, and 112 system-waiting
+  blocks. It did not report a user-actionable playlist block. No provider request or playlist write
+  was initiated for this reliability validation.
+- Browser smoke rendered the recovered feed, exports page, and System Status page. The web server's
+  ignored `.env` currently has Spotify and dormant MusicBrainz enabled but does not enable Apple or
+  the scheduler; the protected production scheduler environment correctly has Apple and both
+  schedulers enabled and MusicBrainz disabled. This pre-existing configuration split explains why
+  provider enabled labels in System Status do not represent the production task. No `.env` was
+  changed in this pass. Aligning the web-only flags is a separate configuration correction.
+- Task Scheduler Operational history is still disabled. The current limited identity can inspect
+  the setting but cannot enable it, and `powercfg /waketimers` likewise requires elevation. From an
+  Administrator Terminal, enable future task event history with
+  `wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true`. Neither limitation blocks
+  normal task execution.
+
+### Validation
+
+- Formatting passed. Lint passed after correcting one unused local variable. TypeScript passed
+  across all six workspace projects. Unit tests passed: 75 files, 531 tests. PostgreSQL integration
+  tests passed against an isolated PostgreSQL 17 container on port 5434: 28 files, 157 tests. The
+  production build generated all 28 pages and routes. Chromium passed all 32 tests against a second
+  isolated port-5434 database. Both temporary containers were verified by exact name and port and
+  removed; production and Showcase databases were not touched.
+- Final Doctor, health, task snapshot, migration count, and `git diff --check` passed immediately
+  before commit. The commit and push result are recorded in the final task report.
 
 ## Review Completion And Broad Spotify Coverage Audit (2026-08-29)
 

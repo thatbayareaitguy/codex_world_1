@@ -32,6 +32,7 @@ export interface DiscoveryMaintenanceDecision {
   reason:
     | "apple_due"
     | "apple_due_soon"
+    | "broad_capacity_wait"
     | "broad_work"
     | "cooldown_wait"
     | "no_work"
@@ -102,7 +103,7 @@ export function decideDiscoveryMaintenance(
     );
   }
 
-  const broadAllowed = [0, 1, 2, 3, 6].includes(pacificWeekday(now));
+  const broadAllowed = isBroadSpotifyDay(now);
   const broadBacklog =
     snapshot.spotify.dueArtistCount > 0 ||
     snapshot.spotify.backlog.artist_reconciliation > 0 ||
@@ -118,6 +119,26 @@ export function decideDiscoveryMaintenance(
   if (broadAllowed && broadBacklog && broadCapacity && !snapshot.spotify.cooldownActive) {
     return runDecision("broad_work");
   }
+  const broadDailyCapacity =
+    snapshot.spotify.dailyBudget.broadArtistsUsed <
+      snapshot.spotify.dailyBudget.broadArtistsLimit &&
+    snapshot.spotify.dailyBudget.broadRequestsUsed <
+      snapshot.spotify.dailyBudget.broadRequestsLimit;
+  if (
+    broadAllowed &&
+    broadBacklog &&
+    broadDailyCapacity &&
+    !snapshot.spotify.cooldownActive &&
+    snapshot.spotify.endpointBudget.artistAlbums.broadRemaining === 0 &&
+    snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt !== null &&
+    isBroadSpotifyDay(snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt)
+  ) {
+    return blockedDecision(
+      "broad_capacity_wait",
+      snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt,
+      now,
+    );
+  }
   return {
     dynamicWakeAt: null,
     holdPower: false,
@@ -128,7 +149,7 @@ export function decideDiscoveryMaintenance(
 }
 
 function blockedDecision(
-  reason: "cooldown_wait" | "priority_capacity_wait",
+  reason: "broad_capacity_wait" | "cooldown_wait" | "priority_capacity_wait",
   nextRunnableAt: Date | null,
   now: Date,
 ): DiscoveryMaintenanceDecision {
@@ -160,6 +181,10 @@ function runDecision(
   reason: "apple_due" | "broad_work" | "playlist_work" | "priority_work",
 ): DiscoveryMaintenanceDecision {
   return { dynamicWakeAt: null, holdPower: true, reason, runNow: true, waitUntil: null };
+}
+
+function isBroadSpotifyDay(now: Date): boolean {
+  return [0, 1, 2, 3, 6].includes(pacificWeekday(now));
 }
 
 function pacificWeekday(now: Date): number {

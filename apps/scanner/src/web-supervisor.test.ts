@@ -42,7 +42,7 @@ describe("web supervisor", () => {
     expect(readFileSync(pidPath, "utf8")).toBe("202");
   });
 
-  it("registers a direct, hidden, non-overlapping at-logon task with recovery", () => {
+  it("registers a direct, hidden, non-overlapping logon task with an awake-only watchdog", () => {
     const registration = readFileSync(resolve("scripts", "register-web-startup-task.ps1"), "utf8");
     const removal = readFileSync(resolve("scripts", "remove-web-startup-task.ps1"), "utf8");
 
@@ -51,11 +51,15 @@ describe("web supervisor", () => {
     expect(registration).toContain('--headless `"$node`" --import tsx');
     expect(registration).toContain("web-supervisor-cli.ts");
     expect(registration).toContain("New-ScheduledTaskTrigger -AtLogOn");
+    expect(registration).toContain("-RepetitionInterval (New-TimeSpan -Minutes 5)");
+    expect(registration).toContain('$logonTrigger.Id = "WebAtLogon"');
+    expect(registration).toContain('$watchdogTrigger.Id = "WebWatchdog"');
     expect(registration).toContain("-MultipleInstances IgnoreNew");
     expect(registration).toContain("-StartWhenAvailable");
     expect(registration).toContain("-RestartCount 3");
     expect(registration).toContain("-RestartInterval");
     expect(registration).toContain("-Hidden");
+    expect(registration).not.toContain("-WakeToRun");
     expect(registration).not.toMatch(/--headless[^\n]*(?:powershell|pnpm\.cmd|cmd\.exe|\.ps1)/i);
     expect(registration).not.toMatch(/CLIENT_SECRET|ACCESS_TOKEN|REFRESH_TOKEN/);
     expect(removal).toContain("Stop-ScheduledTask");

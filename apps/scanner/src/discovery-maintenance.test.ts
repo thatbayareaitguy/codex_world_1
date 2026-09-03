@@ -85,6 +85,72 @@ describe("discovery maintenance decisions", () => {
     ).toMatchObject({ holdPower: true, reason: "broad_work", runNow: true });
   });
 
+  it("schedules a dynamic wake for broad work when rolling capacity returns", () => {
+    const now = new Date("2026-08-29T16:00:00.000Z");
+    const nextCapacityAt = new Date(now.getTime() + 90 * 60_000);
+    const snapshot = baseSnapshot();
+    snapshot.spotify.dueArtistCount = 10;
+    snapshot.spotify.endpointBudget.artistAlbums.broadRemaining = 0;
+    snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt = nextCapacityAt;
+    const decision = decideDiscoveryMaintenance(snapshot, now);
+    expect(decision).toMatchObject({
+      dynamicWakeAt: new Date(nextCapacityAt.getTime() - maintenanceWakeLeadMs),
+      holdPower: false,
+      reason: "broad_capacity_wait",
+      runNow: false,
+    });
+  });
+
+  it("holds power for a near-term broad capacity return", () => {
+    const now = new Date("2026-08-29T16:00:00.000Z");
+    const nextCapacityAt = new Date(now.getTime() + 12 * 60_000);
+    const snapshot = baseSnapshot();
+    snapshot.spotify.dueArtistCount = 10;
+    snapshot.spotify.endpointBudget.artistAlbums.broadRemaining = 0;
+    snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt = nextCapacityAt;
+    expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
+      dynamicWakeAt: null,
+      holdPower: true,
+      reason: "broad_capacity_wait",
+      runNow: false,
+      waitUntil: nextCapacityAt,
+    });
+  });
+
+  it("does not schedule a broad capacity wake after the daily budget is exhausted", () => {
+    const now = new Date("2026-08-29T16:00:00.000Z");
+    const snapshot = baseSnapshot();
+    snapshot.spotify.dueArtistCount = 10;
+    snapshot.spotify.endpointBudget.artistAlbums.broadRemaining = 0;
+    snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt = new Date(
+      now.getTime() + 90 * 60_000,
+    );
+    snapshot.spotify.dailyBudget.broadArtistsUsed = snapshot.spotify.dailyBudget.broadArtistsLimit;
+    expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
+      dynamicWakeAt: null,
+      holdPower: false,
+      reason: "no_work",
+      runNow: false,
+    });
+  });
+
+  it("does not wake on Thursday for Wednesday broad capacity returning overnight", () => {
+    const now = new Date("2026-09-03T04:00:00.000Z");
+    const snapshot = baseSnapshot();
+    snapshot.spotify.dueArtistCount = 10;
+    snapshot.spotify.endpointBudget.artistAlbums.broadRemaining = 0;
+    snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt = new Date(
+      "2026-09-03T15:51:39.000Z",
+    );
+    expect(decideDiscoveryMaintenance(snapshot, now)).toEqual({
+      dynamicWakeAt: null,
+      holdPower: false,
+      reason: "no_work",
+      runNow: false,
+      waitUntil: null,
+    });
+  });
+
   it("runs Apple priority before an otherwise eligible broad backlog", () => {
     const snapshot = baseSnapshot();
     snapshot.discovery.phase = "apple_priority";

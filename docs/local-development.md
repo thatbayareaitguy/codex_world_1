@@ -13,7 +13,7 @@ pnpm app:up:dev
 `app:up:dev` starts PostgreSQL, applies all pending migrations, and serves only on `127.0.0.1:3000`. `pnpm app:up` uses a production build, creating it if needed. `pnpm app:down` stops the web process tree and database service but preserves the volume. Neither command modifies `.env`.
 
 On Windows, register the production web application to start automatically after the current user
-logs on:
+logs on and to be checked every five minutes while Windows is awake:
 
 ```powershell
 pnpm app:startup:register
@@ -25,7 +25,9 @@ Registration is safe to repeat. The hidden, non-overlapping task runs
 Docker Desktop and PostgreSQL, applies pending migrations, and then starts production Next.js only
 on `127.0.0.1:3000`. Its persistent supervisor does not duplicate an already healthy server, removes
 dead PID records, and restarts the web process after an exit or repeated health-check failure. Task
-Scheduler retries a failed supervisor attempt three times at one-minute intervals. Remove the task
+Scheduler retries a failed supervisor attempt three times at one-minute intervals. The five-minute
+watchdog has `WakeToRun` disabled, so it repairs an offline server only when Windows is already
+awake. Remove the task
 and its exact repository-scoped supervisor process without changing application data or `.env` with:
 
 ```powershell

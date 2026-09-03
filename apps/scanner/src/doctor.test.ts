@@ -24,7 +24,7 @@ describe("doctor", () => {
         directoryProbe: () => true,
         expectedMigrationCount: 6,
         pnpmVersion: "11.9.0",
-        portProbe: () => Promise.resolve("available"),
+        portProbe: () => Promise.resolve("application"),
       },
     );
     expect(report.overall).toBe("READY");
@@ -55,7 +55,7 @@ describe("doctor", () => {
         directoryProbe: () => true,
         expectedMigrationCount: 6,
         pnpmVersion: "11.9.0",
-        portProbe: () => Promise.resolve("available"),
+        portProbe: () => Promise.resolve("application"),
       },
     );
     expect(report.overall).toBe("READY");
@@ -76,7 +76,7 @@ describe("doctor", () => {
         directoryProbe: () => true,
         expectedMigrationCount: 6,
         pnpmVersion: "11.9.0",
-        portProbe: () => Promise.resolve("available"),
+        portProbe: () => Promise.resolve("application"),
       },
     );
     const output = formatDoctorReport(report);
@@ -105,7 +105,7 @@ describe("doctor", () => {
         directoryProbe: () => true,
         expectedMigrationCount: 6,
         pnpmVersion: "11.9.0",
-        portProbe: () => Promise.resolve("available"),
+        portProbe: () => Promise.resolve("application"),
       },
     );
 
@@ -131,7 +131,7 @@ describe("doctor", () => {
       directoryProbe: () => true,
       expectedMigrationCount: 6,
       pnpmVersion: "11.9.0",
-      portProbe: () => Promise.resolve<"available">("available"),
+      portProbe: () => Promise.resolve<"application">("application"),
     };
     const privateOnly = await collectDoctorReport(baseEnvironment, {
       ...dependencies,
@@ -197,7 +197,7 @@ describe("doctor", () => {
         directoryProbe: () => true,
         expectedMigrationCount: 6,
         pnpmVersion: "11.9.0",
-        portProbe: () => Promise.resolve("available"),
+        portProbe: () => Promise.resolve("application"),
       },
     );
     expect(report.checks.find((check) => check.name === "Spotify scheduler")).toMatchObject({
@@ -260,7 +260,7 @@ describe("doctor", () => {
         directoryProbe: () => true,
         expectedMigrationCount: 6,
         pnpmVersion: "11.9.0",
-        portProbe: () => Promise.resolve("available"),
+        portProbe: () => Promise.resolve("application"),
       },
     );
     const output = formatDoctorReport(report);
@@ -285,7 +285,7 @@ describe("doctor", () => {
         directoryProbe: () => true,
         expectedMigrationCount: 6,
         pnpmVersion: "11.9.0",
-        portProbe: () => Promise.resolve("available"),
+        portProbe: () => Promise.resolve("application"),
       },
     );
     expect(report.overall).toBe("ACTION_REQUIRED");
@@ -311,7 +311,7 @@ describe("doctor", () => {
         directoryProbe: () => true,
         expectedMigrationCount: 6,
         pnpmVersion: "11.9.0",
-        portProbe: () => Promise.resolve("available"),
+        portProbe: () => Promise.resolve("application"),
       },
     );
     const failedScanCheck = report.checks.find((check) => check.name === "Failed scans");
@@ -327,11 +327,37 @@ describe("doctor", () => {
           Promise.reject(new Error("failed postgresql://owner:private@127.0.0.1:5432/radar")),
         directoryProbe: () => true,
         pnpmVersion: "11.9.0",
-        portProbe: () => Promise.resolve("available"),
+        portProbe: () => Promise.resolve("application"),
       },
     );
     const output = formatDoctorReport(report);
     expect(output).not.toContain("private");
     expect(output).toContain("[DATABASE_URL REDACTED]");
+  });
+
+  it("reports a free port as an offline application with supervisor and task state", async () => {
+    const report = await collectDoctorReport(
+      {
+        DATABASE_URL: "postgresql://secret:secret@127.0.0.1:5432/radar",
+        MUSICBRAINZ_ENABLED: "false",
+        REDDIT_ENABLED: "false",
+        SPOTIFY_ENABLED: "false",
+      },
+      {
+        databaseProbe: () => Promise.resolve(databaseReady),
+        directoryProbe: () => true,
+        expectedMigrationCount: 6,
+        pnpmVersion: "11.9.0",
+        portProbe: () => Promise.resolve("available"),
+        webRuntimeProbe: () => ({ supervisor: "stopped", task: "registered" }),
+      },
+    );
+    expect(report.overall).toBe("ACTION_REQUIRED");
+    expect(report.checks.find((check) => check.name === "Application health")).toMatchObject({
+      state: "ACTION_REQUIRED",
+    });
+    expect(report.checks.find((check) => check.name === "Application health")?.message).toContain(
+      "offline; loopback port 3000 is available. Supervisor stopped; startup task registered.",
+    );
   });
 });
