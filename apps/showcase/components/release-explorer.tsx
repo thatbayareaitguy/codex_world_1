@@ -3,12 +3,8 @@
 import { useMemo, useState } from "react";
 import { Search, SlidersHorizontal } from "lucide-react";
 import { ReleaseCard } from "./release-card";
-import {
-  formatArtistCredits,
-  getReleaseGenreNames,
-  type PublicRelease,
-  type PublicReleaseStatus,
-} from "../lib/public-catalog";
+import { formatArtistCredits, getReleaseGenreNames } from "../lib/public-catalog-display";
+import type { PublicRelease, PublicReleaseStatus } from "../lib/public-catalog";
 
 type ReleaseFilter = PublicReleaseStatus | "all";
 

@@ -1,10 +1,11 @@
 # Showcase Neon Database Boundary
 
-Verified: 2026-08-30
+Verified: 2026-09-02
 
-The initial Neon foundation stores immutable snapshots of the sanitized `showcase-public-v2`
-contract. It does not connect the public site or the local publisher to Neon yet. The existing local
-JSON publication path remains active until a separate integration milestone changes it.
+Neon stores immutable snapshots of the sanitized `showcase-public-v3` contract. The local
+publisher writes only through the validated security-definer function. The Showcase server reads
+only the current public view. A generated JSON snapshot remains available as a local-development
+fallback when Neon is absent.
 
 ## Schema and roles
 
@@ -23,6 +24,8 @@ The owner-only bootstrap creates the `showcase` schema and these SQL roles:
 function owns the only write path and validates the contract version, content hash, required
 top-level public fields, exact top-level allowlist, timestamp agreement, and collection types. An
 identical content hash resolves to the existing snapshot rather than creating a duplicate.
+
+Contract v2 rows may remain as immutable history, but the publishing function accepts only v3.
 
 The website credential uses Neon's pooled endpoint. The local publisher credential uses a direct
 connection. Neon recommends pooled connections for application traffic and direct connections for
@@ -62,6 +65,39 @@ Normal permission verification does not read the owner file:
 ```powershell
 pnpm showcase:neon:verify
 ```
+
+Apply the v3 schema migration with the owner credential only when required:
+
+```powershell
+pnpm showcase:neon:migrate
+```
+
+Publish the validated scanner-derived snapshot through the restricted publisher role:
+
+```powershell
+pnpm showcase:publish
+```
+
+Verify content integrity and both application-role boundaries without the owner credential:
+
+```powershell
+pnpm showcase:neon:roundtrip
+```
+
+The round-trip command compares the normalized JSON fallback with the website's read-only Neon
+result, validates the stored canonical hash, and confirms that direct publisher table writes,
+website base-table reads, and website publishing are denied.
+
+## Runtime and deployment
+
+Local development resolves `SHOWCASE_NEON_PUBLIC_DATABASE_URL` from the process environment first,
+then `%LOCALAPPDATA%\Showcase\neon-public-web.env`. If neither is configured, it reads the generated
+JSON snapshot. `SHOWCASE_CATALOG_SOURCE=json` explicitly forces that fallback for tests.
+
+For Vercel, store only `SHOWCASE_NEON_PUBLIC_DATABASE_URL` as an encrypted server-side environment
+variable. Do not configure the owner or publisher URL. The application rejects the JSON fallback
+when `VERCEL=1`, so a production deployment cannot silently serve a stale local snapshot. The URL
+must identify the pooled `showcase_web_readonly` role and use TLS.
 
 Do not rerun the bootstrap or use `--rotate` without an explicit credential-rotation decision. A
 rotation changes both generated passwords and replaces both local application credential files.

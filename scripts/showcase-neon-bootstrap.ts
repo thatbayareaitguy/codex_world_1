@@ -85,7 +85,7 @@ export function readEnvValue(source: string, variableName: string): string {
   return value;
 }
 
-function validateOwnerUrl(value: string): URL {
+export function validateOwnerUrl(value: string): URL {
   let parsed: URL;
   try {
     parsed = new URL(value);
@@ -359,7 +359,7 @@ async function verifyPublisher(publisherUrl: string): Promise<{
       await reserved`BEGIN`;
       const generatedAt = new Date("2026-01-01T00:00:00.000Z");
       const probeCatalog = {
-        contractVersion: "showcase-public-v2",
+        contractVersion: "showcase-public-v3",
         generatedAt: generatedAt.toISOString(),
         genres: [],
         artists: [],

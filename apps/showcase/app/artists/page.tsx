@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { ArtistExplorer } from "../../components/artist-explorer";
-import { publicCatalog } from "../../lib/public-catalog";
+import { loadPublicCatalog } from "../../lib/catalog-source.server";
+
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Artists",
@@ -8,7 +10,16 @@ export const metadata: Metadata = {
     "Discover electronic artists through structured genre, label, and release information.",
 };
 
-export default function ArtistsPage() {
+export default async function ArtistsPage() {
+  const publicCatalog = await loadPublicCatalog();
+  const releaseCounts = Object.fromEntries(
+    publicCatalog.artists.map((artist) => [
+      artist.slug,
+      publicCatalog.releases.filter((release) =>
+        release.artistCredits.some((credit) => credit.artistSlug === artist.slug),
+      ).length,
+    ]),
+  );
   return (
     <div className="listing-page page-shell">
       <header className="listing-hero artist-listing-hero">
@@ -22,7 +33,7 @@ export default function ArtistsPage() {
           they move through, and the genres they love.
         </p>
       </header>
-      <ArtistExplorer artists={publicCatalog.artists} />
+      <ArtistExplorer artists={publicCatalog.artists} releaseCounts={releaseCounts} />
     </div>
   );
 }

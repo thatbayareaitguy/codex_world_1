@@ -3,13 +3,15 @@
 import { useMemo, useState } from "react";
 import { Search, SlidersHorizontal } from "lucide-react";
 import { ArtistCard } from "./artist-card";
-import { getArtistGenreNames, type PublicArtist } from "../lib/public-catalog";
+import { getArtistGenreNames } from "../lib/public-catalog-display";
+import type { PublicArtist } from "../lib/public-catalog";
 
 interface ArtistExplorerProps {
   readonly artists: readonly PublicArtist[];
+  readonly releaseCounts: Readonly<Record<string, number>>;
 }
 
-export function ArtistExplorer({ artists }: ArtistExplorerProps) {
+export function ArtistExplorer({ artists, releaseCounts }: ArtistExplorerProps) {
   const [query, setQuery] = useState("");
   const [genre, setGenre] = useState("all");
   const genres = useMemo(
@@ -64,7 +66,11 @@ export function ArtistExplorer({ artists }: ArtistExplorerProps) {
       {visibleArtists.length > 0 ? (
         <div className="artist-grid">
           {visibleArtists.map((artist) => (
-            <ArtistCard artist={artist} key={artist.publicId} />
+            <ArtistCard
+              artist={artist}
+              key={artist.publicId}
+              releaseCount={releaseCounts[artist.slug] ?? 0}
+            />
           ))}
         </div>
       ) : (

@@ -3,9 +3,12 @@ import Link from "next/link";
 import { ArrowRight, CalendarDays, Headphones, Radio } from "lucide-react";
 import { ArtistCard } from "../components/artist-card";
 import { ReleaseCard } from "../components/release-card";
-import { publicCatalog } from "../lib/public-catalog";
+import { loadPublicCatalog } from "../lib/catalog-source.server";
 
-export default function HomePage() {
+export const dynamic = "force-dynamic";
+
+export default async function HomePage() {
+  const publicCatalog = await loadPublicCatalog();
   const weekCutoff = new Date(publicCatalog.generatedAt);
   weekCutoff.setUTCDate(weekCutoff.getUTCDate() - 7);
   const newReleasesThisWeek = publicCatalog.releases.filter(
@@ -18,6 +21,14 @@ export default function HomePage() {
     .filter((release) => release.status === "upcoming")
     .slice(0, 2);
   const featuredArtists = publicCatalog.artists.slice(0, 3);
+  const featuredArtistReleaseCounts = new Map(
+    featuredArtists.map((artist) => [
+      artist.slug,
+      publicCatalog.releases.filter((release) =>
+        release.artistCredits.some((credit) => credit.artistSlug === artist.slug),
+      ).length,
+    ]),
+  );
 
   return (
     <>
@@ -137,7 +148,11 @@ export default function HomePage() {
         </div>
         <div className="artist-grid home-artist-grid">
           {featuredArtists.map((artist) => (
-            <ArtistCard artist={artist} key={artist.publicId} />
+            <ArtistCard
+              artist={artist}
+              key={artist.publicId}
+              releaseCount={featuredArtistReleaseCounts.get(artist.slug) ?? 0}
+            />
           ))}
         </div>
       </section>

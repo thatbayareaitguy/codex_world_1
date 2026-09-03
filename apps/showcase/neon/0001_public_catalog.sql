@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS showcase.catalog_snapshots (
   content_sha256 text NOT NULL UNIQUE,
   catalog jsonb NOT NULL,
   CONSTRAINT catalog_snapshots_contract_version_check
-    CHECK (contract_version = 'showcase-public-v2'),
+    CHECK (contract_version IN ('showcase-public-v2', 'showcase-public-v3')),
   CONSTRAINT catalog_snapshots_content_sha256_check
     CHECK (content_sha256 ~ '^[0-9a-f]{64}$'),
   CONSTRAINT catalog_snapshots_catalog_object_check
@@ -47,7 +47,7 @@ AS $publish_catalog$
 DECLARE
   published_version bigint;
 BEGIN
-  IF requested_contract_version <> 'showcase-public-v2' THEN
+  IF requested_contract_version <> 'showcase-public-v3' THEN
     RAISE EXCEPTION 'unsupported Showcase public contract version';
   END IF;
 

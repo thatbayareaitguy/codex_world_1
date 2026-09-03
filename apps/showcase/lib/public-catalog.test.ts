@@ -127,18 +127,31 @@ describe("Showcase public catalog", () => {
     for (const field of forbiddenFields) expect(serialized).not.toContain(field);
   });
 
-  it("has no scanner database or provider API runtime dependency", async () => {
+  it("keeps the Neon reader server-only and has no scanner or provider runtime dependency", async () => {
     const sourceFiles = await listSourceFiles(join(process.cwd(), "apps", "showcase"));
-    const source = (
-      await Promise.all(sourceFiles.map(async (path) => await readFile(path, "utf8")))
-    ).join("\n");
+    const sources = await Promise.all(
+      sourceFiles.map(async (path) => ({ path, source: await readFile(path, "utf8") })),
+    );
+    const source = sources.map((entry) => entry.source).join("\n");
 
     expect(source).not.toMatch(/@radar\/(?:db|providers)/);
-    expect(source).not.toContain("DATABASE_URL");
+    expect(source).not.toContain("process.env.DATABASE_URL");
+    expect(source).not.toContain("SHOWCASE_NEON_OWNER_DATABASE_URL");
+    expect(source).not.toContain("SHOWCASE_NEON_PUBLISHER_DATABASE_URL");
     expect(source).not.toContain("api.music.apple.com");
     expect(source).not.toContain("api.media.apple.com");
     expect(source).not.toContain("api.spotify.com");
-    expect(source).not.toMatch(/from ["']postgres["']/);
+    expect(
+      sources
+        .filter((entry) => /from ["']postgres["']/u.test(entry.source))
+        .map((entry) => entry.path.replaceAll("\\", "/")),
+    ).toEqual([expect.stringMatching(/apps\/showcase\/lib\/catalog-source\.server\.ts$/u)]);
+    for (const entry of sources.filter((candidate) =>
+      candidate.source.startsWith('"use client"'),
+    )) {
+      expect(entry.source).not.toContain("catalog-source.server");
+      expect(entry.source).not.toContain("SHOWCASE_NEON_PUBLIC_DATABASE_URL");
+    }
   });
 });
 

@@ -5,24 +5,23 @@ import { notFound } from "next/navigation";
 import { Artwork } from "../../../components/artwork";
 import { ProviderLinks } from "../../../components/provider-links";
 import { ReleaseCard } from "../../../components/release-card";
+import { loadPublicCatalog } from "../../../lib/catalog-source.server";
 import {
   getArtist,
   getArtistGenreNames,
   getArtistReleases,
   getRelatedArtists,
-  publicCatalog,
 } from "../../../lib/public-catalog";
+
+export const dynamic = "force-dynamic";
 
 interface ArtistPageProps {
   readonly params: Promise<{ slug: string }>;
 }
 
-export function generateStaticParams() {
-  return publicCatalog.artists.map((artist) => ({ slug: artist.slug }));
-}
-
 export async function generateMetadata({ params }: ArtistPageProps): Promise<Metadata> {
-  const artist = getArtist((await params).slug);
+  const publicCatalog = await loadPublicCatalog();
+  const artist = getArtist((await params).slug, publicCatalog);
   if (artist === undefined)
     return { title: "Artist not found", openGraph: { images: [] }, twitter: { images: [] } };
   const genres = getArtistGenreNames(artist);
@@ -36,13 +35,14 @@ export async function generateMetadata({ params }: ArtistPageProps): Promise<Met
 }
 
 export default async function ArtistDetailPage({ params }: ArtistPageProps) {
-  const artist = getArtist((await params).slug);
+  const publicCatalog = await loadPublicCatalog();
+  const artist = getArtist((await params).slug, publicCatalog);
   if (artist === undefined) notFound();
   const genres = getArtistGenreNames(artist);
-  const releases = getArtistReleases(artist.slug);
+  const releases = getArtistReleases(artist.slug, publicCatalog);
   const recent = releases.filter((release) => release.status !== "upcoming");
   const upcoming = releases.filter((release) => release.status === "upcoming");
-  const related = getRelatedArtists(artist.slug);
+  const related = getRelatedArtists(artist.slug, publicCatalog);
 
   return (
     <div className="detail-page page-shell">

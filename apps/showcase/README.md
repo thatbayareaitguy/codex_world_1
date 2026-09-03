@@ -1,8 +1,9 @@
 # Showcase public application
 
-`apps/showcase` is a deployable Next.js public site backed by a generated, sanitized local catalog.
-It is intentionally independent from the private scanner runtime and never opens the scanner database
-or calls a music provider at runtime.
+`apps/showcase` is a deployable Next.js public site backed by a sanitized catalog. In configured
+environments it reads the current immutable snapshot from Neon through the read-only website role.
+Local development falls back to the generated JSON snapshot when Neon is not configured. It never
+opens the scanner database or calls a music provider at runtime.
 
 ## Local development
 
@@ -74,7 +75,9 @@ review and suggestion evidence, scheduler and queue state, quota or cooldown sta
 operations, and internal failures. The publisher reads persisted scanner data locally, closes the
 database connection, and then matches existing numeric Apple release identities against the Apple
 Music Feed album export. It reads Feed Parquet files by bounded byte ranges and stores no raw Feed
-response. The Showcase application makes no database or provider API requests at runtime.
+response. The validated v3 snapshot is sent through Neon's restricted publishing function and is
+also written atomically to the generated JSON fallback. The Showcase application makes no provider
+API requests at runtime.
 
 ## Apple Music Feed artwork publication
 
@@ -106,6 +109,8 @@ publishing function and read the current public view. The website credential can
 view and uses Neon's pooled endpoint. Both credentials live under `%LOCALAPPDATA%\Showcase` with
 restricted Windows ACLs and never enter the repository.
 
-This milestone creates the remote schema and roles only. Showcase still serves the generated local
-JSON catalog until a separate database-integration milestone deliberately changes the runtime and
-publisher paths.
+`pnpm showcase:publish` sends the validated `showcase-public-v3` snapshot to Neon through the local
+publisher credential, then refreshes `lib/generated-public-catalog.json` as the development
+fallback. The website uses `SHOWCASE_NEON_PUBLIC_DATABASE_URL` from the process environment or the
+local website credential file. Set `SHOWCASE_CATALOG_SOURCE=json` to force the fallback in local
+tests. A Vercel runtime refuses the fallback and requires the read-only Neon configuration.

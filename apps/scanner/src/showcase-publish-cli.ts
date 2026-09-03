@@ -8,7 +8,13 @@ import {
   fetchAppleMusicFeedArtwork,
   loadAppleMusicFeedCredentials,
 } from "./showcase-apple-feed";
+import { applyShowcaseEditorialPolicy } from "./showcase-editorial-policy";
 import { buildShowcasePublicCatalog, loadShowcasePublicationSource } from "./showcase-publication";
+import { showcasePublicCatalogSchema } from "./showcase-publication";
+import {
+  loadShowcasePublisherDatabaseUrl,
+  publishShowcaseCatalogToNeon,
+} from "./showcase-neon-publication";
 
 const outputPath = resolve(process.cwd(), "apps/showcase/lib/generated-public-catalog.json");
 
@@ -50,24 +56,55 @@ async function main(): Promise<void> {
     }),
   };
   const result = buildShowcasePublicCatalog(enrichedSource);
-  await writeCatalogAtomically(outputPath, `${JSON.stringify(result.catalog, null, 2)}\n`);
+  const catalog = showcasePublicCatalogSchema.parse(
+    await applyShowcaseEditorialPolicy(result.catalog, {
+      confirmedGenres: resolve(
+        process.cwd(),
+        "apps",
+        "showcase",
+        "lib",
+        "confirmed-artist-genres.json",
+      ),
+      excludedArtists: resolve(
+        process.cwd(),
+        "apps",
+        "showcase",
+        "lib",
+        "excluded-public-artists.json",
+      ),
+    }),
+  );
+  const neonPublication = await publishShowcaseCatalogToNeon(
+    catalog,
+    await loadShowcasePublisherDatabaseUrl(),
+  );
+  await writeCatalogAtomically(outputPath, `${JSON.stringify(catalog, null, 2)}\n`);
   process.stdout.write(
     `${JSON.stringify({
       event: "showcase.catalog_published",
-      artistCount: result.artistCount,
-      artistsWithGenresCount: result.artistsWithGenresCount,
+      artistCount: catalog.artists.length,
+      artistsWithGenresCount: catalog.artists.filter((artist) => artist.genreSlugs.length > 0)
+        .length,
       invalidActiveArtistCount: result.invalidActiveArtistCount,
       invalidAppleReleaseCount: result.invalidAppleReleaseCount,
-      multiCreditReleaseCount: result.multiCreditReleaseCount,
+      multiCreditReleaseCount: catalog.releases.filter(
+        (release) => release.artistCredits.length > 1,
+      ).length,
       feedExportPartCount: feedResult.exportPartCount,
       feedPartsScanned: feedResult.partsScanned,
+      neonCatalogVersion: neonPublication.catalogVersion,
+      contentSha256: neonPublication.contentSha256,
       outputPath,
-      releaseCount: result.releaseCount,
+      releaseCount: catalog.releases.length,
+      genreCount: catalog.genres.length,
       unresolvedCollaboratorCount: result.unresolvedCollaboratorCount,
-      withSpotifyCount: result.withSpotifyCount,
-      withoutSpotifyCount: result.withoutSpotifyCount,
-      withArtworkCount: result.withArtworkCount,
-      withoutArtworkCount: result.withoutArtworkCount,
+      withSpotifyCount: catalog.releases.filter((release) => release.links.spotify !== undefined)
+        .length,
+      withoutSpotifyCount: catalog.releases.filter((release) => release.links.spotify === undefined)
+        .length,
+      withArtworkCount: catalog.releases.filter((release) => release.artwork !== undefined).length,
+      withoutArtworkCount: catalog.releases.filter((release) => release.artwork === undefined)
+        .length,
     })}\n`,
   );
 }

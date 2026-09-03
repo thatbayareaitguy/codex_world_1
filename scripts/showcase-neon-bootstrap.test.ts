@@ -83,4 +83,20 @@ describe("Showcase Neon bootstrap helpers", () => {
       /GRANT\s+EXECUTE\s+ON\s+FUNCTION\s+showcase\.publish_catalog\([^;]+?TO\s+showcase_web_readonly/iu,
     );
   });
+
+  it("migrates publication to v3 without granting website writes", async () => {
+    const migration = await readFile(
+      resolve("apps", "showcase", "neon", "0002_public_catalog_v3.sql"),
+      "utf8",
+    );
+
+    expect(migration).toContain("requested_contract_version <> 'showcase-public-v3'");
+    expect(migration).toContain("SECURITY DEFINER");
+    expect(migration).toMatch(
+      /GRANT EXECUTE ON FUNCTION showcase\.publish_catalog\(text, timestamptz, text, jsonb\)\s+TO showcase_publisher/iu,
+    );
+    expect(migration).toMatch(
+      /REVOKE ALL ON FUNCTION showcase\.publish_catalog\(text, timestamptz, text, jsonb\)\s+FROM showcase_web_readonly/iu,
+    );
+  });
 });

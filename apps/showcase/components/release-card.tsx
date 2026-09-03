@@ -4,8 +4,8 @@ import {
   formatArtistCredits,
   formatPublicDate,
   getReleaseGenreNames,
-  type PublicRelease,
-} from "../lib/public-catalog";
+} from "../lib/public-catalog-display";
+import type { PublicRelease } from "../lib/public-catalog";
 
 interface ReleaseCardProps {
   readonly release: PublicRelease;

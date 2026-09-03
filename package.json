@@ -37,6 +37,8 @@
     "showcase:publish": "tsx apps/scanner/src/showcase-publish-cli.ts",
     "showcase:genre-research": "tsx apps/showcase/ops/genre-evidence-cli.ts",
     "showcase:neon:bootstrap": "tsx scripts/showcase-neon-bootstrap.ts",
+    "showcase:neon:migrate": "tsx scripts/showcase-neon-migrate.ts",
+    "showcase:neon:roundtrip": "tsx scripts/showcase-neon-roundtrip.ts",
     "showcase:neon:verify": "tsx scripts/showcase-neon-bootstrap.ts --verify-only",
     "scan:reconcile": "tsx apps/scanner/src/cli.ts --full",
     "scan:status": "tsx apps/scanner/src/scan-status.ts status",

@@ -5,24 +5,23 @@ import { notFound } from "next/navigation";
 import { Artwork } from "../../../components/artwork";
 import { ProviderLinks } from "../../../components/provider-links";
 import { ReleaseCard } from "../../../components/release-card";
+import { loadPublicCatalog } from "../../../lib/catalog-source.server";
 import {
   formatArtistCredits,
   formatPublicDate,
   getRelease,
   getReleaseGenreNames,
-  publicCatalog,
 } from "../../../lib/public-catalog";
+
+export const dynamic = "force-dynamic";
 
 interface ReleasePageProps {
   readonly params: Promise<{ slug: string }>;
 }
 
-export function generateStaticParams() {
-  return publicCatalog.releases.map((release) => ({ slug: release.slug }));
-}
-
 export async function generateMetadata({ params }: ReleasePageProps): Promise<Metadata> {
-  const release = getRelease((await params).slug);
+  const publicCatalog = await loadPublicCatalog();
+  const release = getRelease((await params).slug, publicCatalog);
   if (release === undefined)
     return { title: "Release not found", openGraph: { images: [] }, twitter: { images: [] } };
   const description = `${release.title} by ${formatArtistCredits(release)}. ${release.type}, released ${formatPublicDate(release.releaseDate)}.`;
@@ -35,7 +34,8 @@ export async function generateMetadata({ params }: ReleasePageProps): Promise<Me
 }
 
 export default async function ReleaseDetailPage({ params }: ReleasePageProps) {
-  const release = getRelease((await params).slug);
+  const publicCatalog = await loadPublicCatalog();
+  const release = getRelease((await params).slug, publicCatalog);
   if (release === undefined) notFound();
   const genres = getReleaseGenreNames(release);
   const related = publicCatalog.releases

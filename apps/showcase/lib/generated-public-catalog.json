@@ -1,6 +1,6 @@
 {
   "contractVersion": "showcase-public-v3",
-  "generatedAt": "2026-08-29T23:11:15.719Z",
+  "generatedAt": "2026-09-03T00:29:25.959Z",
   "genres": [
     {
       "name": "Bass Music",
@@ -108,7 +108,10 @@
       "publicId": "artist_000d51e410f587182126",
       "slug": "13-000d51e4",
       "name": "13",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "dubstep"
+      ],
       "links": {
         "appleMusic": "https://music.apple.com/us/artist/1447181442",
         "spotify": "https://open.spotify.com/artist/4LZb4u8MywTSbLkAxTYwhw"
@@ -119,7 +122,11 @@
       "publicId": "artist_a9c6281d5f9237f312fe",
       "slug": "1788-l-a9c6281d",
       "name": "1788-L",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "dubstep",
+        "midtempo-bass"
+      ],
       "links": {
         "appleMusic": "https://music.apple.com/us/artist/1337802116",
         "spotify": "https://open.spotify.com/artist/7oB4pCSzvvRtZka6DxXUfN"
@@ -453,7 +460,11 @@
       "publicId": "artist_2f92326507cb9a18a3ec",
       "slug": "armnhmr-2f923265",
       "name": "ARMNHMR",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "dubstep",
+        "melodic-dubstep"
+      ],
       "links": {
         "appleMusic": "https://music.apple.com/us/artist/885439866",
         "spotify": "https://open.spotify.com/artist/0P2bZXPyjHYRW4guHVAFl1"
@@ -505,7 +516,11 @@
       "publicId": "artist_3801d6b769d34aff0199",
       "slug": "atliens-3801d6b7",
       "name": "ATLiens",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "dubstep",
+        "experimental-bass"
+      ],
       "links": {
         "appleMusic": "https://music.apple.com/us/artist/960823169",
         "spotify": "https://open.spotify.com/artist/74RET4rCZPTGzhsLjD0i3g"
@@ -633,7 +648,10 @@
       "publicId": "artist_20521040b44813a3e2a6",
       "slug": "badklaat-20521040",
       "name": "Badklaat",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "dubstep"
+      ],
       "links": {
         "appleMusic": "https://music.apple.com/us/artist/377774426",
         "spotify": "https://open.spotify.com/artist/4AgEF49juDBIfJUoPCPncc"
@@ -704,7 +722,10 @@
       "publicId": "artist_8457b143b4415a5d853e",
       "slug": "barely-alive-8457b143",
       "name": "BARELY ALIVE",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "dubstep"
+      ],
       "links": {
         "appleMusic": "https://music.apple.com/us/artist/634813449",
         "spotify": "https://open.spotify.com/artist/5c3akKV3CUqAVOnGZqf4S3"
@@ -740,7 +761,9 @@
       "publicId": "artist_30291aafddcbdcd7e739",
       "slug": "basstripper-30291aaf",
       "name": "Basstripper",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "drum-and-bass"
+      ],
       "links": {
         "appleMusic": "https://music.apple.com/us/artist/928801176",
         "spotify": "https://open.spotify.com/artist/1tSiIyp5dxfbEaS0nZGMEl"
@@ -751,7 +774,11 @@
       "publicId": "artist_5fa94d1954a1a3a10aac",
       "slug": "bd-hbt-5fa94d19",
       "name": "bd hbt",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "experimental-bass",
+        "trap"
+      ],
       "links": {
         "appleMusic": "https://music.apple.com/us/artist/1313021195",
         "spotify": "https://open.spotify.com/artist/2VYFboeFi8XZOLuEYLf1Z2"
@@ -762,7 +789,11 @@
       "publicId": "artist_6a2e7e1b8223ccd69778",
       "slug": "bear-grillz-6a2e7e1b",
       "name": "Bear Grillz",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "dubstep",
+        "melodic-dubstep"
+      ],
       "links": {
         "appleMusic": "https://music.apple.com/us/artist/738114510",
         "spotify": "https://open.spotify.com/artist/04vdWVjgi45nrMAxeCEVQe"
@@ -970,7 +1001,11 @@
       "publicId": "artist_3c2cf5aef0b0428ccf70",
       "slug": "blurrd-vzn-3c2cf5ae",
       "name": "Blurrd Vzn",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "dubstep",
+        "experimental-bass"
+      ],
       "links": {
         "appleMusic": "https://music.apple.com/us/artist/1494320034",
         "spotify": "https://open.spotify.com/artist/1Un7dSWqDulk2W0L0QD8vI"
@@ -1287,7 +1322,9 @@
       "publicId": "artist_aee8aabe9fe88ee2d85b",
       "slug": "camo-krooked-aee8aabe",
       "name": "Camo & Krooked",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "drum-and-bass"
+      ],
       "links": {
         "appleMusic": "https://music.apple.com/us/artist/288242555",
         "spotify": "https://open.spotify.com/artist/2N8IPNZTiNo3nj4mreOlHU"
@@ -1460,17 +1497,6 @@
         "spotify": "https://open.spotify.com/artist/1QeTjGvzNdgEbglFeedKWe"
       },
       "artworkTone": "violet"
-    },
-    {
-      "publicId": "artist_f450f3a20160dbaf576f",
-      "slug": "codename-niocell-f450f3a2",
-      "name": "CODENAME:NIOCELL",
-      "genreSlugs": [],
-      "links": {
-        "appleMusic": "https://music.apple.com/us/artist/1536338616",
-        "spotify": "https://open.spotify.com/artist/1xWdmlYFuR4UziFstJdWP8"
-      },
-      "artworkTone": "blue"
     },
     {
       "publicId": "artist_9559d74e20a0f56609e5",
@@ -1705,7 +1731,10 @@
       "publicId": "artist_9df24714a4bb16fa264c",
       "slug": "delta-heavy-9df24714",
       "name": "Delta Heavy",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "drum-and-bass"
+      ],
       "links": {
         "appleMusic": "https://music.apple.com/us/artist/339726277",
         "spotify": "https://open.spotify.com/artist/7GvVTb8yFV0ZrdI30Qce6T"
@@ -2275,7 +2304,10 @@
       "publicId": "artist_b85b5b791472cf20f8c2",
       "slug": "fabian-mazur-b85b5b79",
       "name": "Fabian Mazur",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "trap"
+      ],
       "links": {
         "appleMusic": "https://music.apple.com/us/artist/583211564",
         "spotify": "https://open.spotify.com/artist/5BBBDm18Y0TCRXZggaOnZG"
@@ -2528,7 +2560,12 @@
       "publicId": "artist_f0bc47b6481b90befd40",
       "slug": "ganja-white-night-f0bc47b6",
       "name": "Ganja White Night",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "dubstep",
+        "melodic-dubstep",
+        "experimental-bass"
+      ],
       "links": {
         "appleMusic": "https://music.apple.com/us/artist/358405621",
         "spotify": "https://open.spotify.com/artist/1a6oIpEh4DGgaqgWg5xwd3"
@@ -3169,7 +3206,9 @@
       "publicId": "artist_9172a47b386269fa4afe",
       "slug": "it-s-murph-9172a47b",
       "name": "it's murph",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "house"
+      ],
       "links": {
         "appleMusic": "https://music.apple.com/us/artist/1650216419",
         "spotify": "https://open.spotify.com/artist/3zW0xazqnHoq9QV9zBROVC"
@@ -7675,6 +7714,7 @@
       "releaseDate": "2026-08-28",
       "firstDiscoveredDate": "2026-08-28",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -7711,6 +7751,7 @@
       "releaseDate": "2026-08-28",
       "firstDiscoveredDate": "2026-08-28",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "house"
       ],
@@ -7873,6 +7914,7 @@
       "releaseDate": "2026-08-28",
       "firstDiscoveredDate": "2026-08-28",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -8006,6 +8048,7 @@
       "releaseDate": "2026-08-28",
       "firstDiscoveredDate": "2026-08-28",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -8328,6 +8371,7 @@
       "releaseDate": "2026-08-28",
       "firstDiscoveredDate": "2026-08-28",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -8585,6 +8629,7 @@
       "releaseDate": "2026-08-28",
       "firstDiscoveredDate": "2026-08-28",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "house",
         "other-electronic"
@@ -8622,6 +8667,7 @@
       "releaseDate": "2026-08-28",
       "firstDiscoveredDate": "2026-08-28",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -8868,7 +8914,11 @@
       "status": "released",
       "releaseDate": "2026-08-26",
       "firstDiscoveredDate": "2026-08-28",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "dubstep",
+        "melodic-dubstep"
+      ],
       "tracks": [
         {
           "discNumber": 1,
@@ -9009,6 +9059,7 @@
       "releaseDate": "2026-08-21",
       "firstDiscoveredDate": "2026-08-21",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -9087,7 +9138,9 @@
       "status": "released",
       "releaseDate": "2026-08-21",
       "firstDiscoveredDate": "2026-08-21",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "drum-and-bass"
+      ],
       "tracks": [
         {
           "discNumber": 1,
@@ -9313,7 +9366,11 @@
       "status": "released",
       "releaseDate": "2026-08-21",
       "firstDiscoveredDate": "2026-08-21",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "dubstep",
+        "experimental-bass"
+      ],
       "tracks": [
         {
           "discNumber": 1,
@@ -9488,6 +9545,7 @@
       "releaseDate": "2026-08-21",
       "firstDiscoveredDate": "2026-08-21",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -9532,7 +9590,8 @@
         }
       ],
       "links": {
-        "appleMusic": "https://music.apple.com/us/album/6796525186"
+        "appleMusic": "https://music.apple.com/us/album/6796525186",
+        "spotify": "https://open.spotify.com/album/5xeyKtM7wv48Ffsj0PPZWc"
       },
       "artwork": {
         "height": 3000,
@@ -9729,6 +9788,7 @@
       "releaseDate": "2026-08-21",
       "firstDiscoveredDate": "2026-08-21",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "drum-and-bass",
         "other-electronic"
@@ -9741,7 +9801,8 @@
         }
       ],
       "links": {
-        "appleMusic": "https://music.apple.com/us/album/6798056776"
+        "appleMusic": "https://music.apple.com/us/album/6798056776",
+        "spotify": "https://open.spotify.com/album/54QvwnfQAQPixOwlM8eDlX"
       },
       "artwork": {
         "height": 1500,
@@ -9898,6 +9959,7 @@
       "releaseDate": "2026-08-21",
       "firstDiscoveredDate": "2026-08-21",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -10099,6 +10161,7 @@
       "releaseDate": "2026-08-21",
       "firstDiscoveredDate": "2026-08-21",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -10438,7 +10501,11 @@
       "status": "released",
       "releaseDate": "2026-08-20",
       "firstDiscoveredDate": "2026-08-21",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "dubstep",
+        "midtempo-bass"
+      ],
       "tracks": [
         {
           "discNumber": 1,
@@ -10447,7 +10514,8 @@
         }
       ],
       "links": {
-        "appleMusic": "https://music.apple.com/us/album/6799153799"
+        "appleMusic": "https://music.apple.com/us/album/6799153799",
+        "spotify": "https://open.spotify.com/album/2HTRzekRCl7u07zvSyzvDD"
       },
       "artwork": {
         "height": 3000,
@@ -10903,6 +10971,7 @@
       "releaseDate": "2026-08-20",
       "firstDiscoveredDate": "2026-08-21",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "drum-and-bass",
         "house",
@@ -10973,7 +11042,11 @@
       "status": "released",
       "releaseDate": "2026-08-19",
       "firstDiscoveredDate": "2026-08-21",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "dubstep",
+        "melodic-dubstep"
+      ],
       "tracks": [
         {
           "discNumber": 1,
@@ -11197,7 +11270,8 @@
         }
       ],
       "links": {
-        "appleMusic": "https://music.apple.com/us/album/6784041594"
+        "appleMusic": "https://music.apple.com/us/album/6784041594",
+        "spotify": "https://open.spotify.com/album/2bI4LHBohAXweeLlJVRf7I"
       },
       "artwork": {
         "height": 3000,
@@ -11703,7 +11777,12 @@
       "status": "released",
       "releaseDate": "2026-08-14",
       "firstDiscoveredDate": "2026-08-14",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "dubstep",
+        "melodic-dubstep",
+        "experimental-bass"
+      ],
       "tracks": [
         {
           "discNumber": 1,
@@ -11774,6 +11853,7 @@
       "releaseDate": "2026-08-14",
       "firstDiscoveredDate": "2026-08-14",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -11811,6 +11891,7 @@
       "releaseDate": "2026-08-14",
       "firstDiscoveredDate": "2026-08-14",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -11956,6 +12037,7 @@
       "releaseDate": "2026-08-14",
       "firstDiscoveredDate": "2026-08-14",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "house",
         "techno",
@@ -12379,6 +12461,7 @@
       "releaseDate": "2026-08-14",
       "firstDiscoveredDate": "2026-08-21",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -12423,7 +12506,8 @@
         }
       ],
       "links": {
-        "appleMusic": "https://music.apple.com/us/album/6792926442"
+        "appleMusic": "https://music.apple.com/us/album/6792926442",
+        "spotify": "https://open.spotify.com/album/5DU8oufl99pZdMGKcVRe27"
       },
       "artwork": {
         "height": 3000,
@@ -12448,6 +12532,7 @@
       "releaseDate": "2026-08-14",
       "firstDiscoveredDate": "2026-08-14",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -12722,6 +12807,7 @@
       "releaseDate": "2026-08-13",
       "firstDiscoveredDate": "2026-08-14",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -13062,6 +13148,7 @@
       "releaseDate": "2026-08-11",
       "firstDiscoveredDate": "2026-08-14",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -13789,7 +13876,10 @@
       "status": "released",
       "releaseDate": "2026-08-07",
       "firstDiscoveredDate": "2026-08-07",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "trap"
+      ],
       "tracks": [
         {
           "discNumber": 1,
@@ -13824,6 +13914,7 @@
       "releaseDate": "2026-08-07",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "drum-and-bass",
         "house",
@@ -14005,6 +14096,7 @@
       "releaseDate": "2026-08-07",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "drum-and-bass",
         "house",
@@ -14043,6 +14135,7 @@
       "releaseDate": "2026-08-07",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -14079,7 +14172,9 @@
       "status": "released",
       "releaseDate": "2026-08-07",
       "firstDiscoveredDate": "2026-08-07",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "house"
+      ],
       "tracks": [
         {
           "discNumber": 1,
@@ -14187,6 +14282,7 @@
       "releaseDate": "2026-08-07",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "drum-and-bass",
         "other-electronic"
@@ -14436,6 +14532,7 @@
       "releaseDate": "2026-08-07",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -14570,6 +14667,7 @@
       "releaseDate": "2026-08-07",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -14721,6 +14819,7 @@
       "releaseDate": "2026-08-07",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -15222,6 +15321,7 @@
       "releaseDate": "2026-07-31",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "house"
       ],
@@ -15326,6 +15426,7 @@
       "releaseDate": "2026-07-31",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "house",
         "techno",
@@ -16054,6 +16155,7 @@
       "releaseDate": "2026-07-31",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -16346,6 +16448,7 @@
       "releaseDate": "2026-07-30",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "drum-and-bass",
         "house",
@@ -16389,7 +16492,9 @@
       "releaseDate": "2026-07-29",
       "firstDiscoveredDate": "2026-08-04",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
+        "melodic-dubstep",
         "drum-and-bass",
         "other-electronic"
       ],
@@ -16490,7 +16595,10 @@
       "status": "released",
       "releaseDate": "2026-07-28",
       "firstDiscoveredDate": "2026-08-04",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "drum-and-bass"
+      ],
       "tracks": [
         {
           "discNumber": 1,
@@ -17017,6 +17125,7 @@
       "releaseDate": "2026-07-24",
       "firstDiscoveredDate": "2026-08-04",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -17627,6 +17736,7 @@
       "releaseDate": "2026-07-24",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "house",
         "other-electronic"
@@ -17804,6 +17914,7 @@
       "releaseDate": "2026-07-24",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -18301,6 +18412,7 @@
       "releaseDate": "2026-07-23",
       "firstDiscoveredDate": "2026-08-04",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -18353,6 +18465,7 @@
       "releaseDate": "2026-07-23",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -18642,7 +18755,9 @@
       "status": "released",
       "releaseDate": "2026-07-21",
       "firstDiscoveredDate": "2026-08-04",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "drum-and-bass"
+      ],
       "tracks": [
         {
           "discNumber": 1,
@@ -18980,7 +19095,10 @@
       "status": "released",
       "releaseDate": "2026-07-17",
       "firstDiscoveredDate": "2026-08-04",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "dubstep"
+      ],
       "tracks": [
         {
           "discNumber": 1,
@@ -19394,6 +19512,7 @@
       "releaseDate": "2026-07-17",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "drum-and-bass",
         "house",
@@ -19466,6 +19585,7 @@
       "releaseDate": "2026-07-17",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -19503,6 +19623,7 @@
       "releaseDate": "2026-07-17",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "drum-and-bass",
         "other-electronic"
@@ -19541,6 +19662,7 @@
       "releaseDate": "2026-07-17",
       "firstDiscoveredDate": "2026-08-14",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "drum-and-bass",
         "other-electronic"
@@ -19588,6 +19710,7 @@
       "releaseDate": "2026-07-17",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "trance",
         "other-electronic"
@@ -19626,6 +19749,7 @@
       "releaseDate": "2026-07-17",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "techno",
         "other-electronic"
@@ -20087,6 +20211,7 @@
       "releaseDate": "2026-07-17",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -20178,6 +20303,7 @@
       "releaseDate": "2026-07-17",
       "firstDiscoveredDate": "2026-08-04",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -20214,6 +20340,7 @@
       "releaseDate": "2026-07-17",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "trance",
         "other-electronic"
@@ -20296,6 +20423,7 @@
       "releaseDate": "2026-07-17",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -20333,6 +20461,7 @@
       "releaseDate": "2026-07-17",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -20370,6 +20499,7 @@
       "releaseDate": "2026-07-17",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -20486,6 +20616,7 @@
       "releaseDate": "2026-07-17",
       "firstDiscoveredDate": "2026-08-04",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -20795,6 +20926,7 @@
       "releaseDate": "2026-07-16",
       "firstDiscoveredDate": "2026-08-04",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -21410,6 +21542,7 @@
       "releaseDate": "2026-07-10",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "house",
         "other-electronic"
@@ -21702,6 +21835,7 @@
       "releaseDate": "2026-07-10",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -21742,6 +21876,7 @@
       "releaseDate": "2026-07-10",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "drum-and-bass",
         "house",
@@ -21780,6 +21915,7 @@
       "releaseDate": "2026-07-10",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "house",
         "techno",
@@ -22564,6 +22700,7 @@
       "releaseDate": "2026-07-09",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "drum-and-bass",
         "house",
@@ -22766,6 +22903,7 @@
       "releaseDate": "2026-07-08",
       "firstDiscoveredDate": "2026-08-07",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "other-electronic"
       ],
@@ -23503,7 +23641,10 @@
       "status": "released",
       "releaseDate": "2026-04-15",
       "firstDiscoveredDate": "2026-08-04",
-      "genreSlugs": [],
+      "genreSlugs": [
+        "bass-music",
+        "dubstep"
+      ],
       "tracks": [
         {
           "discNumber": 1,
@@ -23931,6 +24072,7 @@
       "releaseDate": "2026-02-06",
       "firstDiscoveredDate": "2026-08-04",
       "genreSlugs": [
+        "bass-music",
         "dubstep",
         "drum-and-bass",
         "house",

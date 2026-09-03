@@ -1,14 +1,15 @@
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { Artwork } from "./artwork";
-import { getArtistGenreNames, getArtistReleases, type PublicArtist } from "../lib/public-catalog";
+import { getArtistGenreNames } from "../lib/public-catalog-display";
+import type { PublicArtist } from "../lib/public-catalog";
 
 interface ArtistCardProps {
   readonly artist: PublicArtist;
+  readonly releaseCount: number;
 }
 
-export function ArtistCard({ artist }: ArtistCardProps) {
-  const releaseCount = getArtistReleases(artist.slug).length;
+export function ArtistCard({ artist, releaseCount }: ArtistCardProps) {
   const genres = getArtistGenreNames(artist);
 
   return (
