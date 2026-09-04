@@ -1,0 +1,211 @@
+import {
+  acquireOperationLock,
+  claimAutomaticDiscoveryPlaylistInboxExport,
+  createSpotifyRequestGate,
+  ensureLocalOwner,
+  executeSpotifyPlaylistExport,
+  inspectSpotifyPlaylistCheckpoint,
+  markDiscoveryPlaylistInboxStatus,
+  previewSpotifyPlaylistExport,
+  releaseOperationLock,
+  SpotifyTokenManager,
+  SpotifyCooldownError,
+  type RadarDatabase,
+} from "@radar/db";
+import {
+  SpotifyClient,
+  spotifyAuthorizedPlaylistId,
+  SpotifyHttpError,
+  SpotifyOAuthClient,
+  type ProviderConfiguration,
+} from "@radar/providers";
+import { sanitizedSpotifyPlaylistExportOutput } from "./spotify-playlist-export-cli";
+
+export async function runSpotifyPlaylistExportPreview(
+  db: RadarDatabase,
+  configuration: ProviderConfiguration,
+  discoveryReconciliationCampaignId?: string,
+) {
+  if (
+    !configuration.appEncryptionKey ||
+    !configuration.spotify.enabled ||
+    !configuration.spotify.configured ||
+    !configuration.spotify.clientId ||
+    !configuration.spotify.clientSecret ||
+    !configuration.spotify.allowedPlaylistId
+  ) {
+    throw new Error(
+      "Spotify playlist preview requires encryption, Spotify credentials, and SPOTIFY_ALLOWED_PLAYLIST_ID.",
+    );
+  }
+  const userId = await ensureLocalOwner(db);
+  const requestGate = createSpotifyRequestGate(
+    db,
+    configuration.spotify.minRequestIntervalMs,
+    undefined,
+    discoveryReconciliationCampaignId,
+  );
+  const oauth = new SpotifyOAuthClient({
+    clientId: configuration.spotify.clientId,
+    clientSecret: configuration.spotify.clientSecret,
+    playlistWritesEnabled: false,
+    redirectUri: configuration.spotify.redirectUri,
+    requestGate,
+  });
+  const tokens = new SpotifyTokenManager(db, userId, configuration.appEncryptionKey, oauth);
+  const client = new SpotifyClient({
+    accessToken: () => tokens.getAccessToken(),
+    onUnauthorized: () => tokens.refresh().then(() => undefined),
+    playlistWritePolicy: {
+      allowedPlaylistId: configuration.spotify.allowedPlaylistId,
+      enabled: false,
+    },
+    requestGate,
+  });
+  const preview = await previewSpotifyPlaylistExport(
+    db,
+    userId,
+    client,
+    configuration.spotify.allowedPlaylistId,
+  );
+  return {
+    preview,
+    sanitized: sanitizedSpotifyPlaylistExportOutput(preview),
+  };
+}
+
+export async function runAutomaticDiscoveryPlaylistExport(
+  db: RadarDatabase,
+  configuration: ProviderConfiguration,
+  dependencies: {
+    executeExport?: typeof executeSpotifyPlaylistExport;
+  } = {},
+) {
+  if (
+    !configuration.discoverySchedulerEnabled ||
+    !configuration.spotify.scheduler.enabled ||
+    !configuration.spotify.playlistWritesEnabled
+  ) {
+    return { reason: "capability_disabled" as const };
+  }
+  if (
+    !configuration.appEncryptionKey ||
+    !configuration.spotify.enabled ||
+    !configuration.spotify.configured ||
+    !configuration.spotify.clientId ||
+    !configuration.spotify.clientSecret ||
+    !configuration.spotify.allowedPlaylistId
+  ) {
+    throw new Error(
+      "Automatic Spotify playlist export requires explicitly enabled writes, encryption, Spotify credentials, and SPOTIFY_ALLOWED_PLAYLIST_ID.",
+    );
+  }
+  if (configuration.spotify.allowedPlaylistId !== spotifyAuthorizedPlaylistId) {
+    throw new Error(
+      `Automatic Spotify playlist export is restricted to ${spotifyAuthorizedPlaylistId}.`,
+    );
+  }
+  const lock = await acquireOperationLock(db, {
+    lockKey: "spotify:playlist-export",
+    metadata: { automatic: true, provider: "spotify" },
+    operationType: "spotify_playlist_export",
+  });
+  try {
+    const claimed = await claimAutomaticDiscoveryPlaylistInboxExport(db);
+    if (!claimed) return { reason: "not_due" as const };
+    const userId = await ensureLocalOwner(db);
+    const inspection = await inspectSpotifyPlaylistCheckpoint(
+      db,
+      userId,
+      configuration.spotify.allowedPlaylistId,
+    );
+    if (!inspection.shouldRun) {
+      await markDiscoveryPlaylistInboxStatus(db, { status: "completed" });
+      return { inspection, reason: "no_changes" as const };
+    }
+    const requestGate = createSpotifyRequestGate(
+      db,
+      configuration.spotify.minRequestIntervalMs,
+      undefined,
+      undefined,
+      {
+        artistAlbumsBudget: {
+          limit: configuration.spotify.artistAlbums24HourLimit,
+          priorityReserve: configuration.spotify.artistAlbumsPriorityReserve,
+          reserveReleaseAfterHours: configuration.spotify.artistAlbumsReserveReleaseAfterHours,
+        },
+        quotaLane: "playlist",
+      },
+    );
+    const oauth = new SpotifyOAuthClient({
+      clientId: configuration.spotify.clientId,
+      clientSecret: configuration.spotify.clientSecret,
+      playlistWritesEnabled: true,
+      redirectUri: configuration.spotify.redirectUri,
+      requestGate,
+    });
+    const tokens = new SpotifyTokenManager(db, userId, configuration.appEncryptionKey, oauth);
+    const client = new SpotifyClient({
+      accessToken: () => tokens.getAccessToken(),
+      onUnauthorized: () => tokens.refresh().then(() => undefined),
+      playlistWritePolicy: {
+        allowedPlaylistId: configuration.spotify.allowedPlaylistId,
+        enabled: true,
+      },
+      requestGate,
+    });
+    const execution = await (dependencies.executeExport ?? executeSpotifyPlaylistExport)(
+      db,
+      userId,
+      client,
+      {
+        orderingPolicy: "release_date_custom_order",
+        playlistId: configuration.spotify.allowedPlaylistId,
+        policy: {
+          allowedPlaylistId: configuration.spotify.allowedPlaylistId,
+          enabled: true,
+        },
+      },
+    );
+    await markDiscoveryPlaylistInboxStatus(db, {
+      exportRunId: execution.run.id,
+      status: execution.run.status === "completed" ? "completed" : "partial",
+    });
+    return {
+      reason: execution.run.status === "completed" ? ("completed" as const) : ("partial" as const),
+      runId: execution.run.id,
+      sanitized: sanitizedSpotifyPlaylistExportOutput(execution),
+    };
+  } catch (error) {
+    await markDiscoveryPlaylistInboxStatus(db, {
+      pauseForCooldown: isSpotifyCooldown(error),
+      status: isSpotifyCooldown(error) ? "partial" : "failed",
+    });
+    throw error;
+  } finally {
+    await releaseOperationLock(db, lock);
+  }
+}
+
+export async function inspectAutomaticDiscoveryPlaylistCheckpoint(
+  db: RadarDatabase,
+  configuration: ProviderConfiguration,
+) {
+  if (
+    !configuration.discoverySchedulerEnabled ||
+    !configuration.spotify.scheduler.enabled ||
+    !configuration.spotify.playlistWritesEnabled ||
+    !configuration.spotify.allowedPlaylistId
+  ) {
+    return { reason: "capability_disabled" as const, shouldRun: false };
+  }
+  const userId = await ensureLocalOwner(db);
+  return inspectSpotifyPlaylistCheckpoint(db, userId, configuration.spotify.allowedPlaylistId);
+}
+
+function isSpotifyCooldown(error: unknown): boolean {
+  return (
+    error instanceof SpotifyCooldownError ||
+    (error instanceof SpotifyHttpError && error.status === 429)
+  );
+}

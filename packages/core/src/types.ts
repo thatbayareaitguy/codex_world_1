@@ -2,6 +2,7 @@ export const providerNames = [
   "mock",
   "spotify",
   "musicbrainz",
+  "reddit",
   "youtube",
   "soundcloud",
   "apple_music",
@@ -24,6 +25,10 @@ export const releaseTypes = [
   "feature",
   "upload",
   "other",
+  "radio_show",
+  "podcast",
+  "playlist",
+  "unknown",
 ] as const;
 
 export type ReleaseType = (typeof releaseTypes)[number];
@@ -66,6 +71,32 @@ export interface ArtistCreditInput {
   role: "primary" | "featured" | "remixer" | "producer";
 }
 
+export interface SpotifyArtworkImage {
+  height: number | null;
+  url: string;
+  width: number | null;
+}
+
+export interface SpotifyReleaseArtwork {
+  albumId: string;
+  albumUrl: string;
+  image: SpotifyArtworkImage;
+  lastObservedAt: string;
+  sourceProvider: "spotify";
+}
+
+export interface AppleMusicReleaseArtwork {
+  albumId: string;
+  albumUrl: string;
+  image: {
+    height: number;
+    url: string;
+    width: number;
+  };
+  lastObservedAt: string;
+  sourceProvider: "apple_music";
+}
+
 export interface TrackCandidate {
   provider: ProviderName;
   externalReleaseId: string;
@@ -96,6 +127,8 @@ export interface TrackCandidate {
   evidenceType: string;
   payloadHash: string;
   isUpcoming?: boolean;
+  appleMusicRelease?: AppleMusicReleaseArtwork;
+  spotifyRelease?: SpotifyReleaseArtwork;
 }
 
 export interface CanonicalTrack {
@@ -152,15 +185,48 @@ export interface ProviderScanResult {
 export interface FeedFixtureItem {
   id: string;
   state: FeedState;
+  saved: boolean;
+  listened: boolean;
   artist: string;
   title: string;
+  releaseId?: string;
   releaseTitle: string;
   releaseType: ReleaseType;
   releaseDate: string;
+  releaseGroupDate?: string;
   releaseDatePrecision?: "day" | "month" | "year";
+  releaseCompleteness?: {
+    expectedTracks: number;
+    fetchedTracks: number;
+    missingTracks: number;
+    status:
+      | "not_started"
+      | "in_progress"
+      | "partial"
+      | "completed"
+      | "paused"
+      | "rate_limited"
+      | "failed";
+  };
+  discNumber?: number;
+  trackNumber?: number;
+  providerOrder?: number;
   firstSeenAt: string;
   sources: Array<{ provider: string; href: string; evidenceHref: string }>;
   spotify: AvailabilityState;
+  spotifyResolution?: {
+    mode: "automatic" | "manual";
+    status: "queued" | "verifying" | "mismatch";
+  };
+  review?: {
+    candidateId: string;
+    deferredUntil?: string;
+    groupKey?: string;
+    provider: ProviderName;
+    providerUrl?: string;
+  };
+  spotifyArtwork?: SpotifyReleaseArtwork;
+  appleMusicArtwork?: AppleMusicReleaseArtwork;
   soundcloudState: SoundCloudLinkState;
   links: Array<{ label: string; href: string }>;
   confidence: number;
@@ -168,4 +234,14 @@ export interface FeedFixtureItem {
   region: string;
   exportStatus: "eligible" | "exported" | "blocked" | "review_required";
   accent: "coral" | "cyan" | "lime" | "gold";
+  reddit?: {
+    subreddit: string;
+    postCreatedAt: string;
+    parseConfidence: number;
+    artistMatchConfidence: number;
+    corroboration: "reddit_only" | "spotify" | "musicbrainz" | "user_confirmed";
+    directSpotifyLink: boolean;
+    unverifiedExternalLink: boolean;
+    sourceDeleted: boolean;
+  };
 }

@@ -2,7 +2,16 @@ import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["**/.next/**", "**/dist/**", "**/coverage/**", "playwright-report/**"] },
+  {
+    ignores: [
+      "**/.next/**",
+      "**/.next-e2e/**",
+      "**/dist/**",
+      "**/coverage/**",
+      "outputs/**",
+      "playwright-report/**",
+    ],
+  },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {

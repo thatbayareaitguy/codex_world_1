@@ -1,0 +1,7 @@
+**/.next/**
+**/.next-e2e/**
+**/dist/**
+**/coverage/**
+node_modules/**
+playwright-report/**
+test-results/**

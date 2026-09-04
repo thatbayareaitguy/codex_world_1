@@ -1,69 +1,41 @@
 import {
-  manualMatchDecisions,
-  playlistExports,
-  playlistTargets,
-  releaseCandidates,
-  trackAvailabilities,
+  executeSpotifyPlaylistExport,
+  previewSpotifyPlaylistExport,
+  SpotifyPlaylistExportError,
+  type SpotifyPlaylistExportPreview,
 } from "@radar/db";
-import { planSpotifyPlaylistSync } from "@radar/providers";
-import { and, eq } from "drizzle-orm";
+import { loadProviderConfiguration, SpotifyPlaylistWriteDeniedError } from "@radar/providers";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { assertSameOrigin, enforceRateLimit } from "../../../../lib/request-security";
+import {
+  assertNoPlaylistWriteRequestBody,
+  configuredSpotifyPlaylistId,
+  requireSpotifyPlaylistWriteRoute,
+  SpotifyPlaylistRequestBodyError,
+} from "../../../../lib/spotify-playlist-security";
 import { createSpotifyServerContext } from "../../../../lib/spotify-server";
-
-async function loadSyncData(context: Awaited<ReturnType<typeof createSpotifyServerContext>>) {
-  const target = await context.db.query.playlistTargets.findFirst({
-    where: and(eq(playlistTargets.userId, context.userId), eq(playlistTargets.provider, "spotify")),
-  });
-  if (!target?.providerPlaylistId) throw new Error("Spotify playlist is not configured");
-  const rows = await context.db
-    .select({
-      candidateId: releaseCandidates.id,
-      confidence: releaseCandidates.matchConfidence,
-      matchRule: releaseCandidates.matchRule,
-      providerTrackId: trackAvailabilities.providerTrackId,
-      providerUrl: trackAvailabilities.providerUrl,
-      trackId: trackAvailabilities.trackId,
-    })
-    .from(releaseCandidates)
-    .innerJoin(
-      trackAvailabilities,
-      and(
-        eq(releaseCandidates.matchedTrackId, trackAvailabilities.trackId),
-        eq(trackAvailabilities.provider, "spotify"),
-      ),
-    )
-    .where(eq(releaseCandidates.provider, "spotify"));
-  const decisions = await context.db.select().from(manualMatchDecisions);
-  const items = rows.map((row) => ({
-    confidence: Number(row.confidence),
-    manuallyConfirmed: decisions.some(
-      (decision) => decision.candidateId === row.candidateId && decision.decision === "confirm",
-    ),
-    matchRule: row.matchRule,
-    providerTrackId: row.providerTrackId,
-    providerUrl: row.providerUrl,
-  }));
-  const existing = await context.client.getPlaylistTrackIds(target.providerPlaylistId);
-  return { existing, items, rows, target };
-}
 
 export async function GET(): Promise<NextResponse> {
   try {
+    const configuration = loadProviderConfiguration();
+    const playlistId = configuredSpotifyPlaylistId(configuration);
+    if (!playlistId) throw new Error("Spotify playlist is not configured");
     const context = await createSpotifyServerContext();
     try {
-      const data = await loadSyncData(context);
-      return NextResponse.json({
-        playlistName: data.target.name,
-        ...planSpotifyPlaylistSync(data.items, data.existing),
-      });
+      const preview = await previewSpotifyPlaylistExport(
+        context.db,
+        context.userId,
+        context.client,
+        playlistId,
+      );
+      return NextResponse.json(toResponse(preview));
     } finally {
       await context.close();
     }
   } catch {
     return NextResponse.json(
-      { error: "Unable to preview playlist synchronization" },
+      { error: "Unable to preview the configured Spotify playlist" },
       { status: 400 },
     );
   }
@@ -73,48 +45,80 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     assertSameOrigin(request);
     enforceRateLimit(request, 10);
+    await assertNoPlaylistWriteRequestBody(request);
+    const configuration = loadProviderConfiguration();
+    const playlistId = requireSpotifyPlaylistWriteRoute(configuration);
     const context = await createSpotifyServerContext();
     try {
-      const data = await loadSyncData(context);
-      const plan = planSpotifyPlaylistSync(data.items, data.existing);
-      const snapshots = await context.client.addPlaylistItems(
-        data.target.providerPlaylistId!,
-        plan.toAdd,
+      const result = await executeSpotifyPlaylistExport(
+        context.db,
+        context.userId,
+        context.client,
+        {
+          playlistId,
+          policy: {
+            allowedPlaylistId: playlistId,
+            enabled: configuration.spotify.playlistWritesEnabled,
+          },
+        },
       );
-      for (const providerTrackId of plan.toAdd) {
-        const row = data.rows.find((candidate) => candidate.providerTrackId === providerTrackId);
-        if (!row) continue;
-        await context.db
-          .insert(playlistExports)
-          .values({
-            exportedAt: new Date(),
-            playlistTargetId: data.target.id,
-            providerTrackId,
-            status: "exported",
-            trackId: row.trackId,
-          })
-          .onConflictDoUpdate({
-            target: [playlistExports.playlistTargetId, playlistExports.providerTrackId],
-            set: { exportedAt: new Date(), status: "exported", updatedAt: new Date() },
-          });
-      }
-      await context.db
-        .update(playlistTargets)
-        .set({
-          lastSyncedAt: new Date(),
-          ...(snapshots.at(-1) ? { snapshotId: snapshots.at(-1) } : {}),
-          updatedAt: new Date(),
-        })
-        .where(eq(playlistTargets.id, data.target.id));
-      return NextResponse.json({
-        added: plan.toAdd,
-        alreadyPresent: plan.alreadyPresent,
-        rejected: plan.rejected,
-      });
+      return NextResponse.json({ ...toResponse(result), run: result.run });
     } finally {
       await context.close();
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof SpotifyPlaylistRequestBodyError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    if (
+      error instanceof SpotifyPlaylistWriteDeniedError ||
+      error instanceof SpotifyPlaylistExportError
+    ) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
     return NextResponse.json({ error: "Unable to synchronize Spotify playlist" }, { status: 400 });
   }
+}
+
+function toResponse(preview: SpotifyPlaylistExportPreview) {
+  const skipCounts = Object.fromEntries(
+    [...new Set(preview.plan.skips.map((item) => item.reason))]
+      .sort()
+      .map((reason) => [
+        reason,
+        preview.plan.skips.filter((item) => item.reason === reason).length,
+      ]),
+  );
+  return {
+    additions: preview.plan.additions.map((item) => ({
+      artistOrder: item.desiredOrdinal,
+      position: item.position,
+      providerTrackId: item.providerTrackId,
+      releaseDate: item.releaseDate,
+      releaseTitle: item.releaseTitle,
+      title: item.title,
+    })),
+    alreadyPresent: preview.plan.alreadyPresent.map((item) => ({
+      appManaged: item.appManaged,
+      position: item.position,
+      providerTrackId: item.providerTrackId,
+      title: item.title,
+    })),
+    existingDuplicateTrackIds: preview.plan.existingDuplicateTrackIds,
+    orderingConflicts: preview.plan.reorderMoves,
+    skipCounts,
+    skipped: preview.plan.skips,
+    target: preview.target,
+    totals: {
+      additions: preview.plan.additions.length,
+      alreadyPresent: preview.plan.alreadyPresent.length,
+      eligible: preview.plan.desired.length,
+      finalPlaylistItems: preview.plan.finalTrackIds.length,
+      managedPlaylistItems: preview.plan.managedPlaylistItemCount,
+      orderingConflicts: preview.plan.reorderMoves.length,
+      outsideCurrentEligibility: preview.plan.outsideCurrentExportSetItems.length,
+      skipped: preview.plan.skips.length,
+      unmanagedPlaylistItems: preview.plan.unmanagedItems.length,
+    },
+  };
 }

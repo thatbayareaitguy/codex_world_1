@@ -37,16 +37,25 @@ export function matchCandidate(
     }
   }
 
-  const mbExact = tracks.find(
-    (track) =>
-      (candidate.musicbrainzRecordingId &&
-        track.musicbrainzRecordingId === candidate.musicbrainzRecordingId) ||
-      (candidate.musicbrainzReleaseGroupId &&
-        track.musicbrainzReleaseGroupId === candidate.musicbrainzReleaseGroupId),
-  );
+  const mbExact = tracks.find((track) => {
+    if (
+      candidate.musicbrainzRecordingId &&
+      track.musicbrainzRecordingId === candidate.musicbrainzRecordingId
+    ) {
+      return true;
+    }
+    return Boolean(
+      candidate.musicbrainzReleaseGroupId &&
+      track.musicbrainzReleaseGroupId === candidate.musicbrainzReleaseGroupId &&
+      candidate.trackNumber !== undefined &&
+      track.trackNumber === candidate.trackNumber &&
+      (track.discNumber ?? 1) === (candidate.discNumber ?? 1) &&
+      normalizeText(track.title) === normalizeText(candidate.title),
+    );
+  });
   if (mbExact) {
     return automatic(mbExact.id, "exact_musicbrainz", 0.98, [
-      "MusicBrainz recording or release-group identifier is identical",
+      "MusicBrainz recording ID is identical, or release group, position, and title agree",
     ]);
   }
 

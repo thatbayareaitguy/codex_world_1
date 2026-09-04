@@ -21,6 +21,11 @@ const emptyReleases = {
   "release-offset": 0,
   releases: [],
 };
+const emptyReleaseGroups = {
+  "release-group-count": 0,
+  "release-group-offset": 0,
+  "release-groups": [],
+};
 
 describe("MusicBrainzRateGate", () => {
   it("serializes requests at one request per second", async () => {
@@ -62,6 +67,71 @@ describe("MusicBrainzClient", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledWith(500);
   });
+
+  it("uses the configured application identity in its User-Agent", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(emptyReleaseGroups));
+    const client = new MusicBrainzClient({
+      contactEmail: "owner@example.test",
+      fetcher,
+      gate: new MusicBrainzRateGate(0),
+      packageVersion: "1.2.3",
+    });
+    await client.browseReleaseGroups(artistMbid);
+    expect(fetcher.mock.calls[0]?.[1]?.headers).toMatchObject({
+      "User-Agent": "TSNewMusicRadar/1.2.3 (owner@example.test)",
+    });
+  });
+
+  it("supports a bounded single-page release-group lookup", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(emptyReleaseGroups));
+    const client = new MusicBrainzClient({
+      contactEmail: "owner@example.test",
+      fetcher,
+      gate: new MusicBrainzRateGate(0),
+    });
+    await expect(client.browseReleaseGroupsFirstPage(artistMbid)).resolves.toEqual([]);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const request = fetcher.mock.calls[0]?.[0];
+    const requestUrl =
+      typeof request === "string" ? request : request instanceof URL ? request.href : request?.url;
+    expect(requestUrl).toContain("limit=100&offset=0");
+  });
+
+  it("does not retry invalid MusicBrainz payloads", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ releases: [] }));
+    const client = new MusicBrainzClient({
+      contactEmail: "owner@example.test",
+      fetcher,
+      gate: new MusicBrainzRateGate(0),
+    });
+    await expect(client.browseReleases(artistMbid, "artist")).rejects.toThrow();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts nullable fields returned by real artist search responses", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        artists: [
+          {
+            aliases: [{ name: "Yussi", primary: null }],
+            country: null,
+            id: artistMbid,
+            name: "YUSSI",
+            score: 100,
+            "sort-name": "YUSSI",
+          },
+        ],
+        count: 1,
+        offset: 0,
+      }),
+    );
+    const client = new MusicBrainzClient({
+      contactEmail: "owner@example.test",
+      fetcher,
+      gate: new MusicBrainzRateGate(0),
+    });
+    await expect(client.searchArtists("YUSSI")).resolves.toHaveLength(1);
+  });
 });
 
 describe("MusicBrainz matching and discovery", () => {
@@ -78,6 +148,8 @@ describe("MusicBrainz matching and discovery", () => {
     expect(score.confidence).toBeGreaterThan(0.9);
     expect(classifyMusicBrainzRelease("Album", ["Live"])).toBe("live");
     expect(classifyMusicBrainzRelease("Album", ["Remix"])).toBe("remix");
+    expect(classifyMusicBrainzRelease("Album", ["Compilation"])).toBe("compilation");
+    expect(classifyMusicBrainzRelease("Album", ["DJ-mix"])).toBe("dj_mix");
   });
 
   it("creates future track-level appearance candidates with evidence", async () => {
@@ -129,6 +201,7 @@ describe("MusicBrainz matching and discovery", () => {
     };
     const fetcher = vi
       .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(emptyReleaseGroups))
       .mockResolvedValueOnce(jsonResponse(emptyReleases))
       .mockResolvedValueOnce(
         jsonResponse({ "release-count": 1, "release-offset": 0, releases: [appearance] }),
@@ -153,5 +226,59 @@ describe("MusicBrainz matching and discovery", () => {
       releaseType: "feature",
       musicbrainzRecordingId: recordingMbid,
     });
+  });
+
+  it("persists provider stages incrementally and counts an artist only after appearances", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(emptyReleaseGroups))
+      .mockResolvedValueOnce(jsonResponse(emptyReleases))
+      .mockResolvedValueOnce(jsonResponse(emptyReleases));
+    const provider = new MusicBrainzProvider(
+      new MusicBrainzClient({
+        contactEmail: "owner@example.test",
+        fetcher,
+        gate: new MusicBrainzRateGate(0),
+      }),
+      [{ aliases: [], artistId: "canonical-artist", mbid: artistMbid, name: "Night Index" }],
+    );
+    const batches: Array<{ completedUnits: number; stage: string }> = [];
+    await provider.scan({
+      filter: {},
+      onBatch: (batch) => {
+        if (!batch.stage) throw new Error("Expected a MusicBrainz stage");
+        batches.push({ completedUnits: batch.completedUnits, stage: batch.stage });
+        return Promise.resolve();
+      },
+    });
+    expect(batches).toEqual([
+      { completedUnits: 0, stage: "release_groups" },
+      { completedUnits: 0, stage: "primary_releases" },
+      { completedUnits: 1, stage: "track_appearances" },
+    ]);
+  });
+
+  it("stops safely before the next discovery stage when cancelled", async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(emptyReleaseGroups));
+    const provider = new MusicBrainzProvider(
+      new MusicBrainzClient({
+        contactEmail: "owner@example.test",
+        fetcher,
+        gate: new MusicBrainzRateGate(0),
+      }),
+      [{ aliases: [], artistId: "canonical-artist", mbid: artistMbid, name: "Night Index" }],
+    );
+    await expect(
+      provider.scan({
+        filter: {},
+        onBatch: () => {
+          controller.abort(new Error("cancelled"));
+          return Promise.resolve();
+        },
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("cancelled");
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });

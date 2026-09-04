@@ -35,6 +35,12 @@ const canonical: CanonicalTrack = {
   isrc: "USMCK2600001",
 };
 
+function candidateWithoutIsrc(): TrackCandidate {
+  const copy = { ...candidate };
+  delete copy.isrc;
+  return copy;
+}
+
 describe("matchCandidate", () => {
   it("merges provider records with the same normalized ISRC", () => {
     expect(matchCandidate(candidate, [canonical])).toMatchObject({
@@ -117,6 +123,42 @@ describe("matchCandidate", () => {
     expect(matchCandidate(compilationCandidate, [canonical])).toMatchObject({
       kind: "automatic",
       rule: "exact_isrc",
+    });
+  });
+
+  it("does not collapse different tracks from the same MusicBrainz release group", () => {
+    const releaseGroupCandidate: TrackCandidate = {
+      ...candidateWithoutIsrc(),
+      musicbrainzReleaseGroupId: "11111111-1111-4111-8111-111111111111",
+      title: "Second Track",
+      trackNumber: 2,
+    };
+    const releaseGroupTrack: CanonicalTrack = {
+      ...canonical,
+      musicbrainzReleaseGroupId: "11111111-1111-4111-8111-111111111111",
+      title: "First Track",
+      normalizedTitle: normalizeText("First Track"),
+      trackNumber: 1,
+    };
+    expect(matchCandidate(releaseGroupCandidate, [releaseGroupTrack])).toMatchObject({
+      kind: "new",
+    });
+  });
+
+  it("matches a MusicBrainz release group only with the same position and title", () => {
+    const releaseGroupCandidate: TrackCandidate = {
+      ...candidateWithoutIsrc(),
+      musicbrainzReleaseGroupId: "11111111-1111-4111-8111-111111111111",
+      trackNumber: 1,
+    };
+    const releaseGroupTrack: CanonicalTrack = {
+      ...canonical,
+      musicbrainzReleaseGroupId: "11111111-1111-4111-8111-111111111111",
+      trackNumber: 1,
+    };
+    expect(matchCandidate(releaseGroupCandidate, [releaseGroupTrack])).toMatchObject({
+      kind: "automatic",
+      rule: "exact_musicbrainz",
     });
   });
 });

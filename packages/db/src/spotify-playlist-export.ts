@@ -1,0 +1,1022 @@
+import {
+  applySpotifyPlaylistReorderMove,
+  hasSpotifyPlaylistWriteScopes,
+  abbreviateSpotifyPlaylistId,
+  assertOwnedNonCollaborativeSpotifyPlaylist,
+  assertSpotifyPlaylistWriteTarget,
+  isExactSpotifyIdentity,
+  planSpotifyPlaylistExport,
+  planSpotifyPlaylistReleaseDateOrder,
+  spotifyPlaylistIdSchema,
+  spotifyTrackIdSchema,
+  SpotifyHttpError,
+  SpotifyPlaylistWriteDeniedError,
+  type SpotifyClient,
+  type SpotifyPlaylistExportCandidate,
+  type SpotifyPlaylistExportPlan,
+  type SpotifyPlaylistWritePolicy,
+} from "@radar/providers";
+import { and, asc, desc, eq, inArray, isNull, lt, ne, sql } from "drizzle-orm";
+import type { RadarDatabase } from "./client";
+import {
+  artistFollows,
+  feedItems,
+  manualMatchDecisions,
+  oauthAccounts,
+  playlistExports,
+  playlistTargets,
+  releaseCandidates,
+  releaseExternalIds,
+  releaseProviderReconciliations,
+  releases,
+  releaseTrackAppearances,
+  spotifyPlaylistExportOperations,
+  spotifyPlaylistExportRuns,
+  trackCredits,
+  tracks,
+} from "./schema";
+import {
+  loadVerifiedSpotifyPlaylistSnapshot,
+  persistSpotifyPlaylistSnapshot,
+  upsertSpotifyPlaylistTarget,
+} from "./spotify-playlist-cache";
+
+type SpotifyPlaylistOrderingPolicy = "canonical" | "discovery_inbox" | "release_date_custom_order";
+
+export const automaticPlaylistReconciliationIntervalMs = 24 * 60 * 60_000;
+
+export interface SpotifyPlaylistCheckpointInspection {
+  blockedCount: number;
+  duplicateAppearanceCount: number;
+  exportedCount: number;
+  pendingAdditionCount: number;
+  pendingOperationCount: number;
+  reason:
+    | "incomplete_run"
+    | "missing_snapshot"
+    | "pending_additions"
+    | "pending_reorder"
+    | "periodic_reconciliation"
+    | "none";
+  reorderMoveCount: number;
+  shouldRun: boolean;
+  skippedCount: number;
+}
+
+export interface SpotifyPlaylistExportClient {
+  addPlaylistItemsAtPosition: SpotifyClient["addPlaylistItemsAtPosition"];
+  getCurrentUser: SpotifyClient["getCurrentUser"];
+  getPlaylist: SpotifyClient["getPlaylist"];
+  getPlaylistItems: SpotifyClient["getPlaylistItems"];
+  reorderPlaylistItems: SpotifyClient["reorderPlaylistItems"];
+}
+
+export interface SpotifyPlaylistExportPreview {
+  cacheHit: boolean;
+  plan: SpotifyPlaylistExportPlan;
+  target: {
+    collaborative: false;
+    id: string;
+    idAbbreviated: string;
+    name: string;
+    ownerId: string;
+    public: boolean | null;
+    snapshotId: string;
+  };
+}
+
+export interface SpotifyPlaylistExportExecution extends SpotifyPlaylistExportPreview {
+  run: {
+    additionsAttempted: number;
+    exported: number;
+    failed: number;
+    id: string;
+    pending: number;
+    resumed: boolean;
+    skipped: number;
+    status: "completed" | "partial";
+  };
+}
+
+export class SpotifyPlaylistExportError extends Error {
+  constructor(
+    message: string,
+    readonly code:
+      "missing_write_scope" | "playlist_identity_mismatch" | "playlist_operation_invalid",
+  ) {
+    super(message);
+    this.name = "SpotifyPlaylistExportError";
+  }
+}
+
+export async function previewSpotifyPlaylistExport(
+  db: RadarDatabase,
+  userId: string,
+  client: SpotifyPlaylistExportClient,
+  configuredPlaylistId: string,
+  options: {
+    discoveryReconciliationCampaignId?: string;
+    orderingPolicy?: SpotifyPlaylistOrderingPolicy;
+  } = {},
+): Promise<SpotifyPlaylistExportPreview> {
+  const playlistId = spotifyPlaylistIdSchema.parse(configuredPlaylistId);
+  const profile = await client.getCurrentUser();
+  const playlist = await client.getPlaylist(playlistId);
+  assertPlaylistIdentity(playlistId, playlist.id);
+  assertOwnedNonCollaborativeSpotifyPlaylist(playlist, profile);
+  const snapshot = await loadVerifiedSpotifyPlaylistSnapshot(db, userId, client, playlist);
+  return buildPreview(
+    db,
+    userId,
+    playlistId,
+    snapshot.playlist,
+    profile.id,
+    snapshot.items,
+    options,
+    snapshot.cacheHit,
+  );
+}
+
+export async function executeSpotifyPlaylistExport(
+  db: RadarDatabase,
+  userId: string,
+  client: SpotifyPlaylistExportClient,
+  input: {
+    maxAdditions?: number;
+    discoveryReconciliationCampaignId?: string;
+    orderingPolicy?: SpotifyPlaylistOrderingPolicy;
+    playlistId: string;
+    policy: SpotifyPlaylistWritePolicy;
+  },
+): Promise<SpotifyPlaylistExportExecution> {
+  const playlistId = assertSpotifyPlaylistWriteTarget(input.policy, input.playlistId);
+  await requireSpotifyPlaylistWriteScope(db, userId);
+  if (
+    input.maxAdditions !== undefined &&
+    (!Number.isInteger(input.maxAdditions) || input.maxAdditions < 1)
+  ) {
+    throw new SpotifyPlaylistExportError(
+      "Spotify playlist export maximum additions must be a positive integer.",
+      "playlist_operation_invalid",
+    );
+  }
+
+  const profile = await client.getCurrentUser();
+  const playlist = await client.getPlaylist(playlistId);
+  assertPlaylistIdentity(playlistId, playlist.id);
+  assertOwnedNonCollaborativeSpotifyPlaylist(playlist, profile);
+  const snapshot = await loadVerifiedSpotifyPlaylistSnapshot(db, userId, client, playlist, {
+    policy: input.policy,
+  });
+  const playlistItems = snapshot.items;
+  const preview = await buildPreview(
+    db,
+    userId,
+    playlistId,
+    snapshot.playlist,
+    profile.id,
+    playlistItems,
+    {
+      ...(input.discoveryReconciliationCampaignId
+        ? { discoveryReconciliationCampaignId: input.discoveryReconciliationCampaignId }
+        : {}),
+      orderingPolicy: input.orderingPolicy ?? "release_date_custom_order",
+    },
+    snapshot.cacheHit,
+  );
+  const target = await upsertSpotifyPlaylistTarget(db, userId, playlistId, playlist.name);
+  let run = await loadResumableRun(
+    db,
+    target.id,
+    playlistId,
+    input.discoveryReconciliationCampaignId ?? null,
+    input.orderingPolicy ?? "release_date_custom_order",
+  );
+  const resumed = Boolean(run);
+  if (!run) {
+    run = await createExportRun(db, target.id, preview, {
+      discoveryReconciliationCampaignId: input.discoveryReconciliationCampaignId ?? null,
+      orderingPolicy: input.orderingPolicy ?? "release_date_custom_order",
+    });
+  } else {
+    await db
+      .update(spotifyPlaylistExportRuns)
+      .set({
+        errorCode: null,
+        startedAt: run.startedAt ?? new Date(),
+        status: "running",
+        updatedAt: new Date(),
+      })
+      .where(eq(spotifyPlaylistExportRuns.id, run.id));
+    await db
+      .update(spotifyPlaylistExportOperations)
+      .set({ errorCode: null, status: "pending", updatedAt: new Date() })
+      .where(
+        and(
+          eq(spotifyPlaylistExportOperations.runId, run.id),
+          eq(spotifyPlaylistExportOperations.action, "add"),
+          eq(spotifyPlaylistExportOperations.status, "failed"),
+          lt(spotifyPlaylistExportOperations.attemptCount, 3),
+        ),
+      );
+  }
+
+  await reconcilePendingOperations(db, run.id, target.id, playlistItems);
+  let pending = await loadPendingOperations(db, run.id);
+  if (input.maxAdditions !== undefined) pending = pending.slice(0, input.maxAdditions);
+  let additionsAttempted = 0;
+  let snapshotAfter = snapshot.playlist.snapshot_id;
+  let workingItems = playlistItems.slice().sort((left, right) => left.position - right.position);
+
+  try {
+    for (const group of groupPendingOperations(pending)) {
+      additionsAttempted += group.length;
+      try {
+        snapshotAfter = await client.addPlaylistItemsAtPosition(
+          playlistId,
+          group.map((item) => item.providerTrackId),
+          group[0]!.insertPosition,
+        );
+        workingItems = insertExportedItems(workingItems, preview.plan.orderedItems, group);
+        await persistSpotifyPlaylistSnapshot(db, target.id, snapshotAfter, workingItems);
+        for (const operation of group) {
+          await markOperationExported(db, target.id, operation, true);
+        }
+      } catch (error) {
+        if (isGlobalSpotifyWriteFailure(error)) throw error;
+        let failedBefore = 0;
+        for (const operation of group) {
+          try {
+            snapshotAfter = await client.addPlaylistItemsAtPosition(
+              playlistId,
+              [operation.providerTrackId],
+              Math.max(0, operation.insertPosition - failedBefore),
+            );
+            workingItems = insertExportedItems(workingItems, preview.plan.orderedItems, [
+              {
+                ...operation,
+                insertPosition: Math.max(0, operation.insertPosition - failedBefore),
+              },
+            ]);
+            await persistSpotifyPlaylistSnapshot(db, target.id, snapshotAfter, workingItems);
+            await markOperationExported(db, target.id, operation, true);
+          } catch (itemError) {
+            if (isGlobalSpotifyWriteFailure(itemError)) throw itemError;
+            failedBefore += 1;
+            await markOperationFailed(db, operation.id, safeErrorCode(itemError));
+          }
+        }
+      }
+    }
+    const countsBeforeOrdering = await loadOperationCounts(db, run.id);
+    if (
+      countsBeforeOrdering.pending === 0 &&
+      (input.orderingPolicy ?? "release_date_custom_order") === "release_date_custom_order"
+    ) {
+      const orderPlan = planSpotifyPlaylistReleaseDateOrder(workingItems);
+      for (const move of orderPlan.moves) {
+        snapshotAfter = await client.reorderPlaylistItems(playlistId, {
+          ...move,
+          snapshotId: snapshotAfter,
+        });
+        workingItems = applySpotifyPlaylistReorderMove(workingItems, move);
+        await persistSpotifyPlaylistSnapshot(db, target.id, snapshotAfter, workingItems);
+      }
+    }
+  } catch (error) {
+    await db
+      .update(spotifyPlaylistExportRuns)
+      .set({ errorCode: safeErrorCode(error), status: "partial", updatedAt: new Date() })
+      .where(eq(spotifyPlaylistExportRuns.id, run.id));
+    throw error;
+  }
+  await persistSpotifyPlaylistSnapshot(db, target.id, snapshotAfter, workingItems);
+  await reconcilePendingOperations(db, run.id, target.id, workingItems);
+  const counts = await loadOperationCounts(db, run.id);
+  const status = counts.pending === 0 && counts.failed === 0 ? "completed" : "partial";
+  const finishedAt = status === "completed" ? new Date() : null;
+  await db
+    .update(spotifyPlaylistExportRuns)
+    .set({
+      failedCount: counts.failed,
+      finishedAt,
+      snapshotAfter,
+      status,
+      updatedAt: new Date(),
+    })
+    .where(eq(spotifyPlaylistExportRuns.id, run.id));
+  await db
+    .update(playlistTargets)
+    .set({ lastSyncedAt: new Date(), updatedAt: new Date() })
+    .where(eq(playlistTargets.id, target.id));
+
+  return {
+    ...preview,
+    run: {
+      additionsAttempted,
+      exported: counts.exported,
+      failed: counts.failed,
+      id: run.id,
+      pending: counts.pending,
+      resumed,
+      skipped: counts.skipped,
+      status,
+    },
+  };
+}
+
+async function buildPreview(
+  db: RadarDatabase,
+  userId: string,
+  playlistId: string,
+  playlist: Awaited<ReturnType<SpotifyPlaylistExportClient["getPlaylist"]>>,
+  ownerId: string,
+  playlistItems: Awaited<ReturnType<SpotifyPlaylistExportClient["getPlaylistItems"]>>,
+  options: {
+    discoveryReconciliationCampaignId?: string;
+    orderingPolicy?: SpotifyPlaylistOrderingPolicy;
+  } = {},
+  cacheHit = false,
+): Promise<SpotifyPlaylistExportPreview> {
+  const candidates = options.discoveryReconciliationCampaignId
+    ? await loadCampaignPlaylistExportCandidates(
+        db,
+        userId,
+        options.discoveryReconciliationCampaignId,
+      )
+    : await loadCanonicalExportCandidates(db, userId);
+  const managedRows = await db
+    .select({ providerTrackId: playlistExports.providerTrackId })
+    .from(playlistExports)
+    .innerJoin(playlistTargets, eq(playlistTargets.id, playlistExports.playlistTargetId))
+    .where(
+      and(
+        eq(playlistTargets.userId, userId),
+        eq(playlistTargets.provider, "spotify"),
+        eq(playlistTargets.providerPlaylistId, playlistId),
+        eq(playlistExports.appOwned, true),
+        eq(playlistExports.status, "exported"),
+      ),
+    );
+  return {
+    cacheHit,
+    plan: planSpotifyPlaylistExport(
+      candidates,
+      playlistItems,
+      new Set(managedRows.map((row) => row.providerTrackId)),
+      options.orderingPolicy ?? "release_date_custom_order",
+    ),
+    target: {
+      collaborative: false,
+      id: playlistId,
+      idAbbreviated: abbreviateSpotifyPlaylistId(playlistId),
+      name: playlist.name,
+      ownerId,
+      public: playlist.public,
+      snapshotId: playlist.snapshot_id,
+    },
+  };
+}
+
+export async function loadCampaignPlaylistExportCandidates(
+  db: RadarDatabase,
+  userId: string,
+  campaignId: string,
+): Promise<SpotifyPlaylistExportCandidate[]> {
+  const eligible = await db
+    .select({
+      providerReleaseId: releaseProviderReconciliations.spotifyProviderReleaseId,
+      releaseId: releaseProviderReconciliations.spotifyCanonicalReleaseId,
+    })
+    .from(releaseProviderReconciliations)
+    .where(
+      and(
+        eq(releaseProviderReconciliations.campaignId, campaignId),
+        eq(releaseProviderReconciliations.playlistEligible, true),
+      ),
+    );
+  const releaseIds = new Set(eligible.flatMap((row) => (row.releaseId ? [row.releaseId] : [])));
+  const providerReleaseIds = new Set(
+    eligible.flatMap((row) => (row.providerReleaseId ? [row.providerReleaseId] : [])),
+  );
+  if (releaseIds.size === 0 || providerReleaseIds.size === 0) return [];
+  const exactTracks = await db
+    .select({
+      confidence: releaseCandidates.matchConfidence,
+      matchRule: releaseCandidates.matchRule,
+      providerReleaseId: releaseCandidates.providerReleaseId,
+      providerTrackId: releaseCandidates.providerTrackId,
+    })
+    .from(releaseCandidates)
+    .where(
+      and(
+        eq(releaseCandidates.provider, "spotify"),
+        inArray(releaseCandidates.providerReleaseId, [...providerReleaseIds]),
+      ),
+    );
+  const eligibleTrackIds = new Set(
+    exactTracks
+      .filter(
+        (track) =>
+          isExactSpotifyIdentity(track.matchRule, Number(track.confidence)) &&
+          providerReleaseIds.has(track.providerReleaseId),
+      )
+      .map((track) => track.providerTrackId),
+  );
+  return (await loadCanonicalExportCandidates(db, userId)).filter(
+    (candidate) =>
+      releaseIds.has(candidate.releaseId) &&
+      Boolean(candidate.providerTrackId && eligibleTrackIds.has(candidate.providerTrackId)),
+  );
+}
+
+export async function loadCanonicalExportCandidates(
+  db: RadarDatabase,
+  userId: string,
+): Promise<SpotifyPlaylistExportCandidate[]> {
+  const feedRows = await db
+    .select({
+      discNumber: releaseTrackAppearances.discNumber,
+      feedItemId: feedItems.id,
+      feedState: feedItems.state,
+      releaseDate: releases.releaseDate,
+      releaseId: releases.id,
+      releaseTitle: releases.title,
+      releaseType: releases.releaseType,
+      title: tracks.title,
+      trackId: tracks.id,
+      trackNumber: releaseTrackAppearances.trackNumber,
+    })
+    .from(feedItems)
+    .innerJoin(releaseTrackAppearances, eq(feedItems.appearanceId, releaseTrackAppearances.id))
+    .innerJoin(releases, eq(releaseTrackAppearances.releaseId, releases.id))
+    .innerJoin(tracks, eq(releaseTrackAppearances.trackId, tracks.id))
+    .where(eq(feedItems.userId, userId));
+  const followedRows = await db
+    .select({ trackId: trackCredits.trackId })
+    .from(trackCredits)
+    .innerJoin(
+      artistFollows,
+      and(
+        eq(trackCredits.artistId, artistFollows.artistId),
+        eq(artistFollows.userId, userId),
+        eq(artistFollows.active, true),
+      ),
+    );
+  const releaseExternalRows = await db
+    .select({ externalId: releaseExternalIds.externalId, releaseId: releaseExternalIds.releaseId })
+    .from(releaseExternalIds)
+    .where(eq(releaseExternalIds.provider, "spotify"));
+  const candidateRows = await db
+    .select({
+      candidateId: releaseCandidates.id,
+      confidence: releaseCandidates.matchConfidence,
+      firstSeenAt: releaseCandidates.firstSeenAt,
+      matchRule: releaseCandidates.matchRule,
+      providerTrackId: releaseCandidates.providerTrackId,
+      trackId: releaseCandidates.matchedTrackId,
+    })
+    .from(releaseCandidates)
+    .where(eq(releaseCandidates.provider, "spotify"));
+  const decisions = await db
+    .select({ candidateId: manualMatchDecisions.candidateId })
+    .from(manualMatchDecisions)
+    .where(
+      and(eq(manualMatchDecisions.userId, userId), eq(manualMatchDecisions.decision, "confirm")),
+    );
+  const followedTrackIds = new Set(followedRows.map((row) => row.trackId));
+  const providerReleaseIdByRelease = new Map(
+    releaseExternalRows.map((row) => [row.releaseId, row.externalId]),
+  );
+  const confirmedCandidateIds = new Set(decisions.map((row) => row.candidateId));
+  const candidateByTrack = new Map<string, (typeof candidateRows)[number]>();
+  for (const candidate of candidateRows) {
+    if (!candidate.trackId) continue;
+    const existing = candidateByTrack.get(candidate.trackId);
+    if (!existing || compareProviderCandidates(candidate, existing, confirmedCandidateIds) < 0) {
+      candidateByTrack.set(candidate.trackId, candidate);
+    }
+  }
+  return feedRows.map((feed) => {
+    const candidate = candidateByTrack.get(feed.trackId);
+    const providerReleaseId = providerReleaseIdByRelease.get(feed.releaseId);
+    return {
+      ...(candidate ? { candidateId: candidate.candidateId } : {}),
+      ...(candidate ? { confidence: Number(candidate.confidence) } : {}),
+      discNumber: feed.discNumber,
+      feedItemId: feed.feedItemId,
+      feedState: feed.feedState,
+      followedArtist: followedTrackIds.has(feed.trackId),
+      manuallyConfirmed: candidate ? confirmedCandidateIds.has(candidate.candidateId) : false,
+      ...(candidate ? { matchRule: candidate.matchRule } : {}),
+      ...(candidate ? { providerTrackId: candidate.providerTrackId } : {}),
+      ...(providerReleaseId ? { providerReleaseId } : {}),
+      releaseDate: feed.releaseDate,
+      releaseId: feed.releaseId,
+      releaseTitle: feed.releaseTitle,
+      releaseType: feed.releaseType,
+      title: feed.title,
+      trackId: feed.trackId,
+      trackNumber: feed.trackNumber,
+    };
+  });
+}
+
+export async function inspectSpotifyPlaylistCheckpoint(
+  db: RadarDatabase,
+  userId: string,
+  playlistId: string,
+  options: { now?: Date; reconciliationIntervalMs?: number } = {},
+): Promise<SpotifyPlaylistCheckpointInspection> {
+  const now = options.now ?? new Date();
+  const reconciliationIntervalMs =
+    options.reconciliationIntervalMs ?? automaticPlaylistReconciliationIntervalMs;
+  if (!Number.isSafeInteger(reconciliationIntervalMs) || reconciliationIntervalMs < 60_000) {
+    throw new Error("Spotify playlist reconciliation interval must be at least one minute.");
+  }
+  const target = await db.query.playlistTargets.findFirst({
+    where: and(
+      eq(playlistTargets.userId, userId),
+      eq(playlistTargets.provider, "spotify"),
+      eq(playlistTargets.providerPlaylistId, playlistId),
+    ),
+  });
+  if (!target || !target.snapshotId || !Array.isArray(target.snapshotItems)) {
+    return emptyCheckpointInspection("missing_snapshot", true);
+  }
+
+  const incompleteRun = await db.query.spotifyPlaylistExportRuns.findFirst({
+    orderBy: [desc(spotifyPlaylistExportRuns.createdAt)],
+    where: and(
+      eq(spotifyPlaylistExportRuns.playlistTargetId, target.id),
+      inArray(spotifyPlaylistExportRuns.status, ["planned", "running", "partial"]),
+    ),
+  });
+  const pendingOperations = incompleteRun
+    ? await db
+        .select({ id: spotifyPlaylistExportOperations.id })
+        .from(spotifyPlaylistExportOperations)
+        .where(
+          and(
+            eq(spotifyPlaylistExportOperations.runId, incompleteRun.id),
+            inArray(spotifyPlaylistExportOperations.status, ["pending", "failed"]),
+          ),
+        )
+    : [];
+  const [candidates, managedRows] = await Promise.all([
+    loadCanonicalExportCandidates(db, userId),
+    db
+      .select({ providerTrackId: playlistExports.providerTrackId })
+      .from(playlistExports)
+      .where(
+        and(
+          eq(playlistExports.playlistTargetId, target.id),
+          eq(playlistExports.appOwned, true),
+          eq(playlistExports.status, "exported"),
+        ),
+      ),
+  ]);
+  const plan = planSpotifyPlaylistExport(
+    candidates,
+    target.snapshotItems,
+    new Set(managedRows.map((row) => row.providerTrackId)),
+    "release_date_custom_order",
+  );
+  const actionableBlockedTrackIds = new Set(
+    plan.skips
+      .filter((skip) =>
+        [
+          "malformed_spotify_track_id",
+          "missing_spotify_match",
+          "needs_review",
+          "uncertain_spotify_match",
+        ].includes(skip.reason),
+      )
+      .map((skip) => skip.trackId),
+  );
+  const snapshotVerifiedAt = target.snapshotVerifiedAt?.getTime() ?? 0;
+  const reconciliationDue = now.getTime() - snapshotVerifiedAt >= reconciliationIntervalMs;
+  const reason: SpotifyPlaylistCheckpointInspection["reason"] = incompleteRun
+    ? "incomplete_run"
+    : plan.additions.length > 0
+      ? "pending_additions"
+      : plan.reorderMoves.length > 0
+        ? "pending_reorder"
+        : reconciliationDue
+          ? "periodic_reconciliation"
+          : "none";
+  return {
+    blockedCount: actionableBlockedTrackIds.size,
+    duplicateAppearanceCount: plan.skips.filter(
+      (skip) => skip.reason === "duplicate_recording_appearance",
+    ).length,
+    exportedCount: plan.alreadyPresent.length,
+    pendingAdditionCount: plan.additions.length,
+    pendingOperationCount: pendingOperations.length,
+    reason,
+    reorderMoveCount: plan.reorderMoves.length,
+    shouldRun: reason !== "none",
+    skippedCount: plan.skips.length,
+  };
+}
+
+export async function surfaceUncertainSpotifyMatchesForReview(
+  db: RadarDatabase,
+  userId: string,
+  now = new Date(),
+): Promise<{ candidatesUpdated: number; feedItemsUpdated: number }> {
+  const candidates = await loadCanonicalExportCandidates(db, userId);
+  const candidateIds = [
+    ...new Set(
+      candidates.flatMap((candidate) =>
+        candidate.candidateId &&
+        candidate.followedArtist &&
+        candidate.feedState !== "dismissed" &&
+        candidate.providerTrackId &&
+        spotifyTrackIdSchema.safeParse(candidate.providerTrackId).success &&
+        !candidate.manuallyConfirmed &&
+        !isExactSpotifyIdentity(candidate.matchRule ?? "", candidate.confidence ?? 0)
+          ? [candidate.candidateId]
+          : [],
+      ),
+    ),
+  ];
+  if (candidateIds.length === 0) return { candidatesUpdated: 0, feedItemsUpdated: 0 };
+  return db.transaction(async (tx) => {
+    const updatedCandidates = await tx
+      .update(releaseCandidates)
+      .set({ matchStatus: "needs_review" })
+      .where(
+        and(
+          inArray(releaseCandidates.id, candidateIds),
+          ne(releaseCandidates.matchStatus, "needs_review"),
+        ),
+      )
+      .returning({ id: releaseCandidates.id });
+    const updatedFeedItems = await tx
+      .update(feedItems)
+      .set({ state: "needs_review", updatedAt: now })
+      .where(
+        and(
+          inArray(feedItems.candidateId, candidateIds),
+          inArray(feedItems.state, ["new", "upcoming"]),
+        ),
+      )
+      .returning({ id: feedItems.id });
+    return {
+      candidatesUpdated: updatedCandidates.length,
+      feedItemsUpdated: updatedFeedItems.length,
+    };
+  });
+}
+
+function emptyCheckpointInspection(
+  reason: SpotifyPlaylistCheckpointInspection["reason"],
+  shouldRun: boolean,
+): SpotifyPlaylistCheckpointInspection {
+  return {
+    blockedCount: 0,
+    duplicateAppearanceCount: 0,
+    exportedCount: 0,
+    pendingAdditionCount: 0,
+    pendingOperationCount: 0,
+    reason,
+    reorderMoveCount: 0,
+    shouldRun,
+    skippedCount: 0,
+  };
+}
+
+function compareProviderCandidates(
+  left: {
+    candidateId: string;
+    confidence: string;
+    firstSeenAt: Date;
+    matchRule: string;
+  },
+  right: {
+    candidateId: string;
+    confidence: string;
+    firstSeenAt: Date;
+    matchRule: string;
+  },
+  confirmed: ReadonlySet<string>,
+): number {
+  return (
+    Number(confirmed.has(right.candidateId)) - Number(confirmed.has(left.candidateId)) ||
+    Number(isExactSpotifyIdentity(right.matchRule, Number(right.confidence))) -
+      Number(isExactSpotifyIdentity(left.matchRule, Number(left.confidence))) ||
+    Number(right.confidence) - Number(left.confidence) ||
+    right.firstSeenAt.getTime() - left.firstSeenAt.getTime() ||
+    left.candidateId.localeCompare(right.candidateId)
+  );
+}
+
+async function requireSpotifyPlaylistWriteScope(db: RadarDatabase, userId: string): Promise<void> {
+  const account = await db.query.oauthAccounts.findFirst({
+    columns: { scopes: true },
+    where: and(
+      eq(oauthAccounts.userId, userId),
+      eq(oauthAccounts.provider, "spotify"),
+      isNull(oauthAccounts.disconnectedAt),
+    ),
+  });
+  if (!account || !hasSpotifyPlaylistWriteScopes(account.scopes)) {
+    throw new SpotifyPlaylistExportError(
+      "Spotify must be reauthorized with both playlist modification scopes before live export.",
+      "missing_write_scope",
+    );
+  }
+}
+
+function assertPlaylistIdentity(expected: string, actual: string): void {
+  if (actual !== expected) {
+    throw new SpotifyPlaylistWriteDeniedError(
+      "Spotify returned a playlist other than the configured target",
+      "playlist_id_mismatch",
+    );
+  }
+}
+
+async function loadResumableRun(
+  db: RadarDatabase,
+  targetId: string,
+  playlistId: string,
+  campaignId: string | null,
+  orderingPolicy: SpotifyPlaylistOrderingPolicy,
+) {
+  return db.query.spotifyPlaylistExportRuns.findFirst({
+    orderBy: [desc(spotifyPlaylistExportRuns.createdAt)],
+    where: and(
+      eq(spotifyPlaylistExportRuns.playlistTargetId, targetId),
+      eq(spotifyPlaylistExportRuns.targetPlaylistId, playlistId),
+      campaignId
+        ? eq(spotifyPlaylistExportRuns.discoveryReconciliationCampaignId, campaignId)
+        : isNull(spotifyPlaylistExportRuns.discoveryReconciliationCampaignId),
+      eq(spotifyPlaylistExportRuns.orderingPolicy, orderingPolicy),
+      inArray(spotifyPlaylistExportRuns.status, ["planned", "running", "partial"]),
+    ),
+  });
+}
+
+async function createExportRun(
+  db: RadarDatabase,
+  targetId: string,
+  preview: SpotifyPlaylistExportPreview,
+  options: {
+    discoveryReconciliationCampaignId: string | null;
+    orderingPolicy: SpotifyPlaylistOrderingPolicy;
+  },
+) {
+  return db.transaction(async (tx) => {
+    const [run] = await tx
+      .insert(spotifyPlaylistExportRuns)
+      .values({
+        additionCount: preview.plan.additions.length,
+        alreadyPresentCount: preview.plan.alreadyPresent.length,
+        eligibleCount: preview.plan.desired.length,
+        discoveryReconciliationCampaignId: options.discoveryReconciliationCampaignId,
+        mode: "live",
+        orderingPolicy: options.orderingPolicy,
+        orderingConflictCount: preview.plan.reorderMoves.length,
+        playlistName: preview.target.name,
+        playlistTargetId: targetId,
+        skippedCount: preview.plan.skips.length,
+        snapshotBefore: preview.target.snapshotId,
+        startedAt: new Date(),
+        status: "running",
+        targetPlaylistId: preview.target.id,
+      })
+      .returning();
+    if (!run) throw new Error("Spotify playlist export run could not be created.");
+    const operations = [
+      ...preview.plan.additions.map((item) => ({
+        action: "add" as const,
+        desiredOrdinal: item.desiredOrdinal,
+        feedItemId: item.feedItemId,
+        insertPosition: item.position,
+        providerTrackId: item.providerTrackId,
+        reason: item.reason,
+        runId: run.id,
+        status: "pending" as const,
+        trackId: item.trackId,
+      })),
+      ...preview.plan.alreadyPresent.map((item) => ({
+        action: "already_present" as const,
+        completedAt: new Date(),
+        desiredOrdinal: item.desiredOrdinal,
+        feedItemId: item.feedItemId,
+        insertPosition: item.position,
+        providerTrackId: item.providerTrackId,
+        reason: item.appManaged ? "already_app_managed" : "already_user_present",
+        runId: run.id,
+        status: "exported" as const,
+        trackId: item.trackId,
+      })),
+      ...preview.plan.skips.map((item) => ({
+        action: "skip" as const,
+        completedAt: new Date(),
+        feedItemId: item.feedItemId,
+        providerTrackId: item.providerTrackId,
+        reason: item.reason,
+        runId: run.id,
+        status: "skipped" as const,
+        trackId: item.trackId,
+      })),
+    ];
+    if (operations.length > 0) await tx.insert(spotifyPlaylistExportOperations).values(operations);
+    return run;
+  });
+}
+
+interface PendingOperation {
+  id: string;
+  insertPosition: number;
+  providerTrackId: string;
+  trackId: string;
+}
+
+async function loadPendingOperations(
+  db: RadarDatabase,
+  runId: string,
+): Promise<PendingOperation[]> {
+  const rows = await db
+    .select({
+      id: spotifyPlaylistExportOperations.id,
+      insertPosition: spotifyPlaylistExportOperations.insertPosition,
+      providerTrackId: spotifyPlaylistExportOperations.providerTrackId,
+      trackId: spotifyPlaylistExportOperations.trackId,
+    })
+    .from(spotifyPlaylistExportOperations)
+    .where(
+      and(
+        eq(spotifyPlaylistExportOperations.runId, runId),
+        eq(spotifyPlaylistExportOperations.action, "add"),
+        eq(spotifyPlaylistExportOperations.status, "pending"),
+      ),
+    )
+    .orderBy(asc(spotifyPlaylistExportOperations.desiredOrdinal));
+  return rows.map((row) => {
+    if (row.insertPosition === null || !row.providerTrackId || !row.trackId) {
+      throw new SpotifyPlaylistExportError(
+        "A pending Spotify playlist operation is incomplete.",
+        "playlist_operation_invalid",
+      );
+    }
+    return {
+      id: row.id,
+      insertPosition: row.insertPosition,
+      providerTrackId: row.providerTrackId,
+      trackId: row.trackId,
+    };
+  });
+}
+
+function groupPendingOperations(operations: PendingOperation[]): PendingOperation[][] {
+  const groups: PendingOperation[][] = [];
+  for (const operation of operations) {
+    const current = groups.at(-1);
+    const previous = current?.at(-1);
+    if (
+      current &&
+      previous &&
+      current.length < 100 &&
+      operation.insertPosition === previous.insertPosition + 1
+    ) {
+      current.push(operation);
+    } else {
+      groups.push([operation]);
+    }
+  }
+  return groups;
+}
+
+function insertExportedItems(
+  currentItems: SpotifyPlaylistExportPlan["orderedItems"],
+  desiredItems: SpotifyPlaylistExportPlan["orderedItems"],
+  operations: PendingOperation[],
+): SpotifyPlaylistExportPlan["orderedItems"] {
+  const next = currentItems.slice().sort((left, right) => left.position - right.position);
+  const additions = operations.map((operation) => {
+    const desired = desiredItems.find((item) => item.trackId === operation.providerTrackId);
+    if (!desired) {
+      throw new SpotifyPlaylistExportError(
+        `The planned Spotify track ${operation.providerTrackId} has no ordering metadata.`,
+        "playlist_operation_invalid",
+      );
+    }
+    return { ...desired };
+  });
+  next.splice(Math.min(operations[0]!.insertPosition, next.length), 0, ...additions);
+  return next.map((item, position) => ({ ...item, position }));
+}
+
+async function reconcilePendingOperations(
+  db: RadarDatabase,
+  runId: string,
+  targetId: string,
+  playlistItems: Array<{ trackId: string | null }>,
+): Promise<void> {
+  const present = new Set(
+    playlistItems.map((item) => item.trackId).filter((id): id is string => id !== null),
+  );
+  const pending = await loadPendingOperations(db, runId);
+  for (const operation of pending) {
+    if (present.has(operation.providerTrackId)) {
+      await markOperationExported(db, targetId, operation, false);
+    }
+  }
+}
+
+async function markOperationExported(
+  db: RadarDatabase,
+  targetId: string,
+  operation: PendingOperation,
+  appOwned: boolean,
+): Promise<void> {
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    await tx
+      .insert(playlistExports)
+      .values({
+        appOwned,
+        exportedAt: now,
+        playlistTargetId: targetId,
+        providerTrackId: operation.providerTrackId,
+        status: "exported",
+        trackId: operation.trackId,
+      })
+      .onConflictDoUpdate({
+        target: [playlistExports.playlistTargetId, playlistExports.providerTrackId],
+        set: {
+          errorCode: null,
+          exportedAt: now,
+          status: "exported",
+          ...(appOwned ? { appOwned: true } : {}),
+          updatedAt: now,
+        },
+      });
+    await tx
+      .update(spotifyPlaylistExportOperations)
+      .set({
+        attemptCount: sql`${spotifyPlaylistExportOperations.attemptCount} + 1`,
+        completedAt: now,
+        errorCode: null,
+        status: "exported",
+        updatedAt: now,
+      })
+      .where(eq(spotifyPlaylistExportOperations.id, operation.id));
+  });
+}
+
+async function markOperationFailed(
+  db: RadarDatabase,
+  operationId: string,
+  errorCode: string,
+): Promise<void> {
+  await db
+    .update(spotifyPlaylistExportOperations)
+    .set({
+      attemptCount: sql`${spotifyPlaylistExportOperations.attemptCount} + 1`,
+      completedAt: new Date(),
+      errorCode,
+      status: "failed",
+      updatedAt: new Date(),
+    })
+    .where(eq(spotifyPlaylistExportOperations.id, operationId));
+}
+
+async function loadOperationCounts(db: RadarDatabase, runId: string) {
+  const [row] = await db
+    .select({
+      exported: sql<number>`count(*) filter (where ${spotifyPlaylistExportOperations.status} = 'exported')::int`,
+      failed: sql<number>`count(*) filter (where ${spotifyPlaylistExportOperations.status} = 'failed')::int`,
+      pending: sql<number>`count(*) filter (where ${spotifyPlaylistExportOperations.status} = 'pending')::int`,
+      skipped: sql<number>`count(*) filter (where ${spotifyPlaylistExportOperations.status} = 'skipped')::int`,
+    })
+    .from(spotifyPlaylistExportOperations)
+    .where(eq(spotifyPlaylistExportOperations.runId, runId));
+  return row ?? { exported: 0, failed: 0, pending: 0, skipped: 0 };
+}
+
+function isGlobalSpotifyWriteFailure(error: unknown): boolean {
+  return (
+    error instanceof SpotifyPlaylistWriteDeniedError ||
+    error instanceof SpotifyPlaylistExportError ||
+    (error instanceof SpotifyHttpError && [401, 403, 429].includes(error.status))
+  );
+}
+
+function safeErrorCode(error: unknown): string {
+  if (error instanceof SpotifyPlaylistWriteDeniedError) return error.code;
+  if (error instanceof SpotifyPlaylistExportError) return error.code;
+  if (error instanceof SpotifyHttpError) {
+    return error.providerReasonToken === "QUOTA_EXCEEDED" ||
+      error.providerErrorClassification === "quota_exceeded"
+      ? "spotify_quota_exceeded"
+      : error.providerErrorClassification
+        ? `spotify_${error.providerErrorClassification}`
+        : `spotify_http_${error.status}`;
+  }
+  return "playlist_item_add_failed";
+}
