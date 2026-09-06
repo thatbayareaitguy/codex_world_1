@@ -43,8 +43,10 @@ describe("discovery maintenance Windows tasks", () => {
     );
     expect(registration).toContain('-DaysOfWeek Thursday -At "20:50"');
     expect(registration).toContain('-DaysOfWeek Friday -At "08:50"');
+    expect(registration).toContain('-DaysOfWeek Friday -At "20:50"');
     expect(registration).toContain('$maintenanceTriggers[2].Id = "ThursdayAppleWake"');
     expect(registration).toContain('$maintenanceTriggers[3].Id = "FridayCatchupWake"');
+    expect(registration).toContain('$maintenanceTriggers[4].Id = "FridayPriorityFallbackWake"');
     expect(registration).toContain('$_.Id -eq "DynamicCapacityWake"');
     expect(registration).toContain("$maintenanceTriggers += $existingDynamicWake[0]");
     expect(registration).not.toMatch(/CLIENT_SECRET|ACCESS_TOKEN|REFRESH_TOKEN/);

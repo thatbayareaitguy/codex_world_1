@@ -14,6 +14,7 @@ import {
 } from "./windows-power-diagnostics";
 
 export interface WindowsPowerRequest {
+  confirmActivation?(): Promise<KeepAwakeDiagnosticRecord | null>;
   diagnosticPath?: string;
   processId?: number;
   readDiagnostics?(): Promise<KeepAwakeDiagnosticRecord | null>;
@@ -109,6 +110,24 @@ export function acquireWindowsSystemPowerRequest(
   });
   let released = false;
   return {
+    confirmActivation: async () => {
+      const activationDeadline = Date.now() + 5_000;
+      while (Date.now() < activationDeadline) {
+        const record = await readKeepAwakeRecord(claimed.paths);
+        if (record?.activatedAt && record.state === "active") return record;
+        if (child.exitCode !== null || child.killed) {
+          await finalizeKeepAwakeRelease(
+            claimed.paths,
+            now(),
+            `activation_failed_helper_exit_${child.exitCode ?? "unknown"}`,
+          );
+          throw new Error("Windows keep-awake helper exited before activation was confirmed.");
+        }
+        await delay(50);
+      }
+      await stopPowerRequest(child, claimed.paths, now, dependencies.releaseGraceMs ?? 2_000);
+      throw new Error("Windows keep-awake activation was not confirmed within five seconds.");
+    },
     diagnosticPath: claimed.paths.recordPath,
     ...(child.pid === undefined ? {} : { processId: child.pid }),
     readDiagnostics: () => readKeepAwakeRecord(claimed.paths),
@@ -127,6 +146,10 @@ export function acquireWindowsSystemPowerRequest(
       });
     },
   };
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 export async function updateWindowsMaintenanceWake(

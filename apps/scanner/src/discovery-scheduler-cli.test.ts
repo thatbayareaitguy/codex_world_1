@@ -142,16 +142,20 @@ describe("discovery scheduler CLI", () => {
 
   it("claims a due Friday catch-up before Spotify cooldown routing", async () => {
     const claim = {
+      appleMusicBatchId: null,
       id: "catchup-job",
       jobKey: "apple_catchup:2026-08-07",
       jobType: "apple_catchup" as const,
       leaseExpiresAt: new Date("2026-08-07T19:00:00.000Z"),
       leaseOwner: "owner",
       recoveryDeadline: new Date("2026-08-08T16:00:00.000Z"),
+      scanRunId: null,
       scheduledFor: new Date("2026-08-07T16:00:00.000Z"),
     };
-    const getStatus = vi.fn();
-    const reconcileCooldown = vi.fn();
+    const getStatus = vi.fn(() =>
+      Promise.resolve({ phase: "broad_spotify", playlistInbox: { status: "completed" } }),
+    );
+    const reconcileCooldown = vi.fn(() => Promise.resolve(false));
 
     await expect(
       selectDiscoverySchedulerAction({} as ReturnType<typeof createDatabase>["db"], {
@@ -160,8 +164,22 @@ describe("discovery scheduler CLI", () => {
         reconcileCooldown,
       }),
     ).resolves.toEqual({ appleClaim: claim, route: "apple_scan" });
-    expect(getStatus).not.toHaveBeenCalled();
-    expect(reconcileCooldown).not.toHaveBeenCalled();
+    expect(getStatus).toHaveBeenCalledOnce();
+    expect(reconcileCooldown).toHaveBeenCalledOnce();
+  });
+
+  it("exports an already-ready playlist before claiming Apple recovery work", async () => {
+    const claimAppleJob = vi.fn();
+    await expect(
+      selectDiscoverySchedulerAction({} as ReturnType<typeof createDatabase>["db"], {
+        claimAppleJob,
+        getStatus: vi.fn(() =>
+          Promise.resolve({ phase: "playlist_inbox", playlistInbox: { status: "ready" } }),
+        ),
+        reconcileCooldown: vi.fn(() => Promise.resolve(false)),
+      }),
+    ).resolves.toEqual({ route: "playlist_export" });
+    expect(claimAppleJob).not.toHaveBeenCalled();
   });
 
   it("reconciles an expired cooldown before selecting Spotify work", async () => {

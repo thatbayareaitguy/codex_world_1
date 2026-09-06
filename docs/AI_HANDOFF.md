@@ -1,18 +1,106 @@
 # AI Handoff
 
-Updated: 2026-09-02 21:14 PDT
+Updated: 2026-09-06 15:36 PDT
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`
-- Current reliability-goal starting HEAD and upstream:
-  `5845943310cd0e6430b52009952feec78e8b2351`
-- The tracked worktree was clean at goal start. The feed/review work described as uncommitted in the
-  goal had already been coherently committed in `8d3c8ffc8e341c6bf713ef68818388603e903e32`
-  (`fix: group mirrored release reviews`). It was preserved and extended, not reverted or
-  duplicated.
+- Current wake-recovery starting HEAD and upstream:
+  `295d65671a2eee9eed5dbf825fcca5ad0734492c`
+- The tracked worktree was clean at goal start.
 - `outputs/` is unrelated, remains untracked, and is excluded from the intended commit.
 - No secret or `.env` file was changed.
+
+## Weekly Wake And Missed-Work Recovery (2026-09-06)
+
+### Confirmed failure and correction
+
+- Windows wake timers were working, but the maintenance process could continue before the hidden
+  helper proved that `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` was active. The
+  September 4 Friday 08:50 wake therefore returned to sleep at 08:52, before the 09:00 catch-up.
+  The overdue catch-up later slept mid-run, reached its wall-clock limit, and was marked failed even
+  though its Apple batch was safely paused with 243 of 582 artists complete.
+- Every maintenance invocation now writes `%LOCALAPPDATA%\TSNewMusicRadar\logs\maintenance\<runId>.json`
+  and `latest.json` at process startup, before configuration checks or no-work decisions. Each file
+  records the owner PID, start and finish times, decisions, keep-awake diagnostic path and helper
+  PID, tick count, final reason, and failure state.
+- For due work or a fixed Apple job within 15 minutes, maintenance acquires the existing non-admin
+  Windows helper and waits up to five seconds for its durable activation marker before waiting or
+  running work. Missing activation is a process failure, so Task Scheduler's three one-minute
+  restart attempts can operate. The helper remains direct `SetThreadExecutionState`; it needs no
+  administrator token and does not depend on `powercfg /requests`.
+- The exclusive owner file, activation and release markers, final release state, and abnormal-owner
+  recovery under `%LOCALAPPDATA%\TSNewMusicRadar\logs\keep-awake` are unchanged. They continue to
+  prevent duplicate owners and guarantee release in `finally` when work drains, becomes blocked,
+  fails, or reaches the maintenance ceiling.
+- A leased Apple job is now treated as active work, so the maintenance owner remains awake if the
+  minute scheduler claims the job at 09:00. Playlist work, Apple-priority Spotify resolution, and
+  priority-related track resolution remain keep-awake work. Capacity waits longer than 15 minutes
+  release the helper and retain at most one `DynamicCapacityWake` ten minutes before the
+  database-calculated capacity return.
+
+### Friday ordering and resumable Apple work
+
+- Friday evening is priority and recovery only. Selection order is pending playlist export first,
+  then the incomplete Apple schedule job, then Apple-priority Spotify work, then newly eligible
+  guarded exports. Broad Spotify remains limited to Saturday through Wednesday.
+- A schedule lease now stores its Apple batch and scan-run IDs as soon as the batch is ready and
+  before the first provider request. Runtime, request-budget, cooldown, timeout, transport, and
+  temporary-server exhaustion yield the same schedule row back to `scheduled`; they no longer
+  create a failed campaign. Completed artist rows and cursors remain in the same Apple batch.
+- Resumption explicitly passes the stored batch ID into the scanner and reuses the original scan
+  run with its cumulative counts. Scheduled Apple invocations yield after at most 3.5 hours, which
+  leaves time for a clean pause inside the four-hour maintenance task.
+- Reconciliation repairs the confirmed historical failure by linking the failed September 4
+  schedule row to its one matching incomplete batch. It never creates a duplicate catch-up. After
+  offline validation, ordinary status reconciliation linked schedule `apple_catchup:2026-09-04`
+  to batch `af2d5b49-dbfa-4c82-a644-b8615525ad1d` and scan run
+  `dc7cface-dc5e-4014-80fd-63aadfa01190`. The next natural minute tick reclaimed those same IDs.
+  At the 15:36 PDT evidence snapshot the batch was running with 319 of 582 artists complete, up
+  from 243, with zero current failed artists. No manual provider scan was invoked.
+
+### Registered Windows schedule
+
+- The maintenance task now has exactly five fixed trigger groups: `BroadMorningWake` at 08:50
+  Saturday through Wednesday, `BroadEveningWake` at 20:50 Saturday through Wednesday,
+  `ThursdayAppleWake` at Thursday 20:50, `FridayCatchupWake` at Friday 08:50, and
+  `FridayPriorityFallbackWake` at Friday 20:50. `DynamicCapacityWake` remains optional and there
+  was no dynamic trigger at final registration.
+- Exported task XML reports five triggers, `WakeToRun=true`, `Hidden=true`,
+  `StartWhenAvailable=true`, `IgnoreNew`, and three restart attempts one minute apart. The action is
+  `C:\WINDOWS\System32\conhost.exe --headless "C:\Program Files\nodejs\node.exe" --env-file="%LOCALAPPDATA%\TSNewMusicRadar\production-scheduler.env" --import tsx "...\apps\scanner\src\discovery-maintenance-cli.ts"`.
+  The minute task remains separate, enabled, awake-only, direct `conhost.exe --headless node.exe
+--import tsx`, and non-overlapping.
+- Task Scheduler Operational history is disabled and requires an Administrator Terminal on this
+  PC. The exact optional command is
+  `wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true`.
+
+### Backup and validation
+
+- Before production-state correction, a PostgreSQL 17 custom-format backup was created at
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-09-06T22-14-55-462Z.dump`.
+  Size is 42,914,488 bytes and SHA-256 is
+  `09CB93CB1784ED5C5931E7B602D4828B12969D28159B82A4A3A1FBF2DA0554BC`.
+  `pg_restore --list` verified 514 archive entries and 525 output lines in an isolated PostgreSQL 17
+  container.
+- Offline tests cover Thursday and Friday 08:50 waits through 09:00, Friday evening work and
+  no-work paths, long capacity waits, leased-work sleep protection, activation failure, duplicate
+  owner and crash recovery, runtime yield and same-job resumption, orphaned-batch recovery,
+  export-before-recovery ordering, and Thursday/Friday broad exclusion.
+- Final validation passed: formatting, lint, TypeScript across six projects, 76 unit files with 539
+  tests, 28 PostgreSQL integration files with 159 tests, the 28-route production build, and all 32
+  Chromium tests. Production doctor reports PostgreSQL connected, 31 current migrations, no stale
+  lock, no active cooldown, and loopback health responding. Its one historical failed scan is the
+  schedule failure now resuming through the same durable batch.
+- The in-app browser production smoke opened System status, rendered the active scan ID and all
+  provider/database sections, and showed zero `Status could not be loaded.` messages.
+- Production PostgreSQL remains healthy with Compose `restart: unless-stopped`. The unrelated
+  Showcase test database was restored healthy after isolated validation. No `.env`, credential,
+  quota, provider request interval, fixed playlist target, ordering rule, or matching logic changed.
+- The activation handshake and recovery are offline-validated, and ordinary same-batch production
+  recovery is live. The next naturally due maintenance window must provide the first live evidence
+  that the new maintenance lifecycle owns and releases keep-awake for a full production phase. No
+  extra sleep test or production schedule change is required before that natural validation.
 
 ## Production Reliability Completion (2026-09-02)
 

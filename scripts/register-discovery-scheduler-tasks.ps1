@@ -39,11 +39,13 @@ $maintenanceTriggers = @(
   New-ScheduledTaskTrigger -Weekly -WeeksInterval 1 -DaysOfWeek Saturday, Sunday, Monday, Tuesday, Wednesday -At "20:50"
   New-ScheduledTaskTrigger -Weekly -WeeksInterval 1 -DaysOfWeek Thursday -At "20:50"
   New-ScheduledTaskTrigger -Weekly -WeeksInterval 1 -DaysOfWeek Friday -At "08:50"
+  New-ScheduledTaskTrigger -Weekly -WeeksInterval 1 -DaysOfWeek Friday -At "20:50"
 )
 $maintenanceTriggers[0].Id = "BroadMorningWake"
 $maintenanceTriggers[1].Id = "BroadEveningWake"
 $maintenanceTriggers[2].Id = "ThursdayAppleWake"
 $maintenanceTriggers[3].Id = "FridayCatchupWake"
+$maintenanceTriggers[4].Id = "FridayPriorityFallbackWake"
 $existingMaintenanceTask = Get-ScheduledTask -TaskName $MaintenanceTaskName -ErrorAction SilentlyContinue
 $existingDynamicWake = @(
   $existingMaintenanceTask.Triggers | Where-Object { $_.Id -eq "DynamicCapacityWake" }

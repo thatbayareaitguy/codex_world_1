@@ -132,6 +132,9 @@ interface PreparedMusicBrainzWork {
 type DatabaseExecutor = Pick<RadarDatabase, "insert" | "query" | "select">;
 
 export interface ScanRuntime {
+  appleMusicBatchReady?: (input: { batchId: string; scanRunId: string }) => Promise<void>;
+  appleMusicBatchId?: string;
+  appleMusicMaximumRuntimeMs?: number;
   deadlineAt?: number;
   deferSpotifyReleaseDetails?: boolean;
   reportProgress: (metadata: Record<string, unknown>, force?: boolean) => Promise<void>;
@@ -170,7 +173,13 @@ function assertMusicBrainzScanEnabled(
   }
 }
 
-export async function runScan(options: ScannerOptions): Promise<ScanSummary> {
+export async function runScan(
+  options: ScannerOptions,
+  lifecycle: Pick<
+    ScanRuntime,
+    "appleMusicBatchId" | "appleMusicBatchReady" | "appleMusicMaximumRuntimeMs"
+  > = {},
+): Promise<ScanSummary> {
   const configuration = loadProviderConfiguration();
   assertMusicBrainzScanEnabled(options, configuration);
   if (!configuration.databaseUrl) return runScanUnlocked(options, configuration);
@@ -254,6 +263,7 @@ export async function runScan(options: ScannerOptions): Promise<ScanSummary> {
   monitor.unref();
   try {
     return await runScanUnlocked(options, configuration, {
+      ...lifecycle,
       reportProgress,
       signal: controller.signal,
     });

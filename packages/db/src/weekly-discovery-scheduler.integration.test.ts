@@ -3,10 +3,12 @@ import { and, eq, lte, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createDatabase } from "./client";
 import {
+  attachDiscoveryScheduleAppleJobBatch,
   claimDiscoveryScheduleAppleJob,
   finishDiscoveryScheduleAppleJob,
   getRecurringDiscoveryScheduleStatus,
   reconcileDiscoveryScheduleJobs,
+  yieldDiscoveryScheduleAppleJob,
 } from "./discovery-schedule";
 import {
   appleMusicArtistScans,
@@ -20,6 +22,7 @@ import {
   spotifySchedulerDailyArtists,
   spotifySchedulerState,
   spotifySchedulerWork,
+  scanRuns,
 } from "./schema";
 
 const databaseUrl =
@@ -30,6 +33,8 @@ describe.sequential("weekly discovery scheduler persistence", () => {
 
   beforeEach(async () => {
     await connection.db.delete(discoveryScheduleJobs);
+    await connection.db.delete(appleMusicArtistScans);
+    await connection.db.delete(appleMusicScanBatches);
     await connection.db.delete(discoveryScheduleState);
     await connection.db.delete(spotifySchedulerDailyArtists);
     await connection.db.delete(spotifySchedulerWork);
@@ -184,5 +189,86 @@ describe.sequential("weekly discovery scheduler persistence", () => {
       phase: "playlist_inbox",
       playlistInbox: { status: "ready" },
     });
+  });
+
+  it("reconnects an orphaned failed schedule job to its existing resumable batch", async () => {
+    const scheduledFor = new Date("2026-08-07T16:00:00.000Z");
+    const recoveryDeadline = new Date("2026-08-08T16:00:00.000Z");
+    const [run] = await connection.db
+      .insert(scanRuns)
+      .values({ provider: "apple_music", providersRequested: ["apple_music"], status: "paused" })
+      .returning({ id: scanRuns.id });
+    const [batch] = await connection.db
+      .insert(appleMusicScanBatches)
+      .values({
+        createdAt: new Date("2026-08-07T19:00:00.000Z"),
+        scanRunId: run!.id,
+        status: "paused",
+        totalArtists: 580,
+      })
+      .returning({ id: appleMusicScanBatches.id });
+    await connection.db.insert(discoveryScheduleJobs).values({
+      errorClassification: "scheduled_apple_scan_failed",
+      jobKey: "apple_catchup:2026-08-07",
+      jobType: "apple_catchup",
+      recoveryDeadline,
+      scheduledFor,
+      status: "failed",
+    });
+
+    const afterDeadline = new Date("2026-08-09T01:00:00.000Z");
+    await reconcileDiscoveryScheduleJobs(connection.db, afterDeadline);
+    const resumed = await claimDiscoveryScheduleAppleJob(connection.db, afterDeadline);
+    expect(resumed).toMatchObject({
+      appleMusicBatchId: batch!.id,
+      jobKey: "apple_catchup:2026-08-07",
+      scanRunId: run!.id,
+    });
+  });
+
+  it("yields a runtime-limited Apple job and resumes the same batch and scan run", async () => {
+    const started = new Date("2026-08-07T19:00:00.000Z");
+    await connection.db.insert(discoveryScheduleState).values({
+      id: "global",
+      lastAppleScanCompletedAt: new Date("2026-08-07T15:00:00.000Z"),
+      phase: "broad_spotify",
+    });
+    await reconcileDiscoveryScheduleJobs(connection.db, started);
+    const firstClaim = await claimDiscoveryScheduleAppleJob(connection.db, started);
+    expect(firstClaim?.jobType).toBe("apple_catchup");
+    const [run] = await connection.db
+      .insert(scanRuns)
+      .values({ provider: "apple_music", providersRequested: ["apple_music"] })
+      .returning({ id: scanRuns.id });
+    const [batch] = await connection.db
+      .insert(appleMusicScanBatches)
+      .values({ scanRunId: run!.id, status: "paused", totalArtists: 580 })
+      .returning({ id: appleMusicScanBatches.id });
+    expect(
+      await attachDiscoveryScheduleAppleJobBatch(connection.db, firstClaim!, {
+        appleMusicBatchId: batch!.id,
+        scanRunId: run!.id,
+      }),
+    ).toBe(true);
+    expect(
+      await yieldDiscoveryScheduleAppleJob(connection.db, firstClaim!, {
+        appleMusicBatchId: batch!.id,
+        errorClassification: "runtime_budget_exhausted",
+        scanRunId: run!.id,
+      }),
+    ).toBe(true);
+
+    const afterOriginalDeadline = new Date("2026-08-09T01:00:00.000Z");
+    const resumed = await claimDiscoveryScheduleAppleJob(connection.db, afterOriginalDeadline);
+    expect(resumed).toMatchObject({
+      appleMusicBatchId: batch!.id,
+      id: firstClaim!.id,
+      scanRunId: run!.id,
+    });
+    const jobs = await connection.db
+      .select({ id: discoveryScheduleJobs.id })
+      .from(discoveryScheduleJobs)
+      .where(eq(discoveryScheduleJobs.appleMusicBatchId, batch!.id));
+    expect(jobs).toHaveLength(1);
   });
 });

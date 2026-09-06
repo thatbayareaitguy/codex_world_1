@@ -1,4 +1,5 @@
 import {
+  attachDiscoveryScheduleAppleJobBatch,
   claimDiscoveryScheduleAppleJob,
   createDatabase,
   finishDiscoveryScheduleAppleJob,
@@ -13,13 +14,14 @@ import {
   reconcileDeferredPriorityTrackResolutionWork,
   reconcileStaleSpotifyQueueDepth,
   surfaceUncertainSpotifyMatchesForReview,
+  yieldDiscoveryScheduleAppleJob,
   type DiscoveryAppleJobClaim,
   type SpotifySchedulerClaim,
   type SpotifySchedulerLimits,
   type SpotifySchedulerStatus,
 } from "@radar/db";
 import { loadProviderConfiguration } from "@radar/providers";
-import { desc, gte } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { appleMusicScanBatches } from "@radar/db";
 import { loadLocalEnvironment } from "./local-env";
 import {
@@ -32,6 +34,8 @@ import { decideDiscoveryMaintenance } from "./discovery-maintenance";
 import { updateWindowsMaintenanceWake } from "./windows-maintenance";
 
 loadLocalEnvironment();
+
+export const scheduledAppleMaximumRuntimeMs = 3.5 * 60 * 60_000;
 
 export function parseDiscoverySchedulerCommand(args: string[]): "status" | "tick" {
   const values = args.filter((value) => value !== "--");
@@ -153,17 +157,16 @@ export async function selectDiscoverySchedulerAction(
   | { appleClaim: DiscoveryAppleJobClaim; route: "apple_scan" }
   | { route: "playlist_export" | "spotify_priority" | "apple_or_spotify" }
 > {
-  const appleClaim = await (dependencies.claimAppleJob ?? claimDiscoveryScheduleAppleJob)(db);
-  if (appleClaim) return { appleClaim, route: "apple_scan" };
-
   await (dependencies.reconcileCooldown ?? reconcileDiscoveryScheduleAfterCooldown)(db);
   const status = await (dependencies.getStatus ?? getRecurringDiscoveryScheduleStatus)(db);
-  return {
-    route: discoverySchedulerRoute({
-      phase: status.phase,
-      playlistInboxStatus: status.playlistInbox.status,
-    }),
-  };
+  const route = discoverySchedulerRoute({
+    phase: status.phase,
+    playlistInboxStatus: status.playlistInbox.status,
+  });
+  if (route === "playlist_export") return { route };
+  const appleClaim = await (dependencies.claimAppleJob ?? claimDiscoveryScheduleAppleJob)(db);
+  if (appleClaim) return { appleClaim, route: "apple_scan" };
+  return { route };
 }
 
 export async function runReadyAutomaticPlaylistExport(
@@ -370,13 +373,29 @@ async function runClaimedAppleJob(
     });
     throw new Error("Apple Music is not configured for the scheduled catalog scan.");
   }
-  const startedAt = new Date();
+  let batchId = appleClaim.appleMusicBatchId;
+  let scanRunId = appleClaim.scanRunId;
   try {
     const { runScan } = await import("./scan");
-    await runScan({ dryRun: false, full: false, provider: "apple_music" });
+    await runScan(
+      { dryRun: false, full: false, provider: "apple_music" },
+      {
+        ...(batchId ? { appleMusicBatchId: batchId } : {}),
+        appleMusicMaximumRuntimeMs: scheduledAppleMaximumRuntimeMs,
+        appleMusicBatchReady: async (input) => {
+          batchId = input.batchId;
+          scanRunId = input.scanRunId;
+          const attached = await attachDiscoveryScheduleAppleJobBatch(db, appleClaim, {
+            appleMusicBatchId: input.batchId,
+            scanRunId: input.scanRunId,
+          });
+          if (!attached) throw new Error("The scheduled Apple Music job lease was lost.");
+        },
+      },
+    );
+    if (!batchId) throw new Error("Scheduled Apple Music scan did not attach a durable batch.");
     const batch = await db.query.appleMusicScanBatches.findFirst({
-      where: gte(appleMusicScanBatches.createdAt, startedAt),
-      orderBy: [desc(appleMusicScanBatches.createdAt)],
+      where: eq(appleMusicScanBatches.id, batchId),
     });
     if (!batch || batch.status !== "completed") {
       throw new Error("Scheduled Apple Music scan did not produce a completed batch.");
@@ -397,12 +416,51 @@ async function runClaimedAppleJob(
       totalArtists: batch.totalArtists,
     };
   } catch (error) {
+    const classification = appleScanClassification(error);
+    if (batchId && isRetryableAppleYield(classification)) {
+      const yielded = await yieldDiscoveryScheduleAppleJob(db, appleClaim, {
+        appleMusicBatchId: batchId,
+        errorClassification: classification,
+        scanRunId,
+      });
+      if (!yielded) throw new Error("The scheduled Apple Music job lease was lost while yielding.");
+      return {
+        appleMusicBatchId: batchId,
+        errorClassification: classification,
+        jobType: appleClaim.jobType,
+        status: "yielded",
+      };
+    }
     await finishDiscoveryScheduleAppleJob(db, appleClaim, {
       errorClassification: safeClassification(error),
       status: "failed",
     });
     throw error;
   }
+}
+
+function appleScanClassification(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "classification" in error &&
+    typeof error.classification === "string"
+  ) {
+    return error.classification;
+  }
+  return safeClassification(error);
+}
+
+function isRetryableAppleYield(classification: string): boolean {
+  return [
+    "cancelled",
+    "rate_limited",
+    "request_budget_exhausted",
+    "runtime_budget_exhausted",
+    "temporary_server_error",
+    "timeout",
+    "transport_error",
+  ].includes(classification);
 }
 
 async function runSpotifyTick(

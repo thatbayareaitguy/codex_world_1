@@ -22,6 +22,77 @@ describe("discovery maintenance decisions", () => {
     });
   });
 
+  it("holds through the Friday 8:50 AM wake until the 9:00 catch-up", () => {
+    const now = new Date("2026-08-28T15:50:00.000Z");
+    const snapshot = baseSnapshot();
+    snapshot.discovery.catchup.next = {
+      recoveryDeadline: new Date("2026-08-29T16:00:00.000Z"),
+      scheduledFor: new Date("2026-08-28T16:00:00.000Z"),
+      status: "scheduled",
+    };
+    expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
+      holdPower: true,
+      reason: "apple_due_soon",
+      runNow: false,
+      waitUntil: new Date("2026-08-28T16:00:00.000Z"),
+    });
+  });
+
+  it("resumes a linked Apple batch after its original recovery deadline", () => {
+    const now = new Date("2026-09-06T22:00:00.000Z");
+    const snapshot = baseSnapshot();
+    snapshot.discovery.catchup.latest = {
+      appleMusicBatchId: "existing-batch",
+      recoveryDeadline: new Date("2026-09-05T16:00:00.000Z"),
+      scheduledFor: new Date("2026-09-04T16:00:00.000Z"),
+      status: "scheduled",
+    };
+    expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
+      holdPower: true,
+      reason: "apple_due",
+      runNow: true,
+    });
+  });
+
+  it("keeps the PC awake while another scheduler process owns the Apple lease", () => {
+    const now = new Date("2026-09-04T16:05:00.000Z");
+    const snapshot = baseSnapshot();
+    snapshot.discovery.catchup.latest = {
+      recoveryDeadline: new Date("2026-09-05T16:00:00.000Z"),
+      scheduledFor: new Date("2026-09-04T16:00:00.000Z"),
+      status: "leased",
+    };
+    expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
+      holdPower: true,
+      reason: "apple_active",
+      runNow: false,
+    });
+  });
+
+  it("runs Friday evening playlist and priority work but never broad work", () => {
+    const fridayEvening = new Date("2026-08-29T03:50:00.000Z");
+    const playlist = baseSnapshot();
+    playlist.discovery.phase = "playlist_inbox";
+    playlist.discovery.playlistInbox.status = "ready";
+    expect(decideDiscoveryMaintenance(playlist, fridayEvening)).toMatchObject({
+      reason: "playlist_work",
+      runNow: true,
+    });
+    const priority = baseSnapshot();
+    priority.discovery.phase = "apple_catchup_priority";
+    priority.spotify.appleCatchupPriorityCount = 1;
+    expect(decideDiscoveryMaintenance(priority, fridayEvening)).toMatchObject({
+      reason: "priority_work",
+      runNow: true,
+    });
+    const broad = baseSnapshot();
+    broad.spotify.dueArtistCount = 100;
+    expect(decideDiscoveryMaintenance(broad, fridayEvening)).toMatchObject({
+      reason: "no_work",
+      runNow: false,
+    });
+  });
+
   it("schedules one wake ten minutes before rolling capacity returns", () => {
     const now = new Date("2026-08-28T08:00:00.000Z");
     const nextCapacityAt = new Date("2026-08-28T09:30:00.000Z");

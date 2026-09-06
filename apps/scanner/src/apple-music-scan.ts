@@ -3,6 +3,7 @@ import {
   artistExternalIds,
   artistFollows,
   artists,
+  appleMusicScanBatches,
   attachAppleMusicBatchScanRun,
   bootstrapAppleMusicIdentity,
   countAppleMusicRequests,
@@ -39,6 +40,9 @@ export interface AppleMusicScanSummary {
 }
 
 export interface AppleMusicScanRuntime {
+  appleMusicBatchId?: string;
+  appleMusicBatchReady?: (input: { batchId: string; scanRunId: string }) => Promise<void>;
+  appleMusicMaximumRuntimeMs?: number;
   reportProgress?: (metadata: Record<string, unknown>, force?: boolean) => Promise<void>;
   signal?: AbortSignal;
 }
@@ -102,47 +106,76 @@ export async function runAppleMusicScan(
   if (requestedArtistIds.length && mappings.length !== requestedArtistIdSet.size) {
     throw new Error("The selected artist does not have a confirmed Apple Music mapping.");
   }
-  if (mappings.length === 0) {
+  if (mappings.length === 0 && !runtime.appleMusicBatchId) {
     return emptySummary();
   }
-
-  const batchId = await createAppleMusicBatch(
-    db,
-    mappings.map((mapping) => ({
-      appleArtistId: mapping.appleArtistId,
-      artistId: mapping.canonicalArtistId,
-    })),
+  const effectiveMaximumRuntimeMs = Math.min(
+    configuration.appleMusic.maxRuntimeMs,
+    runtime.appleMusicMaximumRuntimeMs ?? configuration.appleMusic.maxRuntimeMs,
   );
-  const [run] = await db
-    .insert(scanRuns)
-    .values({
-      artistFilter:
-        options.artistId ??
-        (options.artistIds?.length ? `cohort:${options.artistIds.length}` : null),
-      detailedExpiresAt: new Date(Date.now() + configuration.scanDetailRetentionDays * 86_400_000),
-      dryRun: false,
-      metadata: {
-        appleMusicBatchId: batchId,
-        identityBootstrap: bootstrap,
-        effectiveAppleMusicConfiguration: {
-          maxRequestsPerRun: configuration.appleMusic.maxRequestsPerRun,
-          maxRuntimeMs: configuration.appleMusic.maxRuntimeMs,
-          minRequestIntervalMs: configuration.appleMusic.minRequestIntervalMs,
-          storefront: configuration.appleMusic.storefront,
-          windowDays: 30,
-        },
-      },
-      provider: "apple_music",
-      providersRequested: ["apple_music"],
-      triggerType: options.artistId
-        ? "provider_single_artist"
-        : options.artistIds?.length
-          ? "provider_cohort"
-          : "provider_manual",
-    })
-    .returning({ id: scanRuns.id });
+
+  const batchId =
+    runtime.appleMusicBatchId ??
+    (await createAppleMusicBatch(
+      db,
+      mappings.map((mapping) => ({
+        appleArtistId: mapping.appleArtistId,
+        artistId: mapping.canonicalArtistId,
+      })),
+    ));
+  const batch = await db.query.appleMusicScanBatches.findFirst({
+    where: eq(appleMusicScanBatches.id, batchId),
+  });
+  if (!batch) throw new Error("Apple Music scan batch was not found after creation.");
+  if (["completed", "cancelled"].includes(batch.status)) {
+    throw new Error(`Apple Music batch ${batch.id} cannot resume from ${batch.status}.`);
+  }
+  const existingRun = batch.scanRunId
+    ? await db.query.scanRuns.findFirst({ where: eq(scanRuns.id, batch.scanRunId) })
+    : null;
+  const run =
+    existingRun ??
+    (
+      await db
+        .insert(scanRuns)
+        .values({
+          artistFilter:
+            options.artistId ??
+            (options.artistIds?.length ? `cohort:${options.artistIds.length}` : null),
+          detailedExpiresAt: new Date(
+            Date.now() + configuration.scanDetailRetentionDays * 86_400_000,
+          ),
+          dryRun: false,
+          metadata: {
+            appleMusicBatchId: batchId,
+            identityBootstrap: bootstrap,
+            effectiveAppleMusicConfiguration: {
+              maxRequestsPerRun: configuration.appleMusic.maxRequestsPerRun,
+              maxRuntimeMs: effectiveMaximumRuntimeMs,
+              minRequestIntervalMs: configuration.appleMusic.minRequestIntervalMs,
+              storefront: configuration.appleMusic.storefront,
+              windowDays: 30,
+            },
+          },
+          provider: "apple_music",
+          providersRequested: ["apple_music"],
+          triggerType: options.artistId
+            ? "provider_single_artist"
+            : options.artistIds?.length
+              ? "provider_cohort"
+              : "provider_manual",
+        })
+        .returning()
+    )[0];
   if (!run) throw new Error("Apple Music scan run creation failed.");
+  if (existingRun) {
+    await db
+      .update(scanRuns)
+      .set({ completedAt: null, providersFailed: [], status: "running" })
+      .where(eq(scanRuns.id, run.id));
+  }
   await attachAppleMusicBatchScanRun(db, batchId, run.id);
+  await runtime.appleMusicBatchReady?.({ batchId, scanRunId: run.id });
 
   const tokenManager = new AppleDeveloperTokenManager({
     keyId: configuration.appleMusic.keyId,
@@ -153,7 +186,7 @@ export async function runAppleMusicScan(
   const client = new AppleMusicClient({
     enabled: true,
     maxRequestsPerRun: configuration.appleMusic.maxRequestsPerRun,
-    maximumRuntimeMs: configuration.appleMusic.maxRuntimeMs,
+    maximumRuntimeMs: effectiveMaximumRuntimeMs,
     minRequestIntervalMs: configuration.appleMusic.minRequestIntervalMs,
     persistence: createAppleMusicRequestPersistence(db, { batchId, scanRunId: run.id }),
     requestTimeoutMs: configuration.appleMusic.requestTimeoutMs,
@@ -163,19 +196,27 @@ export async function runAppleMusicScan(
   });
   const mappingByArtist = new Map(mappings.map((mapping) => [mapping.canonicalArtistId, mapping]));
   const items = await loadAppleMusicBatchItems(db, batchId);
-  let cumulative = emptyIncrementalSummary();
-  let artistsProcessed = 0;
-  let terminalFailures = 0;
+  let cumulative = existingRun
+    ? {
+        discovered: existingRun.discoveredCount,
+        dryRun: false,
+        inserted: existingRun.insertedCount,
+        needsReview: existingRun.reviewCount,
+        skipped: existingRun.skippedCount,
+      }
+    : emptyIncrementalSummary();
+  let artistsProcessed = existingRun?.artistsProcessedCount ?? batch.completedArtists;
+  let terminalFailures = batch.failedArtists;
   let finalStatus: AppleMusicPersistContext["status"] = "completed";
   let fatalError: unknown;
 
   await runtime.reportProgress?.(
     {
       appleMusicBatchId: batchId,
-      completedUnits: 0,
+      completedUnits: artistsProcessed,
       currentProvider: "apple_music",
       phase: "provider_start",
-      totalUnits: items.length,
+      totalUnits: batch.totalArtists,
     },
     true,
   );
@@ -206,11 +247,11 @@ export async function runAppleMusicScan(
     try {
       await runtime.reportProgress?.(
         {
-          completedUnits: position,
+          completedUnits: artistsProcessed,
           currentUnit: mapping.canonicalName,
           currentUnitId: mapping.canonicalArtistId,
           phase: "scanning",
-          totalUnits: items.length,
+          totalUnits: batch.totalArtists,
         },
         true,
       );
@@ -295,7 +336,7 @@ export async function runAppleMusicScan(
       completedUnits: artistsProcessed,
       currentProvider: null,
       phase: finalStatus === "completed" ? "provider_completed" : finalStatus,
-      totalUnits: items.length,
+      totalUnits: batch.totalArtists,
     },
     true,
   );

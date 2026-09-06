@@ -47,6 +47,10 @@ describe("Windows discovery maintenance integration", () => {
       }),
       "utf8",
     );
+    await expect(request.confirmActivation?.()).resolves.toMatchObject({
+      activatedAt: "2026-08-28T10:00:00.000Z",
+      state: "active",
+    });
     await expect(request.readDiagnostics?.()).resolves.toMatchObject({
       activatedAt: "2026-08-28T10:00:00.000Z",
       helperProcessId: 4242,
@@ -70,6 +74,23 @@ describe("Windows discovery maintenance integration", () => {
     });
     await request.release();
     expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
+  it("rejects when the helper exits before activation", async () => {
+    const { child } = fakeChild(true);
+    const request = acquireWindowsSystemPowerRequest(90_000, {
+      diagnosticDirectory: temporaryDirectory(),
+      platform: "win32",
+      runId: "activation-failure-run",
+      spawnProcess: (() => child) as typeof spawn,
+    });
+    await expect(request.confirmActivation?.()).rejects.toThrow(
+      "exited before activation was confirmed",
+    );
+    await expect(request.readDiagnostics?.()).resolves.toMatchObject({
+      finalReleased: true,
+      state: "released",
+    });
   });
 
   it("updates one idempotent dynamic wake while preserving fixed triggers", async () => {

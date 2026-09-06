@@ -24,8 +24,9 @@ describe("discovery maintenance loop", () => {
 
   it("releases the power request after eligible work drains", async () => {
     const release = vi.fn(() => Promise.resolve());
+    const confirmActivation = vi.fn(() => Promise.resolve(null));
     const updateContext = vi.fn();
-    const acquirePower = vi.fn(() => ({ release, updateContext }));
+    const acquirePower = vi.fn(() => ({ confirmActivation, release, updateContext }));
     const decisions = [decision("priority_work", true, true), decision("no_work", false, false)];
     let clock = Date.parse("2026-08-27T20:00:00.000Z");
     const runTick = vi.fn(() => Promise.resolve());
@@ -54,6 +55,7 @@ describe("discovery maintenance loop", () => {
       reason: "priority_work",
       runId: "priority-run",
     });
+    expect(confirmActivation).toHaveBeenCalled();
     expect(release).toHaveBeenCalledTimes(1);
   });
 
@@ -164,6 +166,38 @@ describe("discovery maintenance loop", () => {
       }),
     ).rejects.toThrow("Synthetic tick failure");
     expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails before waiting or running work when keep-awake activation is not confirmed", async () => {
+    const release = vi.fn(() => Promise.resolve());
+    const runTick = vi.fn();
+    const sleep = vi.fn(() => Promise.resolve());
+    const updateWake = vi.fn(() => Promise.resolve());
+    await expect(
+      runDiscoveryMaintenanceLoop({
+        acquirePower: () => ({
+          confirmActivation: () => Promise.reject(new Error("activation failed")),
+          release,
+        }),
+        maximumRuntimeMs: 60_000,
+        now: () => new Date("2026-08-28T03:50:00.000Z"),
+        observe: () =>
+          Promise.resolve({
+            dynamicWakeAt: null,
+            holdPower: true,
+            reason: "apple_due_soon",
+            runNow: false,
+            waitUntil: new Date("2026-08-28T04:00:00.000Z"),
+          }),
+        runTick,
+        sleep,
+        updateWake,
+      }),
+    ).rejects.toThrow("activation failed");
+    expect(runTick).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+    expect(updateWake).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
   });
 });
 

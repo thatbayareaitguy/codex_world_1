@@ -32,6 +32,7 @@ export interface DiscoveryMaintenanceDecision {
   reason:
     | "apple_due"
     | "apple_due_soon"
+    | "apple_active"
     | "broad_capacity_wait"
     | "broad_work"
     | "cooldown_wait"
@@ -44,6 +45,7 @@ export interface DiscoveryMaintenanceDecision {
 }
 
 interface MaintenanceAppleJob {
+  appleMusicBatchId?: string | null;
   recoveryDeadline: Date;
   scheduledFor: Date;
   status: string;
@@ -57,9 +59,23 @@ export function decideDiscoveryMaintenance(
     (job): job is MaintenanceAppleJob => job !== null,
   );
   const dueApple = appleJobs.find(
-    (job) => job.status === "scheduled" && job.scheduledFor <= now && job.recoveryDeadline >= now,
+    (job) =>
+      job.status === "scheduled" &&
+      job.scheduledFor <= now &&
+      (job.recoveryDeadline >= now || Boolean(job.appleMusicBatchId)),
   );
   if (dueApple) return runDecision("apple_due");
+
+  const activeApple = appleJobs.find((job) => job.status === "leased" && job.scheduledFor <= now);
+  if (activeApple) {
+    return {
+      dynamicWakeAt: null,
+      holdPower: true,
+      reason: "apple_active",
+      runNow: false,
+      waitUntil: new Date(now.getTime() + 60_000),
+    };
+  }
 
   const nextApple = [snapshot.discovery.full.next, snapshot.discovery.catchup.next]
     .filter((job): job is MaintenanceAppleJob => job !== null && job.status === "scheduled")
