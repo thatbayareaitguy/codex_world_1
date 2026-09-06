@@ -226,6 +226,43 @@ describe.sequential("weekly discovery scheduler persistence", () => {
     });
   });
 
+  it("reclaims a linked expired schedule job when its resumable batch still needs finalization", async () => {
+    const scheduledFor = new Date("2026-08-07T16:00:00.000Z");
+    const [run] = await connection.db
+      .insert(scanRuns)
+      .values({ provider: "apple_music", providersRequested: ["apple_music"], status: "partial" })
+      .returning({ id: scanRuns.id });
+    const [batch] = await connection.db
+      .insert(appleMusicScanBatches)
+      .values({
+        completedArtists: 1,
+        failedArtists: 0,
+        finishedAt: new Date("2026-08-07T19:00:00.000Z"),
+        scanRunId: run!.id,
+        status: "partial",
+        totalArtists: 1,
+      })
+      .returning({ id: appleMusicScanBatches.id });
+    await connection.db.insert(discoveryScheduleJobs).values({
+      appleMusicBatchId: batch!.id,
+      errorClassification: "scheduled_apple_scan_failed",
+      jobKey: "apple_catchup:2026-08-07",
+      jobType: "apple_catchup",
+      recoveryDeadline: new Date("2026-08-08T16:00:00.000Z"),
+      scanRunId: run!.id,
+      scheduledFor,
+      status: "expired",
+    });
+
+    const afterDeadline = new Date("2026-08-09T01:00:00.000Z");
+    await reconcileDiscoveryScheduleJobs(connection.db, afterDeadline);
+    expect(await claimDiscoveryScheduleAppleJob(connection.db, afterDeadline)).toMatchObject({
+      appleMusicBatchId: batch!.id,
+      jobKey: "apple_catchup:2026-08-07",
+      scanRunId: run!.id,
+    });
+  });
+
   it("yields a runtime-limited Apple job and resumes the same batch and scan run", async () => {
     const started = new Date("2026-08-07T19:00:00.000Z");
     await connection.db.insert(discoveryScheduleState).values({

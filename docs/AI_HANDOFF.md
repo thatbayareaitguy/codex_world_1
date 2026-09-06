@@ -1,12 +1,13 @@
 # AI Handoff
 
-Updated: 2026-09-06 15:36 PDT
+Updated: 2026-09-06 16:06 PDT
 
 ## Repository
 
 - Branch: `codex/release-radar-hardening`
-- Current wake-recovery starting HEAD and upstream:
+- Wake-recovery goal starting HEAD and upstream:
   `295d65671a2eee9eed5dbf825fcca5ad0734492c`
+- Primary wake and schedule repair commit: `3e3fde1ff16a048d49239fd3c574045e5bc1a011`.
 - The tracked worktree was clean at goal start.
 - `outputs/` is unrelated, remains untracked, and is excluded from the intended commit.
 - No secret or `.env` file was changed.
@@ -56,8 +57,27 @@ Updated: 2026-09-06 15:36 PDT
   offline validation, ordinary status reconciliation linked schedule `apple_catchup:2026-09-04`
   to batch `af2d5b49-dbfa-4c82-a644-b8615525ad1d` and scan run
   `dc7cface-dc5e-4014-80fd-63aadfa01190`. The next natural minute tick reclaimed those same IDs.
-  At the 15:36 PDT evidence snapshot the batch was running with 319 of 582 artists complete, up
-  from 243, with zero current failed artists. No manual provider scan was invoked.
+  The batch progressed naturally from 243 to 582 of 582 artists with zero final failures. A
+  retryable artist from the original attempt had temporarily contributed to the batch failure
+  counter. The resumed process retained that older count in memory, so it first labeled the fully
+  successful batch `partial` and the schedule job `failed`. Final classification now reads the
+  current persisted failure count, and linked resumable jobs recover from either `failed` or
+  `expired` without creating a new campaign.
+- The still-running web production build contained the former 24-hour expiry rule and its status
+  polling briefly changed the repaired job back to `expired`. The web service was rebuilt and
+  handed back to the existing hidden startup task. The old process was removed, PostgreSQL and
+  `http://127.0.0.1:3000/api/health` recovered, and the schedule row remained recoverable beyond its
+  original deadline.
+- The controlled web/database restart interrupted one legitimate playlist checkpoint only after
+  all 10 additions and all ledger operations had completed. After verifying that no owner process,
+  pending operation, or failed operation existed, the exact abandoned operation lock was removed.
+  The natural scheduler resumed and finalized that same export run, with no duplicate ledger or
+  duplicate addition.
+- At 16:04:49 PDT the natural scheduler completed the original catch-up schedule row, original
+  batch, and original scan run. Final evidence was 582 of 582 artists, zero failures, and zero new
+  Apple requests during finalization. At 16:06 the workflow had advanced automatically to 161
+  queued Apple-priority Spotify items, with playlist inbox `pending`, zero operation locks, no
+  cooldown, and no 429. No manual provider scan was invoked.
 
 ### Registered Windows schedule
 
@@ -87,18 +107,20 @@ Updated: 2026-09-06 15:36 PDT
   no-work paths, long capacity waits, leased-work sleep protection, activation failure, duplicate
   owner and crash recovery, runtime yield and same-job resumption, orphaned-batch recovery,
   export-before-recovery ordering, and Thursday/Friday broad exclusion.
-- Final validation passed: formatting, lint, TypeScript across six projects, 76 unit files with 539
-  tests, 28 PostgreSQL integration files with 159 tests, the 28-route production build, and all 32
+- Final validation passed: formatting, lint, TypeScript across six projects, 76 unit files with 542
+  tests, 28 PostgreSQL integration files with 160 tests, the 28-route production build, and all 32
   Chromium tests. Production doctor reports PostgreSQL connected, 31 current migrations, no stale
-  lock, no active cooldown, and loopback health responding. Its one historical failed scan is the
-  schedule failure now resuming through the same durable batch.
-- The in-app browser production smoke opened System status, rendered the active scan ID and all
-  provider/database sections, and showed zero `Status could not be loaded.` messages.
+  lock, no active cooldown, and loopback health responding. Its one action item is an unrelated
+  August 4 Apple `partial` history row with no failed provider or stored error, not this completed
+  catch-up.
+- The final in-app browser production smoke opened System status after the controlled restart,
+  rendered the database and provider sections, showed 31 current migrations and the 16:03 playlist
+  sync, produced zero browser console errors, and showed zero `Status could not be loaded.` messages.
 - Production PostgreSQL remains healthy with Compose `restart: unless-stopped`. The unrelated
   Showcase test database was restored healthy after isolated validation. No `.env`, credential,
   quota, provider request interval, fixed playlist target, ordering rule, or matching logic changed.
-- The activation handshake and recovery are offline-validated, and ordinary same-batch production
-  recovery is live. The next naturally due maintenance window must provide the first live evidence
+- The activation handshake is offline-validated, and same-batch production recovery through final
+  schedule completion is live. The next naturally due maintenance window must provide the first live evidence
   that the new maintenance lifecycle owns and releases keep-awake for a full production phase. No
   extra sleep test or production schedule change is required before that natural validation.
 

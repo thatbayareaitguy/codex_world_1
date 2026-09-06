@@ -585,6 +585,53 @@ export async function reconcileDiscoveryScheduleJobs(
   ];
 
   await db.transaction(async (tx) => {
+    const linkedFailedJobs = await tx
+      .select({
+        batchCompletedArtists: appleMusicScanBatches.completedArtists,
+        batchFailedArtists: appleMusicScanBatches.failedArtists,
+        batchId: appleMusicScanBatches.id,
+        batchTotalArtists: appleMusicScanBatches.totalArtists,
+        jobId: discoveryScheduleJobs.id,
+      })
+      .from(discoveryScheduleJobs)
+      .innerJoin(
+        appleMusicScanBatches,
+        eq(appleMusicScanBatches.id, discoveryScheduleJobs.appleMusicBatchId),
+      )
+      .where(
+        and(
+          inArray(discoveryScheduleJobs.status, ["failed", "expired"]),
+          inArray(appleMusicScanBatches.status, [
+            "pending",
+            "running",
+            "partial",
+            "paused",
+            "rate_limited",
+          ]),
+        ),
+      );
+    for (const job of linkedFailedJobs) {
+      const unfinished = await tx
+        .select({ count: sql<number>`count(*)::int` })
+        .from(appleMusicArtistScans)
+        .where(
+          and(
+            eq(appleMusicArtistScans.batchId, job.batchId),
+            inArray(appleMusicArtistScans.status, ["pending", "running", "retryable"]),
+          ),
+        );
+      const allArtistsSucceeded =
+        job.batchCompletedArtists === job.batchTotalArtists && job.batchFailedArtists === 0;
+      if (!allArtistsSucceeded && Number(unfinished[0]?.count ?? 0) === 0) continue;
+      await tx
+        .update(discoveryScheduleJobs)
+        .set({
+          errorClassification: "resumable_linked_batch_recovered",
+          status: "scheduled",
+          updatedAt: now,
+        })
+        .where(eq(discoveryScheduleJobs.id, job.jobId));
+    }
     const orphanedJobs = await tx
       .select()
       .from(discoveryScheduleJobs)

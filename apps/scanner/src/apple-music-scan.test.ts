@@ -1,7 +1,7 @@
 import { AppleMusicClientError } from "@radar/providers";
 import { describe, expect, it } from "vitest";
 
-import { classifyAppleMusicFailure } from "./apple-music-scan";
+import { classifyAppleMusicFailure, resolveAppleMusicBatchFinalStatus } from "./apple-music-scan";
 
 describe("Apple Music scan failure isolation", () => {
   it.each([
@@ -44,5 +44,20 @@ describe("Apple Music scan failure isolation", () => {
       continue: false,
       runStatus: "rate_limited",
     });
+  });
+});
+
+describe("Apple Music resumed-batch completion", () => {
+  it("uses the current persisted failure count after retryable artists recover", () => {
+    expect(resolveAppleMusicBatchFinalStatus({ failedArtists: 0, remainingItems: 0 })).toBe(
+      "completed",
+    );
+  });
+
+  it.each([
+    { failedArtists: 0, remainingItems: 1 },
+    { failedArtists: 1, remainingItems: 0 },
+  ])("keeps genuinely unfinished or failed batches partial", (input) => {
+    expect(resolveAppleMusicBatchFinalStatus(input)).toBe("partial");
   });
 });

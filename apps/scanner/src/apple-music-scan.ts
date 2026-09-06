@@ -206,7 +206,6 @@ export async function runAppleMusicScan(
       }
     : emptyIncrementalSummary();
   let artistsProcessed = existingRun?.artistsProcessedCount ?? batch.completedArtists;
-  let terminalFailures = batch.failedArtists;
   let finalStatus: AppleMusicPersistContext["status"] = "completed";
   let fatalError: unknown;
 
@@ -237,7 +236,6 @@ export async function runAppleMusicScan(
         requestCount: 0,
         status: "terminal",
       });
-      terminalFailures += 1;
       continue;
     }
     if (!(await startAppleMusicArtist(db, item.id))) continue;
@@ -304,7 +302,6 @@ export async function runAppleMusicScan(
         status: outcome.artistStatus,
       });
       if (outcome.continue) {
-        terminalFailures += 1;
         log("warn", "apple_music.artist_failed", {
           classification: outcome.classification,
           position,
@@ -328,7 +325,15 @@ export async function runAppleMusicScan(
   }
 
   const remaining = await loadAppleMusicBatchItems(db, batchId);
-  finalStatus = remaining.length > 0 ? "partial" : terminalFailures > 0 ? "partial" : "completed";
+  const persistedBatch = await db.query.appleMusicScanBatches.findFirst({
+    columns: { failedArtists: true },
+    where: eq(appleMusicScanBatches.id, batchId),
+  });
+  if (!persistedBatch) throw new Error("Apple Music scan batch disappeared before completion.");
+  finalStatus = resolveAppleMusicBatchFinalStatus({
+    failedArtists: persistedBatch.failedArtists,
+    remainingItems: remaining.length,
+  });
   await finishAppleMusicBatch(db, batchId, finalStatus);
   await finalizeScanRun(db, run.id, cumulative, artistsProcessed, finalStatus);
   await runtime.reportProgress?.(
@@ -346,6 +351,13 @@ export async function runAppleMusicScan(
       apple_music: { discovered: cumulative.discovered, inserted: cumulative.inserted },
     },
   };
+}
+
+export function resolveAppleMusicBatchFinalStatus(input: {
+  failedArtists: number;
+  remainingItems: number;
+}): "completed" | "partial" {
+  return input.remainingItems > 0 || input.failedArtists > 0 ? "partial" : "completed";
 }
 
 function scannerArtistIds(options: ScannerOptions): readonly string[] {
