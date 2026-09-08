@@ -228,6 +228,15 @@ test("featured playlists and About Us pages are available from navigation", asyn
     page.getByRole("link", { name: "Open Showcase New Release Radar on Spotify" }).locator("img"),
   ).toHaveAttribute("src", /showcase-new-release-radar/);
   await expect(
+    page.getByRole("link", { name: "Open What we're listening to on Spotify" }),
+  ).toHaveAttribute(
+    "href",
+    "https://open.spotify.com/playlist/2h8lAGYTHUz3RpYxhRUHu9?si=d6d1697368354732",
+  );
+  await expect(
+    page.getByRole("link", { name: "Open What we're listening to on Spotify" }),
+  ).toHaveAttribute("target", "_blank");
+  await expect(
     page.getByText(
       "Find new releases from all of our followed artists, all available in one playlist. Updated weekly.",
     ),

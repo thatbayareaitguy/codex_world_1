@@ -22,7 +22,7 @@ const featuredPlaylists = [
     description: "Collection of the things we are liking the most.",
     artworkClass: "playlist-artwork-blue",
     artworkImage: null,
-    spotifyUrl: null,
+    spotifyUrl: "https://open.spotify.com/playlist/2h8lAGYTHUz3RpYxhRUHu9?si=d6d1697368354732",
   },
   {
     number: "03",

@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-09-02 PDT
+Updated: 2026-09-08 PDT
 
 ## Showcase Public Site Milestone
 
@@ -18,8 +18,9 @@ Updated: 2026-09-02 PDT
   generated site-wide social preview. The navigation now exposes Featured Playlists and About Us.
   Featured Playlists has three initial editorial cards. The Showcase New Release Radar uses the
   supplied Spotify-sized logo at `apps/showcase/public/showcase-new-release-radar.png` and links to
-  the supplied authorized Spotify playlist in a new tab; the remaining cards are static. About Us
-  now includes the supplied mission, selection, and team copy.
+  the supplied authorized Spotify playlist in a new tab. The What we're listening to artwork links
+  to its supplied Spotify playlist in a new tab; the third card remains static. About Us now
+  includes the supplied mission, selection, and team copy.
 - Decorative dot-prefixed eyebrow labels were removed from every top-level Showcase hero, including
   the private local genre-review page. Section-level labels remain where they identify content.
 - The public release catalog renders 50 matching releases per page while preserving the generated
