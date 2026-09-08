@@ -387,3 +387,15 @@ Updated: 2026-09-02 PDT
   a 998-page Showcase production build, and all eight Showcase Playwright tests. Live browser
   inspection confirmed both tabs, classified-only search results, and reopening AHEE with its four
   saved genre assignments available for editing.
+
+## Showcase Vercel Deployment
+
+- The Vercel project is `showcasedm` under the Showcase EDM team and is connected to the existing
+  GitHub repository.
+- Vercel is configured as a Next.js project with repository root `apps/showcase` and production
+  branch `codex/showcase-public-site`. Scanner and administration apps are outside the project root.
+- Production has exactly one user-configured secret: `SHOWCASE_NEON_PUBLIC_DATABASE_URL`. Its value
+  comes from the ignored local read-only website configuration. Owner, publisher, Apple, Spotify,
+  and scanner credentials are not present in Vercel.
+- Local Vercel link state and generated Vercel environment files remain ignored. No credential value
+  is recorded in source control.

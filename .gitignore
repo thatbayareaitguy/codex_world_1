@@ -17,3 +17,5 @@ backups/
 !.env.example
 .DS_Store
 Thumbs.db
+
+.vercel/
