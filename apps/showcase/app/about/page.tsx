@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ProviderLinks } from "../../components/provider-links";
 
 export const metadata: Metadata = {
   title: "About Us",
@@ -43,6 +44,27 @@ export default function AboutPage() {
             <p>{section.body}</p>
           </article>
         ))}
+      </section>
+
+      <section className="founder-note" aria-labelledby="founder-note-title">
+        <div className="founder-note-heading">
+          <p className="meta">FROM THE FOUNDER</p>
+          <h2 id="founder-note-title">Note from the founder</h2>
+        </div>
+        <div className="founder-note-copy">
+          <h3>K!LLAHURTS</h3>
+          <p>
+            I&apos;m the founder of Showcase, and my goal is to create a space where fans, artists,
+            and EDM community members can find new music, discover artists, and keep up with what is
+            happening across the EDM world.
+          </p>
+          <ProviderLinks
+            links={{
+              appleMusic: "https://music.apple.com/us/artist/k-llahurts/1662425607",
+              spotify: "https://open.spotify.com/artist/6wktzPZcAX9ukJEliEwWqT",
+            }}
+          />
+        </div>
       </section>
     </div>
   );

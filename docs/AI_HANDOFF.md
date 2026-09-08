@@ -21,6 +21,9 @@ Updated: 2026-09-08 PDT
   the supplied authorized Spotify playlist in a new tab. The What we're listening to artwork links
   to its supplied Spotify playlist in a new tab; the third card remains static. About Us now
   includes the supplied mission, selection, and team copy.
+- About Us ends with a founder note from K!LLAHURTS describing the goal of creating a discovery
+  space for fans, artists, and the wider EDM community. The note links to the supplied Apple Music
+  and Spotify artist profiles using the existing provider-link presentation.
 - Decorative dot-prefixed eyebrow labels were removed from every top-level Showcase hero, including
   the private local genre-review page. Section-level labels remain where they identify content.
 - Emphasized second lines in public page headlines now use the same upright white type treatment as

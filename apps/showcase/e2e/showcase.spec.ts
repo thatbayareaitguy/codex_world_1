@@ -285,6 +285,21 @@ test("featured playlists and About Us pages are available from navigation", asyn
     page.getByText("Curated playlists, songs, and feeds, based on what we think is cool."),
   ).toBeVisible();
   await expect(page.getByText(/Just some wonky weird EDM fanatics/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Note from the founder" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "K!LLAHURTS" })).toBeVisible();
+  await expect(
+    page.getByText(
+      "I'm the founder of Showcase, and my goal is to create a space where fans, artists, and EDM community members can find new music, discover artists, and keep up with what is happening across the EDM world.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open in Apple Music" })).toHaveAttribute(
+    "href",
+    "https://music.apple.com/us/artist/k-llahurts/1662425607",
+  );
+  await expect(page.getByRole("link", { name: "Open in Spotify" })).toHaveAttribute(
+    "href",
+    "https://open.spotify.com/artist/6wktzPZcAX9ukJEliEwWqT",
+  );
 
   await page.getByRole("link", { name: "Contact Us" }).click();
   await expect(page).toHaveURL(/\/contact$/);

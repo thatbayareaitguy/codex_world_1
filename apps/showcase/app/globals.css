@@ -934,6 +934,41 @@ summary:focus-visible {
   font-size: 13px;
   line-height: 1.65;
 }
+.founder-note {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.75fr) minmax(0, 1.25fr);
+  gap: 80px;
+  margin-top: 110px;
+  padding-top: 42px;
+  border-top: 1px solid var(--line);
+}
+.founder-note-heading .meta {
+  margin: 0 0 18px;
+}
+.founder-note-heading h2 {
+  max-width: 340px;
+  margin: 0;
+  font-size: clamp(34px, 4vw, 52px);
+  letter-spacing: -0.06em;
+  line-height: 1;
+}
+.founder-note-copy {
+  max-width: 660px;
+}
+.founder-note-copy h3 {
+  margin: 0;
+  color: var(--accent-pink);
+  font:
+    600 13px/1.2 "DM Mono",
+    monospace;
+  letter-spacing: 0.08em;
+}
+.founder-note-copy > p {
+  margin: 22px 0 28px;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1.75;
+}
 .contact-email-link {
   width: fit-content;
   display: block;
@@ -1894,6 +1929,11 @@ summary:focus-visible {
   }
   .about-placeholder-grid h2 {
     margin-top: 45px;
+  }
+  .founder-note {
+    grid-template-columns: 1fr;
+    gap: 34px;
+    margin-top: 72px;
   }
   .genre-admin-layout {
     grid-template-columns: 1fr;
