@@ -18,7 +18,7 @@ const featuredPlaylists = [
   },
   {
     number: "02",
-    title: "What we're listening to",
+    title: "Showcase: Our Current Favorites",
     description: "Collection of the things we are liking the most.",
     artworkClass: "playlist-artwork-blue",
     artworkImage: null,

@@ -18,9 +18,10 @@ Updated: 2026-09-08 PDT
   generated site-wide social preview. The navigation now exposes Featured Playlists and About Us.
   Featured Playlists has three initial editorial cards. The Showcase New Release Radar uses the
   supplied Spotify-sized logo at `apps/showcase/public/showcase-new-release-radar.png` and links to
-  the supplied authorized Spotify playlist in a new tab. The What we're listening to artwork links
-  to its supplied Spotify playlist in a new tab; the third card remains static. A bottom call to
-  action invites playlist submissions through the public Showcase email address. About Us now
+  the supplied authorized Spotify playlist in a new tab. The Showcase: Our Current Favorites
+  artwork links to its supplied Spotify playlist in a new tab; the third card remains static. A
+  bottom call to action invites playlist submissions through the public Showcase email address.
+  About Us now
   includes the supplied mission, selection, and team copy.
 - About Us ends with a founder note from K!LLAHURTS describing the goal of creating a discovery
   space for fans, artists, and the wider EDM community. The note links to the supplied Apple Music
