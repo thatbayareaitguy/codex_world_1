@@ -211,13 +211,14 @@ summary:focus-visible {
   line-height: 0.94;
   letter-spacing: -0.07em;
 }
-.hero h1 em {
-  color: transparent;
-  background: var(--accent-gradient);
-  background-clip: text;
-  font-weight: 500;
-  font-style: italic;
-  -webkit-background-clip: text;
+.hero h1 em,
+.listing-hero h1 em,
+.upcoming-home-copy h2 em,
+.not-found h1 em {
+  color: inherit;
+  background: none;
+  font-weight: inherit;
+  font-style: normal;
 }
 .hero-intro {
   max-width: 555px;
@@ -683,13 +684,6 @@ summary:focus-visible {
   line-height: 0.98;
   letter-spacing: -0.065em;
 }
-.upcoming-home-copy h2 em {
-  color: transparent;
-  background: var(--accent-gradient);
-  background-clip: text;
-  font-weight: 500;
-  -webkit-background-clip: text;
-}
 .upcoming-home-copy > p:not(.kicker) {
   max-width: 450px;
   margin: 24px 0 30px;
@@ -782,13 +776,6 @@ summary:focus-visible {
   font-size: clamp(58px, 7.8vw, 102px);
   line-height: 0.92;
   letter-spacing: -0.075em;
-}
-.listing-hero h1 em {
-  color: transparent;
-  background: var(--accent-gradient);
-  background-clip: text;
-  font-weight: 500;
-  -webkit-background-clip: text;
 }
 .listing-hero > p:last-child {
   max-width: 620px;
@@ -1387,13 +1374,6 @@ summary:focus-visible {
   font-size: clamp(65px, 9vw, 118px);
   line-height: 0.9;
   letter-spacing: -0.08em;
-}
-.not-found h1 em {
-  color: transparent;
-  background: var(--accent-gradient);
-  background-clip: text;
-  font-weight: 500;
-  -webkit-background-clip: text;
 }
 .not-found > p:not(.kicker) {
   margin: 28px 0 34px;

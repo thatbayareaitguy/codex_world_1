@@ -19,6 +19,34 @@ test("homepage introduces release and artist discovery", async ({ page }) => {
   await expect(page.getByText("ARTIST INDEX", { exact: true })).toBeVisible();
 });
 
+test("hero emphasis uses the same upright headline style on every public page", async ({
+  page,
+}) => {
+  for (const path of ["/", "/releases", "/artists", "/playlists", "/about", "/contact"]) {
+    await page.goto(path);
+    const headline = page.locator("main h1").first();
+    const emphasis = headline.locator("em");
+    await expect(emphasis).toBeVisible();
+    await expect(emphasis).toHaveCSS("font-style", "normal");
+    await expect(emphasis).toHaveCSS("background-image", "none");
+
+    const matchingHeadlineStyle = await headline.evaluate((element) => {
+      const emphasized = element.querySelector("em");
+      if (emphasized === null) return false;
+      const headlineStyle = getComputedStyle(element);
+      const emphasisStyle = getComputedStyle(emphasized);
+      return (
+        emphasisStyle.color === headlineStyle.color &&
+        emphasisStyle.fontWeight === headlineStyle.fontWeight
+      );
+    });
+    expect(matchingHeadlineStyle).toBe(true);
+  }
+
+  await page.goto("/missing-page");
+  await expect(page.locator("main h1 em")).toHaveCSS("font-style", "normal");
+});
+
 test("release filters and detail routes work", async ({ page }) => {
   const releasedReleases = generatedCatalog.releases.filter(
     (release) => release.status === "released",

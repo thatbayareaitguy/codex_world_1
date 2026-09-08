@@ -23,6 +23,9 @@ Updated: 2026-09-08 PDT
   includes the supplied mission, selection, and team copy.
 - Decorative dot-prefixed eyebrow labels were removed from every top-level Showcase hero, including
   the private local genre-review page. Section-level labels remain where they identify content.
+- Emphasized second lines in public page headlines now use the same upright white type treatment as
+  the first line. This includes the home, release, artist, playlist, about, contact, and not-found
+  headings, plus the home page's secondary upcoming-release heading.
 - The public release catalog renders 50 matching releases per page while preserving the generated
   newest-first order. Wide desktop layouts use five cards per row, then fall back to four, three,
   two, and one column at narrower breakpoints. The bottom pager includes Previous, Next, direct
