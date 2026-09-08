@@ -8,12 +8,19 @@ import {
   type executeSpotifyPlaylistExport,
   type SpotifyPlaylistExportExecution,
   SpotifyCooldownError,
+  SpotifyPlaylistSnapshotYieldError,
 } from "@radar/db";
 import { loadProviderConfiguration } from "@radar/providers";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { runAutomaticDiscoveryPlaylistExport } from "./spotify-playlist-export-runtime";
+import {
+  automaticPlaylistExportFallbackTtlMs,
+  automaticPlaylistExportMaxAdditions,
+  automaticPlaylistExportMaxMutations,
+  automaticPlaylistExportMaxReadPages,
+  runAutomaticDiscoveryPlaylistExport,
+} from "./spotify-playlist-export-runtime";
 
 const databaseUrl =
   process.env.TEST_DATABASE_URL ?? "postgres://radar:radar@127.0.0.1:5433/radar_test";
@@ -57,6 +64,9 @@ describe.sequential("automatic discovery playlist export", () => {
     const executeExport: typeof executeSpotifyPlaylistExport = vi.fn(
       (_db, _userId, _client, input) => {
         expect(input).toMatchObject({
+          maxAdditions: automaticPlaylistExportMaxAdditions,
+          maxMutations: automaticPlaylistExportMaxMutations,
+          maxPlaylistReadPages: automaticPlaylistExportMaxReadPages,
           orderingPolicy: "release_date_custom_order",
           playlistId,
           policy: { allowedPlaylistId: playlistId, enabled: true },
@@ -142,6 +152,152 @@ describe.sequential("automatic discovery playlist export", () => {
     ).toMatchObject({ phase: "playlist_inbox", playlistInboxStatus: "exporting" });
   });
 
+  it("yields a partial export cleanly and resumes the same run on the next minute tick", async () => {
+    await connection.db.insert(discoveryScheduleState).values({
+      id: "global",
+      phase: "playlist_inbox",
+      playlistInboxStatus: "ready",
+    });
+    const runId = randomUUID();
+    const executeExport: typeof executeSpotifyPlaylistExport = vi
+      .fn()
+      .mockResolvedValueOnce(partialExecution(runId, 3, 7))
+      .mockResolvedValueOnce(completedExecution(runId, true));
+
+    await expect(
+      runAutomaticDiscoveryPlaylistExport(connection.db, configuration(), { executeExport }),
+    ).resolves.toMatchObject({ reason: "partial", runId });
+    expect(
+      await connection.db.query.discoveryScheduleState.findFirst({
+        where: eq(discoveryScheduleState.id, "global"),
+      }),
+    ).toMatchObject({
+      phase: "playlist_inbox",
+      playlistInboxExportRunId: runId,
+      playlistInboxStatus: "partial",
+    });
+    expect(await connection.db.select().from(operationLocks)).toHaveLength(0);
+
+    await expect(
+      runAutomaticDiscoveryPlaylistExport(connection.db, configuration(), { executeExport }),
+    ).resolves.toMatchObject({ reason: "completed", runId });
+    expect(executeExport).toHaveBeenCalledTimes(2);
+    expect(executeExport).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.any(String),
+      expect.anything(),
+      expect.objectContaining({ maxAdditions: automaticPlaylistExportMaxAdditions }),
+    );
+    expect(executeExport).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.any(String),
+      expect.anything(),
+      expect.objectContaining({ maxAdditions: automaticPlaylistExportMaxAdditions }),
+    );
+  });
+
+  it("immediately reclaims an export lock whose local owner process is proven dead", async () => {
+    const now = new Date("2026-09-08T19:30:00.000Z");
+    await connection.db.insert(discoveryScheduleState).values({
+      id: "global",
+      phase: "playlist_inbox",
+      playlistInboxStatus: "exporting",
+    });
+    await connection.db.insert(operationLocks).values({
+      acquiredAt: now,
+      expiresAt: new Date(now.getTime() + 2 * 60 * 60_000),
+      lockKey: "spotify:playlist-export",
+      metadata: {
+        heartbeatAt: now.toISOString(),
+        ownerHost: "test-host",
+        ownerPid: 424242,
+      },
+      operationType: "spotify_playlist_export",
+      ownerToken: randomUUID(),
+    });
+    const runId = randomUUID();
+    const executeExport: typeof executeSpotifyPlaylistExport = vi.fn(() =>
+      Promise.resolve(completedExecution(runId)),
+    );
+
+    await expect(
+      runAutomaticDiscoveryPlaylistExport(connection.db, configuration(), {
+        executeExport,
+        inspectProcess: () => "dead",
+        now: () => now,
+        ownerHost: "test-host",
+      }),
+    ).resolves.toMatchObject({ reason: "completed", runId });
+    expect(executeExport).toHaveBeenCalledOnce();
+    expect(await connection.db.select().from(operationLocks)).toHaveLength(0);
+  });
+
+  it("protects an export lock whose local owner process is still alive", async () => {
+    const now = new Date("2026-09-08T19:30:00.000Z");
+    await connection.db.insert(discoveryScheduleState).values({
+      id: "global",
+      phase: "playlist_inbox",
+      playlistInboxStatus: "exporting",
+    });
+    await connection.db.insert(operationLocks).values({
+      acquiredAt: new Date(now.getTime() - 60 * 60_000),
+      expiresAt: new Date(now.getTime() + 60 * 60_000),
+      lockKey: "spotify:playlist-export",
+      metadata: {
+        heartbeatAt: new Date(now.getTime() - 60 * 60_000).toISOString(),
+        ownerHost: "test-host",
+        ownerPid: 424242,
+      },
+      operationType: "spotify_playlist_export",
+      ownerToken: randomUUID(),
+    });
+    const executeExport: typeof executeSpotifyPlaylistExport = vi.fn(() =>
+      Promise.resolve(completedExecution(randomUUID())),
+    );
+
+    await expect(
+      runAutomaticDiscoveryPlaylistExport(connection.db, configuration(), {
+        executeExport,
+        inspectProcess: () => "alive",
+        now: () => now,
+        ownerHost: "test-host",
+      }),
+    ).rejects.toThrow("already running");
+    expect(executeExport).not.toHaveBeenCalled();
+    expect(await connection.db.select().from(operationLocks)).toHaveLength(1);
+  });
+
+  it("reclaims an unverifiable abandoned lock after the five-minute fallback TTL", async () => {
+    const now = new Date("2026-09-08T19:30:00.000Z");
+    await connection.db.insert(discoveryScheduleState).values({
+      id: "global",
+      phase: "playlist_inbox",
+      playlistInboxStatus: "exporting",
+    });
+    await connection.db.insert(operationLocks).values({
+      acquiredAt: new Date(now.getTime() - automaticPlaylistExportFallbackTtlMs - 1),
+      expiresAt: new Date(now.getTime() + 60 * 60_000),
+      lockKey: "spotify:playlist-export",
+      operationType: "spotify_playlist_export",
+      ownerToken: randomUUID(),
+    });
+    const executeExport: typeof executeSpotifyPlaylistExport = vi.fn(() =>
+      Promise.resolve(completedExecution(randomUUID())),
+    );
+
+    await expect(
+      runAutomaticDiscoveryPlaylistExport(connection.db, configuration(), {
+        executeExport,
+        inspectProcess: () => "unknown",
+        now: () => now,
+        ownerHost: "test-host",
+      }),
+    ).resolves.toMatchObject({ reason: "completed" });
+    expect(executeExport).toHaveBeenCalledOnce();
+  });
+
   it("leaves scheduled writes disabled in default configuration", async () => {
     await connection.db.insert(discoveryScheduleState).values({
       id: "global",
@@ -200,6 +356,27 @@ describe.sequential("automatic discovery playlist export", () => {
     ).toMatchObject({ phase: "cooldown_wait", playlistInboxStatus: "partial" });
   });
 
+  it("treats a bounded snapshot-page yield as resumable rather than failed", async () => {
+    await connection.db.insert(discoveryScheduleState).values({
+      id: "global",
+      phase: "playlist_inbox",
+      playlistInboxStatus: "ready",
+    });
+    const executeExport: typeof executeSpotifyPlaylistExport = vi.fn(() =>
+      Promise.reject(new SpotifyPlaylistSnapshotYieldError(300)),
+    );
+
+    await expect(
+      runAutomaticDiscoveryPlaylistExport(connection.db, configuration(), { executeExport }),
+    ).resolves.toEqual({ nextOffset: 300, reason: "snapshot_yield" });
+    expect(
+      await connection.db.query.discoveryScheduleState.findFirst({
+        where: eq(discoveryScheduleState.id, "global"),
+      }),
+    ).toMatchObject({ phase: "playlist_inbox", playlistInboxStatus: "partial" });
+    expect(await connection.db.select().from(operationLocks)).toHaveLength(0);
+  });
+
   it("does not execute a completed inbox twice", async () => {
     await connection.db.insert(discoveryScheduleState).values({
       id: "global",
@@ -236,7 +413,7 @@ function configuration() {
   });
 }
 
-function completedExecution(runId: string): SpotifyPlaylistExportExecution {
+function completedExecution(runId: string, resumed = false): SpotifyPlaylistExportExecution {
   return {
     cacheHit: false,
     plan: {
@@ -260,7 +437,7 @@ function completedExecution(runId: string): SpotifyPlaylistExportExecution {
       failed: 0,
       id: runId,
       pending: 0,
-      resumed: false,
+      resumed,
       skipped: 0,
       status: "completed",
     },
@@ -272,6 +449,24 @@ function completedExecution(runId: string): SpotifyPlaylistExportExecution {
       ownerId: "owner",
       public: true,
       snapshotId: "snapshot",
+    },
+  };
+}
+
+function partialExecution(
+  runId: string,
+  additionsAttempted: number,
+  pending: number,
+): SpotifyPlaylistExportExecution {
+  const execution = completedExecution(runId);
+  return {
+    ...execution,
+    run: {
+      ...execution.run,
+      additionsAttempted,
+      exported: additionsAttempted,
+      pending,
+      status: "partial",
     },
   };
 }

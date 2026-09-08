@@ -18,6 +18,7 @@ import {
   oauthAccounts,
   playlistExports,
   playlistTargets,
+  providerCache,
   releaseCandidates,
   releaseProviderReconciliations,
   releases,
@@ -247,6 +248,7 @@ describe.sequential("Spotify canonical playlist export", () => {
       resumed: true,
       status: "completed",
     });
+    expect(resumed.run.id).toBe(canary.run.id);
     expect(client.addCalls).toHaveLength(1);
     expect(client.items).toEqual([
       fixture.exactProviderTrackId,
@@ -275,6 +277,97 @@ describe.sequential("Spotify canonical playlist export", () => {
       { appOwned: true, providerTrackId: fixture.exactProviderTrackId },
       { appOwned: false, providerTrackId: fixture.confirmedProviderTrackId },
     ]);
+  });
+
+  it.each([1, 3, 4, 10, 17])(
+    "bounds and resumes a %i-item automatic export without duplicates",
+    async (trackCount) => {
+      const fixture = await createExactBatchFixture(trackCount);
+      const userTrack = "9999999999999999999999";
+      const client = new FakePlaylistClient([userTrack]);
+      const runIds = new Set<string>();
+      let invocationCount = 0;
+      let result: Awaited<ReturnType<typeof executeSpotifyPlaylistExport>>;
+
+      do {
+        result = await executeSpotifyPlaylistExport(db, fixture.userId, client, {
+          maxAdditions: 3,
+          orderingPolicy: "release_date_custom_order",
+          playlistId,
+          policy: { allowedPlaylistId: playlistId, enabled: true },
+        });
+        invocationCount += 1;
+        runIds.add(result.run.id);
+        expect(result.run.additionsAttempted).toBeLessThanOrEqual(3);
+      } while (result.run.status !== "completed");
+
+      expect(invocationCount).toBe(Math.ceil(trackCount / 3));
+      expect(runIds.size).toBe(1);
+      expect(client.items).toEqual([...fixture.providerTrackIds, userTrack]);
+      expect(new Set(client.items).size).toBe(client.items.length);
+      expect(client.addCalls.flatMap((call) => call.trackIds)).toEqual(fixture.providerTrackIds);
+      await expect(tableCount(spotifyPlaylistExportRuns)).resolves.toBe(1);
+      expect(
+        await db.query.spotifyPlaylistExportOperations.findMany({
+          where: eq(spotifyPlaylistExportOperations.status, "pending"),
+        }),
+      ).toHaveLength(0);
+    },
+  );
+
+  it("persists bounded playlist snapshot pages and resumes without rereading completed pages", async () => {
+    const fixture = await createExactBatchFixture(1);
+    const existingTracks = Array.from({ length: 5 }, (_, index) =>
+      String(900 + index).padStart(22, "0"),
+    );
+    const client = new FakePlaylistClient([...existingTracks], undefined, 2);
+    const input = {
+      maxAdditions: 3,
+      maxMutations: 3,
+      maxPlaylistReadPages: 1,
+      orderingPolicy: "release_date_custom_order" as const,
+      playlistId,
+      policy: { allowedPlaylistId: playlistId, enabled: true },
+    };
+
+    await expect(
+      executeSpotifyPlaylistExport(db, fixture.userId, client, input),
+    ).rejects.toMatchObject({ name: "SpotifyPlaylistSnapshotYieldError", nextOffset: 2 });
+    await expect(
+      executeSpotifyPlaylistExport(db, fixture.userId, client, input),
+    ).rejects.toMatchObject({ name: "SpotifyPlaylistSnapshotYieldError", nextOffset: 4 });
+    const completed = await executeSpotifyPlaylistExport(db, fixture.userId, client, input);
+
+    expect(completed.run).toMatchObject({ additionsAttempted: 1, status: "completed" });
+    expect(client.pageReadOffsets).toEqual([0, 2, 4]);
+    expect(client.items).toEqual([fixture.providerTrackIds[0], ...existingTracks]);
+    await expect(tableCount(providerCache)).resolves.toBe(0);
+  });
+
+  it("bounds reorder mutations and resumes the same run until Custom Order is correct", async () => {
+    const fixture = await createExactBatchFixture(10);
+    const client = new FakePlaylistClient([...fixture.providerTrackIds].reverse());
+    const runIds = new Set<string>();
+    let result: Awaited<ReturnType<typeof executeSpotifyPlaylistExport>>;
+    let invocationCount = 0;
+
+    do {
+      result = await executeSpotifyPlaylistExport(db, fixture.userId, client, {
+        maxAdditions: 3,
+        maxMutations: 3,
+        orderingPolicy: "release_date_custom_order",
+        playlistId,
+        policy: { allowedPlaylistId: playlistId, enabled: true },
+      });
+      runIds.add(result.run.id);
+      invocationCount += 1;
+      expect(client.reorderCalls).toBeLessThanOrEqual(invocationCount * 3);
+      if (invocationCount > 10) throw new Error("Bounded ordering did not converge.");
+    } while (result.run.status !== "completed");
+
+    expect(runIds.size).toBe(1);
+    expect(client.items).toEqual(fixture.providerTrackIds);
+    expect(new Set(client.items).size).toBe(client.items.length);
   });
 
   it("falls back to individual additions, records one failure, and continues", async () => {
@@ -363,6 +456,7 @@ describe.sequential("Spotify canonical playlist export", () => {
 class FakePlaylistClient implements SpotifyPlaylistExportClient {
   readonly addCalls: Array<{ position: number; trackIds: string[] }> = [];
   itemReadCalls = 0;
+  readonly pageReadOffsets: number[] = [];
   readCalls = 0;
   reorderCalls = 0;
   private snapshot = 1;
@@ -370,6 +464,7 @@ class FakePlaylistClient implements SpotifyPlaylistExportClient {
   constructor(
     readonly items: string[],
     private readonly fail?: (trackIds: string[]) => Error | undefined,
+    private readonly pageSize = 50,
   ) {}
 
   getCurrentUser = () => {
@@ -402,6 +497,16 @@ class FakePlaylistClient implements SpotifyPlaylistExportClient {
     this.readCalls += 1;
     this.itemReadCalls += 1;
     return Promise.resolve(this.items.map((trackId, position) => ({ position, trackId })));
+  };
+
+  getPlaylistItemsPage = (_id: string, offset: number) => {
+    this.readCalls += 1;
+    this.pageReadOffsets.push(offset);
+    const selected = this.items.slice(offset, offset + this.pageSize);
+    return Promise.resolve({
+      items: selected.map((trackId, index) => ({ position: offset + index, trackId })),
+      nextOffset: offset + selected.length < this.items.length ? offset + selected.length : null,
+    });
   };
 
   externalInsert(trackId: string, position: number): void {
@@ -543,6 +648,40 @@ async function createFixture(input: {
   };
 }
 
+async function createExactBatchFixture(trackCount: number) {
+  const [user] = await db
+    .insert(users)
+    .values({ displayName: "Batch owner", email: "batch-owner@example.test" })
+    .returning();
+  if (!user) throw new Error("Batch test user was not created.");
+  await db.insert(oauthAccounts).values({
+    provider: "spotify",
+    providerAccountId: "spotify-batch-owner",
+    scopes: [
+      "user-follow-read",
+      "playlist-read-private",
+      "playlist-modify-private",
+      "playlist-modify-public",
+    ],
+    userId: user.id,
+  });
+  const providerTrackIds: string[] = [];
+  for (let index = 0; index < trackCount; index += 1) {
+    const providerTrackId = String(index + 1).padStart(22, "0");
+    providerTrackIds.push(providerTrackId);
+    await createFeedTrack(user.id, {
+      confidence: "1.000",
+      feedState: "new",
+      followed: true,
+      matchRule: "exact_isrc",
+      providerTrackId,
+      releaseDate: `2026-08-${String(28 - index).padStart(2, "0")}`,
+      title: `Batch track ${String(index + 1).padStart(2, "0")}`,
+    });
+  }
+  return { providerTrackIds, userId: user.id };
+}
+
 async function createFeedTrack(
   userId: string,
   input: {
@@ -666,6 +805,7 @@ async function createDuplicateAppearance(
 async function tableCount(
   table:
     | typeof playlistTargets
+    | typeof providerCache
     | typeof playlistExports
     | typeof spotifyPlaylistExportRuns
     | typeof spotifyPlaylistExportOperations,

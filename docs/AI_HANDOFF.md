@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-09-08 12:20 PDT
+Updated: 2026-09-08 13:06 PDT
 
 ## Repository
 
@@ -8,9 +8,52 @@ Updated: 2026-09-08 12:20 PDT
 - Wake-recovery goal starting HEAD and upstream:
   `295d65671a2eee9eed5dbf825fcca5ad0734492c`
 - Primary wake and schedule repair commit: `3e3fde1ff16a048d49239fd3c574045e5bc1a011`.
+- Playlist runtime repair starting HEAD and upstream:
+  `713de70393b6b5263587613531c56dfc6d106c25`.
 - The tracked worktree was clean at goal start.
 - `outputs/` is unrelated, remains untracked, and is excluded from the intended commit.
 - No secret or `.env` file was changed.
+
+## Automatic Playlist Export Runtime Repair (2026-09-08)
+
+- Confirmed root cause: automatic export run `3ba4a00e-52c5-44ff-88d7-5e77f95f6ddd`
+  planned ten additions and committed six before Windows ended the recurring task host at its
+  `PT3M` execution limit. The fixed playlist contained 1,428 items, so an invalidated snapshot
+  required 29 gated 50-item reads and could not finish inside three minutes. This was not a
+  Spotify 429, cooldown, matching failure, or playlist-target problem.
+- The automatic path now permits at most three additions and three total playlist mutations per
+  minute-task invocation. A partial batch or partial Custom Order repair is a successful bounded
+  yield. The same export run and operation rows remain partial, committed additions remain
+  exported, and the next eligible tick resumes without replaying them. Manual export behavior is
+  unchanged.
+- Large playlist snapshot refreshes now persist after every page in the existing Spotify provider
+  cache and read at most six pages per invocation. Later ticks continue from the stored offset. A
+  snapshot change discards only the incomplete page cache and restarts verification. The complete
+  snapshot is still verified against Spotify before any addition or reorder, preserving snapshot
+  safety and Date Added provenance.
+- Automatic export locks now record host, PID, acquisition heartbeat, and runtime bounds. A local
+  owner proven dead is reclaimed immediately. An owner of unknown status is reclaimed after five
+  minutes. A proven live owner retains a two-hour lease, preventing the ordinary expiration path
+  from admitting a second writer. Normal completion and every bounded yield release the lock.
+- Live recovery reused the original run. `Ghost Of Us`, `Memories`, and `Nobody Can Stop Richard
+Finger (Levity Remix)` were committed by its first bounded continuation. `Never Be Ashamed` and
+  the remaining Custom Order moves then completed through the guarded automatic path. The run
+  finished at 12:56 PDT with zero failed operations and zero pending operations. The cached
+  authorized playlist contains each of the four requested Spotify track IDs exactly once.
+- During live diagnosis, Windows had ended an earlier `conhost` task host while its Node child PID
+  20308 remained alive and no longer owned the current lock. That exact orphan was stopped to avoid
+  concurrent writers. No export lock or orphan scheduler process remained after completion.
+- The twelve unresolved IVORY tracks were not exported or rematched. They remain twelve distinct
+  queued track-resolution targets, represented in both the repair and Apple-priority queues, for
+  normal quota-controlled reconciliation.
+- The maintenance wake lifecycle, five fixed wake groups, Friday export priority, authorized
+  playlist ID, provider budgets, matching rules, and Thursday/Friday broad-work prohibition were
+  not changed. No Apple or Spotify request was made solely for a test.
+- Offline integration validation covers 1, 3, 4, 10, and 17-item batches, same-run continuation,
+  durable page continuation, a provider write followed by local-finalization loss, dead and live
+  lock owners, deduplication, bounded Custom Order convergence, and resumable snapshot yields. The
+  complete PostgreSQL integration suite passed 172 tests in 28 files on an isolated PostgreSQL 17
+  container at port 5434.
 
 ## Unattended Wake Dependency Recovery (2026-09-08)
 
@@ -739,12 +782,12 @@ backup, and this work did not make any live review decision.
 - `pnpm format:check`: passed
 - `pnpm lint`: passed with zero warnings
 - `pnpm typecheck`: passed across all six workspace projects
-- `pnpm test`: 75 files and 525 tests passed. Maintenance coverage directly asserts keep-awake
+- `pnpm test`: 77 files and 549 tests passed. Maintenance coverage directly asserts keep-awake
   release, failure cleanup, absolute runtime cutoff, dynamic-wake deduplication, Thursday and Friday
   broad-work suppression, Saturday broad eligibility, Apple-priority precedence, cooldown
   enforcement, optional `powercfg` denial, single-owner enforcement, crash recovery, bounded
   near-term waits, and durable activation and release evidence.
-- `pnpm test:integration`: 28 files and 155 tests passed against an isolated PostgreSQL 17 service
+- `pnpm test:integration`: 28 files and 172 tests passed against an isolated PostgreSQL 17 service
   on port 5434 with all 31 migrations. Production port 5432 was not used by the tests.
 - `pnpm build`: passed, including the current API and system-status routes
 - `pnpm test:e2e`: 32 Playwright tests passed, including production-shaped

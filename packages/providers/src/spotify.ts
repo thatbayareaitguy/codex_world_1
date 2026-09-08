@@ -203,6 +203,11 @@ export interface SpotifyPlaylistItemSnapshot {
   title?: string;
 }
 
+export interface SpotifyPlaylistItemsPage {
+  items: SpotifyPlaylistItemSnapshot[];
+  nextOffset: number | null;
+}
+
 export interface SpotifyPlaylistReorderInput {
   insertBefore: number;
   rangeLength: number;
@@ -565,36 +570,49 @@ export class SpotifyClient {
     const items: SpotifyPlaylistItemSnapshot[] = [];
     let offset = 0;
     while (true) {
-      const page = await this.request(
-        `/playlists/${encodeURIComponent(id)}/items?limit=50&offset=${offset}`,
-        spotifyPlaylistItemsSchema,
-        { signal },
-      );
-      for (const [index, entry] of page.items.entries()) {
-        const track = entry.item;
-        const addedById = entry.added_by?.account_id ?? entry.added_by?.id;
-        items.push({
-          ...(entry.added_at ? { addedAt: entry.added_at } : {}),
-          ...(addedById ? { addedById } : {}),
-          ...(track
-            ? {
-                albumId: track.album.id,
-                albumTitle: track.album.name,
-                artistNames: track.artists.map((artist) => artist.name),
-                discNumber: track.disc_number,
-                releaseDate: track.album.release_date,
-                title: track.name,
-                trackNumber: track.track_number,
-              }
-            : {}),
-          position: offset + index,
-          trackId: track?.id ?? null,
-        });
-      }
-      if (!page.next || page.items.length === 0) break;
-      offset += page.items.length;
+      const page = await this.getPlaylistItemsPage(id, offset, signal);
+      items.push(...page.items);
+      if (page.nextOffset === null) break;
+      offset = page.nextOffset;
     }
     return items;
+  }
+
+  async getPlaylistItemsPage(
+    id: string,
+    offset: number,
+    signal?: AbortSignal,
+  ): Promise<SpotifyPlaylistItemsPage> {
+    const page = await this.request(
+      `/playlists/${encodeURIComponent(id)}/items?limit=50&offset=${offset}`,
+      spotifyPlaylistItemsSchema,
+      { signal },
+    );
+    const items = page.items.map((entry, index) => {
+      const track = entry.item;
+      const addedById = entry.added_by?.account_id ?? entry.added_by?.id;
+      return {
+        ...(entry.added_at ? { addedAt: entry.added_at } : {}),
+        ...(addedById ? { addedById } : {}),
+        ...(track
+          ? {
+              albumId: track.album.id,
+              albumTitle: track.album.name,
+              artistNames: track.artists.map((artist) => artist.name),
+              discNumber: track.disc_number,
+              releaseDate: track.album.release_date,
+              title: track.name,
+              trackNumber: track.track_number,
+            }
+          : {}),
+        position: offset + index,
+        trackId: track?.id ?? null,
+      } satisfies SpotifyPlaylistItemSnapshot;
+    });
+    return {
+      items,
+      nextOffset: page.next && page.items.length > 0 ? offset + page.items.length : null,
+    };
   }
 
   async getPlaylistTrackIds(id: string, signal?: AbortSignal): Promise<Set<string>> {

@@ -8,6 +8,29 @@ export interface OperationLockHandle {
   ownerToken: string;
 }
 
+export async function loadOperationLock(db: RadarDatabase, lockKey: string) {
+  return db.query.operationLocks.findFirst({
+    where: eq(operationLocks.lockKey, lockKey),
+  });
+}
+
+export async function renewOperationLock(
+  db: RadarDatabase,
+  input: OperationLockHandle & { ttlMs: number },
+): Promise<boolean> {
+  const [renewed] = await db
+    .update(operationLocks)
+    .set({ expiresAt: new Date(Date.now() + input.ttlMs) })
+    .where(
+      and(
+        eq(operationLocks.lockKey, input.lockKey),
+        eq(operationLocks.ownerToken, input.ownerToken),
+      ),
+    )
+    .returning({ lockKey: operationLocks.lockKey });
+  return Boolean(renewed);
+}
+
 export async function acquireOperationLock(
   db: RadarDatabase,
   input: {

@@ -5,11 +5,14 @@ import {
   ensureLocalOwner,
   executeSpotifyPlaylistExport,
   inspectSpotifyPlaylistCheckpoint,
+  loadOperationLock,
   markDiscoveryPlaylistInboxStatus,
   previewSpotifyPlaylistExport,
   releaseOperationLock,
+  renewOperationLock,
   SpotifyTokenManager,
   SpotifyCooldownError,
+  SpotifyPlaylistSnapshotYieldError,
   type RadarDatabase,
 } from "@radar/db";
 import {
@@ -19,7 +22,17 @@ import {
   SpotifyOAuthClient,
   type ProviderConfiguration,
 } from "@radar/providers";
+import { hostname } from "node:os";
 import { sanitizedSpotifyPlaylistExportOutput } from "./spotify-playlist-export-cli";
+
+const automaticPlaylistExportLockKey = "spotify:playlist-export";
+export const automaticPlaylistExportMaxAdditions = 3;
+export const automaticPlaylistExportMaxMutations = 3;
+export const automaticPlaylistExportMaxReadPages = 6;
+export const automaticPlaylistExportFallbackTtlMs = 5 * 60_000;
+export const automaticPlaylistExportOwnerLeaseMs = 2 * 60 * 60_000;
+
+type ProcessLiveness = "alive" | "dead" | "unknown";
 
 export async function runSpotifyPlaylistExportPreview(
   db: RadarDatabase,
@@ -79,6 +92,10 @@ export async function runAutomaticDiscoveryPlaylistExport(
   configuration: ProviderConfiguration,
   dependencies: {
     executeExport?: typeof executeSpotifyPlaylistExport;
+    inspectProcess?: (pid: number) => ProcessLiveness;
+    now?: () => Date;
+    ownerHost?: string;
+    ownerPid?: number;
   } = {},
 ) {
   if (
@@ -105,10 +122,28 @@ export async function runAutomaticDiscoveryPlaylistExport(
       `Automatic Spotify playlist export is restricted to ${spotifyAuthorizedPlaylistId}.`,
     );
   }
+  const now = dependencies.now?.() ?? new Date();
+  const ownerHost = dependencies.ownerHost ?? hostname();
+  const ownerPid = dependencies.ownerPid ?? process.pid;
+  await recoverAbandonedAutomaticPlaylistExportLock(db, {
+    inspectProcess: dependencies.inspectProcess ?? inspectLocalProcess,
+    now,
+    ownerHost,
+  });
   const lock = await acquireOperationLock(db, {
-    lockKey: "spotify:playlist-export",
-    metadata: { automatic: true, provider: "spotify" },
+    lockKey: automaticPlaylistExportLockKey,
+    metadata: {
+      automatic: true,
+      heartbeatAt: now.toISOString(),
+      maxAdditions: automaticPlaylistExportMaxAdditions,
+      maxMutations: automaticPlaylistExportMaxMutations,
+      maxPlaylistReadPages: automaticPlaylistExportMaxReadPages,
+      ownerHost,
+      ownerPid,
+      provider: "spotify",
+    },
     operationType: "spotify_playlist_export",
+    ttlMs: automaticPlaylistExportOwnerLeaseMs,
   });
   try {
     const claimed = await claimAutomaticDiscoveryPlaylistInboxExport(db);
@@ -159,6 +194,9 @@ export async function runAutomaticDiscoveryPlaylistExport(
       userId,
       client,
       {
+        maxAdditions: automaticPlaylistExportMaxAdditions,
+        maxMutations: automaticPlaylistExportMaxMutations,
+        maxPlaylistReadPages: automaticPlaylistExportMaxReadPages,
         orderingPolicy: "release_date_custom_order",
         playlistId: configuration.spotify.allowedPlaylistId,
         policy: {
@@ -177,6 +215,13 @@ export async function runAutomaticDiscoveryPlaylistExport(
       sanitized: sanitizedSpotifyPlaylistExportOutput(execution),
     };
   } catch (error) {
+    if (error instanceof SpotifyPlaylistSnapshotYieldError) {
+      await markDiscoveryPlaylistInboxStatus(db, { status: "partial" });
+      return {
+        nextOffset: error.nextOffset,
+        reason: "snapshot_yield" as const,
+      };
+    }
     await markDiscoveryPlaylistInboxStatus(db, {
       pauseForCooldown: isSpotifyCooldown(error),
       status: isSpotifyCooldown(error) ? "partial" : "failed",
@@ -185,6 +230,69 @@ export async function runAutomaticDiscoveryPlaylistExport(
   } finally {
     await releaseOperationLock(db, lock);
   }
+}
+
+async function recoverAbandonedAutomaticPlaylistExportLock(
+  db: RadarDatabase,
+  input: {
+    inspectProcess: (pid: number) => ProcessLiveness;
+    now: Date;
+    ownerHost: string;
+  },
+): Promise<void> {
+  const existing = await loadOperationLock(db, automaticPlaylistExportLockKey);
+  if (!existing) return;
+
+  const metadata = isRecord(existing.metadata) ? existing.metadata : {};
+  const recordedHost = typeof metadata.ownerHost === "string" ? metadata.ownerHost : null;
+  const recordedPid =
+    typeof metadata.ownerPid === "number" && Number.isInteger(metadata.ownerPid)
+      ? metadata.ownerPid
+      : null;
+  const liveness =
+    recordedHost === input.ownerHost && recordedPid !== null
+      ? input.inspectProcess(recordedPid)
+      : "unknown";
+  const heartbeatAt = parseTimestamp(metadata.heartbeatAt) ?? existing.acquiredAt;
+  const fallbackExpired =
+    input.now.getTime() - heartbeatAt.getTime() >= automaticPlaylistExportFallbackTtlMs;
+
+  if (liveness === "alive" || (liveness === "unknown" && !fallbackExpired)) {
+    await renewOperationLock(db, {
+      lockKey: existing.lockKey,
+      ownerToken: existing.ownerToken,
+      ttlMs: automaticPlaylistExportOwnerLeaseMs,
+    });
+    return;
+  }
+  await releaseOperationLock(db, {
+    lockKey: existing.lockKey,
+    ownerToken: existing.ownerToken,
+  });
+}
+
+function inspectLocalProcess(pid: number): ProcessLiveness {
+  try {
+    process.kill(pid, 0);
+    return "alive";
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ESRCH") return "dead";
+    return "unknown";
+  }
+}
+
+function parseTimestamp(value: unknown): Date | null {
+  if (typeof value !== "string") return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function isNodeError(value: unknown): value is NodeJS.ErrnoException {
+  return value instanceof Error && "code" in value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 export async function inspectAutomaticDiscoveryPlaylistCheckpoint(

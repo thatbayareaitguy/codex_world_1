@@ -68,6 +68,7 @@ export interface SpotifyPlaylistExportClient {
   getCurrentUser: SpotifyClient["getCurrentUser"];
   getPlaylist: SpotifyClient["getPlaylist"];
   getPlaylistItems: SpotifyClient["getPlaylistItems"];
+  getPlaylistItemsPage?: SpotifyClient["getPlaylistItemsPage"];
   reorderPlaylistItems: SpotifyClient["reorderPlaylistItems"];
 }
 
@@ -143,6 +144,8 @@ export async function executeSpotifyPlaylistExport(
   client: SpotifyPlaylistExportClient,
   input: {
     maxAdditions?: number;
+    maxMutations?: number;
+    maxPlaylistReadPages?: number;
     discoveryReconciliationCampaignId?: string;
     orderingPolicy?: SpotifyPlaylistOrderingPolicy;
     playlistId: string;
@@ -160,12 +163,24 @@ export async function executeSpotifyPlaylistExport(
       "playlist_operation_invalid",
     );
   }
+  if (
+    input.maxMutations !== undefined &&
+    (!Number.isInteger(input.maxMutations) || input.maxMutations < 1)
+  ) {
+    throw new SpotifyPlaylistExportError(
+      "Spotify playlist export maximum mutations must be a positive integer.",
+      "playlist_operation_invalid",
+    );
+  }
 
   const profile = await client.getCurrentUser();
   const playlist = await client.getPlaylist(playlistId);
   assertPlaylistIdentity(playlistId, playlist.id);
   assertOwnedNonCollaborativeSpotifyPlaylist(playlist, profile);
   const snapshot = await loadVerifiedSpotifyPlaylistSnapshot(db, userId, client, playlist, {
+    ...(input.maxPlaylistReadPages !== undefined
+      ? { maxReadPages: input.maxPlaylistReadPages }
+      : {}),
     policy: input.policy,
   });
   const playlistItems = snapshot.items;
@@ -225,6 +240,7 @@ export async function executeSpotifyPlaylistExport(
   let pending = await loadPendingOperations(db, run.id);
   if (input.maxAdditions !== undefined) pending = pending.slice(0, input.maxAdditions);
   let additionsAttempted = 0;
+  let orderingYielded = false;
   let snapshotAfter = snapshot.playlist.snapshot_id;
   let workingItems = playlistItems.slice().sort((left, right) => left.position - right.position);
 
@@ -274,7 +290,13 @@ export async function executeSpotifyPlaylistExport(
       (input.orderingPolicy ?? "release_date_custom_order") === "release_date_custom_order"
     ) {
       const orderPlan = planSpotifyPlaylistReleaseDateOrder(workingItems);
-      for (const move of orderPlan.moves) {
+      const availableOrderingMutations =
+        input.maxMutations === undefined
+          ? orderPlan.moves.length
+          : Math.max(0, input.maxMutations - additionsAttempted);
+      const moves = orderPlan.moves.slice(0, availableOrderingMutations);
+      orderingYielded = moves.length < orderPlan.moves.length;
+      for (const move of moves) {
         snapshotAfter = await client.reorderPlaylistItems(playlistId, {
           ...move,
           snapshotId: snapshotAfter,
@@ -293,7 +315,8 @@ export async function executeSpotifyPlaylistExport(
   await persistSpotifyPlaylistSnapshot(db, target.id, snapshotAfter, workingItems);
   await reconcilePendingOperations(db, run.id, target.id, workingItems);
   const counts = await loadOperationCounts(db, run.id);
-  const status = counts.pending === 0 && counts.failed === 0 ? "completed" : "partial";
+  const status =
+    counts.pending === 0 && counts.failed === 0 && !orderingYielded ? "completed" : "partial";
   const finishedAt = status === "completed" ? new Date() : null;
   await db
     .update(spotifyPlaylistExportRuns)
