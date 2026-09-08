@@ -215,10 +215,12 @@ summary:focus-visible {
 .listing-hero h1 em,
 .upcoming-home-copy h2 em,
 .not-found h1 em {
-  color: inherit;
-  background: none;
+  color: transparent;
+  background: var(--accent-gradient);
+  background-clip: text;
   font-weight: inherit;
   font-style: normal;
+  -webkit-background-clip: text;
 }
 .hero-intro {
   max-width: 555px;

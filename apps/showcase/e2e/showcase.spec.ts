@@ -19,7 +19,7 @@ test("homepage introduces release and artist discovery", async ({ page }) => {
   await expect(page.getByText("ARTIST INDEX", { exact: true })).toBeVisible();
 });
 
-test("hero emphasis uses the same upright headline style on every public page", async ({
+test("hero emphasis uses upright gradient headline styling on every public page", async ({
   page,
 }) => {
   for (const path of ["/", "/releases", "/artists", "/playlists", "/about", "/contact"]) {
@@ -28,23 +28,23 @@ test("hero emphasis uses the same upright headline style on every public page", 
     const emphasis = headline.locator("em");
     await expect(emphasis).toBeVisible();
     await expect(emphasis).toHaveCSS("font-style", "normal");
-    await expect(emphasis).toHaveCSS("background-image", "none");
+    await expect(emphasis).not.toHaveCSS("background-image", "none");
+    await expect(emphasis).toHaveCSS("background-clip", "text");
 
-    const matchingHeadlineStyle = await headline.evaluate((element) => {
+    const matchingHeadlineWeight = await headline.evaluate((element) => {
       const emphasized = element.querySelector("em");
       if (emphasized === null) return false;
       const headlineStyle = getComputedStyle(element);
       const emphasisStyle = getComputedStyle(emphasized);
-      return (
-        emphasisStyle.color === headlineStyle.color &&
-        emphasisStyle.fontWeight === headlineStyle.fontWeight
-      );
+      return emphasisStyle.fontWeight === headlineStyle.fontWeight;
     });
-    expect(matchingHeadlineStyle).toBe(true);
+    expect(matchingHeadlineWeight).toBe(true);
   }
 
   await page.goto("/missing-page");
-  await expect(page.locator("main h1 em")).toHaveCSS("font-style", "normal");
+  const missingPageEmphasis = page.locator("main h1 em");
+  await expect(missingPageEmphasis).toHaveCSS("font-style", "normal");
+  await expect(missingPageEmphasis).not.toHaveCSS("background-image", "none");
 });
 
 test("release filters and detail routes work", async ({ page }) => {
