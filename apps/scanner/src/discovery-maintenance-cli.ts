@@ -7,7 +7,10 @@ import { loadProviderConfiguration } from "@radar/providers";
 import { randomUUID } from "node:crypto";
 import {
   decideDiscoveryMaintenance,
+  maintenanceDatabaseReadinessTimeoutMs,
+  maintenanceDatabaseRetryIntervalMs,
   maintenanceMaximumRuntimeMs,
+  maintenanceStartupRecoveryDelayMs,
   type DiscoveryMaintenanceDecision,
 } from "./discovery-maintenance";
 import { runDiscoverySchedulerTick } from "./discovery-scheduler-cli";
@@ -17,8 +20,15 @@ import {
   type MaintenanceLifecycleDiagnostics,
 } from "./maintenance-diagnostics";
 import {
+  inspectDockerDatabaseAvailability,
+  MaintenanceDatabaseReadinessError,
+  waitForMaintenanceDatabase,
+  type DockerDatabaseAvailability,
+} from "./maintenance-readiness";
+import {
   acquireWindowsSystemPowerRequest,
   updateWindowsMaintenanceWake,
+  updateWindowsStartupRecoveryWake,
   type WindowsPowerRequest,
 } from "./windows-maintenance";
 
@@ -26,39 +36,75 @@ loadLocalEnvironment();
 
 export async function runDiscoveryMaintenanceWindow(
   dependencies: {
+    acquirePower?: typeof acquireWindowsSystemPowerRequest;
+    databaseReadinessTimeoutMs?: number;
+    databaseRetryIntervalMs?: number;
+    inspectDocker?: () => Promise<DockerDatabaseAvailability>;
     maximumRuntimeMs?: number;
     now?: () => Date;
     runId?: string;
     sleep?: (milliseconds: number) => Promise<void>;
+    updateStartupRecoveryWake?: (wakeAt: Date | null) => Promise<void>;
   } = {},
 ) {
   const now = dependencies.now ?? (() => new Date());
   const runId = dependencies.runId ?? randomUUID();
-  const lifecycle = createMaintenanceLifecycleDiagnostics(runId, now());
+  const startedAt = now();
+  const lifecycle = createMaintenanceLifecycleDiagnostics(runId, startedAt);
+  const maximumRuntimeMs = dependencies.maximumRuntimeMs ?? maintenanceMaximumRuntimeMs;
   let connection: ReturnType<typeof createDatabase> | null = null;
   let loopStarted = false;
+  let powerRequest: WindowsPowerRequest | null = null;
   try {
-    const configuration = loadProviderConfiguration();
-    if (!configuration.databaseUrl) throw new Error("DATABASE_URL is required.");
-    if (!configuration.discoverySchedulerEnabled) {
-      throw new Error("Recurring discovery execution is disabled.");
-    }
-    connection = createDatabase(configuration.databaseUrl);
+    const startup = await prepareDiscoveryMaintenanceStartup<
+      ReturnType<typeof loadProviderConfiguration>,
+      ReturnType<typeof createDatabase>
+    >({
+      acquirePower: dependencies.acquirePower ?? acquireWindowsSystemPowerRequest,
+      close: (candidate) => candidate.client.end(),
+      inspectDocker: dependencies.inspectDocker ?? (() => inspectDockerDatabaseAvailability()),
+      lifecycle,
+      loadConfiguration: () => {
+        const configuration = loadProviderConfiguration();
+        if (!configuration.databaseUrl) throw new Error("DATABASE_URL is required.");
+        if (!configuration.discoverySchedulerEnabled) {
+          throw new Error("Recurring discovery execution is disabled.");
+        }
+        return configuration;
+      },
+      maximumRuntimeMs,
+      now,
+      open: (configuration) => createDatabase(configuration.databaseUrl),
+      probe: async (candidate) => {
+        await candidate.client.unsafe("select 1 as ready");
+      },
+      readinessTimeoutMs:
+        dependencies.databaseReadinessTimeoutMs ?? maintenanceDatabaseReadinessTimeoutMs,
+      retryIntervalMs: dependencies.databaseRetryIntervalMs ?? maintenanceDatabaseRetryIntervalMs,
+      runId,
+      sleep: dependencies.sleep ?? wait,
+      updateStartupRecoveryWake:
+        dependencies.updateStartupRecoveryWake ?? updateWindowsStartupRecoveryWake,
+    });
+    connection = startup.connection;
+    powerRequest = startup.powerRequest;
     loopStarted = true;
     return runDiscoveryMaintenanceLoop({
       acquirePower: acquireWindowsSystemPowerRequest,
-      maximumRuntimeMs: dependencies.maximumRuntimeMs ?? maintenanceMaximumRuntimeMs,
+      initialPowerRequest: powerRequest,
+      maximumRuntimeMs,
       lifecycle,
       now,
       observe: async (observedAt) => {
         const [discovery, spotify] = await Promise.all([
-          getRecurringDiscoveryScheduleStatus(connection!.db, observedAt),
-          getSpotifySchedulerStatus(connection!.db, observedAt),
+          getRecurringDiscoveryScheduleStatus(startup.connection.db, observedAt),
+          getSpotifySchedulerStatus(startup.connection.db, observedAt),
         ]);
         return decideDiscoveryMaintenance({ discovery, spotify }, observedAt);
       },
-      runTick: () => runDiscoverySchedulerTick(connection!.db, configuration),
+      runTick: () => runDiscoverySchedulerTick(startup.connection.db, startup.configuration),
       sleep: dependencies.sleep ?? wait,
+      startedAt,
       updateWake: updateWindowsMaintenanceWake,
       runId,
     });
@@ -73,7 +119,93 @@ export async function runDiscoveryMaintenanceWindow(
     }
     throw error;
   } finally {
+    if (!loopStarted) await powerRequest?.release();
     await connection?.client.end();
+  }
+}
+
+export async function prepareDiscoveryMaintenanceStartup<Configuration, Connection>(input: {
+  acquirePower: (
+    maximumRuntimeMs: number,
+    context: { phase: string; reason: string; runId: string },
+  ) => WindowsPowerRequest;
+  close(connection: Connection): Promise<void>;
+  inspectDocker(): Promise<DockerDatabaseAvailability>;
+  lifecycle?: MaintenanceLifecycleDiagnostics;
+  loadConfiguration(): Configuration;
+  maximumRuntimeMs: number;
+  now(): Date;
+  open(configuration: Configuration): Connection;
+  probe(connection: Connection): Promise<void>;
+  readinessTimeoutMs: number;
+  retryIntervalMs: number;
+  runId: string;
+  sleep(milliseconds: number): Promise<void>;
+  updateStartupRecoveryWake(wakeAt: Date | null): Promise<void>;
+}): Promise<{
+  configuration: Configuration;
+  connection: Connection;
+  powerRequest: WindowsPowerRequest;
+}> {
+  const powerRequest = input.acquirePower(input.maximumRuntimeMs, {
+    phase: "dependency_readiness",
+    reason: "startup_readiness",
+    runId: input.runId,
+  });
+  try {
+    const activation = await powerRequest.confirmActivation?.();
+    input.lifecycle?.keepAwake({
+      activatedAt: activation?.activatedAt ?? null,
+      diagnosticPath: powerRequest.diagnosticPath ?? null,
+      helperProcessId: activation?.helperProcessId ?? powerRequest.processId ?? null,
+    });
+    const configuration = input.loadConfiguration();
+    const connection = await waitForMaintenanceDatabase({
+      close: (candidate) => input.close(candidate),
+      inspectDocker: () => input.inspectDocker(),
+      now: () => input.now(),
+      open: () => input.open(configuration),
+      probe: (candidate) => input.probe(candidate),
+      record: (attempt) => input.lifecycle?.readiness(attempt),
+      retryIntervalMs: input.retryIntervalMs,
+      sleep: (milliseconds) => input.sleep(milliseconds),
+      timeoutMs: input.readinessTimeoutMs,
+    });
+    const clearedAt = input.now();
+    try {
+      await input.updateStartupRecoveryWake(null);
+      input.lifecycle?.startupRecoveryWake({
+        observedAt: clearedAt,
+        scheduledFor: null,
+        state: "cleared",
+      });
+    } catch (error) {
+      input.lifecycle?.startupRecoveryWake({
+        error: classifyStartupError(error),
+        observedAt: clearedAt,
+        scheduledFor: null,
+        state: "failed",
+      });
+    }
+    return { configuration, connection, powerRequest };
+  } catch (error) {
+    if (error instanceof MaintenanceDatabaseReadinessError) {
+      const observedAt = input.now();
+      const scheduledFor = new Date(observedAt.getTime() + maintenanceStartupRecoveryDelayMs);
+      try {
+        await input.updateStartupRecoveryWake(scheduledFor);
+        input.lifecycle?.startupRecoveryWake({ observedAt, scheduledFor, state: "scheduled" });
+      } catch (wakeError) {
+        input.lifecycle?.startupRecoveryWake({
+          error: classifyStartupError(wakeError),
+          observedAt,
+          scheduledFor,
+          state: "failed",
+        });
+      }
+    }
+    await powerRequest.release();
+    throw error;
   }
 }
 
@@ -84,17 +216,19 @@ export async function runDiscoveryMaintenanceLoop(input: {
   ) => WindowsPowerRequest;
   maximumRuntimeMs: number;
   lifecycle?: MaintenanceLifecycleDiagnostics;
+  initialPowerRequest?: WindowsPowerRequest;
   now: () => Date;
   observe: (now: Date) => Promise<DiscoveryMaintenanceDecision>;
   runTick: () => Promise<unknown>;
   sleep: (milliseconds: number) => Promise<void>;
+  startedAt?: Date;
   updateWake: (wakeAt: Date | null) => Promise<void>;
   runId?: string;
 }) {
-  const startedAt = input.now();
+  const startedAt = input.startedAt ?? input.now();
   const runId = input.runId ?? randomUUID();
   const deadline = new Date(startedAt.getTime() + input.maximumRuntimeMs);
-  let powerRequest: WindowsPowerRequest | null = null;
+  let powerRequest: WindowsPowerRequest | null = input.initialPowerRequest ?? null;
   let ticks = 0;
   let finalDecision: DiscoveryMaintenanceDecision | null = null;
   try {
@@ -160,6 +294,15 @@ export async function runDiscoveryMaintenanceLoop(input: {
 
 function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function classifyStartupError(error: unknown): string {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = String(error.code).trim();
+    if (code) return code.slice(0, 80);
+  }
+  if (error instanceof Error && error.name) return error.name.slice(0, 80);
+  return "unknown_error";
 }
 
 if (process.env.VITEST !== "true" && process.argv[1]?.endsWith("discovery-maintenance-cli.ts")) {

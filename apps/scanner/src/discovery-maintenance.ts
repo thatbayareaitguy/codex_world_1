@@ -2,9 +2,13 @@ import type { SpotifySchedulerStatus } from "@radar/db";
 
 export const maintenanceTaskName = "TS New Music Radar Maintenance Window";
 export const maintenanceDynamicTriggerId = "DynamicCapacityWake";
+export const maintenanceStartupRecoveryTriggerId = "StartupRecoveryWake";
 export const maintenanceWakeLeadMs = 10 * 60_000;
 export const maintenanceNearTermWaitMs = 15 * 60_000;
 export const maintenanceMaximumRuntimeMs = 4 * 60 * 60_000;
+export const maintenanceDatabaseReadinessTimeoutMs = 10 * 60_000;
+export const maintenanceDatabaseRetryIntervalMs = 10_000;
+export const maintenanceStartupRecoveryDelayMs = 7 * 60_000;
 
 export interface DiscoveryMaintenanceSnapshot {
   discovery: {

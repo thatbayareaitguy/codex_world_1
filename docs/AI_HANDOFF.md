@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-09-06 16:06 PDT
+Updated: 2026-09-08 12:20 PDT
 
 ## Repository
 
@@ -11,6 +11,71 @@ Updated: 2026-09-06 16:06 PDT
 - The tracked worktree was clean at goal start.
 - `outputs/` is unrelated, remains untracked, and is excluded from the intended commit.
 - No secret or `.env` file was changed.
+
+## Unattended Wake Dependency Recovery (2026-09-08)
+
+### Confirmed failure and repaired startup order
+
+- Windows System evidence proves the fixed maintenance task woke the PC at 20:49 on September 6,
+  08:49 and 20:49 on September 7, and 08:49 on September 8. Each former maintenance process then
+  failed its first `spotify_scheduler_state` PostgreSQL query within milliseconds, before it had
+  acquired keep-awake. Windows returned to idle sleep at approximately 08:52 or 20:52. The
+  PostgreSQL container remained configured with `restart: unless-stopped` and is healthy, so the
+  missing lifecycle step was bounded post-wake dependency readiness, not provider logic.
+- Maintenance now creates its durable lifecycle record, acquires and confirms the existing
+  non-admin `ES_CONTINUOUS | ES_SYSTEM_REQUIRED` helper, and only then loads configuration or opens
+  PostgreSQL. The same helper owner remains active during dependency readiness and is handed into
+  the normal maintenance loop. It is not released between scheduler ticks while immediately
+  runnable work remains.
+- PostgreSQL readiness now retries every 10 seconds for up to 10 minutes. Each durable attempt
+  records its number and timestamp, elapsed time, sanitized error classification, PostgreSQL
+  result, and Docker state when `docker compose ps` can be inspected. No provider is queried during
+  this phase, and transient database unavailability is never classified as `no_work`.
+- If PostgreSQL remains unavailable, maintenance schedules or replaces one `StartupRecoveryWake`
+  seven minutes later without database access, releases keep-awake, and exits. A later successful
+  start removes that trigger. Dynamic capacity updates preserve `StartupRecoveryWake`, startup
+  recovery updates preserve `DynamicCapacityWake`, and each updater collapses duplicate instances.
+- The direct registered action remains `conhost.exe --headless node.exe --env-file=... --import tsx
+...discovery-maintenance-cli.ts`. An offline Node process intentionally exited with code 7 behind
+  this exact `conhost` form; the caller observed no propagated exit code. This agrees with the
+  production evidence where Task Scheduler reported result 0 while the Node lifecycle record said
+  `failed`. Task Scheduler result 0 can prove only that the headless host launched and ended; it
+  cannot prove that Node maintenance succeeded. Internal readiness retry plus
+  `StartupRecoveryWake` therefore provide recovery independently of `RestartOnFailure`.
+
+### Schedule, live helper evidence, and validation
+
+- The registered maintenance task remains hidden, limited-user, `WakeToRun`, `StartWhenAvailable`,
+  `IgnoreNew`, and four-hour bounded. It has exactly five fixed trigger groups and no temporary
+  trigger at final inspection: Saturday through Wednesday 08:50, Saturday through Wednesday
+  20:50, Thursday 20:50, Friday 08:50, and Friday 20:50 fallback. Task Scheduler Operational
+  history is now enabled.
+- Friday evening behavior is unchanged: already-eligible export, incomplete catch-up recovery,
+  Apple-priority Spotify resolution, newly eligible export, and only required priority repairs.
+  Broad Spotify remains excluded Thursday and Friday. Long capacity or cooldown waits continue to
+  use one precise `DynamicCapacityWake`.
+- Provider-free validation run
+  `startup-validation-be68e39d-6827-4505-acb2-d08d2170e60d` used the real helper under the normal
+  user identity. Activation was recorded at `2026-09-08T19:19:34.5869759Z`; a synthetic first
+  `ECONNREFUSED` attempt was followed by readiness 1.015 seconds later; release completed at
+  `2026-09-08T19:19:36.0865276Z` with `finalReleased=true` and no owner left behind. This made no
+  database, provider, playlist, or scheduled-task mutation.
+- A fresh PostgreSQL 17 custom-format backup was created before task registration at
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-09-08T19-05-58-993Z.dump`.
+  It is 43,979,388 bytes with SHA-256
+  `706E9B81E282367E2A1B44D4BFDBA70A646BDB81FC382FDD433B55E744311B44`; `pg_restore --list`
+  verified 525 lines.
+- Final validation passed formatting, lint, TypeScript across six projects, 77 unit files with 549
+  tests, 28 PostgreSQL integration files with 160 tests on an isolated port-5434 PostgreSQL 17
+  container, the 28-route production build, and all 32 Chromium tests. The in-app production smoke
+  loaded System status with PostgreSQL connected, 31 migrations current, scanner ready, and zero
+  browser errors. Production doctor is READY apart from the unrelated August 4 historical Apple
+  partial row.
+- The completed September catch-up remains the same original batch and scan run at 582 of 582 with
+  zero failed artists. No duplicate Apple workflow was created. No Apple or Spotify request was
+  made solely for this maintenance validation. The next naturally scheduled maintenance wake is
+  the first unattended sleep proof of the new dependency-readiness sequence; no production
+  schedule change or additional provider test is required.
 
 ## Weekly Wake And Missed-Work Recovery (2026-09-06)
 

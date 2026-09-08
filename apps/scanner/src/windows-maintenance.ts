@@ -1,7 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
-import { maintenanceDynamicTriggerId, maintenanceTaskName } from "./discovery-maintenance";
+import {
+  maintenanceDynamicTriggerId,
+  maintenanceStartupRecoveryTriggerId,
+  maintenanceTaskName,
+} from "./discovery-maintenance";
 import {
   claimKeepAwakeOwner,
   defaultKeepAwakeDiagnosticDirectory,
@@ -156,6 +160,21 @@ export async function updateWindowsMaintenanceWake(
   wakeAt: Date | null,
   dependencies: SpawnDependencies & { taskName?: string } = {},
 ): Promise<void> {
+  return updateWindowsMaintenanceTrigger(maintenanceDynamicTriggerId, wakeAt, dependencies);
+}
+
+export async function updateWindowsStartupRecoveryWake(
+  wakeAt: Date | null,
+  dependencies: SpawnDependencies & { taskName?: string } = {},
+): Promise<void> {
+  return updateWindowsMaintenanceTrigger(maintenanceStartupRecoveryTriggerId, wakeAt, dependencies);
+}
+
+async function updateWindowsMaintenanceTrigger(
+  triggerId: string,
+  wakeAt: Date | null,
+  dependencies: SpawnDependencies & { taskName?: string },
+): Promise<void> {
   const platform = dependencies.platform ?? process.platform;
   if (platform !== "win32") return;
   const spawnProcess = dependencies.spawnProcess ?? spawn;
@@ -163,25 +182,26 @@ export async function updateWindowsMaintenanceWake(
   const script = [
     "$task=Get-ScheduledTask -TaskName $env:RADAR_MAINTENANCE_TASK -ErrorAction SilentlyContinue",
     "if (-not $task) { exit 0 }",
-    `$existing=@($task.Triggers | Where-Object { $_.Id -eq '${maintenanceDynamicTriggerId}' })`,
-    "if (-not $env:RADAR_DYNAMIC_WAKE_AT -and $existing.Count -eq 0) { exit 0 }",
-    "if ($env:RADAR_DYNAMIC_WAKE_AT -and $existing.Count -eq 1) {",
-    "  $desired=[DateTimeOffset]::Parse($env:RADAR_DYNAMIC_WAKE_AT).LocalDateTime",
+    "$existing=@($task.Triggers | Where-Object { $_.Id -eq $env:RADAR_WAKE_TRIGGER_ID })",
+    "if (-not $env:RADAR_WAKE_AT -and $existing.Count -eq 0) { exit 0 }",
+    "if ($env:RADAR_WAKE_AT -and $existing.Count -eq 1) {",
+    "  $desired=[DateTimeOffset]::Parse($env:RADAR_WAKE_AT).LocalDateTime",
     "  $current=[DateTime]::Parse($existing[0].StartBoundary)",
     "  if ([Math]::Abs(($current-$desired).TotalSeconds) -lt 30) { exit 0 }",
     "}",
-    `$fixed=@($task.Triggers | Where-Object { $_.Id -ne '${maintenanceDynamicTriggerId}' })`,
-    "if ($env:RADAR_DYNAMIC_WAKE_AT) {",
-    "  $local=[DateTimeOffset]::Parse($env:RADAR_DYNAMIC_WAKE_AT).LocalDateTime",
+    "$preserved=@($task.Triggers | Where-Object { $_.Id -ne $env:RADAR_WAKE_TRIGGER_ID })",
+    "if ($env:RADAR_WAKE_AT) {",
+    "  $local=[DateTimeOffset]::Parse($env:RADAR_WAKE_AT).LocalDateTime",
     "  $dynamic=New-ScheduledTaskTrigger -Once -At $local",
-    `  $dynamic.Id='${maintenanceDynamicTriggerId}'`,
-    "  $fixed += $dynamic",
+    "  $dynamic.Id=$env:RADAR_WAKE_TRIGGER_ID",
+    "  $preserved += $dynamic",
     "}",
-    "Set-ScheduledTask -TaskName $env:RADAR_MAINTENANCE_TASK -Trigger $fixed | Out-Null",
+    "Set-ScheduledTask -TaskName $env:RADAR_MAINTENANCE_TASK -Trigger $preserved | Out-Null",
   ].join("; ");
   await runHiddenPowerShell(spawnProcess, script, {
-    RADAR_DYNAMIC_WAKE_AT: wakeAt?.toISOString() ?? "",
     RADAR_MAINTENANCE_TASK: taskName,
+    RADAR_WAKE_AT: wakeAt?.toISOString() ?? "",
+    RADAR_WAKE_TRIGGER_ID: triggerId,
   });
 }
 

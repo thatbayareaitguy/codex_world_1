@@ -23,8 +23,30 @@ describe("maintenance lifecycle diagnostics", () => {
     );
     expect(read(directory, "latest.json")).toMatchObject({
       decisions: [],
+      readiness: { attempts: [], finalResult: "pending" },
       runId: "maintenance-run",
       state: "running",
+    });
+    diagnostics.readiness({
+      attempt: 1,
+      attemptedAt: new Date("2026-09-04T15:50:01.000Z"),
+      dockerAvailability: "running",
+      elapsedMs: 1_000,
+      errorClassification: "ECONNREFUSED",
+      postgresReady: false,
+    });
+    diagnostics.readiness({
+      attempt: 2,
+      attemptedAt: new Date("2026-09-04T15:50:11.000Z"),
+      dockerAvailability: "healthy",
+      elapsedMs: 11_000,
+      errorClassification: null,
+      postgresReady: true,
+    });
+    diagnostics.startupRecoveryWake({
+      observedAt: new Date("2026-09-04T15:50:12.000Z"),
+      scheduledFor: null,
+      state: "cleared",
     });
     diagnostics.decision(
       {
@@ -50,7 +72,15 @@ describe("maintenance lifecycle diagnostics", () => {
       decisions: [{ holdPower: true, reason: "apple_due_soon" }],
       finalReason: "no_work",
       keepAwake: { helperProcessId: 42 },
+      readiness: {
+        attempts: [
+          { attempt: 1, errorClassification: "ECONNREFUSED", postgresReady: false },
+          { attempt: 2, dockerAvailability: "healthy", postgresReady: true },
+        ],
+        finalResult: "ready",
+      },
       state: "completed",
+      startupRecoveryWake: { state: "cleared" },
       ticks: 2,
     });
   });

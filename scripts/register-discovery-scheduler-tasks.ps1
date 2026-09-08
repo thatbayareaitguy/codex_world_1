@@ -47,11 +47,13 @@ $maintenanceTriggers[2].Id = "ThursdayAppleWake"
 $maintenanceTriggers[3].Id = "FridayCatchupWake"
 $maintenanceTriggers[4].Id = "FridayPriorityFallbackWake"
 $existingMaintenanceTask = Get-ScheduledTask -TaskName $MaintenanceTaskName -ErrorAction SilentlyContinue
-$existingDynamicWake = @(
-  $existingMaintenanceTask.Triggers | Where-Object { $_.Id -eq "DynamicCapacityWake" }
-)
-if ($existingDynamicWake.Count -gt 0) {
-  $maintenanceTriggers += $existingDynamicWake[0]
+foreach ($temporaryWakeId in @("DynamicCapacityWake", "StartupRecoveryWake")) {
+  $existingTemporaryWake = @(
+    $existingMaintenanceTask.Triggers | Where-Object { $_.Id -eq $temporaryWakeId }
+  )
+  if ($existingTemporaryWake.Count -gt 0) {
+    $maintenanceTriggers += $existingTemporaryWake[0]
+  }
 }
 $maintenanceSettings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable -WakeToRun `
   -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `

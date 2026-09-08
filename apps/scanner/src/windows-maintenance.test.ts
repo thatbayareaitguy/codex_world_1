@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   acquireWindowsSystemPowerRequest,
   updateWindowsMaintenanceWake,
+  updateWindowsStartupRecoveryWake,
 } from "./windows-maintenance";
 
 describe("Windows discovery maintenance integration", () => {
@@ -113,14 +114,15 @@ describe("Windows discovery maintenance integration", () => {
     expect(invocation?.args).toContain("Hidden");
     expect(invocation?.options.windowsHide).toBe(true);
     expect(invocation?.options.env).toMatchObject({
-      RADAR_DYNAMIC_WAKE_AT: wakeAt.toISOString(),
       RADAR_MAINTENANCE_TASK: "Synthetic maintenance task",
+      RADAR_WAKE_AT: wakeAt.toISOString(),
+      RADAR_WAKE_TRIGGER_ID: "DynamicCapacityWake",
     });
     expect(script).toContain("$existing.Count -eq 0");
     expect(script).toContain("$existing.Count -eq 1");
     expect(script).toContain("TotalSeconds) -lt 30");
-    expect(script).toContain("$_.Id -ne 'DynamicCapacityWake'");
-    expect(script).toContain("$dynamic.Id='DynamicCapacityWake'");
+    expect(script).toContain("$_.Id -ne $env:RADAR_WAKE_TRIGGER_ID");
+    expect(script).toContain("$dynamic.Id=$env:RADAR_WAKE_TRIGGER_ID");
     expect(script).toContain("Set-ScheduledTask");
   });
 
@@ -134,9 +136,37 @@ describe("Windows discovery maintenance integration", () => {
 
     await updateWindowsMaintenanceWake(null, { platform: "win32", spawnProcess });
 
-    expect(invocation?.options.env).toMatchObject({ RADAR_DYNAMIC_WAKE_AT: "" });
+    expect(invocation?.options.env).toMatchObject({
+      RADAR_WAKE_AT: "",
+      RADAR_WAKE_TRIGGER_ID: "DynamicCapacityWake",
+    });
     expect(invocation?.args.at(-1)).toContain(
-      "$fixed=@($task.Triggers | Where-Object { $_.Id -ne 'DynamicCapacityWake' })",
+      "$preserved=@($task.Triggers | Where-Object { $_.Id -ne $env:RADAR_WAKE_TRIGGER_ID })",
+    );
+  });
+
+  it("updates one startup-recovery wake while preserving every other trigger", async () => {
+    const { child } = fakeChild(true);
+    let invocation: SpawnInvocation | undefined;
+    const spawnProcess = ((command: string, args: readonly string[], options: SpawnOptions) => {
+      invocation = { args, command, options };
+      return child;
+    }) as typeof spawn;
+    const wakeAt = new Date("2026-09-08T16:07:00.000Z");
+
+    await updateWindowsStartupRecoveryWake(wakeAt, {
+      platform: "win32",
+      spawnProcess,
+      taskName: "Synthetic maintenance task",
+    });
+
+    expect(invocation?.options.env).toMatchObject({
+      RADAR_MAINTENANCE_TASK: "Synthetic maintenance task",
+      RADAR_WAKE_AT: wakeAt.toISOString(),
+      RADAR_WAKE_TRIGGER_ID: "StartupRecoveryWake",
+    });
+    expect(invocation?.args.at(-1)).toContain(
+      "$preserved=@($task.Triggers | Where-Object { $_.Id -ne $env:RADAR_WAKE_TRIGGER_ID })",
     );
   });
 
