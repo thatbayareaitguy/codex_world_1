@@ -399,3 +399,12 @@ Updated: 2026-09-02 PDT
   and scanner credentials are not present in Vercel.
 - Local Vercel link state and generated Vercel environment files remain ignored. No credential value
   is recorded in source control.
+- The initial Git-triggered production deployment completed successfully on 2026-09-08. The public
+  production alias is `https://showcasedm-showcase-edm.vercel.app`. Vercel Authentication is limited
+  to preview deployments so the public site does not require a Vercel login.
+- HTTPS checks returned 200 with the expected page-specific content for the home, releases, artists,
+  playlists, about, and contact routes. The deployed Neon-backed catalog rendered 406 releases and
+  581 artists, plus Apple artwork and both Apple Music and available Spotify outbound links.
+- Deployment validation passed: formatting, lint with zero warnings, all seven workspace type
+  checks, 79 unit files with 537 tests, 28 database integration files with 149 tests, the Showcase
+  production build, and all eight Showcase Playwright tests against the read-only Neon source.
