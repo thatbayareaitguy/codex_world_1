@@ -900,6 +900,35 @@ summary:focus-visible {
   font-size: 13px;
   line-height: 1.65;
 }
+.playlist-contact-cta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.75fr);
+  align-items: end;
+  gap: 48px;
+  margin-top: 96px;
+  padding-top: 40px;
+  border-top: 1px solid var(--line);
+}
+.playlist-contact-cta h2 {
+  margin: 0;
+  font-size: clamp(32px, 4vw, 52px);
+  letter-spacing: -0.055em;
+}
+.playlist-contact-cta p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1.65;
+}
+.playlist-contact-cta a {
+  color: var(--ink);
+  font-weight: 700;
+  text-decoration-color: var(--accent-pink);
+  text-underline-offset: 5px;
+}
+.playlist-contact-cta a:hover {
+  color: var(--accent-pink);
+}
 .about-hero {
   padding-bottom: 120px;
 }
@@ -1915,6 +1944,11 @@ summary:focus-visible {
   }
   .playlist-grid {
     grid-template-columns: 1fr 1fr;
+  }
+  .playlist-contact-cta {
+    grid-template-columns: 1fr;
+    gap: 18px;
+    margin-top: 72px;
   }
   .about-placeholder-grid {
     grid-template-columns: 1fr;

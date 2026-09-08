@@ -273,6 +273,14 @@ test("featured playlists and About Us pages are available from navigation", asyn
   await expect(page.getByText("Progressive house · Melodic techno")).toHaveCount(0);
   await expect(page.getByText("Drum & bass · Jungle")).toHaveCount(0);
   await expect(page.getByText("UK garage · Breaks · Bass")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Want your playlist featured?" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Send us an email" })).toHaveAttribute(
+    "href",
+    "mailto:showcasedmhq@gmail.com",
+  );
+  await expect(page.locator(".playlist-contact-cta p")).toHaveText(
+    "Send us an email, and let's connect!",
+  );
 
   await page.getByRole("link", { name: "About Us" }).click();
   await expect(page).toHaveURL(/\/about$/);

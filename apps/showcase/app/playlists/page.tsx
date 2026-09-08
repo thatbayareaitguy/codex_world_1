@@ -97,6 +97,13 @@ export default function FeaturedPlaylistsPage() {
           );
         })}
       </section>
+
+      <section className="playlist-contact-cta" aria-labelledby="playlist-contact-title">
+        <h2 id="playlist-contact-title">Want your playlist featured?</h2>
+        <p>
+          <a href="mailto:showcasedmhq@gmail.com">Send us an email</a>, and let&apos;s connect!
+        </p>
+      </section>
     </div>
   );
 }
