@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-09-08 13:06 PDT
+Updated: 2026-09-11 16:15 PDT
 
 ## Repository
 
@@ -13,6 +13,36 @@ Updated: 2026-09-08 13:06 PDT
 - The tracked worktree was clean at goal start.
 - `outputs/` is unrelated, remains untracked, and is excluded from the intended commit.
 - No secret or `.env` file was changed.
+
+## Tape B Spotify Mapping (2026-09-11)
+
+- The existing canonical `Tape B` artist was reused. It had been created from its stored guest
+  credit on `Of The Trees, Tape B - Brackish`, but it had no follow row, provider mapping,
+  identity status, scheduler work, or duplicate canonical record.
+- The user-supplied Spotify artist URL was validated and stored without its share query as
+  `https://open.spotify.com/artist/59tlsKpLWoLTxjNNS2wdPi`. The Spotify ID was not mapped to any
+  other canonical artist.
+- One atomic local transaction activated the follow with manual provenance, recorded a confirmed
+  `user_confirmed_spotify` mapping at score `1.000`, and recorded the Spotify identity as
+  `manually_confirmed` by the user. No Spotify or Apple request and no playlist write was used to
+  create or verify the mapping.
+- `/api/artists` immediately changed from 582 to 583 active follows and returns Tape B once with
+  provider `spotify`. Normal scheduler reconciliation can now create its initial Spotify catalog
+  work; no manual provider scan was triggered, and Friday's broad-Spotify prohibition remains in
+  force.
+- The Artists view now bases `Pending mapping` on the absence of provider IDs instead of manual
+  follow provenance. A manually followed artist with a confirmed provider identity therefore
+  retains `Added manually` provenance while correctly displaying `Mapped`.
+- The pre-change PostgreSQL custom-format backup is
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-09-11T23-09-46-996Z.dump`.
+  The backup command completed successfully; the file is 44,674,356 bytes with SHA-256
+  `4FA1D4E7CE06BD86907FEE224AC0EFFEC76325058F74051355D467FBFCE6C328`.
+- Validation passed formatting, lint, TypeScript across six projects, 77 unit files with 549
+  tests, 28 PostgreSQL integration files with 172 tests, the 28-page production build, and all 33
+  Chromium tests. The hidden supervisor replaced web child PID 41756 with PID 43952; loopback
+  health and production doctor are READY with all 31 migrations. A full browser reload shows one
+  Tape B row with `Added manually`, `spotify`, `Reconciliation queued`, and `Mapped`, with no
+  browser warning or error logs.
 
 ## Automatic Playlist Export Runtime Repair (2026-09-08)
 

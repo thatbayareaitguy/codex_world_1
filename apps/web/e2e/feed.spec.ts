@@ -1254,6 +1254,83 @@ test("shows a confirmed Spotify import from the persisted watchlist response", a
   expect(removedArtistId).toBe(artistId);
 });
 
+test("shows a manually followed artist as mapped after a provider identity is attached", async ({
+  page,
+}) => {
+  const importRunId = "00000000-0000-4000-8000-000000000105";
+  const candidateId = "00000000-0000-4000-8000-000000000106";
+  const artistId = "00000000-0000-4000-8000-000000000104";
+
+  await page.route("**/api/spotify/status", async (route) => {
+    await route.fulfill({
+      json: {
+        displayName: "Synthetic Spotify account",
+        scopes: ["user-follow-read", "playlist-read-private"],
+        state: "connected",
+      },
+    });
+  });
+  await page.route("**/api/spotify/import/preview", async (route) => {
+    await route.fulfill({
+      json: {
+        candidates: [
+          {
+            id: candidateId,
+            proposedAction: "merge",
+            providerName: "Tape B",
+            providerUrl: "https://open.spotify.com/artist/synthetic-tape-b",
+            selected: true,
+          },
+        ],
+        importRunId,
+        retrieved: 1,
+      },
+    });
+  });
+  await page.route("**/api/spotify/import/confirm", async (route) => {
+    await route.fulfill({
+      json: {
+        alreadyPresent: 0,
+        created: 0,
+        failed: 0,
+        merged: 1,
+        needsReview: 0,
+        persisted: 1,
+        retrieved: 1,
+        selected: 1,
+        skipped: 0,
+      },
+    });
+  });
+  await page.route("**/api/artists", async (route) => {
+    await route.fulfill({
+      json: {
+        activeCount: 1,
+        artists: [
+          {
+            active: true,
+            addedAt: "2026-09-11T12:00:00.000Z",
+            id: artistId,
+            name: "Tape B",
+            providers: ["spotify"],
+            source: "manual",
+            spotifyCoverage: null,
+          },
+        ],
+      },
+    });
+  });
+
+  await page.goto("/#settings");
+  await page.getByRole("button", { name: "Import followed artists" }).click();
+  await page.getByRole("button", { name: "Confirm import" }).click();
+  const row = page.locator(".data-row").filter({ hasText: "Tape B" });
+  await expect(row).toContainText("Added manually");
+  await expect(row).toContainText("spotify");
+  await expect(row).toContainText("Mapped");
+  await expect(row).not.toContainText("Pending mapping");
+});
+
 test("hides MusicBrainz mapping by default and preserves advanced mapping coverage", async ({
   page,
 }) => {

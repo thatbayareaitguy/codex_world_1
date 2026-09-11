@@ -3499,10 +3499,18 @@ function ArtistsView({
               )}
             </div>
             <span
-              className={`mapping-status ${artist.manuallyAdded || !artist.active ? "pending" : ""}`}
+              className={`mapping-status ${artist.providers.length === 0 || !artist.active ? "pending" : ""}`}
             >
-              {artist.manuallyAdded || !artist.active ? <Clock3 size={14} /> : <Check size={14} />}
-              {!artist.active ? "Paused" : artist.manuallyAdded ? "Pending mapping" : "Mapped"}
+              {artist.providers.length === 0 || !artist.active ? (
+                <Clock3 size={14} />
+              ) : (
+                <Check size={14} />
+              )}
+              {!artist.active
+                ? "Paused"
+                : artist.providers.length === 0
+                  ? "Pending mapping"
+                  : "Mapped"}
             </span>
             <div className="row-actions">
               {musicbrainzEnabled && (
