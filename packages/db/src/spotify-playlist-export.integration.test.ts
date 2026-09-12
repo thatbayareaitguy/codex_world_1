@@ -1,4 +1,5 @@
 import type { FeedState } from "@radar/core";
+import { SpotifyHttpError } from "@radar/providers";
 import type { SpotifyPlaylistExportClient } from "./spotify-playlist-export";
 import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
@@ -315,7 +316,7 @@ describe.sequential("Spotify canonical playlist export", () => {
     },
   );
 
-  it("persists bounded playlist snapshot pages and resumes without rereading completed pages", async () => {
+  it("preserves the client receiver and resumes bounded snapshot pages without rereading", async () => {
     const fixture = await createExactBatchFixture(1);
     const existingTracks = Array.from({ length: 5 }, (_, index) =>
       String(900 + index).padStart(22, "0"),
@@ -368,6 +369,97 @@ describe.sequential("Spotify canonical playlist export", () => {
     expect(runIds.size).toBe(1);
     expect(client.items).toEqual(fixture.providerTrackIds);
     expect(new Set(client.items).size).toBe(client.items.length);
+  });
+
+  it("continues a partial reorder from its mutation snapshot while playlist metadata lags", async () => {
+    const fixture = await createExactBatchFixture(10);
+    const unmanagedTrack = "9999999999999999999999";
+    const client = new FakePlaylistClient([
+      unmanagedTrack,
+      ...fixture.providerTrackIds.slice().reverse(),
+    ]);
+    const input = {
+      maxAdditions: 3,
+      maxMutations: 3,
+      maxPlaylistReadPages: 6,
+      orderingPolicy: "release_date_custom_order" as const,
+      playlistId,
+      policy: { allowedPlaylistId: playlistId, enabled: true },
+    };
+
+    const first = await executeSpotifyPlaylistExport(db, fixture.userId, client, input);
+    expect(first.run).toMatchObject({ additionsAttempted: 0, status: "partial" });
+    const pageReadsAfterFirstTick = client.pageReadOffsets.length;
+    const itemMetadataAfterFirstTick = await loadPlaylistItemMetadata(fixture.userId);
+
+    client.reportedSnapshotId = "stale-playlist-metadata-snapshot";
+    const second = await executeSpotifyPlaylistExport(db, fixture.userId, client, input);
+
+    expect(second.run).toMatchObject({ id: first.run.id, resumed: true, status: "partial" });
+    expect(client.pageReadOffsets).toHaveLength(pageReadsAfterFirstTick);
+    expect(client.reorderCalls).toBe(6);
+    expect(await loadPlaylistItemMetadata(fixture.userId)).toEqual(itemMetadataAfterFirstTick);
+
+    client.reportedSnapshotId = null;
+    let completed = second;
+    while (completed.run.status !== "completed") {
+      completed = await executeSpotifyPlaylistExport(db, fixture.userId, client, input);
+    }
+
+    expect(completed.run.id).toBe(first.run.id);
+    expect(client.items).toEqual([...fixture.providerTrackIds, unmanagedTrack]);
+    expect(new Set(client.items).size).toBe(client.items.length);
+    expect(await loadPlaylistItemMetadata(fixture.userId)).toEqual(itemMetadataAfterFirstTick);
+  });
+
+  it("invalidates the local snapshot when a conditional reorder proves it is stale", async () => {
+    const fixture = await createExactBatchFixture(10);
+    const client = new FakePlaylistClient(fixture.providerTrackIds.slice().reverse());
+    const input = {
+      maxAdditions: 3,
+      maxMutations: 3,
+      maxPlaylistReadPages: 6,
+      orderingPolicy: "release_date_custom_order" as const,
+      playlistId,
+      policy: { allowedPlaylistId: playlistId, enabled: true },
+    };
+
+    const first = await executeSpotifyPlaylistExport(db, fixture.userId, client, input);
+    expect(first.run.status).toBe("partial");
+    client.reportedSnapshotId = "stale-playlist-metadata-snapshot";
+    client.externalInsert("8888888888888888888888", 0);
+
+    await expect(executeSpotifyPlaylistExport(db, fixture.userId, client, input)).rejects.toThrow(
+      "synthetic snapshot conflict",
+    );
+    const target = await db.query.playlistTargets.findFirst({
+      where: eq(playlistTargets.userId, fixture.userId),
+    });
+    expect(target).toMatchObject({ snapshotId: null, snapshotItems: null });
+  });
+
+  it("does not trust a lagging metadata snapshot while additions remain pending", async () => {
+    const fixture = await createExactBatchFixture(10);
+    const client = new FakePlaylistClient([], undefined, 2);
+    const input = {
+      maxAdditions: 3,
+      maxMutations: 3,
+      maxPlaylistReadPages: 1,
+      orderingPolicy: "release_date_custom_order" as const,
+      playlistId,
+      policy: { allowedPlaylistId: playlistId, enabled: true },
+    };
+
+    const first = await executeSpotifyPlaylistExport(db, fixture.userId, client, input);
+    expect(first.run).toMatchObject({ additionsAttempted: 3, pending: 7, status: "partial" });
+    const pageReadsAfterFirstTick = client.pageReadOffsets.length;
+    client.reportedSnapshotId = "stale-playlist-metadata-snapshot";
+
+    await expect(
+      executeSpotifyPlaylistExport(db, fixture.userId, client, input),
+    ).rejects.toMatchObject({ name: "SpotifyPlaylistSnapshotYieldError", nextOffset: 2 });
+    expect(client.pageReadOffsets).toHaveLength(pageReadsAfterFirstTick + 1);
+    expect(client.addCalls).toHaveLength(1);
   });
 
   it("falls back to individual additions, records one failure, and continues", async () => {
@@ -458,14 +550,23 @@ class FakePlaylistClient implements SpotifyPlaylistExportClient {
   itemReadCalls = 0;
   readonly pageReadOffsets: number[] = [];
   readCalls = 0;
+  reportedSnapshotId: string | null = null;
   reorderCalls = 0;
   private snapshot = 1;
+  private readonly addedAtByTrackId: Map<string, string>;
 
   constructor(
     readonly items: string[],
     private readonly fail?: (trackIds: string[]) => Error | undefined,
     private readonly pageSize = 50,
-  ) {}
+  ) {
+    this.addedAtByTrackId = new Map(
+      items.map((trackId, index) => [
+        trackId,
+        new Date(Date.UTC(2026, 7, 1, 0, index)).toISOString(),
+      ]),
+    );
+  }
 
   getCurrentUser = () => {
     this.readCalls += 1;
@@ -488,7 +589,7 @@ class FakePlaylistClient implements SpotifyPlaylistExportClient {
       name: "Release Radar Inbox",
       owner: { account_id: "owner-account", id: "owner" },
       public: true,
-      snapshot_id: `snapshot-${this.snapshot}`,
+      snapshot_id: this.reportedSnapshotId ?? `snapshot-${this.snapshot}`,
       uri: `spotify:playlist:${id}`,
     });
   };
@@ -496,20 +597,25 @@ class FakePlaylistClient implements SpotifyPlaylistExportClient {
   getPlaylistItems = () => {
     this.readCalls += 1;
     this.itemReadCalls += 1;
-    return Promise.resolve(this.items.map((trackId, position) => ({ position, trackId })));
+    return Promise.resolve(
+      this.items.map((trackId, position) => this.snapshotItem(trackId, position)),
+    );
   };
 
-  getPlaylistItemsPage = (_id: string, offset: number) => {
+  getPlaylistItemsPage(_id: string, offset: number) {
     this.readCalls += 1;
     this.pageReadOffsets.push(offset);
     const selected = this.items.slice(offset, offset + this.pageSize);
     return Promise.resolve({
-      items: selected.map((trackId, index) => ({ position: offset + index, trackId })),
+      items: selected.map((trackId, index) => this.snapshotItem(trackId, offset + index)),
       nextOffset: offset + selected.length < this.items.length ? offset + selected.length : null,
     });
-  };
+  }
 
   externalInsert(trackId: string, position: number): void {
+    if (!this.addedAtByTrackId.has(trackId)) {
+      this.addedAtByTrackId.set(trackId, new Date().toISOString());
+    }
     this.items.splice(position, 0, trackId);
     this.snapshot += 1;
   }
@@ -518,6 +624,9 @@ class FakePlaylistClient implements SpotifyPlaylistExportClient {
     this.addCalls.push({ position, trackIds: [...trackIds] });
     const failure = this.fail?.(trackIds);
     if (failure) return Promise.reject(failure);
+    for (const trackId of trackIds) {
+      this.addedAtByTrackId.set(trackId, new Date().toISOString());
+    }
     this.items.splice(position, 0, ...trackIds);
     this.snapshot += 1;
     return Promise.resolve(`snapshot-${this.snapshot}`);
@@ -525,9 +634,17 @@ class FakePlaylistClient implements SpotifyPlaylistExportClient {
 
   reorderPlaylistItems = (
     _id: string,
-    input: { insertBefore: number; rangeLength?: number; rangeStart: number },
+    input: {
+      insertBefore: number;
+      rangeLength?: number;
+      rangeStart: number;
+      snapshotId: string;
+    },
   ) => {
     this.reorderCalls += 1;
+    if (input.snapshotId !== `snapshot-${this.snapshot}`) {
+      return Promise.reject(new SpotifyHttpError("synthetic snapshot conflict", 409));
+    }
     const rangeLength = input.rangeLength ?? 1;
     const moved = this.items.splice(input.rangeStart, rangeLength);
     const adjustedInsert =
@@ -536,6 +653,24 @@ class FakePlaylistClient implements SpotifyPlaylistExportClient {
     this.snapshot += 1;
     return Promise.resolve(`snapshot-${this.snapshot}`);
   };
+
+  private snapshotItem(trackId: string, position: number) {
+    const addedAt = this.addedAtByTrackId.get(trackId);
+    return {
+      ...(addedAt ? { addedAt } : {}),
+      position,
+      trackId,
+    };
+  }
+}
+
+async function loadPlaylistItemMetadata(userId: string) {
+  const target = await db.query.playlistTargets.findFirst({
+    where: eq(playlistTargets.userId, userId),
+  });
+  return target?.snapshotItems
+    ?.map((item) => ({ addedAt: item.addedAt, trackId: item.trackId }))
+    .sort((left, right) => (left.trackId ?? "").localeCompare(right.trackId ?? ""));
 }
 
 async function createFixture(input: {

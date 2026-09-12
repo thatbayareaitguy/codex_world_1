@@ -118,6 +118,7 @@ export function sanitizedSchedulerOutput(
       nextBaseSlotAt: result.status.nextBaseSlotAt,
       overdueArtistCount: result.status.overdueArtistCount,
       requestCounts: result.status.requestCounts,
+      rollingRequestNextCapacityAt: result.status.rollingRequestNextCapacityAt,
       recentWork: result.status.recentWork
         ? {
             completedAt: result.status.recentWork.completedAt,

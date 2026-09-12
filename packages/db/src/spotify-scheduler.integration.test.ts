@@ -554,6 +554,40 @@ describe("Spotify rolling scheduler persistence", () => {
       last24Hours: 0,
       last30Minutes: 0,
     });
+    expect(status.rollingRequestNextCapacityAt).toBeNull();
+  });
+
+  it("reports the next general rolling-request capacity boundary", async () => {
+    const now = new Date("2026-07-22T16:00:00.000Z");
+    await db
+      .update(spotifySchedulerState)
+      .set({
+        effectiveConfiguration: {
+          ...defaultSchedulerLimits(),
+          rolling30MinuteLimit: 3,
+        },
+      })
+      .where(eq(spotifySchedulerState.id, "global"));
+    const starts = [
+      new Date(now.getTime() - 20 * 60_000),
+      new Date(now.getTime() - 10 * 60_000),
+      new Date(now.getTime() - 5 * 60_000),
+    ];
+    await db.insert(spotifyRequestEvents).values(
+      starts.map((startedAt) => ({
+        endpointCategory: "oauth_or_other",
+        method: "GET",
+        startedAt,
+        status: 200,
+      })),
+    );
+
+    const status = await getSpotifySchedulerStatus(db, now);
+
+    expect(status.requestCounts.last30Minutes).toBe(3);
+    expect(status.rollingRequestNextCapacityAt).toEqual(
+      new Date(starts[0]!.getTime() + 30 * 60_000),
+    );
   });
 
   it("queues recent catalog releases without details and protects due base work", async () => {

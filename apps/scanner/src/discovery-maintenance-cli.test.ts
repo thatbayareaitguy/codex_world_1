@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  executeDiscoveryMaintenanceWindow,
   prepareDiscoveryMaintenanceStartup,
   runDiscoveryMaintenanceLoop,
 } from "./discovery-maintenance-cli";
@@ -123,6 +124,87 @@ describe("discovery maintenance startup", () => {
     expect(loadConfiguration).not.toHaveBeenCalled();
     expect(updateStartupRecoveryWake).not.toHaveBeenCalled();
     expect(release).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("discovery maintenance window lifecycle", () => {
+  it("keeps PostgreSQL open until the maintenance loop resolves and closes it afterward", async () => {
+    const events: string[] = [];
+    const connection = { closed: false };
+    let resolveLoop!: (result: { ticks: number }) => void;
+    const loopResult = new Promise<{ ticks: number }>((resolve) => {
+      resolveLoop = resolve;
+    });
+    const close = vi.fn((candidate: typeof connection) => {
+      candidate.closed = true;
+      events.push("database-closed");
+      return Promise.resolve();
+    });
+    const runLoop = vi.fn(async () => {
+      events.push("loop-started");
+      expect(connection.closed).toBe(false);
+      const result = await loopResult;
+      expect(connection.closed).toBe(false);
+      events.push("loop-resolved");
+      return result;
+    });
+
+    const resultPromise = executeDiscoveryMaintenanceWindow({
+      close,
+      lifecycle: lifecycle(),
+      now: () => new Date("2026-09-12T03:50:00.000Z"),
+      prepare: () =>
+        Promise.resolve({
+          configuration: { schedulerEnabled: true },
+          connection,
+          powerRequest: { release: () => Promise.resolve() },
+        }),
+      runLoop,
+      updateStartupRecoveryWake: () => Promise.resolve(),
+    });
+
+    await vi.waitFor(() => expect(runLoop).toHaveBeenCalledOnce());
+    expect(close).not.toHaveBeenCalled();
+    expect(connection.closed).toBe(false);
+
+    resolveLoop({ ticks: 2 });
+    await expect(resultPromise).resolves.toEqual({ ticks: 2 });
+    expect(close).toHaveBeenCalledOnce();
+    expect(events).toEqual(["loop-started", "loop-resolved", "database-closed"]);
+  });
+
+  it("schedules one internal recovery wake when the running loop fails", async () => {
+    const observedAt = new Date("2026-09-12T03:51:00.000Z");
+    const close = vi.fn(() => Promise.resolve());
+    const updateStartupRecoveryWake = vi.fn(() => Promise.resolve());
+    const startupRecoveryWake = vi.fn();
+    const diagnostics = { ...lifecycle(), startupRecoveryWake };
+
+    await expect(
+      executeDiscoveryMaintenanceWindow({
+        close,
+        lifecycle: diagnostics,
+        now: () => observedAt,
+        prepare: () =>
+          Promise.resolve({
+            configuration: {},
+            connection: { id: "production" },
+            powerRequest: { release: () => Promise.resolve() },
+          }),
+        runLoop: () => Promise.reject(new Error("Synthetic runtime failure")),
+        updateStartupRecoveryWake,
+      }),
+    ).rejects.toThrow("Synthetic runtime failure");
+
+    const scheduledFor = new Date("2026-09-12T03:58:00.000Z");
+    expect(updateStartupRecoveryWake).toHaveBeenCalledOnce();
+    expect(updateStartupRecoveryWake).toHaveBeenCalledWith(scheduledFor);
+    expect(startupRecoveryWake).toHaveBeenCalledWith({
+      observedAt,
+      scheduledFor,
+      state: "scheduled",
+    });
+    expect(close).toHaveBeenCalledOnce();
   });
 });
 

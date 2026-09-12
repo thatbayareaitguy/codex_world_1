@@ -36,6 +36,7 @@ import {
   tracks,
 } from "./schema";
 import {
+  invalidateSpotifyPlaylistSnapshot,
   loadVerifiedSpotifyPlaylistSnapshot,
   persistSpotifyPlaylistSnapshot,
   upsertSpotifyPlaylistTarget,
@@ -177,11 +178,43 @@ export async function executeSpotifyPlaylistExport(
   const playlist = await client.getPlaylist(playlistId);
   assertPlaylistIdentity(playlistId, playlist.id);
   assertOwnedNonCollaborativeSpotifyPlaylist(playlist, profile);
+  const orderingPolicy = input.orderingPolicy ?? "release_date_custom_order";
+  const target = await upsertSpotifyPlaylistTarget(db, userId, playlistId, playlist.name);
+  let run = await loadResumableRun(
+    db,
+    target.id,
+    playlistId,
+    input.discoveryReconciliationCampaignId ?? null,
+    orderingPolicy,
+  );
+  let trustedMutationSnapshotId: string | undefined;
+  // Spotify playlist metadata can briefly lag a successful reorder response. A reorder-only
+  // continuation can safely use the response snapshot because the next reorder submits it as a
+  // provider-enforced precondition. Additions never take this path because they are unconditional.
+  if (
+    run?.status === "partial" &&
+    !run.errorCode &&
+    run.snapshotAfter &&
+    target.snapshotId === run.snapshotAfter &&
+    Array.isArray(target.snapshotItems) &&
+    orderingPolicy === "release_date_custom_order" &&
+    input.maxMutations !== undefined
+  ) {
+    const counts = await loadOperationCounts(db, run.id);
+    if (
+      counts.pending === 0 &&
+      counts.failed === 0 &&
+      planSpotifyPlaylistReleaseDateOrder(target.snapshotItems).moves.length > 0
+    ) {
+      trustedMutationSnapshotId = run.snapshotAfter;
+    }
+  }
   const snapshot = await loadVerifiedSpotifyPlaylistSnapshot(db, userId, client, playlist, {
     ...(input.maxPlaylistReadPages !== undefined
       ? { maxReadPages: input.maxPlaylistReadPages }
       : {}),
     policy: input.policy,
+    ...(trustedMutationSnapshotId ? { trustedMutationSnapshotId } : {}),
   });
   const playlistItems = snapshot.items;
   const preview = await buildPreview(
@@ -195,23 +228,15 @@ export async function executeSpotifyPlaylistExport(
       ...(input.discoveryReconciliationCampaignId
         ? { discoveryReconciliationCampaignId: input.discoveryReconciliationCampaignId }
         : {}),
-      orderingPolicy: input.orderingPolicy ?? "release_date_custom_order",
+      orderingPolicy,
     },
     snapshot.cacheHit,
-  );
-  const target = await upsertSpotifyPlaylistTarget(db, userId, playlistId, playlist.name);
-  let run = await loadResumableRun(
-    db,
-    target.id,
-    playlistId,
-    input.discoveryReconciliationCampaignId ?? null,
-    input.orderingPolicy ?? "release_date_custom_order",
   );
   const resumed = Boolean(run);
   if (!run) {
     run = await createExportRun(db, target.id, preview, {
       discoveryReconciliationCampaignId: input.discoveryReconciliationCampaignId ?? null,
-      orderingPolicy: input.orderingPolicy ?? "release_date_custom_order",
+      orderingPolicy,
     });
   } else {
     await db
@@ -241,6 +266,7 @@ export async function executeSpotifyPlaylistExport(
   if (input.maxAdditions !== undefined) pending = pending.slice(0, input.maxAdditions);
   let additionsAttempted = 0;
   let orderingYielded = false;
+  let reorderAttempted = false;
   let snapshotAfter = snapshot.playlist.snapshot_id;
   let workingItems = playlistItems.slice().sort((left, right) => left.position - right.position);
 
@@ -285,10 +311,7 @@ export async function executeSpotifyPlaylistExport(
       }
     }
     const countsBeforeOrdering = await loadOperationCounts(db, run.id);
-    if (
-      countsBeforeOrdering.pending === 0 &&
-      (input.orderingPolicy ?? "release_date_custom_order") === "release_date_custom_order"
-    ) {
+    if (countsBeforeOrdering.pending === 0 && orderingPolicy === "release_date_custom_order") {
       const orderPlan = planSpotifyPlaylistReleaseDateOrder(workingItems);
       const availableOrderingMutations =
         input.maxMutations === undefined
@@ -297,6 +320,7 @@ export async function executeSpotifyPlaylistExport(
       const moves = orderPlan.moves.slice(0, availableOrderingMutations);
       orderingYielded = moves.length < orderPlan.moves.length;
       for (const move of moves) {
+        reorderAttempted = true;
         snapshotAfter = await client.reorderPlaylistItems(playlistId, {
           ...move,
           snapshotId: snapshotAfter,
@@ -306,6 +330,9 @@ export async function executeSpotifyPlaylistExport(
       }
     }
   } catch (error) {
+    if (reorderAttempted) {
+      await invalidateSpotifyPlaylistSnapshot(db, userId, playlistId);
+    }
     await db
       .update(spotifyPlaylistExportRuns)
       .set({ errorCode: safeErrorCode(error), status: "partial", updatedAt: new Date() })

@@ -27,6 +27,7 @@ export interface DiscoveryMaintenanceSnapshot {
     | "dailyBudget"
     | "dueArtistCount"
     | "endpointBudget"
+    | "rollingRequestNextCapacityAt"
   >;
 }
 
@@ -113,6 +114,17 @@ export function decideDiscoveryMaintenance(
   }
   if (playlistDue) return runDecision("playlist_work");
   if (priorityDue) {
+    const artistAlbumsCapacityAt =
+      snapshot.spotify.endpointBudget.artistAlbums.priorityRemaining > 0
+        ? null
+        : snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt;
+    const priorityCapacityAt = latestCapacityAt(
+      snapshot.spotify.rollingRequestNextCapacityAt,
+      artistAlbumsCapacityAt,
+    );
+    if (priorityCapacityAt) {
+      return blockedDecision("priority_capacity_wait", priorityCapacityAt, now);
+    }
     if (snapshot.spotify.endpointBudget.artistAlbums.priorityRemaining > 0) {
       return runDecision("priority_work");
     }
@@ -132,6 +144,7 @@ export function decideDiscoveryMaintenance(
     snapshot.spotify.backlog.track_resolution > 0;
   const broadCapacity =
     snapshot.spotify.endpointBudget.artistAlbums.broadRemaining > 0 &&
+    snapshot.spotify.rollingRequestNextCapacityAt === null &&
     snapshot.spotify.dailyBudget.broadArtistsUsed <
       snapshot.spotify.dailyBudget.broadArtistsLimit &&
     snapshot.spotify.dailyBudget.broadRequestsUsed <
@@ -144,20 +157,28 @@ export function decideDiscoveryMaintenance(
       snapshot.spotify.dailyBudget.broadArtistsLimit &&
     snapshot.spotify.dailyBudget.broadRequestsUsed <
       snapshot.spotify.dailyBudget.broadRequestsLimit;
+  const broadArtistAlbumsBlocked =
+    snapshot.spotify.endpointBudget.artistAlbums.broadRemaining === 0;
+  const broadCapacityKnown =
+    !broadArtistAlbumsBlocked ||
+    snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt !== null;
+  const broadCapacityAt = broadCapacityKnown
+    ? latestCapacityAt(
+        snapshot.spotify.rollingRequestNextCapacityAt,
+        broadArtistAlbumsBlocked
+          ? snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt
+          : null,
+      )
+    : null;
   if (
     broadAllowed &&
     broadBacklog &&
     broadDailyCapacity &&
     !snapshot.spotify.cooldownActive &&
-    snapshot.spotify.endpointBudget.artistAlbums.broadRemaining === 0 &&
-    snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt !== null &&
-    isBroadSpotifyDay(snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt)
+    broadCapacityAt !== null &&
+    isBroadSpotifyDay(broadCapacityAt)
   ) {
-    return blockedDecision(
-      "broad_capacity_wait",
-      snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt,
-      now,
-    );
+    return blockedDecision("broad_capacity_wait", broadCapacityAt, now);
   }
   return {
     dynamicWakeAt: null,
@@ -166,6 +187,12 @@ export function decideDiscoveryMaintenance(
     runNow: false,
     waitUntil: null,
   };
+}
+
+function latestCapacityAt(left: Date | null, right: Date | null): Date | null {
+  if (!left) return right;
+  if (!right) return left;
+  return left > right ? left : right;
 }
 
 function blockedDecision(

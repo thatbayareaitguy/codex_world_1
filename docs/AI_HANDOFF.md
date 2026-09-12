@@ -1,6 +1,70 @@
 # AI Handoff
 
-Updated: 2026-09-11 16:15 PDT
+Updated: 2026-09-12 03:25 PDT
+
+## Friday Maintenance And Playlist Recovery (2026-09-12)
+
+- Starting HEAD and upstream were `5298cefdd46a59b64e8327560c12eb97174436b1` on
+  `codex/release-radar-hardening`. `outputs/` remains unrelated and untracked. No secret or `.env`
+  file was changed.
+- The Friday maintenance wake did start, activate keep-awake, confirm PostgreSQL healthy, and then
+  fail before its first scheduler decision. `runDiscoveryMaintenanceWindow` returned the loop
+  promise without awaiting it, so its `finally` closed PostgreSQL while the loop's first status
+  queries were still running. The direct `conhost.exe --headless node.exe --import tsx` action then
+  masked the Node failure as Task Scheduler result 0. The 08:50 and 20:50 lifecycle records both
+  show `ticks=0`, `runtime_failure`, and the closed-connection query error.
+- The maintenance window now explicitly awaits the complete loop before closing PostgreSQL. An
+  escaped runtime failure also installs or replaces one `StartupRecoveryWake` seven minutes later
+  and records whether registration succeeded, so recovery no longer depends on `conhost.exe`
+  propagating Node's exit code. Keep-awake ownership and release remain inside the loop and are not
+  duplicated by the connection wrapper.
+- A separate playlist defect repeatedly restarted the fixed playlist snapshot. The bounded reader
+  invoked `SpotifyClient.getPlaylistItemsPage` without its receiver, and later successful reorder
+  responses could briefly be newer than Spotify's playlist metadata response. The receiver is now
+  bound. An error-free, reorder-only continuation of the same export run may use its freshly
+  persisted mutation snapshot when metadata lags, but only with zero pending or failed additions.
+  Every reorder still sends that snapshot as Spotify's provider-enforced precondition. A true
+  external edit invalidates the cache and requires a verified full reread. Additions never use this
+  continuation path.
+- The playlist reread loop accumulated 1,032 playlist reads, 1,016 profile or other metadata
+  requests, and 31 playlist writes in the current 24-hour window. This reached the scanner's
+  conservative general Spotify request gate even though Artist Albums remained at 0 of 80.
+  Scheduler status now exposes the later exact capacity boundary of the 30-minute and 24-hour
+  request windows. Maintenance uses that boundary for priority and broad capacity waits instead of
+  holding the PC awake while repeated ticks return `no_work`.
+- Live recovery reused export run `1e2b22a5-57b8-402e-abc6-beabb1bbb6b7`. It completed all 31
+  Custom Order moves in bounded groups of at most three, finished with zero pending or failed
+  operations, preserved both unmanaged user-added tracks, retained zero duplicate Spotify track
+  IDs, and left the authorized playlist at 1,435 items. It attempted zero additions because all
+  currently exact and eligible tracks were already present; the new Apple discoveries still need
+  priority Spotify resolution.
+- The completed Apple batch `5d763225-cfcd-4549-bdbc-a0b79d43f17b` and scan run
+  `aabc993f-5154-4bb7-a403-3247845fed6a` processed 582 of 582 artists with zero artist failures,
+  found 105 releases, inserted 82, skipped 23 duplicate appearances, and surfaced six reviews.
+  Production is now in `apple_priority` with 148 primary priority items and 36 catch-up priority
+  items. No Apple scan or broad Spotify work was started during this repair.
+- Priority resolution cannot safely start immediately because the rolling 24-hour gate contains
+  2,079 requests from the defective playlist loop. There is no active Spotify cooldown or lease.
+  Capacity returns at `2026-09-12T23:10:43.072Z` (16:10:43 PDT), and the existing maintenance task
+  now contains one `DynamicCapacityWake` for 16:00:43 PDT. It will wake ten minutes early, hold
+  keep-awake through the known short wait, resume Apple-priority resolution, and run normal bounded
+  export checkpoints. This is the one-time current recovery path; the five fixed weekly triggers
+  are unchanged.
+- The recurring discovery task was disabled only while production source and export state were
+  controlled. It was restored enabled and resumed naturally at 03:22:29 PDT with result 0 and zero
+  missed runs. Its direct action remains `conhost.exe --headless node.exe --env-file=... --import
+tsx ...discovery-scheduler-cli.ts tick`.
+- A fresh pre-recovery PostgreSQL custom-format backup is
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-09-12T09-33-26-168Z.dump`.
+  It is 45,705,622 bytes, has the `PGDMP` signature, and SHA-256
+  `91644DA83EDB9B13B45052CB714FDB7422742353686F93CD546ED6F66AF28300`.
+- Final validation passed formatting, lint, TypeScript across six projects, 77 unit files with 556
+  tests, 28 PostgreSQL integration files with 176 tests, the 28-route production build, and all 33
+  Chromium tests. Production doctor is READY with 31 migrations, no stale locks, no active
+  cooldown, and loopback health responding. Its one scan action is historical and is not the
+  completed September 12 Apple run. The hidden web supervisor replaced only the production child,
+  from PID 43952 to PID 50060, and browser smoke loaded the database-backed Artists view with both
+  providers configured and 583 followed artists.
 
 ## Repository
 

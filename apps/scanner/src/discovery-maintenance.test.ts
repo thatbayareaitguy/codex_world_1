@@ -108,6 +108,41 @@ describe("discovery maintenance decisions", () => {
     expect(decision).toMatchObject({ holdPower: false, reason: "priority_capacity_wait" });
   });
 
+  it("waits for general rolling request capacity even when Artist Albums capacity remains", () => {
+    const now = new Date("2026-09-12T09:55:00.000Z");
+    const nextCapacityAt = new Date("2026-09-12T11:20:00.000Z");
+    const snapshot = baseSnapshot();
+    snapshot.discovery.phase = "apple_priority";
+    snapshot.spotify.applePriorityCount = 62;
+    snapshot.spotify.rollingRequestNextCapacityAt = nextCapacityAt;
+
+    expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
+      dynamicWakeAt: new Date(nextCapacityAt.getTime() - maintenanceWakeLeadMs),
+      holdPower: false,
+      reason: "priority_capacity_wait",
+      runNow: false,
+      waitUntil: null,
+    });
+  });
+
+  it("uses the later capacity return when both rolling and Artist Albums budgets are exhausted", () => {
+    const now = new Date("2026-09-12T09:55:00.000Z");
+    const rollingCapacityAt = new Date("2026-09-12T10:30:00.000Z");
+    const artistAlbumsCapacityAt = new Date("2026-09-12T12:00:00.000Z");
+    const snapshot = baseSnapshot();
+    snapshot.discovery.phase = "apple_priority";
+    snapshot.spotify.applePriorityCount = 1;
+    snapshot.spotify.rollingRequestNextCapacityAt = rollingCapacityAt;
+    snapshot.spotify.endpointBudget.artistAlbums.priorityRemaining = 0;
+    snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt = artistAlbumsCapacityAt;
+
+    expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
+      dynamicWakeAt: new Date(artistAlbumsCapacityAt.getTime() - maintenanceWakeLeadMs),
+      holdPower: false,
+      reason: "priority_capacity_wait",
+    });
+  });
+
   it("holds power only when known capacity is near", () => {
     const now = new Date("2026-08-28T09:10:00.000Z");
     const snapshot = baseSnapshot();
@@ -165,6 +200,21 @@ describe("discovery maintenance decisions", () => {
     snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt = nextCapacityAt;
     const decision = decideDiscoveryMaintenance(snapshot, now);
     expect(decision).toMatchObject({
+      dynamicWakeAt: new Date(nextCapacityAt.getTime() - maintenanceWakeLeadMs),
+      holdPower: false,
+      reason: "broad_capacity_wait",
+      runNow: false,
+    });
+  });
+
+  it("schedules a broad wake when the general rolling gate is exhausted", () => {
+    const now = new Date("2026-08-29T16:00:00.000Z");
+    const nextCapacityAt = new Date(now.getTime() + 90 * 60_000);
+    const snapshot = baseSnapshot();
+    snapshot.spotify.dueArtistCount = 10;
+    snapshot.spotify.rollingRequestNextCapacityAt = nextCapacityAt;
+
+    expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
       dynamicWakeAt: new Date(nextCapacityAt.getTime() - maintenanceWakeLeadMs),
       holdPower: false,
       reason: "broad_capacity_wait",
@@ -296,6 +346,7 @@ function baseSnapshot(): DiscoveryMaintenanceSnapshot {
         },
         playlist: { reads: 0, writes: 0 },
       },
+      rollingRequestNextCapacityAt: null,
     },
   };
 }

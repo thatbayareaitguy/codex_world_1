@@ -97,6 +97,7 @@ const status: SpotifySchedulerStatus = {
     last30Minutes: 0,
   },
   recentWork: null,
+  rollingRequestNextCapacityAt: null,
   targetArtistCount: 1,
 };
 

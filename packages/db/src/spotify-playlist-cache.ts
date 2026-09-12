@@ -73,27 +73,35 @@ export async function loadVerifiedSpotifyPlaylistSnapshot(
     forceRefresh?: boolean;
     maxReadPages?: number;
     policy?: SpotifyPlaylistWritePolicy;
+    trustedMutationSnapshotId?: string;
   } = {},
 ): Promise<VerifiedSpotifyPlaylistSnapshot> {
   const playlistId = options.policy
     ? assertSpotifyPlaylistWriteTarget(options.policy, playlist.id)
     : playlist.id;
   const target = await upsertSpotifyPlaylistTarget(db, userId, playlistId, playlist.name);
+  const remoteSnapshotMatches = target.snapshotId === playlist.snapshot_id;
+  const trustedMutationSnapshotMatches =
+    options.trustedMutationSnapshotId !== undefined &&
+    target.snapshotId === options.trustedMutationSnapshotId;
   if (
     !options.forceRefresh &&
-    target.snapshotId === playlist.snapshot_id &&
+    (remoteSnapshotMatches || trustedMutationSnapshotMatches) &&
+    target.snapshotId &&
     Array.isArray(target.snapshotItems)
   ) {
     await clearPlaylistSnapshotRefresh(db, userId, playlistId);
-    const verifiedAt = new Date();
-    await db
-      .update(playlistTargets)
-      .set({ snapshotVerifiedAt: verifiedAt, updatedAt: verifiedAt })
-      .where(eq(playlistTargets.id, target.id));
+    if (remoteSnapshotMatches) {
+      const verifiedAt = new Date();
+      await db
+        .update(playlistTargets)
+        .set({ snapshotVerifiedAt: verifiedAt, updatedAt: verifiedAt })
+        .where(eq(playlistTargets.id, target.id));
+    }
     return {
       cacheHit: true,
       items: target.snapshotItems,
-      playlist,
+      playlist: remoteSnapshotMatches ? playlist : { ...playlist, snapshot_id: target.snapshotId },
       targetId: target.id,
     };
   }
@@ -101,7 +109,7 @@ export async function loadVerifiedSpotifyPlaylistSnapshot(
   const refreshed =
     options.maxReadPages !== undefined && pageReader
       ? await readBoundedConsistentSpotifyPlaylistSnapshot(db, userId, client, playlist, {
-          getPage: pageReader,
+          getPage: pageReader.bind(client),
           maxReadPages: options.maxReadPages,
         })
       : await readConsistentSpotifyPlaylistSnapshot(client, playlist);

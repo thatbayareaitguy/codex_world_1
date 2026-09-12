@@ -43,6 +43,7 @@ import {
 
 export const spotifySchedulerStateId = "global";
 export const spotifySchedulerWindowMs = 24 * 60 * 60_000;
+export const spotifySchedulerShortWindowMs = 30 * 60_000;
 export const spotifySchedulerLeaseMs = 120_000;
 
 type SchedulerTransaction = Parameters<Parameters<RadarDatabase["transaction"]>[0]>[0];
@@ -161,6 +162,7 @@ export interface SpotifySchedulerStatus {
     workId: string;
     workType: SpotifySchedulerWorkType;
   } | null;
+  rollingRequestNextCapacityAt: Date | null;
   targetArtistCount: number;
 }
 
@@ -661,7 +663,7 @@ export async function claimSpotifySchedulerWork(
     }
     const limits = schedulerLimits(state.effectiveConfiguration);
     const [rolling30, rolling24] = await Promise.all([
-      countSpotifyRequests(tx, new Date(now.getTime() - 30 * 60_000)),
+      countSpotifyRequests(tx, new Date(now.getTime() - spotifySchedulerShortWindowMs)),
       countSpotifyRequests(tx, new Date(now.getTime() - spotifySchedulerWindowMs)),
     ]);
     if (rolling30 >= limits.rolling30MinuteLimit || rolling24 >= limits.rolling24HourLimit) {
@@ -925,7 +927,12 @@ export async function getSpotifySchedulerStatus(
     now,
   );
   const last30 = requests.filter(
-    (request) => request.startedAt > new Date(now.getTime() - 30 * 60_000),
+    (request) => request.startedAt > new Date(now.getTime() - spotifySchedulerShortWindowMs),
+  );
+  const rollingRequestNextCapacityAt = nextSpotifyRollingRequestCapacityAt(
+    requests.map((request) => request.startedAt),
+    limits,
+    now,
   );
   const completedLast24 = eligible.filter(
     (artist) =>
@@ -1069,8 +1076,45 @@ export async function getSpotifySchedulerStatus(
           workType: recentWork.workType,
         }
       : null,
+    rollingRequestNextCapacityAt,
     targetArtistCount: state?.cycleTargetArtists ?? eligible.length,
   };
+}
+
+export function nextSpotifyRollingRequestCapacityAt(
+  requestStarts: readonly Date[],
+  limits: Pick<SpotifySchedulerLimits, "rolling24HourLimit" | "rolling30MinuteLimit">,
+  now: Date,
+): Date | null {
+  const nextShortWindow = nextRequestCapacityForWindow(
+    requestStarts,
+    limits.rolling30MinuteLimit,
+    spotifySchedulerShortWindowMs,
+    now,
+  );
+  const nextLongWindow = nextRequestCapacityForWindow(
+    requestStarts,
+    limits.rolling24HourLimit,
+    spotifySchedulerWindowMs,
+    now,
+  );
+  if (!nextShortWindow) return nextLongWindow;
+  if (!nextLongWindow) return nextShortWindow;
+  return nextShortWindow > nextLongWindow ? nextShortWindow : nextLongWindow;
+}
+
+function nextRequestCapacityForWindow(
+  requestStarts: readonly Date[],
+  limit: number,
+  windowMs: number,
+  now: Date,
+): Date | null {
+  const cutoff = now.getTime() - windowMs;
+  const active = requestStarts
+    .filter((startedAt) => startedAt.getTime() > cutoff)
+    .sort((left, right) => left.getTime() - right.getTime());
+  if (active.length < limit) return null;
+  return new Date(active[active.length - limit]!.getTime() + windowMs);
 }
 
 async function selectSpotifySchedulerCandidate(

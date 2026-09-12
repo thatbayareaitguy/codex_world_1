@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   defaultSchedulerLimits,
+  nextSpotifyRollingRequestCapacityAt,
   staggerSpotifyArtistsAcrossWindow,
+  spotifySchedulerShortWindowMs,
   spotifySchedulerWindowMs,
 } from "./spotify-scheduler";
 
@@ -45,5 +47,40 @@ describe("Spotify rolling scheduler planning", () => {
     });
     expect(Math.min(...intervals)).toBeGreaterThanOrEqual(145_000);
     expect(Math.max(...intervals)).toBeLessThanOrEqual(146_000);
+  });
+
+  it("reports the later return when both rolling request windows are exhausted", () => {
+    const now = new Date("2026-09-12T10:00:00.000Z");
+    const shortWindowStarts = Array.from(
+      { length: 4 },
+      (_, index) => new Date(now.getTime() - (20 - index) * 60_000),
+    );
+    const longWindowStarts = Array.from(
+      { length: 6 },
+      (_, index) => new Date(now.getTime() - (23 - index) * 60 * 60_000),
+    );
+
+    expect(
+      nextSpotifyRollingRequestCapacityAt(
+        [...longWindowStarts, ...shortWindowStarts],
+        { rolling24HourLimit: 6, rolling30MinuteLimit: 4 },
+        now,
+      ),
+    ).toEqual(new Date(longWindowStarts[4]!.getTime() + spotifySchedulerWindowMs));
+  });
+
+  it("returns the short-window capacity boundary and null when a request can start", () => {
+    const now = new Date("2026-09-12T10:00:00.000Z");
+    const starts = [
+      new Date(now.getTime() - 20 * 60_000),
+      new Date(now.getTime() - 10 * 60_000),
+      new Date(now.getTime() - 5 * 60_000),
+    ];
+    const limits = { rolling24HourLimit: 100, rolling30MinuteLimit: 3 };
+
+    expect(nextSpotifyRollingRequestCapacityAt(starts, limits, now)).toEqual(
+      new Date(starts[0]!.getTime() + spotifySchedulerShortWindowMs),
+    );
+    expect(nextSpotifyRollingRequestCapacityAt(starts.slice(1), limits, now)).toBeNull();
   });
 });
