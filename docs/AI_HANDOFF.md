@@ -21,17 +21,25 @@ Updated: 2026-09-12 16:20 PDT
   dynamic wakes can still be added or updated, and a true no-work decision still clears an obsolete
   trigger. Regression tests cover the exact pre-fire race, runnable-work preservation, normal
   updates, and no-work cleanup. The five fixed production wake groups are unchanged.
-- Natural minute ticks resumed Spotify priority processing when rolling capacity returned. Export
-  run `95939298-e0e6-415e-8371-8bd722020951` added two current-week discoveries with zero failures:
-  Pirapus, `Renegade (Every Day)` (`3br5GTNAnGFEJVrACYCx4Q`), and DMVU, `The Creator`
-  (`7yTVxyAvH6ifP0gvxkGPMD`). The cached authorized playlist then contained 1,353 exact eligible
-  managed tracks, zero pending additions, zero reorder moves, and no duplicate track IDs.
+- Natural minute ticks resumed Spotify priority processing when rolling capacity returned. By
+  16:29:35 PDT, five completed export runs had added six current-week discoveries with zero
+  failures: Pirapus, `Renegade (Every Day)` (`3br5GTNAnGFEJVrACYCx4Q`); DMVU, `The Creator`
+  (`7yTVxyAvH6ifP0gvxkGPMD`); and Viperactive, `Death Whistle` (`13v2E5Dy8QmQRrJlUWaRuK`), `Swarm`
+  (`4NzOLXMGLdlnzPLjFSFSb5`), `Vanta Black` (`08LSDXqQplmaULzJxPWSvK`), and `Snakepit Anthem`
+  (`25ZeuwSY8hHQ8U7RU2DkTL`). The cached authorized playlist contained 1,441 items and 1,357 exact
+  eligible managed tracks, with zero pending additions, reorder moves, failed operations, or
+  duplicate track IDs.
 - For the explicitly requested one-time recovery, the recurring minute task was disabled only after
   its active invocation finished with result 0. The existing maintenance task was started once at
   16:14:40 PDT. It acquired keep-awake at 16:14:42, confirmed PostgreSQL healthy, and waited through
   the database-calculated rolling-capacity boundaries while processing Apple-priority work and
-  normal bounded playlist checkpoints. The recurring task must be restored after this controlled
-  maintenance run ends.
+  normal bounded playlist checkpoints. The recurring task was restored enabled at 16:27:35 PDT;
+  Task Scheduler recorded 14 intentionally skipped minute triggers from the controlled isolation
+  period. Its 16:28:29 post-restore invocation completed with result 0 and the missed-run count
+  returned to zero. Cross-task safety continues to come from durable work leases, the
+  concurrency-one provider gate, and the single playlist-operation lock. The controlled
+  maintenance task remained active and healthy under its single keep-awake owner while this
+  evidence was recorded.
 - A fresh pre-recovery custom-format backup is
   `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-09-12T23-13-56-709Z.dump`.
   It is 46,083,815 bytes, has the `PGDMP` signature, and SHA-256
