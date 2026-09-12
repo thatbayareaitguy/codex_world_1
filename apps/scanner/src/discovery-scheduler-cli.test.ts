@@ -2,6 +2,7 @@ import { defaultSchedulerLimits, type createDatabase } from "@radar/db";
 import { loadProviderConfiguration } from "@radar/providers";
 import { describe, expect, it, vi } from "vitest";
 import {
+  applyRecurringDynamicMaintenanceWake,
   discoverySchedulerRoute,
   parseDiscoverySchedulerCommand,
   runBroadAutomaticPlaylistCheckpoint,
@@ -82,6 +83,62 @@ describe("discovery scheduler CLI", () => {
     expect(parseDiscoverySchedulerCommand(["status"])).toBe("status");
     expect(parseDiscoverySchedulerCommand(["--", "tick"])).toBe("tick");
     expect(() => parseDiscoverySchedulerCommand(["run"])).toThrow("Usage:");
+  });
+
+  it("preserves an imminent dynamic wake when the minute tick enters the keep-awake window", async () => {
+    const updateWake = vi.fn(() => Promise.resolve());
+
+    await applyRecurringDynamicMaintenanceWake(
+      {
+        dynamicWakeAt: null,
+        holdPower: true,
+        reason: "priority_capacity_wait",
+        runNow: false,
+        waitUntil: new Date("2026-09-12T23:10:43.072Z"),
+      },
+      updateWake,
+    );
+    await applyRecurringDynamicMaintenanceWake(
+      {
+        dynamicWakeAt: null,
+        holdPower: false,
+        reason: "priority_work",
+        runNow: true,
+        waitUntil: null,
+      },
+      updateWake,
+    );
+
+    expect(updateWake).not.toHaveBeenCalled();
+  });
+
+  it("still updates or clears a dynamic wake when maintenance need has ended", async () => {
+    const updateWake = vi.fn(() => Promise.resolve());
+    const wakeAt = new Date("2026-09-13T04:00:00.000Z");
+
+    await applyRecurringDynamicMaintenanceWake(
+      {
+        dynamicWakeAt: wakeAt,
+        holdPower: false,
+        reason: "priority_capacity_wait",
+        runNow: false,
+        waitUntil: null,
+      },
+      updateWake,
+    );
+    await applyRecurringDynamicMaintenanceWake(
+      {
+        dynamicWakeAt: null,
+        holdPower: false,
+        reason: "no_work",
+        runNow: false,
+        waitUntil: null,
+      },
+      updateWake,
+    );
+
+    expect(updateWake).toHaveBeenNthCalledWith(1, wakeAt);
+    expect(updateWake).toHaveBeenNthCalledWith(2, null);
   });
 
   it.each(["ready", "exporting", "partial", "failed"])(

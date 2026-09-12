@@ -30,7 +30,10 @@ import {
 } from "./spotify-playlist-export-runtime";
 import { schedulerLimitsFromConfiguration } from "./spotify-scheduler-cli";
 import type { SpotifySchedulerTickResult } from "./spotify-scheduler";
-import { decideDiscoveryMaintenance } from "./discovery-maintenance";
+import {
+  decideDiscoveryMaintenance,
+  type DiscoveryMaintenanceDecision,
+} from "./discovery-maintenance";
 import { updateWindowsMaintenanceWake } from "./windows-maintenance";
 
 loadLocalEnvironment();
@@ -357,8 +360,19 @@ export async function refreshDynamicMaintenanceWake(
     getSpotifySchedulerStatus(db, now),
   ]);
   const decision = decideDiscoveryMaintenance({ discovery, spotify }, now);
-  await updateWindowsMaintenanceWake(decision.dynamicWakeAt);
+  await applyRecurringDynamicMaintenanceWake(decision);
   return decision.dynamicWakeAt;
+}
+
+export async function applyRecurringDynamicMaintenanceWake(
+  decision: DiscoveryMaintenanceDecision,
+  updateWake: (wakeAt: Date | null) => Promise<void> = updateWindowsMaintenanceWake,
+): Promise<void> {
+  // A near-term decision assumes that the maintenance process already owns keep-awake. The
+  // recurring minute process does not, so it must preserve the imminent trigger that will launch
+  // maintenance and acquire that request. Maintenance clears the trigger after it starts.
+  if (decision.holdPower || decision.runNow) return;
+  await updateWake(decision.dynamicWakeAt);
 }
 
 async function runClaimedAppleJob(

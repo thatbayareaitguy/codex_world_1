@@ -1,6 +1,41 @@
 # AI Handoff
 
-Updated: 2026-09-12 03:25 PDT
+Updated: 2026-09-12 16:20 PDT
+
+## Dynamic Capacity Wake Race And Live Weekly Export Recovery (2026-09-12)
+
+- A read-only follow-up confirmed that the weekly Apple scan was complete, but Spotify
+  reconciliation had not completed. The Apple batch processed 582 of 582 artists with zero artist
+  failures and persisted 81 canonical tracks across 42 unique releases. Before capacity returned,
+  60 direct track-resolution rows and 46 overlapping artist-reconciliation rows from this batch
+  still required processing. They must not be added together as unique missing tracks.
+- The 08:50 Saturday maintenance run correctly calculated capacity return at 16:10:43 PDT and
+  registered `DynamicCapacityWake` for 16:00:43. Windows Task Scheduler event 140 proves that the
+  recurring minute task updated the maintenance task at 15:56:33 and removed the dynamic trigger.
+  The minute process had entered the 15-minute keep-awake window, received a decision with
+  `holdPower=true` and `dynamicWakeAt=null`, and incorrectly treated that as an instruction to
+  delete the imminent wake. The maintenance task therefore never launched at 16:00:43.
+- Recurring wake refresh now preserves the existing dynamic trigger whenever maintenance reports
+  `holdPower` or runnable work. The recurring task cannot own keep-awake, so only the maintenance
+  process clears the trigger after it actually starts and confirms its keep-awake owner. Far-future
+  dynamic wakes can still be added or updated, and a true no-work decision still clears an obsolete
+  trigger. Regression tests cover the exact pre-fire race, runnable-work preservation, normal
+  updates, and no-work cleanup. The five fixed production wake groups are unchanged.
+- Natural minute ticks resumed Spotify priority processing when rolling capacity returned. Export
+  run `95939298-e0e6-415e-8371-8bd722020951` added two current-week discoveries with zero failures:
+  Pirapus, `Renegade (Every Day)` (`3br5GTNAnGFEJVrACYCx4Q`), and DMVU, `The Creator`
+  (`7yTVxyAvH6ifP0gvxkGPMD`). The cached authorized playlist then contained 1,353 exact eligible
+  managed tracks, zero pending additions, zero reorder moves, and no duplicate track IDs.
+- For the explicitly requested one-time recovery, the recurring minute task was disabled only after
+  its active invocation finished with result 0. The existing maintenance task was started once at
+  16:14:40 PDT. It acquired keep-awake at 16:14:42, confirmed PostgreSQL healthy, and waited through
+  the database-calculated rolling-capacity boundaries while processing Apple-priority work and
+  normal bounded playlist checkpoints. The recurring task must be restored after this controlled
+  maintenance run ends.
+- A fresh pre-recovery custom-format backup is
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-09-12T23-13-56-709Z.dump`.
+  It is 46,083,815 bytes, has the `PGDMP` signature, and SHA-256
+  `BD864F92EDD5B6C4613626AE8F32D00EF1ABFD5921E4BBE4940ABEE014483E14`.
 
 ## Friday Maintenance And Playlist Recovery (2026-09-12)
 
