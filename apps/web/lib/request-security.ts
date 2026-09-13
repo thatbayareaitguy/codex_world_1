@@ -9,9 +9,15 @@ export function assertSameOrigin(request: NextRequest): void {
   if (!origin || origin !== expected) throw new Error("Cross-origin request rejected");
 }
 
-export function enforceRateLimit(request: NextRequest, limit = 20, windowMs = 60_000): void {
+export function enforceRateLimit(
+  request: NextRequest,
+  limit = 20,
+  windowMs = 60_000,
+  scope = new URL(request.url).pathname,
+): void {
   const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  const key = forwarded ?? request.headers.get("user-agent") ?? "local";
+  const client = forwarded ?? request.headers.get("user-agent") ?? "local";
+  const key = `${scope}:${client}`;
   const now = Date.now();
   const current = attempts.get(key);
   if (!current || current.resetAt <= now) {

@@ -6,6 +6,7 @@ export interface CanonicalArtistImportTarget {
   id: string;
   manuallyEdited: boolean;
   name: string;
+  selectedByDefault?: boolean;
 }
 
 export interface SpotifyImportPreviewItem {
@@ -33,7 +34,7 @@ export function createSpotifyImportPreview(
         providerArtistId: spotifyArtist.id,
         providerName: spotifyArtist.name,
         providerUrl: spotifyArtist.external_urls.spotify,
-        selected: true,
+        selected: matches[0]!.selectedByDefault !== false,
       };
     }
     if (matches.length > 1) {

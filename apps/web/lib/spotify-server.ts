@@ -1,5 +1,6 @@
 import {
   createDatabase,
+  createSpotifyRequestGate,
   ensureLocalOwner,
   SpotifyTokenManager,
   type RadarDatabase,
@@ -31,7 +32,10 @@ export async function createSpotifyServerContext(): Promise<SpotifyServerContext
   const oauthClient = new SpotifyOAuthClient({
     clientId: config.spotify.clientId,
     clientSecret: config.spotify.clientSecret,
+    playlistWritesEnabled:
+      config.spotify.playlistWritesEnabled && Boolean(config.spotify.allowedPlaylistId),
     redirectUri: config.spotify.redirectUri,
+    requestGate: createSpotifyRequestGate(connection.db, config.spotify.minRequestIntervalMs),
   });
   const tokens = new SpotifyTokenManager(
     connection.db,
@@ -42,6 +46,13 @@ export async function createSpotifyServerContext(): Promise<SpotifyServerContext
   const client = new SpotifyClient({
     accessToken: () => tokens.getAccessToken(),
     onUnauthorized: () => tokens.refresh().then(() => undefined),
+    playlistWritePolicy: {
+      ...(config.spotify.allowedPlaylistId
+        ? { allowedPlaylistId: config.spotify.allowedPlaylistId }
+        : {}),
+      enabled: config.spotify.playlistWritesEnabled,
+    },
+    requestGate: createSpotifyRequestGate(connection.db, config.spotify.minRequestIntervalMs),
   });
   return {
     client,

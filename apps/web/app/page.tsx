@@ -1,37 +1,133 @@
 import { feedFixtures, mockScanFeedFixture } from "@radar/testing";
-import { loadProviderConfiguration } from "@radar/providers";
+import { abbreviateSpotifyPlaylistId, loadProviderConfiguration } from "@radar/providers";
 import { RadarShell } from "./radar-shell";
-import { loadDatabaseFeed } from "../lib/feed-server";
+import { loadDatabaseFeedPage, type DatabaseFeedSummary } from "../lib/feed-server";
+import { createInitialPageDataSource, type PageDataMode } from "../lib/page-data-source";
+import { loadDatabaseProviderActivity } from "../lib/provider-status-server";
+import {
+  loadDatabaseSpotifyPlaylistSummary,
+  type SpotifyPlaylistDashboardSummary,
+} from "../lib/playlist-summary-server";
+import { loadDatabaseWatchlist } from "../lib/watchlist-server";
+import type { WatchlistArtistViewModel } from "../lib/watchlist-types";
 
-export default async function HomePage() {
+export const dynamic = "force-dynamic";
+
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const configuration = loadProviderConfiguration();
-  let initialItems = feedFixtures;
-  let feedMode: "database" | "error" | "mock" = "mock";
-  if (configuration.databaseUrl) {
+  const e2eMockMode = process.env.RADAR_E2E_MOCK_MODE === "true";
+  const parameters = await searchParams;
+  const e2eScanStatusMode = e2eMockMode && parameters["e2e-scan-status"] === "database";
+  const initialDataSource = createInitialPageDataSource(feedFixtures, e2eMockMode);
+  let initialItems = initialDataSource.initialItems;
+  let initialFeedRevision: string | null = null;
+  let initialFeedHasMore = false;
+  let initialFeedNextCursor: string | null = null;
+  let initialFeedTotalCount = initialItems.length;
+  let initialFeedSummary: DatabaseFeedSummary = {
+    needsReview: initialItems.filter((item) => item.state === "needs_review").length,
+    newThisWeek: initialItems.length,
+    upcoming: initialItems.filter((item) => item.state === "upcoming").length,
+  };
+  let feedMode: PageDataMode = initialDataSource.feedMode;
+  let initialArtists: WatchlistArtistViewModel[] = [];
+  let watchlistMode: PageDataMode = initialDataSource.watchlistMode;
+  let databaseProviderActivity = { appleMusic: false, spotify: false };
+  let initialPlaylistSummary: SpotifyPlaylistDashboardSummary = {
+    blocked: initialItems.filter(
+      (item) => !["eligible", "exported"].includes(item.exportStatus ?? "blocked"),
+    ).length,
+    exported: initialItems.filter((item) => item.exportStatus === "exported").length,
+    pendingReorderMoves: 0,
+    ready: initialItems.filter((item) => item.exportStatus === "eligible").length,
+  };
+  if (e2eScanStatusMode) {
+    feedMode = "database";
+    initialItems = feedFixtures.filter((item) => item.state === "new");
+    initialFeedTotalCount = initialItems.length;
+  }
+  if (configuration.databaseUrl && configuration.appEncryptionKey && !e2eMockMode) {
     try {
-      initialItems = await loadDatabaseFeed(configuration.databaseUrl);
+      const snapshot = await loadDatabaseFeedPage(configuration.databaseUrl, {
+        filters: { sort: "release", state: "new" },
+        secret: configuration.appEncryptionKey,
+      });
+      initialItems = snapshot.items;
+      initialFeedRevision = snapshot.revision;
+      initialFeedHasMore = snapshot.hasMore;
+      initialFeedNextCursor = snapshot.nextCursor;
+      initialFeedTotalCount = snapshot.totalCount;
+      initialFeedSummary = snapshot.summary;
       feedMode = "database";
     } catch {
       feedMode = "error";
+    }
+    try {
+      initialArtists = await loadDatabaseWatchlist(configuration.databaseUrl);
+      watchlistMode = "database";
+    } catch {
+      watchlistMode = "error";
+    }
+    try {
+      databaseProviderActivity = await loadDatabaseProviderActivity(configuration.databaseUrl);
+    } catch {
+      // The configuration status remains available when operational evidence cannot be read.
+    }
+    if (configuration.spotify.allowedPlaylistId) {
+      try {
+        initialPlaylistSummary = await loadDatabaseSpotifyPlaylistSummary(
+          configuration.databaseUrl,
+          configuration.spotify.allowedPlaylistId,
+        );
+      } catch {
+        // Feed data remains usable when the local playlist summary cannot be read.
+      }
     }
   }
   return (
     <RadarShell
       feedMode={feedMode}
+      initialFeedHasMore={initialFeedHasMore}
+      initialFeedNextCursor={initialFeedNextCursor}
+      initialFeedRevision={initialFeedRevision}
+      initialFeedSummary={initialFeedSummary}
+      initialFeedTotalCount={initialFeedTotalCount}
+      initialArtists={initialArtists}
       initialItems={initialItems}
+      initialPlaylistSummary={initialPlaylistSummary}
       providerConfiguration={{
+        appleMusic: {
+          configured: configuration.appleMusic.configured || databaseProviderActivity.appleMusic,
+          enabled: configuration.appleMusic.enabled,
+        },
         databaseConfigured: Boolean(configuration.databaseUrl),
         musicbrainz: {
-          configured: configuration.musicbrainz.configured,
-          enabled: configuration.musicbrainz.enabled,
+          configured: false,
+          enabled: false,
         },
         soundcloudManualLinksEnabled: configuration.soundcloudManualLinksEnabled,
         spotify: {
-          configured: configuration.spotify.configured,
+          allowedPlaylistConfigured: Boolean(configuration.spotify.allowedPlaylistId),
+          ...(configuration.spotify.allowedPlaylistId
+            ? {
+                allowedPlaylistIdAbbreviated: abbreviateSpotifyPlaylistId(
+                  configuration.spotify.allowedPlaylistId,
+                ),
+              }
+            : {}),
+          configured: configuration.spotify.configured || databaseProviderActivity.spotify,
           enabled: configuration.spotify.enabled,
+          expectedPlaylistPublic: configuration.spotify.expectedPlaylistPublic,
+          minRequestIntervalMs: configuration.spotify.minRequestIntervalMs,
+          playlistWritesEnabled: configuration.spotify.playlistWritesEnabled,
         },
       }}
       scannedItem={mockScanFeedFixture}
+      watchlistMode={watchlistMode}
     />
   );
 }

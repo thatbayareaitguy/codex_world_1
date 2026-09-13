@@ -1,15 +1,18 @@
 import { normalizeText } from "@radar/core";
 import type { EncryptedValue, SpotifyImportPreviewItem } from "@radar/providers";
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull } from "drizzle-orm";
 import type { RadarDatabase } from "./client";
 import {
   artistExternalIds,
   artistFollows,
   artistImportCandidates,
   artistImportRuns,
+  artistProviderIdentityStatuses,
   artists,
   oauthAccounts,
   oauthStates,
+  spotifyArtistCoverage,
+  spotifySchedulerWork,
   users,
 } from "./schema";
 
@@ -180,6 +183,123 @@ export async function createSpotifyImportRun(
   });
 }
 
+export interface FollowedArtistRecord {
+  active: boolean;
+  artistId: string;
+  followedAt: Date;
+  name: string;
+  providers: Array<(typeof artistExternalIds.$inferSelect)["provider"]>;
+  source: string;
+  spotifyCoverage: {
+    catalogPagesCompleted: number;
+    dailyScanCompletedAt: Date | null;
+    lastFullReconciliationAt: Date | null;
+    nextOffset: number;
+    pagesScannedInCycle: number;
+    partial: boolean;
+    status: string;
+  } | null;
+}
+
+export async function listFollowedArtists(
+  db: RadarDatabase,
+  userId: string,
+): Promise<FollowedArtistRecord[]> {
+  const followed = await db
+    .select({
+      active: artistFollows.active,
+      artistId: artists.id,
+      followedAt: artistFollows.followedAt,
+      name: artists.name,
+      source: artistFollows.source,
+    })
+    .from(artistFollows)
+    .innerJoin(artists, eq(artists.id, artistFollows.artistId))
+    .where(and(eq(artistFollows.userId, userId), eq(artistFollows.active, true)))
+    .orderBy(desc(artistFollows.followedAt), artists.name);
+
+  if (!followed.length) return [];
+
+  const mappings = await db
+    .select({ artistId: artistExternalIds.artistId, provider: artistExternalIds.provider })
+    .from(artistExternalIds)
+    .where(
+      inArray(
+        artistExternalIds.artistId,
+        followed.map((artist) => artist.artistId),
+      ),
+    );
+  const providersByArtist = new Map<string, FollowedArtistRecord["providers"]>();
+  for (const mapping of mappings) {
+    const providers = providersByArtist.get(mapping.artistId) ?? [];
+    if (!providers.includes(mapping.provider)) providers.push(mapping.provider);
+    providersByArtist.set(mapping.artistId, providers);
+  }
+  const coverageRows = await db
+    .select()
+    .from(spotifyArtistCoverage)
+    .where(
+      inArray(
+        spotifyArtistCoverage.artistId,
+        followed.map((artist) => artist.artistId),
+      ),
+    );
+  const coverageByArtist = new Map(coverageRows.map((row) => [row.artistId, row] as const));
+
+  return followed.map((artist) => ({
+    ...artist,
+    providers: providersByArtist.get(artist.artistId) ?? [],
+    spotifyCoverage: coverageByArtist.get(artist.artistId) ?? null,
+  }));
+}
+
+export interface DeactivateFollowedArtistResult {
+  alreadyInactive: boolean;
+  artistId: string;
+  blockedSpotifyWork: number;
+}
+
+export async function deactivateFollowedArtist(
+  db: RadarDatabase,
+  userId: string,
+  artistId: string,
+): Promise<DeactivateFollowedArtistResult | undefined> {
+  return db.transaction(async (tx) => {
+    const follow = await tx.query.artistFollows.findFirst({
+      where: and(eq(artistFollows.userId, userId), eq(artistFollows.artistId, artistId)),
+      columns: { active: true },
+    });
+    if (!follow) return undefined;
+
+    if (follow.active) {
+      await tx
+        .update(artistFollows)
+        .set({ active: false })
+        .where(and(eq(artistFollows.userId, userId), eq(artistFollows.artistId, artistId)));
+    }
+
+    const blocked = await tx
+      .update(spotifySchedulerWork)
+      .set({
+        blockedReason: "artist_not_followed",
+        leaseExpiresAt: null,
+        leaseOwner: null,
+        status: "blocked",
+        updatedAt: new Date(),
+      })
+      .where(
+        and(eq(spotifySchedulerWork.artistId, artistId), eq(spotifySchedulerWork.status, "queued")),
+      )
+      .returning({ id: spotifySchedulerWork.id });
+
+    return {
+      alreadyInactive: !follow.active,
+      artistId,
+      blockedSpotifyWork: blocked.length,
+    };
+  });
+}
+
 export interface ImportDecision {
   candidateId: string;
   decision: "create" | "merge" | "skip";
@@ -187,21 +307,104 @@ export interface ImportDecision {
   selected: boolean;
 }
 
+export interface SpotifyImportSummary {
+  alreadyPresent: number;
+  created: number;
+  failed: number;
+  merged: number;
+  needsReview: number;
+  persisted: number;
+  retrieved: number;
+  selected: number;
+  skipped: number;
+}
+
 export async function confirmSpotifyImport(
   db: RadarDatabase,
   userId: string,
   importRunId: string,
   decisions: ImportDecision[],
-): Promise<{ created: number; merged: number; needsReview: number; skipped: number }> {
+): Promise<SpotifyImportSummary> {
   return db.transaction(async (tx) => {
-    const summary = { created: 0, merged: 0, needsReview: 0, skipped: 0 };
+    const importRun = await tx.query.artistImportRuns.findFirst({
+      where: and(
+        eq(artistImportRuns.id, importRunId),
+        eq(artistImportRuns.userId, userId),
+        eq(artistImportRuns.provider, "spotify"),
+      ),
+    });
+    if (!importRun) throw new Error("Spotify import batch does not belong to the local user");
+
     const candidates = await tx.query.artistImportCandidates.findMany({
       where: eq(artistImportCandidates.importRunId, importRunId),
     });
+    if (importRun.status !== "preview") {
+      const selected = candidates.filter(
+        (candidate) => candidate.selected && candidate.decision !== "skip",
+      ).length;
+      const persisted = (
+        await tx
+          .select({ artistId: artistFollows.artistId })
+          .from(artistFollows)
+          .where(and(eq(artistFollows.userId, userId), eq(artistFollows.active, true)))
+      ).length;
+      return {
+        alreadyPresent: Math.max(
+          0,
+          selected - importRun.createdCount - importRun.mergedCount - importRun.reviewCount,
+        ),
+        created: importRun.createdCount,
+        failed: importRun.failedCount,
+        merged: importRun.mergedCount,
+        needsReview: importRun.reviewCount,
+        persisted,
+        retrieved: importRun.retrievedCount,
+        selected,
+        skipped: importRun.skippedCount,
+      };
+    }
+
+    const decisionByCandidate = new Map(
+      decisions.map((decision) => [decision.candidateId, decision]),
+    );
+    if (decisionByCandidate.size !== decisions.length || decisions.length !== candidates.length) {
+      throw new Error("Every import candidate requires exactly one decision");
+    }
+    if (candidates.some((candidate) => !decisionByCandidate.has(candidate.id))) {
+      throw new Error("Import decisions contain a candidate from another batch");
+    }
+
+    const summary: SpotifyImportSummary = {
+      alreadyPresent: 0,
+      created: 0,
+      failed: 0,
+      merged: 0,
+      needsReview: 0,
+      persisted: 0,
+      retrieved: importRun.retrievedCount,
+      selected: decisions.filter((decision) => decision.selected && decision.decision !== "skip")
+        .length,
+      skipped: 0,
+    };
+    if (summary.selected === 0) {
+      throw new Error("Select at least one artist before confirming the import");
+    }
+
     for (const candidate of candidates) {
-      const decision = decisions.find((item) => item.candidateId === candidate.id);
-      if (!decision?.selected || decision.decision === "skip") {
-        summary.skipped += 1;
+      const decision = decisionByCandidate.get(candidate.id);
+      if (!decision) throw new Error("Import candidate decision is missing");
+      await tx
+        .update(artistImportCandidates)
+        .set({
+          decision: decision.decision,
+          ...(decision.existingArtistId ? { existingArtistId: decision.existingArtistId } : {}),
+          selected: decision.selected,
+        })
+        .where(eq(artistImportCandidates.id, candidate.id));
+
+      if (!decision.selected || decision.decision === "skip") {
+        if (candidate.proposedAction === "review") summary.needsReview += 1;
+        else summary.skipped += 1;
         continue;
       }
 
@@ -218,7 +421,15 @@ export async function confirmSpotifyImport(
         candidate.existingArtistId ??
         undefined;
       if (existingMapping) {
-        summary.merged += 1;
+        const existingFollow = await tx.query.artistFollows.findFirst({
+          where: and(
+            eq(artistFollows.userId, userId),
+            eq(artistFollows.artistId, existingMapping.artistId),
+          ),
+          columns: { active: true },
+        });
+        if (existingFollow?.active) summary.alreadyPresent += 1;
+        else summary.merged += 1;
       } else if (decision.decision === "create") {
         const [created] = await tx
           .insert(artists)
@@ -269,18 +480,53 @@ export async function confirmSpotifyImport(
         .values({ artistId: resolvedArtistId, source: "spotify_import", userId })
         .onConflictDoUpdate({
           target: [artistFollows.userId, artistFollows.artistId],
-          set: { active: true, source: "spotify_import" },
+          set: { active: true },
+        });
+      await tx
+        .insert(artistProviderIdentityStatuses)
+        .values({
+          artistId: resolvedArtistId,
+          decidedAt: new Date(),
+          evidence: ["Exact Spotify identity from the user's followed-artist import"],
+          externalId: candidate.providerArtistId,
+          externalIds: [candidate.providerArtistId],
+          provider: "spotify",
+          reason: "Spotify supplied the exact followed-artist identity.",
+          status: "automatically_confirmed",
+        })
+        .onConflictDoUpdate({
+          target: [
+            artistProviderIdentityStatuses.artistId,
+            artistProviderIdentityStatuses.provider,
+          ],
+          set: {
+            decidedAt: new Date(),
+            evidence: ["Exact Spotify identity from the user's followed-artist import"],
+            externalId: candidate.providerArtistId,
+            externalIds: [candidate.providerArtistId],
+            linkedArtistId: null,
+            reason: "Spotify supplied the exact followed-artist identity.",
+            status: "automatically_confirmed",
+            updatedAt: new Date(),
+          },
         });
     }
+    summary.persisted = (
+      await tx
+        .select({ artistId: artistFollows.artistId })
+        .from(artistFollows)
+        .where(and(eq(artistFollows.userId, userId), eq(artistFollows.active, true)))
+    ).length;
     await tx
       .update(artistImportRuns)
       .set({
         completedAt: new Date(),
         createdCount: summary.created,
         mergedCount: summary.merged,
+        failedCount: summary.failed,
         reviewCount: summary.needsReview,
         skippedCount: summary.skipped,
-        status: "completed",
+        status: summary.needsReview || summary.failed ? "partial" : "completed",
       })
       .where(and(eq(artistImportRuns.id, importRunId), eq(artistImportRuns.userId, userId)));
     return summary;

@@ -8,6 +8,7 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  distDir: process.env.NEXT_DIST_DIR ?? ".next",
   reactStrictMode: true,
   transpilePackages: ["@radar/core", "@radar/testing"],
   headers: () => Promise.resolve([{ source: "/(.*)", headers: securityHeaders }]),

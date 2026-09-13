@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "TS New Music Radar",
+  title: "TS New Music Scanner",
   description: "A source-evidenced release discovery inbox for followed artists.",
 };
 

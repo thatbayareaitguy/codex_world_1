@@ -1,18 +1,74 @@
 # Provider Capabilities and Cost Gate
 
-Verified: 2026-07-16
+## Dormant MusicBrainz adapter (disabled by default)
 
-The only permitted paid prerequisite is the owner's existing Spotify Premium subscription. No provider adapter may require a paid developer membership, API subscription, or commercial plan.
+MusicBrainz is not part of production or normal GUI operation. `MUSICBRAINZ_ENABLED=false` is the
+default. Scan commands, web scan launches, mapping routes, and direct MusicBrainz evidence commands
+reject execution while disabled, before provider work begins. Existing code, mappings, source
+evidence, scan history, and canonical feed records are retained. Re-enabling requires an explicit
+advanced-mode decision, `MUSICBRAINZ_ENABLED=true`, a contact email, and separate regression and
+live validation. The capability notes below document the preserved adapter, not an active provider.
 
-| Provider     | Decision                            | Discovery                                                                           | Account import                                          | Playlist writing           | Playback | Upcoming                                           | Required account and payment                                                             | Authentication                                        | Limits and policy                                                                                          |
-| ------------ | ----------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------- | -------------------------- | -------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| MockProvider | Active                              | Synthetic typed releases                                                            | Synthetic only                                          | Synthetic planning         | None     | Synthetic                                          | None                                                                                     | None                                                  | Fixtures must never be represented as live data                                                            |
-| Spotify      | Active                              | Confirmed artist albums, album tracks, exact track resolution, credited appearances | Followed artists with preview and explicit confirmation | One owned private playlist | None     | Catalog dates only                                 | Development Mode app owner must have Premium; no separate developer fee documented       | Server Authorization Code with PKCE and client secret | Current page limits, rolling rate limits, and `Retry-After`; broad cross-service policy remains unresolved |
-| MusicBrainz  | Active                              | Artist search, release groups, artist releases, and `track_artist` appearances      | None                                                    | None                       | None     | Community release dates with precision and history | Public non-commercial reads require no paid account                                      | No key; meaningful contact User-Agent                 | Average one request per second per IP; metadata can be incomplete                                          |
-| SoundCloud   | Manual feature only, off by default | No automated request                                                                | None                                                    | None                       | None     | None                                               | No account for outbound links; API registration requires paid Artist Pro and is excluded | None                                                  | User-directed HTTPS links only, no metadata fetch or availability claim                                    |
-| YouTube      | Deferred                            | None                                                                                | None                                                    | None                       | None     | None                                               | Not evaluated for this milestone                                                         | None                                                  | Spotify coexistence policy unresolved                                                                      |
-| Apple Music  | Excluded                            | None                                                                                | None                                                    | None                       | None     | None                                               | Apple Developer Program payment required                                                 | None                                                  | Violates cost gate                                                                                         |
-| TIDAL        | Deferred                            | None                                                                                | None                                                    | None                       | None     | None                                               | Free access may exist but compatibility is not established                               | None                                                  | No adapter until a new official review                                                                     |
+### Last workflow verification (2026-07-21)
+
+- Authentication: no OAuth or paid account. A descriptive User-Agent with application name,
+  version, and private operator contact is required.
+- Discovery: canonical artist mapping, release groups, releases, recordings, ISRCs when present,
+  and track-level appearances through the official JSON web service.
+- Rate limit: the application uses one database-backed global queue with no more than one request
+  start per second and bounded retry for HTTP 503.
+- Evidence: MusicBrainz recording links are stored as community metadata evidence. They are not
+  represented as official artist announcements.
+- Playlist writing and playback: unsupported.
+- Completeness: community data may be missing, delayed, partially dated, or inconsistently credited.
+  A no-result scan is not proof that no release exists.
+- Official documentation: https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting,
+  https://musicbrainz.org/doc/MusicBrainz_API, and
+  https://musicbrainz.org/doc/MusicBrainz_API/Search (verified 2026-07-21). The official API
+  reference confirms `track_artist` release browsing for appearances and supports release media,
+  recordings, release groups, artist credits, and ISRC includes.
+
+The owner's Spotify Premium subscription and explicitly approved Apple Developer Program membership are the only permitted paid prerequisites. No other provider adapter may require a paid developer membership, API subscription, or commercial plan without a new product decision.
+
+| Provider     | Decision                            | Discovery                                                                                 | Account import                                          | Playlist writing                                                                                                           | Playback | Upcoming                                      | Required account and payment                                                             | Authentication                                           | Limits and policy                                                                                                                        |
+| ------------ | ----------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------- | --------------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| MockProvider | Active                              | Synthetic typed releases                                                                  | Synthetic only                                          | Synthetic planning                                                                                                         | None     | Synthetic                                     | None                                                                                     | None                                                     | Fixtures must never be represented as live data                                                                                          |
+| Spotify      | Active                              | Confirmed artist albums, album tracks, exact track resolution, credited appearances       | Followed artists with preview and explicit confirmation | Disabled by default; guarded add-only membership plus Custom Order maintenance on one configured owner-controlled playlist | None     | Catalog dates only                            | Development Mode app owner must have Premium; no separate developer fee documented       | Server Authorization Code with PKCE and client secret    | Playlist authorization is account-scoped; application additionally enforces one target ID; broad cross-service policy remains unresolved |
+| MusicBrainz  | Dormant, disabled by default        | Preserved artist search, release groups, releases, and appearances                        | None                                                    | None                                                                                                                       | None     | Community dates, when explicitly enabled      | Public non-commercial reads require no paid account                                      | No key; meaningful contact User-Agent                    | Not in normal operation; advanced re-enable requires separate validation                                                                 |
+| Reddit       | Implemented, approval-gated         | Configured subreddit evidence and local deterministic parsing                             | None                                                    | None                                                                                                                       | None     | User-posted date claims remain evidence only  | Reddit decides approved free or paid access; this project has no approval recorded       | Approved OAuth app credentials and descriptive UA        | Explicit approval required; eligible free clients are documented at 100 QPM averaged over ten minutes                                    |
+| SoundCloud   | Manual feature only, off by default | No automated request                                                                      | None                                                    | None                                                                                                                       | None     | None                                          | No account for outbound links; API registration requires paid Artist Pro and is excluded | None                                                     | User-directed HTTPS links only, no metadata fetch or availability claim                                                                  |
+| YouTube      | Deferred                            | None                                                                                      | None                                                    | None                                                                                                                       | None     | None                                          | Not evaluated for this milestone                                                         | None                                                     | Spotify coexistence policy unresolved                                                                                                    |
+| Apple Music  | Active, public catalog only         | Confirmed artists, first-page singles and albums, release tracks, dates, credits, artwork | None                                                    | None                                                                                                                       | None     | Catalog release dates, including future dates | Apple Developer Program membership, currently 99 USD per year; explicitly approved       | Server-generated developer token from Media Services key | Public catalog only; no user token, library, recommendations, playback, favorites, or playlist access; no published numeric rate limit   |
+| TIDAL        | Deferred                            | None                                                                                      | None                                                    | None                                                                                                                       | None     | None                                          | Free access may exist but compatibility is not established                               | None                                                     | No adapter until a new official review                                                                                                   |
+
+## Apple Music Verification
+
+Verified 2026-08-06 against current official Apple documentation:
+
+- [MusicKit and Apple Music API](https://developer.apple.com/musickit/): Apple documents public catalog access for songs, albums, artists, playlists, music videos, stations, and charts. This implementation uses only artist and album catalog resources.
+- [MusicKit framework overview](https://developer.apple.com/documentation/musickit): Apple Music API is the catalog web service. Playback and subscriber capabilities exist in MusicKit but are not implemented here.
+- [Album attributes](https://developer.apple.com/documentation/applemusicapi/albums/attributes-data.dictionary): `isComplete` identifies albums that contain all final tracks, and prerelease `releaseDate` values may be future expected dates. The scanner preserves announced song titles, suppresses unresolved `Track N` placeholders on incomplete or future releases, and marks future candidates as upcoming.
+- [Artist relationship views](https://developer.apple.com/documentation/applemusicapi/artists/views-data.dictionary): artists expose catalog views including singles, full albums, latest releases, top songs, similar artists, and appears-on albums. Candidate enrichment uses only views reached from a retained numeric Apple artist ID.
+- [Resource relationships](https://developer.apple.com/documentation/applemusicapi/handling-resource-representation-and-relationships): relationship resources and pagination may be fetched directly. The resolver persists bounded Apple-side releases, songs, and artist credits for reuse.
+- [iTunes Search API lookup examples](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/LookupExamples.html): Apple's archived documentation describes direct iTunes ID lookup and notes that ID lookups produce fewer false positives than text search. The fallback resolver uses only a supplied numeric Apple candidate ID and never submits a name.
+- [Create a media identifier and private key](https://developer.apple.com/help/account/capabilities/create-a-media-identifier-and-private-key): a Media ID and Media Services private key sign developer tokens. The private key remains server-only and outside source control.
+- [User authentication for MusicKit](https://developer.apple.com/documentation/applemusicapi/user-authentication-for-musickit): a Music User Token is required for subscriber-specific data. This implementation does not request one and therefore has no personal library, recommendation, playback, favorite, or playlist capability.
+- [Apple Developer Program membership](https://developer.apple.com/programs/whats-included/): membership is currently 99 USD per year or local equivalent. The user explicitly accepted this paid prerequisite for Apple catalog discovery.
+
+Authentication uses a short-lived ES256 developer token containing only the Apple team and key identifiers. Public catalog reads do not require an Apple Music consumer subscription under the documented user-token boundary. Apple does not publish a numeric Apple Music API request limit in the cited documentation, so the application makes no quota claim. It serializes requests through a PostgreSQL gate at a verified minimum of 1100 ms, honors `Retry-After`, and persists a global cooldown after 429.
+
+Production scope is first-page `singles` and `full-albums` views for confirmed mapped artists, a 30-day or last-success window, and targeted album-track retrieval. Missing optional views are treated as empty only when another view or a direct artist lookup proves the artist exists. Catalog 400/404 and invalid record failures remain safe telemetry and do not stop unrelated artists. Apple artwork is stored as a validated provider URL only, displayed only with Apple evidence, and linked to the corresponding Apple release.
+
+Identity-resolution scope is narrower than discovery. Numeric candidate IDs may be enriched with
+Apple artist views or Apple's iTunes lookup endpoint. Apple genres, labels, activity, titles, and
+direct co-credits are supporting ranking evidence only. They cannot automatically confirm a
+mapping. The preserved advanced resolver can automatically confirm one unique validated Apple ID
+from a direct relationship on an independently confirmed MusicBrainz identity or its linked
+Wikidata item, but that path is dormant while MusicBrainz is disabled. See
+[Apple Artist Identity Ranking](apple-identity-ranking.md). MusicBrainz documents a dedicated
+[Apple Music artist URL relationship](https://musicbrainz.org/relationships/artist-url).
+
+Policy uncertainty remains. The Apple Developer Program License Agreement and MusicKit terms govern use, and this repository does not claim Apple review or approval. The application does not redistribute catalog payloads, proxy media, play audio, or expose personal Apple Music data.
 
 ## Spotify Verification
 
@@ -23,10 +79,54 @@ The only permitted paid prerequisite is the owner's existing Spotify Premium sub
 - [Authorization Code](https://developer.spotify.com/documentation/web-api/tutorials/code-flow) and [PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow): server token exchange and S256 challenge.
 - [Followed artists](https://developer.spotify.com/documentation/web-api/reference/get-followed): `user-follow-read`, cursor pagination, maximum 50.
 - [Artist albums](https://developer.spotify.com/documentation/web-api/reference/get-an-artists-albums): album, single, appears_on, and compilation groups, current maximum 10.
-- [Create playlist](https://developer.spotify.com/documentation/web-api/reference/create-playlist), [read items](https://developer.spotify.com/documentation/web-api/reference/get-playlists-items), and [add items](https://developer.spotify.com/documentation/web-api/reference/add-items-to-playlist): `/me/playlists`, `/items`, private scopes, and 100-item addition batches.
-- [Spotify Developer Policy](https://developer.spotify.com/policy): broad prohibition on products integrated with streams or content from another service.
+- [Search](https://developer.spotify.com/documentation/web-api/reference/search): track search accepts the `isrc` field filter and has a current maximum of 10 results in Development Mode. Verified 2026-08-16.
+- [Get Track](https://developer.spotify.com/documentation/web-api/reference/get-track): a supplied Spotify track ID can be read from the public catalog and its returned `external_ids.isrc`, artists, and title can be checked before the match is stored. Verified 2026-08-16.
+- [Get Album](https://developer.spotify.com/documentation/web-api/reference/get-an-album): the official album response includes cover-art URLs and dimensions; Spotify documents the images in widest-first order.
+- [Get Album Tracks](https://developer.spotify.com/documentation/web-api/reference/get-an-albums-tracks): offset pagination supports an explicit limit from 1 through 50. The production default remains 50; bounded live validation may explicitly use 10 without changing normal behavior.
+- [Spotify design guidelines](https://developer.spotify.com/documentation/design): Spotify visual content must remain in its original form and should link back to Spotify. The feed uses the original aspect ratio, no crop, overlay, download, proxy, or transformation, and a direct album link.
+- [Rate limits](https://developer.spotify.com/documentation/web-api/concepts/rate-limits): HTTP 429 responses use integer-second `Retry-After`; the provider-directed wait remains authoritative.
+- [API calls and errors](https://developer.spotify.com/documentation/web-api/concepts/api-calls): the structured error object may contain an optional `reason`; the documented quota reason is `QUOTA_EXCEEDED`.
+- [July 2026 quota update](https://developer.spotify.com/blog/2026-07-23-web-api-quota-updates): Development Mode quota exhaustion now returns the structured `QUOTA_EXCEEDED` reason.
+- [Scopes](https://developer.spotify.com/documentation/web-api/concepts/scopes): `playlist-read-private` permits private playlist reads. The write-enabled authorization requests both `playlist-modify-private` and `playlist-modify-public`; Spotify does not offer a playlist-specific write scope. TS New Music Scanner implements guarded additions and snapshot-aware Custom Order maintenance on one configured, owned, non-collaborative playlist.
+- [Change Playlist Details](https://developer.spotify.com/documentation/web-api/reference/change-playlist-details): the playlist owner may update `public` and `collaborative` with `PUT /playlists/{playlist_id}`. The internal visibility command sends only `public=true` and `collaborative=false` to the hard-coded authorized target. Verified 2026-08-09.
+- [Get playlist](https://developer.spotify.com/documentation/web-api/reference/get-playlist), [read items](https://developer.spotify.com/documentation/web-api/reference/get-playlists-items), [add items](https://developer.spotify.com/documentation/web-api/reference/add-items-to-playlist), and [reorder items](https://developer.spotify.com/documentation/web-api/reference/reorder-or-replace-playlists-items): current playlist paths use `/items`; additions accept at most 100 item URIs and reorder mode accepts a range, insertion position, and snapshot ID.
+- [Playlist concepts](https://developer.spotify.com/documentation/web-api/concepts/playlists): playlist authorization is granted through user scopes, and public/private reflects profile visibility rather than a per-playlist OAuth permission boundary.
+- [Spotify Developer Policy](https://developer.spotify.com/policy): prohibits products integrated with streams or content from another service and prohibits transferring Spotify data to another service except the narrow personal-data or playlist-metadata transfer cases stated by Spotify. Verified 2026-08-05. Consequently, Spotify-derived artist names, ISRCs, UPCs, credits, titles, and release dates must not be submitted to Apple Music or used to confirm an Apple Music identity.
 
-Developer credentials require a Spotify developer account but no separate fee is documented. A paid Premium consumer account is required for the Development Mode app owner under the current rules. The intended private followed-artist, catalog, and private-playlist functions are documented Web API functions. This does not establish conclusive policy approval for the whole product.
+Developer credentials require a Spotify developer account but no separate fee is documented. A paid Premium consumer account is required for the Development Mode app owner under the current rules. Initial authorization requests only `user-follow-read` and `playlist-read-private`. Playlist writes default off. Export requires both playlist modification scopes, `SPOTIFY_PLAYLIST_WRITES_ENABLED=true`, and one valid `SPOTIFY_ALLOWED_PLAYLIST_ID`. The server and provider client reject every other target and verify that the configured playlist is owned and non-collaborative. The canonical-feed planner exports only exact or manually confirmed followed-artist tracks, records skip reasons, preserves all existing and user-added items, and resumes through a durable per-track ledger. Routine export maintains newest-release-first Custom Order through snapshot-aware range moves without removing or re-adding items. This does not establish conclusive policy approval for the whole product. Playlist endpoint, snapshot, scope, and visibility assumptions were reverified against the cited official documentation on 2026-08-09.
+
+Spotify traffic is serialized through one database-backed client-ID gate with one concurrent request
+and a production minimum of ten seconds between request starts. A 429 blocks every Spotify path until
+the persisted cooldown expires. The response body is read through a 4 KB bounded parser that inspects
+only `error.reason`. Exact `QUOTA_EXCEEDED` is stored as `quota_exceeded`; a missing or unusable reason
+is `unspecified_429`; a bounded unknown token is `unknown_reason`; and historical events without
+stored evidence remain `legacy_unknown`. Raw bodies and arbitrary provider messages are not stored or
+logged, and classification does not change retry, pacing, or cooldown behavior. These details and
+official sources were verified 2026-07-27.
+
+Daily artist-album scans check page one for speed but retain a partial state and any deeper
+reconciliation cursor. Initial and periodic reconciliation resume in bounded page units until
+Spotify returns no next cursor. The endpoint documentation does not guarantee newest-first ordering,
+so old results never justify abandoning later pages. Provider catalog summaries prevent repeated
+detail fetches without creating canonical feed records for out-of-window releases. Completeness
+remains limited to the catalog Spotify exposes for the connected user's region. Full album responses
+already retrieved for new releases supply optional artwork metadata, so artwork adds no discovery
+request. Only validated HTTPS `i.scdn.co/image/...` URLs are retained, and the artwork link must be
+the matching `open.spotify.com/album/...` URL. See
+[Spotify Development Mode Scanning](spotify-development-mode-scanning.md).
+
+Apple discoveries that have a provider-neutral ISRC but no Spotify evidence now enter a durable,
+one-request-per-item resolution queue. The queue first performs an exact ISRC track search. A miss
+falls back to separate page-zero `single` and `album` catalog requests, because the combined Artist
+Albums response is not documented as newest-first. Relevant release details are then processed by
+the existing deterministic matcher. Automatic misses retry the inexpensive ISRC search after 24
+hours. A user-supplied `open.spotify.com/track/...` URL follows the same queue and is accepted only
+when the returned Spotify track agrees on ISRC and confirmed Spotify artist identity. Every request
+remains inside the shared client-ID gate, persisted cooldown, and
+global request budget. Manual exact-link verification is prioritized ahead of broad scans but never
+bypasses cooldown or rolling request limits. Apple evidence is used only to locate Spotify evidence;
+Spotify data is not submitted to Apple Music or any other provider. Verified against the cited
+Search, Get Track, Artist Albums, rate-limit, and policy pages on 2026-08-16.
 
 ## MusicBrainz Verification
 
@@ -37,6 +137,16 @@ Developer credentials require a Spotify developer account but no separate fee is
 
 No paid account, developer credential, consumer subscription, or OAuth is required for public reads. This milestone is read-only and submits no edits, ratings, tags, or identifiers.
 
+## Reddit Verification
+
+- [Responsible Builder Policy](https://support.reddithelp.com/hc/en-us/articles/42728983564564-Responsible-Builder-Policy): explicit approval is mandatory before Data API access and Reddit determines free or paid eligibility.
+- [Data API Wiki](https://support.reddithelp.com/hc/en-us/articles/16160319875092-Reddit-Data-API-Wiki): approved eligible free clients are limited to 100 queries per minute per OAuth client ID averaged over ten minutes, require OAuth and a descriptive User-Agent, and must remove deleted content within the documented window.
+- [Accessing Reddit Data](https://support.reddithelp.com/hc/en-us/articles/14945211791892-Developer-Platform-Accessing-Reddit-Data): official access routes and application process.
+- [Official API reference](https://www.reddit.com/dev/api/): `/r/{subreddit}/new`, `/r/{subreddit}/search`, `/api/info`, listing cursors, and limits.
+- [Archived OAuth technical guide](https://github.com/reddit-archive/reddit/wiki/OAuth2): application-only client credentials mechanics, subject to the current approval response.
+
+No consumer subscription is required by the cited documentation, but free access for this use case is not guaranteed. The adapter therefore remains disabled. If Reddit requires payment or incompatible terms, it will not be enabled. This repository does not claim approval.
+
 ## Policy Uncertainty
 
-Spotify's phrase about integration with streams or content from another service remains broad. This application has no playback, preview, embed, audio handling, cross-provider artwork, or transfer of Spotify metadata to MusicBrainz. MusicBrainz starts from user-approved canonical artists and confirmed mappings, not raw Spotify responses. Plain outbound SoundCloud links are disabled by default. These controls reduce risk but do not prove Spotify has approved the architecture.
+Spotify's cross-service restriction remains broad, but its data-transfer prohibition is explicit enough to reject automated Apple identity resolution from Spotify-derived ISRCs, UPCs, artist credits, titles, or release dates. This application has no playback, preview, embed, audio handling, cross-provider artwork, or transfer of Spotify metadata to MusicBrainz or Apple Music. Spotify cover art appears only when Spotify is evidence for the release, remains Spotify-namespaced, and links directly back to that Spotify album. MusicBrainz and Apple Music identity work must start from user-provided or independently sourced provider-neutral evidence, not raw or persisted Spotify responses. Plain outbound SoundCloud links are disabled by default. These controls reduce risk but do not prove Spotify has approved the architecture.

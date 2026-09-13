@@ -1,0 +1,950 @@
+# AI Handoff
+
+Updated: 2026-09-12 16:20 PDT
+
+## Dynamic Capacity Wake Race And Live Weekly Export Recovery (2026-09-12)
+
+- A read-only follow-up confirmed that the weekly Apple scan was complete, but Spotify
+  reconciliation had not completed. The Apple batch processed 582 of 582 artists with zero artist
+  failures and persisted 81 canonical tracks across 42 unique releases. Before capacity returned,
+  60 direct track-resolution rows and 46 overlapping artist-reconciliation rows from this batch
+  still required processing. They must not be added together as unique missing tracks.
+- The 08:50 Saturday maintenance run correctly calculated capacity return at 16:10:43 PDT and
+  registered `DynamicCapacityWake` for 16:00:43. Windows Task Scheduler event 140 proves that the
+  recurring minute task updated the maintenance task at 15:56:33 and removed the dynamic trigger.
+  The minute process had entered the 15-minute keep-awake window, received a decision with
+  `holdPower=true` and `dynamicWakeAt=null`, and incorrectly treated that as an instruction to
+  delete the imminent wake. The maintenance task therefore never launched at 16:00:43.
+- Recurring wake refresh now preserves the existing dynamic trigger whenever maintenance reports
+  `holdPower` or runnable work. The recurring task cannot own keep-awake, so only the maintenance
+  process clears the trigger after it actually starts and confirms its keep-awake owner. Far-future
+  dynamic wakes can still be added or updated, and a true no-work decision still clears an obsolete
+  trigger. Regression tests cover the exact pre-fire race, runnable-work preservation, normal
+  updates, and no-work cleanup. The five fixed production wake groups are unchanged.
+- Natural minute ticks resumed Spotify priority processing when rolling capacity returned. By
+  16:29:35 PDT, five completed export runs had added six current-week discoveries with zero
+  failures: Pirapus, `Renegade (Every Day)` (`3br5GTNAnGFEJVrACYCx4Q`); DMVU, `The Creator`
+  (`7yTVxyAvH6ifP0gvxkGPMD`); and Viperactive, `Death Whistle` (`13v2E5Dy8QmQRrJlUWaRuK`), `Swarm`
+  (`4NzOLXMGLdlnzPLjFSFSb5`), `Vanta Black` (`08LSDXqQplmaULzJxPWSvK`), and `Snakepit Anthem`
+  (`25ZeuwSY8hHQ8U7RU2DkTL`). The cached authorized playlist contained 1,441 items and 1,357 exact
+  eligible managed tracks, with zero pending additions, reorder moves, failed operations, or
+  duplicate track IDs.
+- For the explicitly requested one-time recovery, the recurring minute task was disabled only after
+  its active invocation finished with result 0. The existing maintenance task was started once at
+  16:14:40 PDT. It acquired keep-awake at 16:14:42, confirmed PostgreSQL healthy, and waited through
+  the database-calculated rolling-capacity boundaries while processing Apple-priority work and
+  normal bounded playlist checkpoints. The recurring task was restored enabled at 16:27:35 PDT;
+  Task Scheduler recorded 14 intentionally skipped minute triggers from the controlled isolation
+  period. Its 16:28:29 post-restore invocation completed with result 0 and the missed-run count
+  returned to zero. Cross-task safety continues to come from durable work leases, the
+  concurrency-one provider gate, and the single playlist-operation lock. The controlled
+  maintenance task remained active and healthy under its single keep-awake owner while this
+  evidence was recorded.
+- A fresh pre-recovery custom-format backup is
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-09-12T23-13-56-709Z.dump`.
+  It is 46,083,815 bytes, has the `PGDMP` signature, and SHA-256
+  `BD864F92EDD5B6C4613626AE8F32D00EF1ABFD5921E4BBE4940ABEE014483E14`.
+
+## Friday Maintenance And Playlist Recovery (2026-09-12)
+
+- Starting HEAD and upstream were `5298cefdd46a59b64e8327560c12eb97174436b1` on
+  `codex/release-radar-hardening`. `outputs/` remains unrelated and untracked. No secret or `.env`
+  file was changed.
+- The Friday maintenance wake did start, activate keep-awake, confirm PostgreSQL healthy, and then
+  fail before its first scheduler decision. `runDiscoveryMaintenanceWindow` returned the loop
+  promise without awaiting it, so its `finally` closed PostgreSQL while the loop's first status
+  queries were still running. The direct `conhost.exe --headless node.exe --import tsx` action then
+  masked the Node failure as Task Scheduler result 0. The 08:50 and 20:50 lifecycle records both
+  show `ticks=0`, `runtime_failure`, and the closed-connection query error.
+- The maintenance window now explicitly awaits the complete loop before closing PostgreSQL. An
+  escaped runtime failure also installs or replaces one `StartupRecoveryWake` seven minutes later
+  and records whether registration succeeded, so recovery no longer depends on `conhost.exe`
+  propagating Node's exit code. Keep-awake ownership and release remain inside the loop and are not
+  duplicated by the connection wrapper.
+- A separate playlist defect repeatedly restarted the fixed playlist snapshot. The bounded reader
+  invoked `SpotifyClient.getPlaylistItemsPage` without its receiver, and later successful reorder
+  responses could briefly be newer than Spotify's playlist metadata response. The receiver is now
+  bound. An error-free, reorder-only continuation of the same export run may use its freshly
+  persisted mutation snapshot when metadata lags, but only with zero pending or failed additions.
+  Every reorder still sends that snapshot as Spotify's provider-enforced precondition. A true
+  external edit invalidates the cache and requires a verified full reread. Additions never use this
+  continuation path.
+- The playlist reread loop accumulated 1,032 playlist reads, 1,016 profile or other metadata
+  requests, and 31 playlist writes in the current 24-hour window. This reached the scanner's
+  conservative general Spotify request gate even though Artist Albums remained at 0 of 80.
+  Scheduler status now exposes the later exact capacity boundary of the 30-minute and 24-hour
+  request windows. Maintenance uses that boundary for priority and broad capacity waits instead of
+  holding the PC awake while repeated ticks return `no_work`.
+- Live recovery reused export run `1e2b22a5-57b8-402e-abc6-beabb1bbb6b7`. It completed all 31
+  Custom Order moves in bounded groups of at most three, finished with zero pending or failed
+  operations, preserved both unmanaged user-added tracks, retained zero duplicate Spotify track
+  IDs, and left the authorized playlist at 1,435 items. It attempted zero additions because all
+  currently exact and eligible tracks were already present; the new Apple discoveries still need
+  priority Spotify resolution.
+- The completed Apple batch `5d763225-cfcd-4549-bdbc-a0b79d43f17b` and scan run
+  `aabc993f-5154-4bb7-a403-3247845fed6a` processed 582 of 582 artists with zero artist failures,
+  found 105 releases, inserted 82, skipped 23 duplicate appearances, and surfaced six reviews.
+  Production is now in `apple_priority` with 148 primary priority items and 36 catch-up priority
+  items. No Apple scan or broad Spotify work was started during this repair.
+- Priority resolution cannot safely start immediately because the rolling 24-hour gate contains
+  2,079 requests from the defective playlist loop. There is no active Spotify cooldown or lease.
+  Capacity returns at `2026-09-12T23:10:43.072Z` (16:10:43 PDT), and the existing maintenance task
+  now contains one `DynamicCapacityWake` for 16:00:43 PDT. It will wake ten minutes early, hold
+  keep-awake through the known short wait, resume Apple-priority resolution, and run normal bounded
+  export checkpoints. This is the one-time current recovery path; the five fixed weekly triggers
+  are unchanged.
+- The recurring discovery task was disabled only while production source and export state were
+  controlled. It was restored enabled and resumed naturally at 03:22:29 PDT with result 0 and zero
+  missed runs. Its direct action remains `conhost.exe --headless node.exe --env-file=... --import
+tsx ...discovery-scheduler-cli.ts tick`.
+- A fresh pre-recovery PostgreSQL custom-format backup is
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-09-12T09-33-26-168Z.dump`.
+  It is 45,705,622 bytes, has the `PGDMP` signature, and SHA-256
+  `91644DA83EDB9B13B45052CB714FDB7422742353686F93CD546ED6F66AF28300`.
+- Final validation passed formatting, lint, TypeScript across six projects, 77 unit files with 556
+  tests, 28 PostgreSQL integration files with 176 tests, the 28-route production build, and all 33
+  Chromium tests. Production doctor is READY with 31 migrations, no stale locks, no active
+  cooldown, and loopback health responding. Its one scan action is historical and is not the
+  completed September 12 Apple run. The hidden web supervisor replaced only the production child,
+  from PID 43952 to PID 50060, and browser smoke loaded the database-backed Artists view with both
+  providers configured and 583 followed artists.
+
+## Repository
+
+- Branch: `codex/release-radar-hardening`
+- Wake-recovery goal starting HEAD and upstream:
+  `295d65671a2eee9eed5dbf825fcca5ad0734492c`
+- Primary wake and schedule repair commit: `3e3fde1ff16a048d49239fd3c574045e5bc1a011`.
+- Playlist runtime repair starting HEAD and upstream:
+  `713de70393b6b5263587613531c56dfc6d106c25`.
+- The tracked worktree was clean at goal start.
+- `outputs/` is unrelated, remains untracked, and is excluded from the intended commit.
+- No secret or `.env` file was changed.
+
+## Tape B Spotify Mapping (2026-09-11)
+
+- The existing canonical `Tape B` artist was reused. It had been created from its stored guest
+  credit on `Of The Trees, Tape B - Brackish`, but it had no follow row, provider mapping,
+  identity status, scheduler work, or duplicate canonical record.
+- The user-supplied Spotify artist URL was validated and stored without its share query as
+  `https://open.spotify.com/artist/59tlsKpLWoLTxjNNS2wdPi`. The Spotify ID was not mapped to any
+  other canonical artist.
+- One atomic local transaction activated the follow with manual provenance, recorded a confirmed
+  `user_confirmed_spotify` mapping at score `1.000`, and recorded the Spotify identity as
+  `manually_confirmed` by the user. No Spotify or Apple request and no playlist write was used to
+  create or verify the mapping.
+- `/api/artists` immediately changed from 582 to 583 active follows and returns Tape B once with
+  provider `spotify`. Normal scheduler reconciliation can now create its initial Spotify catalog
+  work; no manual provider scan was triggered, and Friday's broad-Spotify prohibition remains in
+  force.
+- The Artists view now bases `Pending mapping` on the absence of provider IDs instead of manual
+  follow provenance. A manually followed artist with a confirmed provider identity therefore
+  retains `Added manually` provenance while correctly displaying `Mapped`.
+- The pre-change PostgreSQL custom-format backup is
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-09-11T23-09-46-996Z.dump`.
+  The backup command completed successfully; the file is 44,674,356 bytes with SHA-256
+  `4FA1D4E7CE06BD86907FEE224AC0EFFEC76325058F74051355D467FBFCE6C328`.
+- Validation passed formatting, lint, TypeScript across six projects, 77 unit files with 549
+  tests, 28 PostgreSQL integration files with 172 tests, the 28-page production build, and all 33
+  Chromium tests. The hidden supervisor replaced web child PID 41756 with PID 43952; loopback
+  health and production doctor are READY with all 31 migrations. A full browser reload shows one
+  Tape B row with `Added manually`, `spotify`, `Reconciliation queued`, and `Mapped`, with no
+  browser warning or error logs.
+
+## Automatic Playlist Export Runtime Repair (2026-09-08)
+
+- Confirmed root cause: automatic export run `3ba4a00e-52c5-44ff-88d7-5e77f95f6ddd`
+  planned ten additions and committed six before Windows ended the recurring task host at its
+  `PT3M` execution limit. The fixed playlist contained 1,428 items, so an invalidated snapshot
+  required 29 gated 50-item reads and could not finish inside three minutes. This was not a
+  Spotify 429, cooldown, matching failure, or playlist-target problem.
+- The automatic path now permits at most three additions and three total playlist mutations per
+  minute-task invocation. A partial batch or partial Custom Order repair is a successful bounded
+  yield. The same export run and operation rows remain partial, committed additions remain
+  exported, and the next eligible tick resumes without replaying them. Manual export behavior is
+  unchanged.
+- Large playlist snapshot refreshes now persist after every page in the existing Spotify provider
+  cache and read at most six pages per invocation. Later ticks continue from the stored offset. A
+  snapshot change discards only the incomplete page cache and restarts verification. The complete
+  snapshot is still verified against Spotify before any addition or reorder, preserving snapshot
+  safety and Date Added provenance.
+- Automatic export locks now record host, PID, acquisition heartbeat, and runtime bounds. A local
+  owner proven dead is reclaimed immediately. An owner of unknown status is reclaimed after five
+  minutes. A proven live owner retains a two-hour lease, preventing the ordinary expiration path
+  from admitting a second writer. Normal completion and every bounded yield release the lock.
+- Live recovery reused the original run. `Ghost Of Us`, `Memories`, and `Nobody Can Stop Richard
+Finger (Levity Remix)` were committed by its first bounded continuation. `Never Be Ashamed` and
+  the remaining Custom Order moves then completed through the guarded automatic path. The run
+  finished at 12:56 PDT with zero failed operations and zero pending operations. The cached
+  authorized playlist contains each of the four requested Spotify track IDs exactly once.
+- During live diagnosis, Windows had ended an earlier `conhost` task host while its Node child PID
+  20308 remained alive and no longer owned the current lock. That exact orphan was stopped to avoid
+  concurrent writers. No export lock or orphan scheduler process remained after completion.
+- The twelve unresolved IVORY tracks were not exported or rematched. They remain twelve distinct
+  queued track-resolution targets, represented in both the repair and Apple-priority queues, for
+  normal quota-controlled reconciliation.
+- The maintenance wake lifecycle, five fixed wake groups, Friday export priority, authorized
+  playlist ID, provider budgets, matching rules, and Thursday/Friday broad-work prohibition were
+  not changed. No Apple or Spotify request was made solely for a test.
+- Offline integration validation covers 1, 3, 4, 10, and 17-item batches, same-run continuation,
+  durable page continuation, a provider write followed by local-finalization loss, dead and live
+  lock owners, deduplication, bounded Custom Order convergence, and resumable snapshot yields. The
+  complete PostgreSQL integration suite passed 172 tests in 28 files on an isolated PostgreSQL 17
+  container at port 5434.
+
+## Unattended Wake Dependency Recovery (2026-09-08)
+
+### Confirmed failure and repaired startup order
+
+- Windows System evidence proves the fixed maintenance task woke the PC at 20:49 on September 6,
+  08:49 and 20:49 on September 7, and 08:49 on September 8. Each former maintenance process then
+  failed its first `spotify_scheduler_state` PostgreSQL query within milliseconds, before it had
+  acquired keep-awake. Windows returned to idle sleep at approximately 08:52 or 20:52. The
+  PostgreSQL container remained configured with `restart: unless-stopped` and is healthy, so the
+  missing lifecycle step was bounded post-wake dependency readiness, not provider logic.
+- Maintenance now creates its durable lifecycle record, acquires and confirms the existing
+  non-admin `ES_CONTINUOUS | ES_SYSTEM_REQUIRED` helper, and only then loads configuration or opens
+  PostgreSQL. The same helper owner remains active during dependency readiness and is handed into
+  the normal maintenance loop. It is not released between scheduler ticks while immediately
+  runnable work remains.
+- PostgreSQL readiness now retries every 10 seconds for up to 10 minutes. Each durable attempt
+  records its number and timestamp, elapsed time, sanitized error classification, PostgreSQL
+  result, and Docker state when `docker compose ps` can be inspected. No provider is queried during
+  this phase, and transient database unavailability is never classified as `no_work`.
+- If PostgreSQL remains unavailable, maintenance schedules or replaces one `StartupRecoveryWake`
+  seven minutes later without database access, releases keep-awake, and exits. A later successful
+  start removes that trigger. Dynamic capacity updates preserve `StartupRecoveryWake`, startup
+  recovery updates preserve `DynamicCapacityWake`, and each updater collapses duplicate instances.
+- The direct registered action remains `conhost.exe --headless node.exe --env-file=... --import tsx
+...discovery-maintenance-cli.ts`. An offline Node process intentionally exited with code 7 behind
+  this exact `conhost` form; the caller observed no propagated exit code. This agrees with the
+  production evidence where Task Scheduler reported result 0 while the Node lifecycle record said
+  `failed`. Task Scheduler result 0 can prove only that the headless host launched and ended; it
+  cannot prove that Node maintenance succeeded. Internal readiness retry plus
+  `StartupRecoveryWake` therefore provide recovery independently of `RestartOnFailure`.
+
+### Schedule, live helper evidence, and validation
+
+- The registered maintenance task remains hidden, limited-user, `WakeToRun`, `StartWhenAvailable`,
+  `IgnoreNew`, and four-hour bounded. It has exactly five fixed trigger groups and no temporary
+  trigger at final inspection: Saturday through Wednesday 08:50, Saturday through Wednesday
+  20:50, Thursday 20:50, Friday 08:50, and Friday 20:50 fallback. Task Scheduler Operational
+  history is now enabled.
+- Friday evening behavior is unchanged: already-eligible export, incomplete catch-up recovery,
+  Apple-priority Spotify resolution, newly eligible export, and only required priority repairs.
+  Broad Spotify remains excluded Thursday and Friday. Long capacity or cooldown waits continue to
+  use one precise `DynamicCapacityWake`.
+- Provider-free validation run
+  `startup-validation-be68e39d-6827-4505-acb2-d08d2170e60d` used the real helper under the normal
+  user identity. Activation was recorded at `2026-09-08T19:19:34.5869759Z`; a synthetic first
+  `ECONNREFUSED` attempt was followed by readiness 1.015 seconds later; release completed at
+  `2026-09-08T19:19:36.0865276Z` with `finalReleased=true` and no owner left behind. This made no
+  database, provider, playlist, or scheduled-task mutation.
+- A fresh PostgreSQL 17 custom-format backup was created before task registration at
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-09-08T19-05-58-993Z.dump`.
+  It is 43,979,388 bytes with SHA-256
+  `706E9B81E282367E2A1B44D4BFDBA70A646BDB81FC382FDD433B55E744311B44`; `pg_restore --list`
+  verified 525 lines.
+- Final validation passed formatting, lint, TypeScript across six projects, 77 unit files with 549
+  tests, 28 PostgreSQL integration files with 160 tests on an isolated port-5434 PostgreSQL 17
+  container, the 28-route production build, and all 32 Chromium tests. The in-app production smoke
+  loaded System status with PostgreSQL connected, 31 migrations current, scanner ready, and zero
+  browser errors. Production doctor is READY apart from the unrelated August 4 historical Apple
+  partial row.
+- The completed September catch-up remains the same original batch and scan run at 582 of 582 with
+  zero failed artists. No duplicate Apple workflow was created. No Apple or Spotify request was
+  made solely for this maintenance validation. The next naturally scheduled maintenance wake is
+  the first unattended sleep proof of the new dependency-readiness sequence; no production
+  schedule change or additional provider test is required.
+
+## Weekly Wake And Missed-Work Recovery (2026-09-06)
+
+### Confirmed failure and correction
+
+- Windows wake timers were working, but the maintenance process could continue before the hidden
+  helper proved that `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` was active. The
+  September 4 Friday 08:50 wake therefore returned to sleep at 08:52, before the 09:00 catch-up.
+  The overdue catch-up later slept mid-run, reached its wall-clock limit, and was marked failed even
+  though its Apple batch was safely paused with 243 of 582 artists complete.
+- Every maintenance invocation now writes `%LOCALAPPDATA%\TSNewMusicRadar\logs\maintenance\<runId>.json`
+  and `latest.json` at process startup, before configuration checks or no-work decisions. Each file
+  records the owner PID, start and finish times, decisions, keep-awake diagnostic path and helper
+  PID, tick count, final reason, and failure state.
+- For due work or a fixed Apple job within 15 minutes, maintenance acquires the existing non-admin
+  Windows helper and waits up to five seconds for its durable activation marker before waiting or
+  running work. Missing activation is a process failure, so Task Scheduler's three one-minute
+  restart attempts can operate. The helper remains direct `SetThreadExecutionState`; it needs no
+  administrator token and does not depend on `powercfg /requests`.
+- The exclusive owner file, activation and release markers, final release state, and abnormal-owner
+  recovery under `%LOCALAPPDATA%\TSNewMusicRadar\logs\keep-awake` are unchanged. They continue to
+  prevent duplicate owners and guarantee release in `finally` when work drains, becomes blocked,
+  fails, or reaches the maintenance ceiling.
+- A leased Apple job is now treated as active work, so the maintenance owner remains awake if the
+  minute scheduler claims the job at 09:00. Playlist work, Apple-priority Spotify resolution, and
+  priority-related track resolution remain keep-awake work. Capacity waits longer than 15 minutes
+  release the helper and retain at most one `DynamicCapacityWake` ten minutes before the
+  database-calculated capacity return.
+
+### Friday ordering and resumable Apple work
+
+- Friday evening is priority and recovery only. Selection order is pending playlist export first,
+  then the incomplete Apple schedule job, then Apple-priority Spotify work, then newly eligible
+  guarded exports. Broad Spotify remains limited to Saturday through Wednesday.
+- A schedule lease now stores its Apple batch and scan-run IDs as soon as the batch is ready and
+  before the first provider request. Runtime, request-budget, cooldown, timeout, transport, and
+  temporary-server exhaustion yield the same schedule row back to `scheduled`; they no longer
+  create a failed campaign. Completed artist rows and cursors remain in the same Apple batch.
+- Resumption explicitly passes the stored batch ID into the scanner and reuses the original scan
+  run with its cumulative counts. Scheduled Apple invocations yield after at most 3.5 hours, which
+  leaves time for a clean pause inside the four-hour maintenance task.
+- Reconciliation repairs the confirmed historical failure by linking the failed September 4
+  schedule row to its one matching incomplete batch. It never creates a duplicate catch-up. After
+  offline validation, ordinary status reconciliation linked schedule `apple_catchup:2026-09-04`
+  to batch `af2d5b49-dbfa-4c82-a644-b8615525ad1d` and scan run
+  `dc7cface-dc5e-4014-80fd-63aadfa01190`. The next natural minute tick reclaimed those same IDs.
+  The batch progressed naturally from 243 to 582 of 582 artists with zero final failures. A
+  retryable artist from the original attempt had temporarily contributed to the batch failure
+  counter. The resumed process retained that older count in memory, so it first labeled the fully
+  successful batch `partial` and the schedule job `failed`. Final classification now reads the
+  current persisted failure count, and linked resumable jobs recover from either `failed` or
+  `expired` without creating a new campaign.
+- The still-running web production build contained the former 24-hour expiry rule and its status
+  polling briefly changed the repaired job back to `expired`. The web service was rebuilt and
+  handed back to the existing hidden startup task. The old process was removed, PostgreSQL and
+  `http://127.0.0.1:3000/api/health` recovered, and the schedule row remained recoverable beyond its
+  original deadline.
+- The controlled web/database restart interrupted one legitimate playlist checkpoint only after
+  all 10 additions and all ledger operations had completed. After verifying that no owner process,
+  pending operation, or failed operation existed, the exact abandoned operation lock was removed.
+  The natural scheduler resumed and finalized that same export run, with no duplicate ledger or
+  duplicate addition.
+- At 16:04:49 PDT the natural scheduler completed the original catch-up schedule row, original
+  batch, and original scan run. Final evidence was 582 of 582 artists, zero failures, and zero new
+  Apple requests during finalization. At 16:06 the workflow had advanced automatically to 161
+  queued Apple-priority Spotify items, with playlist inbox `pending`, zero operation locks, no
+  cooldown, and no 429. No manual provider scan was invoked.
+
+### Registered Windows schedule
+
+- The maintenance task now has exactly five fixed trigger groups: `BroadMorningWake` at 08:50
+  Saturday through Wednesday, `BroadEveningWake` at 20:50 Saturday through Wednesday,
+  `ThursdayAppleWake` at Thursday 20:50, `FridayCatchupWake` at Friday 08:50, and
+  `FridayPriorityFallbackWake` at Friday 20:50. `DynamicCapacityWake` remains optional and there
+  was no dynamic trigger at final registration.
+- Exported task XML reports five triggers, `WakeToRun=true`, `Hidden=true`,
+  `StartWhenAvailable=true`, `IgnoreNew`, and three restart attempts one minute apart. The action is
+  `C:\WINDOWS\System32\conhost.exe --headless "C:\Program Files\nodejs\node.exe" --env-file="%LOCALAPPDATA%\TSNewMusicRadar\production-scheduler.env" --import tsx "...\apps\scanner\src\discovery-maintenance-cli.ts"`.
+  The minute task remains separate, enabled, awake-only, direct `conhost.exe --headless node.exe
+--import tsx`, and non-overlapping.
+- Task Scheduler Operational history is disabled and requires an Administrator Terminal on this
+  PC. The exact optional command is
+  `wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true`.
+
+### Backup and validation
+
+- Before production-state correction, a PostgreSQL 17 custom-format backup was created at
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-09-06T22-14-55-462Z.dump`.
+  Size is 42,914,488 bytes and SHA-256 is
+  `09CB93CB1784ED5C5931E7B602D4828B12969D28159B82A4A3A1FBF2DA0554BC`.
+  `pg_restore --list` verified 514 archive entries and 525 output lines in an isolated PostgreSQL 17
+  container.
+- Offline tests cover Thursday and Friday 08:50 waits through 09:00, Friday evening work and
+  no-work paths, long capacity waits, leased-work sleep protection, activation failure, duplicate
+  owner and crash recovery, runtime yield and same-job resumption, orphaned-batch recovery,
+  export-before-recovery ordering, and Thursday/Friday broad exclusion.
+- Final validation passed: formatting, lint, TypeScript across six projects, 76 unit files with 542
+  tests, 28 PostgreSQL integration files with 160 tests, the 28-route production build, and all 32
+  Chromium tests. Production doctor reports PostgreSQL connected, 31 current migrations, no stale
+  lock, no active cooldown, and loopback health responding. Its one action item is an unrelated
+  August 4 Apple `partial` history row with no failed provider or stored error, not this completed
+  catch-up.
+- The final in-app browser production smoke opened System status after the controlled restart,
+  rendered the database and provider sections, showed 31 current migrations and the 16:03 playlist
+  sync, produced zero browser console errors, and showed zero `Status could not be loaded.` messages.
+- Production PostgreSQL remains healthy with Compose `restart: unless-stopped`. The unrelated
+  Showcase test database was restored healthy after isolated validation. No `.env`, credential,
+  quota, provider request interval, fixed playlist target, ordering rule, or matching logic changed.
+- The activation handshake is offline-validated, and same-batch production recovery through final
+  schedule completion is live. The next naturally due maintenance window must provide the first live evidence
+  that the new maintenance lifecycle owns and releases keep-awake for a full production phase. No
+  extra sleep test or production schedule change is required before that natural validation.
+
+## Production Reliability Completion (2026-09-02)
+
+### Web application watchdog
+
+- Root cause of the August 29 through September 2 dashboard outage: the web supervisor and child
+  process had both ended without a logged application crash, leaving stale PID files. The existing
+  Windows task had only an at-logon trigger, so Task Scheduler had no reason to launch the
+  supervisor again while the same login session remained active.
+- `TS New Music Radar Web Application` now has `WebAtLogon` plus an awake-only `WebWatchdog` trigger
+  every five minutes. It remains hidden, `IgnoreNew`, `StartWhenAvailable`, restart-on-failure, and
+  `WakeToRun=false`. Its action remains direct:
+  `C:\Windows\System32\conhost.exe --headless "C:\Program Files\nodejs\node.exe" --import tsx "C:\Users\taysh\Documents\Codex\codex_world_1\apps\scanner\src\web-supervisor-cli.ts"`.
+- Registration at 20:53 PDT recovered the already-offline application at 20:54:25 without a login.
+  A controlled stop then terminated only the verified supervisor PID 62232 and web PID 42640.
+  Doctor correctly changed to `ACTION_REQUIRED`, reported the app offline and port 3000 free, and
+  identified the supervisor as stopped and task as registered. The 20:59:21 watchdog run restored
+  health at 20:59:27 without manual task invocation. The recovered tree contained one headless
+  console host, one supervisor PID 50436, and one Next.js child PID 65372 bound to
+  `127.0.0.1:3000`; there was no duplicate supervisor.
+- Doctor now calls the health endpoint first. A free port without a responding application is
+  `ACTION_REQUIRED`, not `READY`; a non-health process occupying the port is an error. Offline
+  diagnostics include the stale/live supervisor PID state and whether the Windows startup task is
+  registered, disabled, missing, or unavailable.
+
+### Capacity-aware broad Spotify wake
+
+- The maintenance decision now treats broad Spotify work that is otherwise eligible but blocked
+  only by the rolling Artist Albums allowance the same way as priority capacity waits. If capacity
+  returns within 15 minutes, the existing single keep-awake owner holds
+  `ES_SYSTEM_REQUIRED`. For a longer wait it releases power and maintains one
+  `DynamicCapacityWake` ten minutes before the database-calculated next capacity time. Daily artist
+  and request ceilings, provider cooldowns, the 80-call trailing allowance, 20-call priority
+  reserve, queue priority, discovery behavior, and playlist safeguards are unchanged.
+- The capacity time must itself fall on Saturday through Wednesday in Pacific time. A natural
+  Wednesday-night tick initially exposed that the first implementation would schedule a Thursday
+  morning wake even though broad work is disabled Thursday and Friday. The guard was added before
+  commit, and the next ordinary minute tick removed that trigger at 21:10:26 with result 0. The
+  maintenance task returned to exactly its four fixed triggers and next runs Thursday at 20:50.
+- A live task-only test used future times and made no provider request: the first update created one
+  `DynamicCapacityWake`, the second replaced it while the count remained one, and cleanup removed
+  it. Throughout the test the fixed IDs remained `BroadMorningWake`, `BroadEveningWake`,
+  `ThursdayAppleWake`, and `FridayCatchupWake`. Final state has zero temporary dynamic wakes,
+  `WakeToRun=true`, `IgnoreNew`, and `StartWhenAvailable=true`.
+- Offline loop tests prove a near-term broad wait acquires the shared keep-awake owner with reason
+  `broad_capacity_wait`, releases it when work becomes non-runnable, and uses the same durable
+  activation, owner, helper, reason, phase, release, and abnormal-recovery evidence as the already
+  live-validated maintenance helper. A natural capacity-bound sleep cycle is still needed to prove
+  this new broad decision end to end; no provider work was started solely for validation.
+
+### Current task and production evidence
+
+- At final task inspection the maintenance task was enabled and had last result 0 at 20:50 PDT with
+  zero missed runs. The recurring minute task was enabled, awake-only, and returning 0. One minute
+  trigger was reported missed while another bounded invocation was active; `IgnoreNew` prevented
+  overlap and later ticks continued normally. The web task was enabled and running with zero missed
+  runs. While its long-running supervisor is healthy, later five-minute triggers are intentionally
+  rejected by `IgnoreNew`; Windows exposes that no-overlap decision as `0x800710E0` even though the
+  supervisor remains running and health is `ok`. This is not a child-process failure or missed run.
+- Production PostgreSQL remains healthy on `127.0.0.1:5432`, all 31 migrations are applied, and the
+  Compose `db` service still has `restart: unless-stopped`. Doctor is `READY` after watchdog
+  recovery. There are no stale locks, active provider leases, active cooldowns, or Spotify 429s in
+  the last 24 hours.
+- Read-only scheduler status at 20:59 PDT showed phase `broad_spotify`, 582 target artists, 561 due,
+  21 checked in the prior 24 hours, 52 of 80 trailing Artist Albums calls used, 8 broad calls then
+  available, and zero pending playlist additions. The last full Apple workflow completed 583 of
+  583 with zero failures; the last catch-up also completed 583 of 583 with zero failures. The next
+  normal workflows remain Thursday September 3 at 21:00 and Friday September 4 at 09:00 Pacific.
+- The exports dashboard reported 0 ready, 1,278 exported feed records, and 112 system-waiting
+  blocks. It did not report a user-actionable playlist block. No provider request or playlist write
+  was initiated for this reliability validation.
+- Browser smoke rendered the recovered feed, exports page, and System Status page. The web server's
+  ignored `.env` currently has Spotify and dormant MusicBrainz enabled but does not enable Apple or
+  the scheduler; the protected production scheduler environment correctly has Apple and both
+  schedulers enabled and MusicBrainz disabled. This pre-existing configuration split explains why
+  provider enabled labels in System Status do not represent the production task. No `.env` was
+  changed in this pass. Aligning the web-only flags is a separate configuration correction.
+- Task Scheduler Operational history is still disabled. The current limited identity can inspect
+  the setting but cannot enable it, and `powercfg /waketimers` likewise requires elevation. From an
+  Administrator Terminal, enable future task event history with
+  `wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true`. Neither limitation blocks
+  normal task execution.
+
+### Validation
+
+- Formatting passed. Lint passed after correcting one unused local variable. TypeScript passed
+  across all six workspace projects. Unit tests passed: 75 files, 531 tests. PostgreSQL integration
+  tests passed against an isolated PostgreSQL 17 container on port 5434: 28 files, 157 tests. The
+  production build generated all 28 pages and routes. Chromium passed all 32 tests against a second
+  isolated port-5434 database. Both temporary containers were verified by exact name and port and
+  removed; production and Showcase databases were not touched.
+- Final Doctor, health, task snapshot, migration count, and `git diff --check` passed immediately
+  before commit. The commit and push result are recorded in the final task report.
+
+## Review Completion And Broad Spotify Coverage Audit (2026-08-29)
+
+### Review classification and workflow
+
+- Production currently has 6 user-actionable review groups, all Spotify candidate records for
+  Fairlane: `Back 2 Life`, `Everybody Knows`, `Hero`, `Euphoria`, `Best You Could`, and `Colors`.
+  Each already has an exported Spotify track, so these are durable match-quality decisions but are
+  not currently blocking a playlist addition.
+- The current export classification is 114 blocked tracks waiting on guarded Spotify resolution,
+  0 user-actionable export blocks, 0 terminal or no-equivalent blocks, 0 deferred groups, and 0
+  stale blocks. Before the repair, 113 were waiting and one historical `SEROTONIN` record was stale.
+- `SEROTONIN` had an ISRC, active followed artist, and confirmed Spotify artist identity but no
+  Spotify track and no resolution work. Its evidence originated from a historical non-Apple path,
+  while automatic repair seeding required an Apple candidate. Repair seeding now preserves the
+  Apple path and also accepts any canonical, non-dismissed followed track with a valid ISRC and a
+  confirmed Spotify artist mapping. It does not enable or call MusicBrainz. The natural scheduler
+  reconciled `SEROTONIN` into the guarded queue; no manual provider command was run.
+- Needs Review now contains only human decisions. System-waiting, terminal, and stale records have
+  separate expandable classifications with explicit reasons. Each human card shows the recommended
+  candidate, stored Spotify and Apple artwork or an honest missing-artwork placeholder, artist,
+  release, type, date, track list, provider links, blocking reason, evidence, and confidence.
+- Durable actions are `Confirm recommended candidate`, `Choose another candidate` through a verified
+  Spotify track URL, `Retry matching`, provider-specific `Keep separate`, `No Spotify equivalent`
+  when no Spotify candidate exists, and `Defer 7 days`.
+- Confirming stored Spotify evidence changes the candidate to a manual exact match and marks a
+  completed broad playlist checkpoint pending. The existing scheduler performs the later guarded
+  preview and fixed-target export. The browser request never writes the playlist. Exact track-link
+  confirmation and retry still queue guarded resolver work first.
+- No review decision was made during this goal, so 0 tracks became newly eligible. The six Fairlane
+  groups remain for the user to decide.
+
+### Artist Albums request breakdown
+
+The 759 Artist Albums requests in the audited August 14 through August 29 window all succeeded with
+zero 429s and zero failed requests:
+
+| Queue                        | Requests |             Unique artists |   Repeated-artist requests | Work rows |
+| ---------------------------- | -------: | -------------------------: | -------------------------: | --------: |
+| Apple priority and catch-up  |      324 |                        145 |                        179 |       307 |
+| Broad recurring artist scans |      182 |                        182 |                          0 |       182 |
+| Artist reconciliation        |       25 |                         25 |                          0 |        25 |
+| Release and track repair     |      228 |                         15 |                        213 |       120 |
+| Total                        |      759 | not additive across queues | not additive across queues |       634 |
+
+Daily Artist Albums use was: Aug 14 61, Aug 15 69, Aug 16 38, Aug 17 72, Aug 18
+80, Aug 19 80, Aug 20 49, Aug 21 60, Aug 22 39, Aug 25 71, Aug 26 60, Aug 28
+15, and Aug 29 65. Broad completed artists were: Aug 15 10, Aug 16 17, Aug 17 36,
+Aug 18 33, Aug 19 34, Aug 25 26, and Aug 26 26. Aug 22 and Aug 29 were eligible
+broad days but priority work consumed the available Artist Albums capacity. Aug 23 and Aug 24 were
+the previously documented host-sleep gap. Thursday and Friday broad exclusion remains intentional.
+
+- The base broad scan itself used 182 Artist Albums requests plus 10 OAuth requests for 182 artists,
+  or 1.05 requests per completed broad artist. Including 11 downstream recurring release-detail
+  calls gives about 1.12. Broad scanning is not intrinsically request-heavy.
+- The main displacement was repair work. Daily ISRC misses correctly requeue for a later exact check,
+  but each miss also reopened already completed `single` and `album` fallback searches. In this
+  window, `single` used 124 requests for 63 work rows and `album` used 89 for 57, exposing 93 repeated
+  fallback Artist Albums calls.
+- Automatic ISRC cascades now leave completed fallback work completed. An explicit user `Retry
+matching` still reopens it. This removes the proven daily fallback churn while keeping manual
+  recovery and the daily exact-ISRC check.
+- The +24-hour base due-date calculation is correct as a due-order mechanism. It does not guarantee
+  that every due artist can run within 24 hours when higher-priority queues consume the same
+  endpoint budget.
+- The observed rate is about 26 artists per broad day that actually ran, or about 20.2 across all
+  eligible operating days including zero-capacity days. At those rates, full 582-artist coverage is
+  about 31 to 40 calendar days. A two-week cycle requires about 59 artists on each of ten broad days,
+  nearly the 60-call daily broad Artist Albums ceiling, so it is not realistic while priority and
+  repair queues share that capacity.
+- Ranked next options by safety are: first, keep the implemented completed-fallback guard; second,
+  consider a longer backoff such as three to seven days for repeated ISRC no-match rows; third,
+  consider a protected base-scan capacity share. The second option offers the next clearest request
+  saving but adds delayed detection risk and was not implemented without a product decision. Budgets,
+  queue priorities, provider cadence, and production schedules were not changed.
+
+### Verification and operational state
+
+- The development runners now honor an explicit `TEST_DATABASE_URL` without also starting the
+  default Compose test service. Playwright accepts `RADAR_E2E_DATABASE_URL`. This allowed the full
+  test suites to use a temporary PostgreSQL 17 container on `127.0.0.1:5434` without touching the
+  Showcase database on port 5433.
+- A controlled application restart activated the new build. `app:down` also stopped the production
+  database service by design; `app:up` immediately restored PostgreSQL and the web supervisor. The
+  persistent database volume was preserved, health returned `ok`, doctor reports all 31 migrations,
+  and there is no evidence of data loss or a stale lock.
+- Production doctor is READY. Current scheduler evidence at 14:25 PDT shows automatic mode, no
+  active lease or cooldown, no Spotify 429 in the last 24 hours, Artist Albums at 80 of 80, priority
+  reserve at 0 of 20 remaining, playlist inbox completed, and zero pending playlist operations.
+- Browser smoke verified 6 human review cards, recommended-candidate labels, Spotify links, stored
+  artwork, Apple comparison placeholders where Apple evidence is absent, all durable action controls,
+  114 separate system-waiting rows with guarded-queue reasons, and zero stale rows.
+- Validation passed: formatting, lint with zero warnings, TypeScript across six projects, 75 unit
+  files with 525 tests, 28 PostgreSQL integration files with 157 tests, the 28-route production
+  build, 32 Chromium tests, production doctor, migration inspection, browser smoke, and
+  `git diff --check`.
+
+## Fresh Backup And Database
+
+- Created before code or production-state changes:
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-08-27T23-15-22-057Z.dump`
+- Size: 35,104,523 bytes
+- SHA-256: `1CE638086296D2D2920805B9D130F1646F2E891223F8DD182F4BF549EB208F76`
+- `pg_restore --list` verified the PostgreSQL 17 custom-format, gzip-compressed archive with 514
+  table-of-contents entries.
+- Production PostgreSQL is healthy on `127.0.0.1:5432`. Migration
+  `0030_mature_silver_surfer.sql` is applied and all 31 migrations are current.
+- Docker service `db` still uses `restart: unless-stopped`.
+
+## August 23-24 Missed-Window Audit
+
+- The old `TS New Music Radar Recurring Discovery` registration used an `InteractiveToken`
+  principal, ran every minute, and had `WakeToRun`, `StartWhenAvailable`, `IgnoreNew`, and hidden mode
+  enabled. Its direct action already used `conhost.exe --headless node.exe --import tsx`.
+- Windows supports S3 sleep and hibernation. The active High Performance plan permits wake timers on
+  AC and DC power. `powercfg /lastwake` proves the old recurring task successfully woke the PC during
+  an ordinary signed-in sleep on August 25.
+- The System log shows the PC slept from August 22 at 06:50 PDT until August 25 at 10:36 PDT, when the
+  power button woke it. A Windows Update reboot occurred shortly before that long sleep. No scanner
+  task wake occurred during the August 23-24 maintenance windows.
+- The evidence distinguishes this from a provider, quota, PostgreSQL, or web crash. The old task had
+  no dedicated maintenance boundary and depended on a usable interactive user session. The missed
+  windows followed a reboot and long lock-screen sleep, so the available evidence points to the
+  unsupported signed-out or not-yet-interactive state rather than ordinary signed-in sleep.
+- Task Scheduler's Operational log was disabled, so Windows retained no per-attempt task history for
+  those missed triggers. Shutdown and signed-out reboot operation remain intentionally unsupported.
+
+## Windows Scheduler After Correction
+
+Registration is through:
+
+```powershell
+pnpm discovery:scheduler:register
+```
+
+Two production tasks are registered for the current signed-in user:
+
+1. `TS New Music Radar Recurring Discovery`
+   - Hidden, enabled, `IgnoreNew`, `StartWhenAvailable`, restart 3 times at one-minute intervals, and
+     a three-minute execution limit.
+   - Repeats once per minute while Windows is awake.
+   - `WakeToRun` is disabled, so this poller no longer creates a wake request every minute.
+   - Direct action:
+     `C:\Windows\System32\conhost.exe --headless "C:\Program Files\nodejs\node.exe" --env-file="C:\Users\taysh\AppData\Local\TSNewMusicRadar\production-scheduler.env" --import tsx "C:\Users\taysh\Documents\Codex\codex_world_1\apps\scanner\src\discovery-scheduler-cli.ts" tick`
+   - Natural post-registration executions returned 0 with zero missed runs. After the idempotent
+     re-registration check, the latest inspected run was 17:23 PDT and returned 0.
+
+2. `TS New Music Radar Maintenance Window`
+   - Hidden, enabled, `IgnoreNew`, `StartWhenAvailable`, `WakeToRun`, restart 3 times at one-minute
+     intervals, and a four-hour execution limit.
+   - Direct action:
+     `C:\Windows\System32\conhost.exe --headless "C:\Program Files\nodejs\node.exe" --env-file="C:\Users\taysh\AppData\Local\TSNewMusicRadar\production-scheduler.env" --import tsx "C:\Users\taysh\Documents\Codex\codex_world_1\apps\scanner\src\discovery-maintenance-cli.ts"`
+   - Fixed Pacific triggers:
+     - Saturday through Wednesday at 08:50 and 20:50
+     - Thursday at 20:50
+     - Friday at 08:50
+   - Next fixed trigger at final inspection: Thursday, August 27 at 20:50 PDT.
+   - `267011` is the Windows never-run status for this newly created task, not a failed execution.
+
+The maintenance process reads the existing PostgreSQL schedule, queues, request budgets, cooldown,
+and playlist checkpoint. It calls the existing scheduler tick and contains no second scanner. It
+holds a hidden Windows `ES_SYSTEM_REQUIRED` request only during runnable work or a known wait of 15
+minutes or less, releases it in `finally`, exits immediately when no eligible work exists, and stops
+after four hours.
+
+Idempotent re-registration was live-verified at 17:23 PDT. After re-registration, the minute task
+still had exactly one `MinuteScheduler` trigger, `WakeToRun=false`, `IgnoreNew`, a three-minute
+limit, and last result 0 with zero missed runs. The maintenance task still had exactly the four
+fixed triggers, no duplicate `DynamicCapacityWake`, `WakeToRun=true`, `IgnoreNew`, a four-hour
+limit, and the next run at 20:50 PDT.
+
+## One-Time Wake Validation
+
+A separate temporary task named
+`TS New Music Radar Maintenance Wake Validation 2026-08-28` is registered for Friday, August 28 at
+02:50 PDT. It is hidden, enabled, `WakeToRun`, `StartWhenAvailable`, `IgnoreNew`, limited to five
+minutes, and runs only for the current interactive user. Its one trigger is
+`WakeValidation20260828` with start boundary `2026-08-28T02:50:00-07:00`.
+
+Its direct action is:
+
+`C:\Windows\System32\conhost.exe --headless "C:\Program Files\nodejs\node.exe" --import tsx "C:\Users\taysh\Documents\Codex\codex_world_1\apps\scanner\src\wake-validation-cli.ts"`
+
+The validation CLI does not import database, provider, scheduler, or playlist modules. It takes a
+Windows `ES_SYSTEM_REQUIRED` request, records independent activation evidence, holds it for 90
+seconds, releases it, verifies that the helper and power request have ended, and writes the result
+atomically to
+`C:\Users\taysh\AppData\Local\TSNewMusicRadar\logs\wake-validation-20260828.json`.
+It cannot start Apple Music or Spotify work, mutate the database, or write a playlist.
+
+A one-run Codex thread follow-up named `Verify 2:50 AM scanner wake test` is active for 02:56 PDT on
+August 28. Its ID is `verify-2-50-am-scanner-wake-test`. The follow-up is explicitly read-only and
+checks the task result, missed-run and overlap state, the evidence JSON, Windows wake evidence,
+minute-scheduler resumption, keep-awake release, leases and errors, and the unchanged production
+triggers. It does not start or stop any task and does not remove the temporary validation task.
+
+At the 17:42 PDT pre-test inspection, the validation task was Ready with next run 02:50, zero missed
+runs, and Windows never-run result `267011`. The production maintenance task still had only
+`BroadMorningWake`, `BroadEveningWake`, `ThursdayAppleWake`, and `FridayCatchupWake`; its next normal
+run remained 20:50 PDT. The minute scheduler remained Ready with `WakeToRun=false`, last result 0,
+and zero missed runs. `powercfg /waketimers` still required administrator elevation, so the task's
+`WakeToRun=true` setting is configured evidence, not yet live wake proof.
+
+The active High Performance plan is configured to sleep after 7,200 seconds on AC power and never
+automatically sleep on battery. The 90-second helper can therefore release promptly while the PC
+remains awake for the 02:56 follow-up under the current power-plan settings.
+
+For the live test, remain signed in and put the PC into ordinary sleep before 02:50. Do not shut
+down, sign out, or hibernate. Those states are outside this signed-in sleep validation.
+
+Isolated tests now also verify that the keep-awake helper requests
+`ES_CONTINUOUS | ES_SYSTEM_REQUIRED`, runs hidden, and releases its child process; that non-Windows
+operation is a no-op; and that dynamic wake updates preserve fixed triggers, tolerate an unchanged
+time, keep at most one `DynamicCapacityWake`, and remove it cleanly.
+
+If priority or playlist work is blocked only by cooldown or rolling Artist Albums capacity, the
+ordinary tick updates one trigger named `DynamicCapacityWake`. The trigger is ten minutes before the
+database-calculated next runnable time. Re-registration preserves it, updates are idempotent, and a
+long wait releases the keep-awake request. There was no dynamic trigger at final inspection because
+no priority or playlist work was waiting on capacity.
+
+Configuration verification is complete, but a live wake by the new maintenance task is not yet
+proven. `powercfg /waketimers` requires an administrator-elevated command prompt on this machine, and
+the maintenance task's first natural trigger is 20:50 PDT. A manual task invocation was not used
+because 577 broad artists are due and the safety reviewer correctly rejected any claim that such a
+run was guaranteed mutation-free. Do not force sleep. Use a user-assisted signed-in sleep test at a
+fixed maintenance trigger, then confirm the Power-Troubleshooter event names the maintenance task.
+
+The same safety restriction was re-confirmed at 17:24 PDT after current status showed 577 due broad
+artists. Although Thursday gating should return `no_work` before 20:50, the manual maintenance task
+was not invoked after the safety reviewer rejected it. No workaround was attempted. The first
+natural maintenance trigger remains the authoritative live test.
+
+## Review Workflow
+
+- Migration 0030 adds `manual_match_decisions.deferred_until` for durable seven-day deferrals.
+- The Needs Review page now shows only persisted release-candidate decisions plus existing artist
+  identity decisions. Release cards identify the actual Apple Music or Spotify source and show
+  artwork, artist, title, release type, date, track, provider links, evidence, confidence, and the
+  blocking explanation.
+- Durable release actions are:
+  - Confirm candidate
+  - Select a specific candidate card when alternates are shown
+  - Confirm a supplied Spotify track link through guarded manual-resolution work
+  - Mark no Spotify equivalent for a non-Spotify candidate
+  - Retry matching through guarded ISRC resolution
+  - Keep separate
+  - Defer for seven days
+- Retry and selected-track confirmation require a canonical ISRC, primary credit, and confirmed
+  Spotify artist mapping. They enqueue the existing resolution worker and never call Spotify from a
+  browser request. Resolved tracks reach the existing fixed-target exporter through normal scheduler
+  eligibility checks. No direct or duplicate export path was added.
+- System-waiting tracks are shown separately with status, due time, attempt count, source, and exact
+  queue or retry reason. They expose no misleading manual action.
+- Every visible release-review card now places a specifically named `Open Spotify track for ...`
+  link above the provider comparison. It uses the card's stored Spotify evidence or Spotify
+  candidate first. An Apple card can reuse a sibling Spotify candidate only when there is exactly
+  one unique stored Spotify URL with the same normalized artist, title, release date, and release
+  type. Zero or multiple candidates remain explicitly unresolved rather than linking to a guessed
+  track.
+- Provider candidate links now identify their destination, such as `Open Apple Music candidate`,
+  and the provider-label comparison accepts the display labels returned by the feed API.
+- Live browser verification after the controlled restart found 21 review cards, 21 exact Spotify
+  track links, and zero missing-link notices. The previously unlinked Apple Music `NASTY` card now
+  exposes the same stored Spotify candidate URL as its uniquely matching Spotify review card.
+
+Current production classification:
+
+- 21 visible manual candidate records: 13 Spotify and 8 Apple Music
+- 23 total candidate rows remain `needs_review`; two have no visible `needs_review` feed row
+- 105 blocked export tracks
+- 2 blocked tracks have a visible user-actionable candidate
+- 102 are waiting on guarded Spotify work, and all 102 detail rows are returned
+- 0 are terminal or marked no Spotify equivalent
+- 0 are currently deferred
+- 1 has stale or invalid state and no matching actionable or waiting record
+
+The goal was written when 22 manual records had been reported. The authoritative post-backup baseline
+was already 21. The latest prior manual decision was recorded at 16:11 PDT, four minutes before this
+backup, and this work did not make any live review decision.
+
+## Current Operational State
+
+- Doctor reports READY. There are no failed scans awaiting attention, stale scan locks, active
+  Spotify lease, or active Spotify cooldown.
+- Spotify telemetry has 0 429s in the last 24 hours and retains five quota-classified plus two legacy
+  historical 429s. The latest quota event was August 9.
+- Current scheduler status reports 1,339 queued and 11 blocked work rows. Artist Albums usage is
+  0 of 80 with the 20-request priority reserve intact. The playlist inbox is completed with zero
+  pending operations.
+- The latest successful provider work is August 28 at 13:56 PDT. No provider scan or playlist
+  write was manually triggered during this correction.
+- The authorized Spotify playlist target and all existing snapshot, additions-only, Custom Order,
+  Date Added, Added By, user-added-track, ownership, collaboration, cooldown, quota, and idempotency
+  safeguards are unchanged.
+- The hidden web supervisor is running the validated production build on `127.0.0.1:3000`. A
+  controlled stop for this correction replaced Next child PID 51568 with PID 54388 under supervisor
+  PID 55768 in under nine seconds. `/api/health` returned `ok`, and the command line remains
+  loopback-only.
+- This review-link correction made no provider request, review decision, scheduler invocation,
+  playlist write, database mutation, or credential change.
+
+## Mirrored Release Review Repair (2026-08-28)
+
+- Apple Music and Spotify candidate rows that point to the same exact canonical release ID and
+  proposed canonical track ID now share one review group. Provider evidence rows remain separate
+  and are not merged or deleted.
+- The review page renders one card per exact canonical group, combines the stored Apple Music and
+  Spotify links, and counts the group as one human decision. Similar titles without the same two
+  canonical IDs remain separate.
+- Confirm, defer, retry, selected-Spotify-track confirmation, and no-equivalent decisions use the
+  grouped API scope. The database applies every member decision in one transaction, so a failure
+  rolls back the whole group. A group containing Spotify evidence cannot be marked as having no
+  Spotify equivalent.
+- Keep separate remains candidate-specific for grouped cards. The UI names the provider on each
+  separate action, preventing an ambiguous group-wide split.
+- Full verification passed: formatting, lint, type checking, 521 unit tests in 74 files, 154
+  integration tests in 28 files against a temporary PostgreSQL 17 database with all migrations, a
+  28-route production build, 32 Playwright tests, production doctor, and `git diff --check`. The
+  targeted browser test proved one card, both provider links, one grouped confirmation request, and
+  removal of both mirrored rows. Database verification proved two manual decisions and provider
+  mappings but only one canonical feed item after confirmation.
+- Production currently has zero raw actionable review rows and zero grouped review decisions, so no
+  live review decision was available or made. The optimized build was deployed through the existing
+  hidden `TS New Music Radar Web Application` task. Loopback health passed, and a cache-busted live
+  browser load displayed the new grouped-count wording.
+- Production doctor is READY: PostgreSQL is connected, all 31 migrations are applied, the loopback
+  application is healthy, and no provider lease, cooldown, stale lock, or recent Spotify 429 is
+  present. The shared Showcase test database on port 5433 lacks migration 0030 and can log a
+  missing-column warning on unmocked E2E status requests; scanner integration and production use
+  current databases, and all E2E tests passed.
+- No provider request, playlist write, review decision, scheduler invocation, credential change, or
+  `.env` change was made for this repair.
+
+## Keep-Awake Validation Correction (2026-08-28)
+
+- The one-time 02:50 PDT task woke Windows at 02:49:38, ran at 02:50 with result 0 and zero missed
+  runs, and the minute scheduler resumed. Normal production Spotify work then resumed without
+  overlap, cooldown, lease, 429, or provider errors. This live-validates wake from ordinary signed-in
+  sleep. The four normal maintenance triggers were not changed.
+- The missing validation JSON was caused by `wake-validation-cli.ts` running `powercfg /requests`
+  before it acquired the keep-awake helper. This PC restricts that query to administrators, although
+  `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` itself works for the normal limited
+  scheduled-task identity.
+- Keep-awake proof no longer depends on `powercfg`. Each owner now has a durable run ID and record
+  under `%LOCALAPPDATA%\TSNewMusicRadar\logs\keep-awake`. The record contains the owner and helper
+  process IDs, request reason and phase, requested and activated timestamps, release request and
+  completion timestamps, final released state, release reason, and abnormal-exit recovery fields.
+  A single exclusive owner record rejects overlap. An exited owner is recovered only after its old
+  helper is confirmed gone, so a replacement cannot overlap it.
+- Production maintenance passes the current work reason into the record. It acquires the helper only
+  for due work or a scheduler-approved wait of at most 15 minutes for known capacity, updates the
+  phase as the decision changes, and releases in `finally` as soon as work drains, becomes
+  non-runnable, fails, or reaches the four-hour ceiling.
+- The helper now uses a graceful release signal, records activation after the Windows API succeeds,
+  clears `ES_SYSTEM_REQUIRED` in `finally`, writes release evidence, and exits if its owner process
+  disappears. A stale owner record is marked `recovery_pending` while an old helper still exists and
+  `recovered_after_abnormal_exit` after it is safely gone.
+- `powercfg /requests` remains an optional secondary observation. Administrator or access-denied
+  results are recorded as informational and never prevent activation or make validation fail.
+- A two-second non-provider validation under the current non-admin identity passed at 14:02 PDT. Run
+  ID `6fe5b8e8-6bac-41c2-9e13-b948f5b0a170` recorded helper PID 42336, activation at
+  21:02:44.068Z, requested release at 21:02:45.611Z, completed release at 21:02:45.816Z, final state
+  `released`, and no remaining owner. Both optional `powercfg` observations reported informational
+  `access_denied`. No database, provider, scheduler, or playlist path was imported or invoked.
+- Task Scheduler Operational history remains disabled. Enabling it was attempted without elevation
+  and Windows returned access denied. From an Administrator Terminal, run:
+  `wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true`.
+- The reusable one-time validation registration now requires an explicit future `-RunAt` value and
+  keeps the direct hidden `conhost.exe --headless node.exe --import tsx` action, limited-user
+  principal, `WakeToRun`, `StartWhenAvailable`, and `IgnoreNew`. It does not alter production
+  triggers.
+
+## Upcoming Feed Maturity Correction (2026-08-28)
+
+- Root cause: `feed_items.state` captured `candidate.isUpcoming` only when a discovery was first
+  inserted. The conflict path was intentionally idempotent and never revisited that state, so an
+  item could remain `upcoming` after its effective canonical release date passed.
+- The recurring scheduler now matures only rows still in `upcoming` at the start of every normal
+  tick. It uses the Pacific production calendar date and moves a row to `new` when its effective
+  canonical release date has arrived or exact stored Spotify availability says the track is
+  playable in the US. Saved, listened, dismissed, and review states are never overwritten.
+- This also handles released preview tracks from future-dated albums without moving unreleased
+  siblings. The summary card now counts only actual `upcoming` rows within the next 30 days.
+- A fresh pre-correction backup is at
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-08-28T21-19-17-273Z.dump`.
+  It is 38,015,992 bytes with SHA-256
+  `077A459C4971AC2B727D3F25B4942B77E2B9C09D8BDEBE02F6689EC31B16B199`; PostgreSQL 17
+  `pg_restore --list` verified 525 table-of-contents lines.
+- The natural minute scheduler applied the correction without a manual provider scan. It moved 28
+  rows: 22 whose effective release dates had passed and 6 already-playable preview tracks. A second
+  pass was a no-op. Production now has 1,705 `new`, 6 `upcoming`, and zero eligible stale upcoming
+  rows.
+- The six retained rows are future-dated and not stored as playable: `Worship` and `Prayers`
+  (September 11), `More! More! More!` and `what do i have to do?` (September 25), and `LIEBE` and
+  `Stay` (October 23). The live API and in-app browser both report 6 total Upcoming items and 4
+  within the next 30 days.
+- No Apple Music or Spotify request was made solely for this repair. No playlist write, review
+  decision, provider schedule, maintenance wake trigger, credential, or `.env` value was changed.
+- The full validation result for this repository state is: formatting passed; lint passed with zero
+  warnings; typecheck passed across all six projects; 74 unit files and 521 tests passed; 28
+  integration files and 154 tests passed against a temporary PostgreSQL 17 instance on port 5434;
+  the production build generated all 28 pages and routes; and all 32 Playwright tests passed. The
+  broad navigation Playwright test was made self-contained after it exposed an existing dependency
+  on leftover OAuth state in the shared test database.
+- Doctor is READY with all 31 migrations applied, PostgreSQL connected, no stale lock, active
+  provider lease, or cooldown, and the web health endpoint responding on `127.0.0.1:3000`. The
+  production web build was restored through `TS New Music Radar Web Application`; the task remains
+  the hidden long-running supervisor with zero missed runs.
+
+## Followed-Artist Removal Repair (2026-08-28)
+
+- Root cause: the trash button changed only browser memory and never called a server route or
+  updated `artist_follows`. The watchlist query also returned inactive follow rows, so a reload
+  restored both newly removed artists and ten historical inactive rows.
+- `DELETE /api/artists/[id]` now idempotently sets the local follow inactive while preserving the
+  canonical artist, provider mappings, releases, evidence, and history. Queued Spotify scheduler
+  work for that artist is blocked with `artist_not_followed`; leased work is not interrupted.
+- The watchlist API now returns only active follows. A Spotify followed-artist import leaves an
+  inactive canonical artist unselected by default, preventing a routine import from silently
+  reactivating a local removal. The user can still explicitly select that candidate to re-add it.
+- A fresh backup made before the live removal is at
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-08-28T23-21-56-143Z.dump`.
+- The previously requested `barking continues` removal was applied through the new loopback route.
+  Active follows changed from 583 to 582, the artist is absent from a fresh API response and full
+  browser reload, and one queued Spotify work item was blocked. No canonical evidence was deleted.
+- The existing hidden web supervisor recovered from a controlled web-process stop and started the
+  verified production build with a new PID. Loopback health and production doctor are READY with
+  all 31 migrations, no stale lock, provider lease, cooldown, or recent Spotify 429.
+- No Apple Music or Spotify provider request, playlist write, provider schedule change, credential,
+  or `.env` change was made for this repair.
+
+## System Status Contract Repair (2026-08-28)
+
+- Root cause: `/api/system/status` was healthy and returned HTTP 200, but the browser's shared
+  Spotify scheduler schema did not recognize the current `track_resolution` work type. Production
+  reported that value in `recentWork`, so Zod rejected the whole response and the page displayed
+  the generic load error.
+- The browser contract now accepts `track_resolution` in active and recent work, backlog counts,
+  and request counts. The detailed scheduler view also reports the track-resolution backlog and
+  request total.
+- Playwright now injects a production-shaped `track_resolution` status response and proves the
+  System status view loads without the error. The older scan-history fixture was updated to the
+  same complete scheduler contract.
+- The historical migration-upgrade integration test now has a 15-second timeout. Applying its 17
+  historical migrations consistently exceeded Vitest's five-second default on Windows Docker; the
+  assertions and production behavior are unchanged.
+- The verified build was deployed through the existing supervisor. The web child changed from PID
+  31996 to PID 45676, `/api/health` returned `ok`, and a cache-busted in-app browser load showed the
+  complete System status view with zero `Status could not be loaded.` messages and zero browser
+  error logs.
+- No database row, provider state, playlist, schedule, credential, or `.env` value was changed.
+
+## Validation
+
+- `pnpm format:check`: passed
+- `pnpm lint`: passed with zero warnings
+- `pnpm typecheck`: passed across all six workspace projects
+- `pnpm test`: 77 files and 549 tests passed. Maintenance coverage directly asserts keep-awake
+  release, failure cleanup, absolute runtime cutoff, dynamic-wake deduplication, Thursday and Friday
+  broad-work suppression, Saturday broad eligibility, Apple-priority precedence, cooldown
+  enforcement, optional `powercfg` denial, single-owner enforcement, crash recovery, bounded
+  near-term waits, and durable activation and release evidence.
+- `pnpm test:integration`: 28 files and 172 tests passed against an isolated PostgreSQL 17 service
+  on port 5434 with all 31 migrations. Production port 5432 was not used by the tests.
+- `pnpm build`: passed, including the current API and system-status routes
+- `pnpm test:e2e`: 32 Playwright tests passed, including production-shaped
+  `track_resolution` status data and the complete scan-history scheduler contract
+- `pnpm run doctor`: READY, with PostgreSQL connected, all 31 migrations applied, no stale locks,
+  no active provider lease or cooldown, and `127.0.0.1:3000` healthy. With pnpm 11, bare
+  `pnpm doctor` invokes pnpm's package-manager diagnostic rather than the repository script.
+- `git diff --check`: passed
+- In-app browser smoke: a cache-busted System status reload rendered Database, provider, scanner,
+  and scheduling status with no load-error text and no browser error logs.
+
+## Remaining Verification
+
+- Wake from signed-in sleep and resumption of production work are live-validated. The corrected
+  non-admin helper activation, durable evidence, graceful release, optional access-denied handling,
+  and absence of a leftover owner are also live-validated while Windows remained awake.
+- One final sleep test is needed only to prove the corrected helper prevents sleep for the entire
+  hold interval under the scheduled Limited identity. Register a future one-time validation with an
+  explicit `-RunAt`, put the signed-in PC into ordinary sleep before it, and inspect
+  `wake-validation-latest.json` plus the matching keep-awake run record afterward. Do not change or
+  move the four production maintenance triggers.
+- Task Scheduler Operational history can be enabled only from an Administrator Terminal on this PC
+  with `wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true`.
