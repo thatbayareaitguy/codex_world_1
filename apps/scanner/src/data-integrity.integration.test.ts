@@ -1,5 +1,6 @@
-import type { TrackCandidate } from "@radar/core";
+import { normalizeText, type TrackCandidate } from "@radar/core";
 import {
+  artists,
   createDatabase,
   createSpotifyScanBatch,
   discoveryScheduleState,
@@ -25,6 +26,7 @@ import {
   spotifyReleaseTrackRetrievals,
   spotifyScanBatches,
   startSpotifyReleaseTrackRetrieval,
+  trackCredits,
   trackExternalIds,
   tracks,
 } from "@radar/db";
@@ -611,6 +613,205 @@ describe.sequential("Spotify mapping resume and Keep separate", () => {
     expect(
       await connection.db.query.feedItems.findFirst({ where: eq(feedItems.id, feed!.id) }),
     ).toMatchObject({ state: "needs_review", trackId: track!.id });
+  });
+
+  it("blocks cross-artist review actions at the database boundary while allowing the same artist", async () => {
+    const userId = await ensureLocalOwner(connection.db);
+    const suffix = randomUUID();
+    const canonicalIsrc = `USNQ926${suffix.replaceAll("-", "").slice(0, 5).toUpperCase()}`;
+    const [release] = await connection.db
+      .insert(releases)
+      .values({
+        normalizedTitle: normalizeText(`Need You ${suffix}`),
+        releaseDate: "2026-09-11",
+        releaseDatePrecision: "day",
+        releaseType: "single",
+        title: `Need You ${suffix}`,
+      })
+      .returning({ id: releases.id });
+    const [canonicalArtist] = await connection.db
+      .insert(artists)
+      .values({
+        name: `Vibe Chemistry ${suffix}`,
+        normalizedName: normalizeText(`Vibe Chemistry ${suffix}`),
+      })
+      .returning({ id: artists.id });
+    const [proposedTrack] = await connection.db
+      .insert(tracks)
+      .values({
+        durationMs: 283_636,
+        isrc: canonicalIsrc,
+        normalizedTitle: "need you",
+        releaseId: release!.id,
+        title: "Need You",
+      })
+      .returning({ id: tracks.id });
+    await connection.db.insert(trackCredits).values({
+      artistId: canonicalArtist!.id,
+      creditedName: "Maurizzle",
+      creditOrder: 0,
+      role: "primary",
+      trackId: proposedTrack!.id,
+    });
+    await connection.db.insert(trackExternalIds).values({
+      externalId: `spotify-need-you-${suffix}`,
+      provider: "spotify",
+      providerUrl: `https://open.spotify.com/track/need-you-${suffix}`,
+      trackId: proposedTrack!.id,
+    });
+
+    async function insertReview(
+      payload: TrackCandidate,
+      dedupeKey: string,
+      matchRule = "metadata_review",
+    ) {
+      const [reviewCandidate] = await connection.db
+        .insert(releaseCandidates)
+        .values({
+          artistExternalId: payload.artistExternalId,
+          firstSeenAt: new Date(payload.firstSeenAt),
+          matchConfidence: "0.600",
+          matchReasons: ["Normalized titles are identical", "Score is below 0.93"],
+          matchRule,
+          matchStatus: "needs_review",
+          matchedTrackId: proposedTrack!.id,
+          normalizedTitle: normalizeText(payload.title),
+          payloadHash: payload.payloadHash,
+          provider: payload.provider,
+          providerReleaseId: payload.externalReleaseId,
+          providerTrackId: payload.externalTrackId,
+          rawPayload: payload,
+          releaseDate: payload.releaseDate,
+          title: payload.title,
+        })
+        .returning({ id: releaseCandidates.id });
+      const [feed] = await connection.db
+        .insert(feedItems)
+        .values({
+          candidateId: reviewCandidate!.id,
+          dedupeKey,
+          firstSeenAt: new Date(payload.firstSeenAt),
+          releaseId: release!.id,
+          state: "needs_review",
+          trackId: proposedTrack!.id,
+          userId,
+        })
+        .returning({ id: feedItems.id });
+      return { candidateId: reviewCandidate!.id, feedId: feed!.id };
+    }
+
+    const oliversePayload = candidate({
+      artistExternalId: `apple-oliverse-${suffix}`,
+      artistName: "Oliverse",
+      availability: "unavailable",
+      credits: [{ name: "Oliverse", role: "primary" }],
+      durationMs: 177_429,
+      evidenceType: "apple_music_track",
+      evidenceUrl: `https://music.apple.com/us/album/need-you/${suffix}`,
+      externalReleaseId: `apple-oliverse-release-${suffix}`,
+      externalTrackId: `apple-oliverse-track-${suffix}`,
+      payloadHash: `sha256:apple-oliverse-${suffix}`,
+      provider: "apple_music",
+      providerUrl: `https://music.apple.com/us/album/need-you/${suffix}`,
+      releaseTitle: "Need You - Single",
+      sourceLabel: "Synthetic Apple Music",
+      title: "Need You",
+    });
+    const mismatchedReview = await insertReview(
+      oliversePayload,
+      `review:oliverse-maurizzle:${suffix}`,
+      "exact_isrc",
+    );
+
+    for (const decision of ["confirm", "retry", "confirm_track", "no_equivalent"] as const) {
+      await expect(
+        resolveFeedReview(
+          connection.db,
+          userId,
+          mismatchedReview.feedId,
+          decision,
+          decision === "confirm_track" ? { spotifyTrackId: "0123456789ABCDEFGHIJKL" } : {},
+        ),
+      ).rejects.toThrow(/primary artist credits do not overlap/i);
+    }
+    expect(
+      await connection.db.query.releaseCandidates.findFirst({
+        where: eq(releaseCandidates.id, mismatchedReview.candidateId),
+      }),
+    ).toMatchObject({ matchStatus: "needs_review" });
+    expect(
+      await connection.db.query.feedItems.findFirst({
+        where: eq(feedItems.id, mismatchedReview.feedId),
+      }),
+    ).toMatchObject({ state: "needs_review" });
+    expect(
+      await connection.db.query.manualMatchDecisions.findFirst({
+        where: eq(manualMatchDecisions.candidateId, mismatchedReview.candidateId),
+      }),
+    ).toBeUndefined();
+    expect(
+      await connection.db.query.trackExternalIds.findFirst({
+        where: eq(trackExternalIds.externalId, oliversePayload.externalTrackId),
+      }),
+    ).toBeUndefined();
+
+    const exactOliversePayload: TrackCandidate = {
+      ...oliversePayload,
+      evidenceUrl: `https://music.apple.com/us/album/need-you-exact/${suffix}`,
+      externalReleaseId: `apple-oliverse-exact-release-${suffix}`,
+      externalTrackId: `apple-oliverse-exact-track-${suffix}`,
+      isrc: canonicalIsrc,
+      payloadHash: `sha256:apple-oliverse-exact-${suffix}`,
+      providerUrl: `https://music.apple.com/us/album/need-you-exact/${suffix}`,
+    };
+    const exactReview = await insertReview(
+      exactOliversePayload,
+      `review:oliverse-maurizzle-exact:${suffix}`,
+      "metadata_review",
+    );
+    await expect(
+      resolveFeedReview(connection.db, userId, exactReview.feedId, "confirm"),
+    ).resolves.toMatchObject({ decision: "confirm", state: "new" });
+    expect(
+      await connection.db.query.releaseCandidates.findFirst({
+        where: eq(releaseCandidates.id, exactReview.candidateId),
+      }),
+    ).toMatchObject({ matchRule: "manual_confirmation", matchStatus: "matched" });
+
+    const maurizzlePayload = candidate({
+      artistExternalId: `apple-maurizzle-${suffix}`,
+      artistName: "Maurizzle",
+      availability: "unavailable",
+      credits: [{ name: "Maurizzle", role: "primary" }],
+      durationMs: 283_000,
+      evidenceType: "apple_music_track",
+      evidenceUrl: `https://music.apple.com/us/album/need-you-match/${suffix}`,
+      externalReleaseId: `apple-maurizzle-release-${suffix}`,
+      externalTrackId: `apple-maurizzle-track-${suffix}`,
+      payloadHash: `sha256:apple-maurizzle-${suffix}`,
+      provider: "apple_music",
+      providerUrl: `https://music.apple.com/us/album/need-you-match/${suffix}`,
+      releaseTitle: "Need You - Single",
+      sourceLabel: "Synthetic Apple Music",
+      title: "Need You",
+    });
+    const matchingReview = await insertReview(
+      maurizzlePayload,
+      `review:maurizzle-maurizzle:${suffix}`,
+    );
+    await expect(
+      resolveFeedReview(connection.db, userId, matchingReview.feedId, "confirm"),
+    ).resolves.toMatchObject({ decision: "confirm", state: "new" });
+    expect(
+      await connection.db.query.releaseCandidates.findFirst({
+        where: eq(releaseCandidates.id, matchingReview.candidateId),
+      }),
+    ).toMatchObject({ matchStatus: "matched" });
+    expect(
+      await connection.db.query.trackExternalIds.findFirst({
+        where: eq(trackExternalIds.externalId, maurizzlePayload.externalTrackId),
+      }),
+    ).toMatchObject({ provider: "apple_music", trackId: proposedTrack!.id });
   });
 
   it("resolves mirrored Apple and Spotify reviews as one atomic canonical group", async () => {

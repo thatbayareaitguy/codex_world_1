@@ -1,9 +1,10 @@
-import type { TrackCandidate } from "@radar/core";
+import { normalizeText, type TrackCandidate } from "@radar/core";
 import {
   createDatabase,
   feedItems,
   feedRevisions,
   releaseCandidates,
+  releases,
   sourceEvidence,
   trackAvailabilities,
   tracks,
@@ -305,6 +306,153 @@ describe.sequential("database feed pagination", () => {
       "Unreleased Album Track 1",
       "Unreleased Album Track 2",
     ]);
+  });
+
+  it("projects incoming and proposed identities with cross-artist review warnings", async () => {
+    const title = "Need You Projection Review";
+    const canonicalIsrc = "USPRJ2600001";
+    const canonicalCandidate: TrackCandidate = {
+      ...spotifyCandidate(980, {
+        releaseDate: "2026-09-11",
+        releaseId: spotifyId(981),
+        releaseTitle: "Need You Spotify Release",
+        releaseType: "single",
+        trackNumber: 1,
+      }),
+      artistExternalId: spotifyId(982),
+      artistName: "Maurizzle",
+      credits: [{ name: "Maurizzle", role: "primary" }],
+      durationMs: 180_000,
+      externalTrackId: spotifyId(983),
+      isrc: canonicalIsrc,
+      title,
+    };
+    await persistCandidates(connection.db, [canonicalCandidate], {
+      dryRun: false,
+      full: false,
+      provider: "spotify",
+    });
+    const canonicalFeed = await connection.db.query.feedItems.findFirst({
+      where: eq(feedItems.dedupeKey, `spotify:${spotifyId(981)}:${spotifyId(983)}`),
+    });
+    expect(canonicalFeed?.releaseId).toBeTruthy();
+    expect(canonicalFeed?.trackId).toBeTruthy();
+    const [incomingRelease] = await connection.db
+      .insert(releases)
+      .values({
+        normalizedTitle: normalizeText("Need You Apple Release"),
+        releaseDate: "2026-09-11",
+        releaseDatePrecision: "day",
+        releaseType: "single",
+        title: "Need You Apple Release",
+      })
+      .returning({ id: releases.id });
+
+    const appleCandidate: TrackCandidate = {
+      artistExternalId: "1982000001",
+      artistName: "Oliverse",
+      availability: "unavailable",
+      credits: [{ name: "Oliverse", role: "primary" }],
+      durationMs: 231_000,
+      evidenceType: "apple_music_catalog_singles",
+      evidenceUrl: "https://music.apple.com/us/album/need-you/1981000001",
+      externalReleaseId: "1981000001",
+      externalTrackId: "1983000001",
+      firstSeenAt: "2026-09-12T04:00:00.000Z",
+      payloadHash: "projection-review-payload",
+      provider: "apple_music",
+      providerUrl: "https://music.apple.com/us/album/need-you/1981000001",
+      region: "US",
+      releaseDate: "2026-09-11",
+      releaseDatePrecision: "day",
+      releaseTitle: "Need You Apple Release",
+      releaseType: "single",
+      sourceLabel: "Apple Music Catalog",
+      title,
+      trackNumber: 1,
+    };
+    const [candidateRow] = await connection.db
+      .insert(releaseCandidates)
+      .values({
+        artistExternalId: appleCandidate.artistExternalId,
+        firstSeenAt: new Date(appleCandidate.firstSeenAt),
+        matchConfidence: "0.600",
+        matchReasons: ["Normalized titles are identical", "Score is below 0.93"],
+        matchRule: "manual_review",
+        matchStatus: "needs_review",
+        matchedTrackId: canonicalFeed!.trackId,
+        matchingAlgorithmVersion: "synthetic-legacy-review",
+        normalizedTitle: normalizeText(title),
+        payloadHash: appleCandidate.payloadHash,
+        provider: "apple_music",
+        providerReleaseId: appleCandidate.externalReleaseId,
+        providerTrackId: appleCandidate.externalTrackId,
+        rawPayload: appleCandidate,
+        releaseDate: appleCandidate.releaseDate,
+        title,
+      })
+      .returning({ id: releaseCandidates.id });
+    await connection.db.insert(sourceEvidence).values({
+      candidateId: candidateRow!.id,
+      evidenceType: appleCandidate.evidenceType,
+      externalId: appleCandidate.externalTrackId,
+      payloadHash: appleCandidate.payloadHash,
+      provider: "apple_music",
+      sourceUrl: appleCandidate.evidenceUrl,
+    });
+    await connection.db.insert(feedItems).values({
+      candidateId: candidateRow!.id,
+      dedupeKey: `apple_music:${appleCandidate.externalReleaseId}:${appleCandidate.externalTrackId}`,
+      firstSeenAt: new Date(appleCandidate.firstSeenAt),
+      releaseId: incomingRelease!.id,
+      state: "needs_review",
+      trackId: null,
+      userId: canonicalFeed!.userId,
+    });
+
+    const page = await loadDatabaseFeedPage(databaseUrl, {
+      filters: { search: title, state: "needs_review" },
+      limit: 25,
+      secret: cursorSecret,
+    });
+
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]?.review).toMatchObject({
+      exactIdentityMatch: false,
+      groupKey: `${incomingRelease!.id}:${canonicalFeed!.trackId}`,
+      incomingCandidate: {
+        artist: "Oliverse",
+        durationMs: 231_000,
+        releaseDate: "2026-09-11",
+        releaseTitle: "Need You Apple Release",
+        releaseType: "single",
+        title,
+      },
+      proposedCanonical: {
+        artist: "Maurizzle",
+        durationMs: 180_000,
+        releaseDate: "2026-09-11",
+        releaseTitle: "Need You Spotify Release",
+        releaseType: "single",
+        title,
+      },
+      warnings: ["artist_credit_mismatch", "duration_mismatch"],
+    });
+
+    await connection.db
+      .update(releaseCandidates)
+      .set({ rawPayload: { ...appleCandidate, isrc: canonicalIsrc } })
+      .where(eq(releaseCandidates.id, candidateRow!.id));
+    const exactPage = await loadDatabaseFeedPage(databaseUrl, {
+      filters: { search: title, state: "needs_review" },
+      limit: 25,
+      secret: cursorSecret,
+    });
+    expect(exactPage.items[0]?.review).toMatchObject({
+      exactIdentityMatch: true,
+      groupKey: `${incomingRelease!.id}:${canonicalFeed!.trackId}`,
+      warnings: ["artist_credit_mismatch", "duration_mismatch"],
+    });
   });
 });
 

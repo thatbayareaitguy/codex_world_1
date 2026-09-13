@@ -4884,11 +4884,50 @@ function ReviewView({
         reviewFilter !== "apple_music_mappings" &&
         visibleItemGroups.length ? (
           visibleItemGroups.map((group) => {
-            const item =
-              group.items.find((candidate) => candidate.review?.provider === "apple_music") ??
-              group.items[0]!;
+            const reviewPresentations = group.items.map((candidate) => ({
+              exactIdentityMatch: candidate.review?.exactIdentityMatch === true,
+              incomingCandidate: candidate.review?.incomingCandidate ?? {
+                artist: candidate.artist,
+                releaseDate: candidate.releaseDate,
+                releaseTitle: candidate.releaseTitle,
+                releaseType: candidate.releaseType,
+                title: candidate.title,
+              },
+              item: candidate,
+              proposedCanonical: candidate.review?.proposedCanonical ?? {
+                artist: candidate.artist,
+                releaseDate: candidate.releaseDate,
+                releaseTitle: candidate.releaseTitle,
+                releaseType: candidate.releaseType,
+                title: candidate.title,
+              },
+              warnings: candidate.review?.warnings ?? [],
+            }));
+            const presentation =
+              reviewPresentations.find(
+                (candidate) =>
+                  candidate.warnings.includes("artist_credit_mismatch") &&
+                  !candidate.exactIdentityMatch,
+              ) ??
+              reviewPresentations.find((candidate) =>
+                candidate.warnings.includes("artist_credit_mismatch"),
+              ) ??
+              reviewPresentations.find(
+                (candidate) => candidate.item.review?.provider === "apple_music",
+              ) ??
+              reviewPresentations[0]!;
+            const item = presentation.item;
             const pending = group.items.some((candidate) => pendingItemIds.includes(candidate.id));
             const candidateProvider = item.review?.provider ?? "mock";
+            const { incomingCandidate, proposedCanonical } = presentation;
+            const warningPresentations = reviewPresentations.filter(
+              (candidate) => candidate.warnings.length > 0,
+            );
+            const blockingArtistCreditMismatch = warningPresentations.some(
+              (candidate) =>
+                candidate.warnings.includes("artist_credit_mismatch") &&
+                !candidate.exactIdentityMatch,
+            );
             const spotifyReviewUrl = findReviewSpotifyUrl(item, group.items);
             const groupedSources = uniqueReviewSources(group.items);
             const candidateArtwork =
@@ -4918,12 +4957,41 @@ function ReviewView({
               <article className="review-card release-review-card" key={group.key}>
                 <div className="release-review-heading">
                   <span className="state state-needs_review">Needs review</span>
-                  <h2>{item.title}</h2>
-                  <p>{item.artist}</p>
+                  <h2>{incomingCandidate.title}</h2>
+                  <p>{incomingCandidate.artist}</p>
                   <small>
                     <strong>Blocking reason:</strong> {item.matchReason} | Confidence:{" "}
                     {Math.round(item.confidence * 100)}%
                   </small>
+                  {warningPresentations.length > 0 && (
+                    <div className="review-mismatch-alert" role="alert">
+                      {warningPresentations
+                        .filter((candidate) =>
+                          candidate.warnings.includes("artist_credit_mismatch"),
+                        )
+                        .map((candidate) => (
+                          <strong key={`artist:${candidate.item.id}`}>
+                            Artist mismatch: the incoming artist (
+                            {candidate.incomingCandidate.artist}) does not match the proposed
+                            canonical artist ({candidate.proposedCanonical.artist}).{" "}
+                            {candidate.exactIdentityMatch
+                              ? "A current stable identifier exactly matches, so review actions remain available."
+                              : "This proposed merge and its Spotify actions are blocked. Choose Keep separate first so the incoming track has its own canonical identity, then resolve that track against Spotify."}
+                          </strong>
+                        ))}
+                      {warningPresentations
+                        .filter((candidate) => candidate.warnings.includes("duration_mismatch"))
+                        .map((candidate) => (
+                          <strong key={`duration:${candidate.item.id}`}>
+                            Duration mismatch for {candidate.incomingCandidate.artist} -{" "}
+                            {candidate.incomingCandidate.title}: the incoming track is{" "}
+                            {formatTrackDuration(candidate.incomingCandidate.durationMs)} and the
+                            proposed track is{" "}
+                            {formatTrackDuration(candidate.proposedCanonical.durationMs)}.
+                          </strong>
+                        ))}
+                    </div>
+                  )}
                   {spotifyReviewUrl ? (
                     <a
                       className="review-spotify-link"
@@ -4931,20 +4999,18 @@ function ReviewView({
                       rel="noopener noreferrer"
                       target="_blank"
                     >
-                      Open Spotify track for {item.title} <ExternalLink size={13} />
+                      Open proposed Spotify comparison: {proposedCanonical.artist} -{" "}
+                      {proposedCanonical.title} <ExternalLink size={13} />
                     </a>
                   ) : (
                     <span className="review-spotify-link-missing">
-                      No stored Spotify track link is available yet. Retry matching or paste the
-                      verified track link below.
+                      No stored proposed Spotify comparison link is available yet.
                     </span>
                   )}
                 </div>
                 <div className="release-review-comparison">
                   <section>
-                    <span>
-                      Recommended candidate | {reviewProviderDisplayName(candidateProvider)}
-                    </span>
+                    <span>Incoming candidate | {reviewProviderDisplayName(candidateProvider)}</span>
                     {candidateArtwork ? (
                       <img alt="Candidate release artwork" src={candidateArtwork} />
                     ) : (
@@ -4952,14 +5018,15 @@ function ReviewView({
                         No stored {reviewProviderDisplayName(candidateProvider)} artwork
                       </div>
                     )}
-                    <strong>{item.releaseTitle}</strong>
-                    <p>{item.artist}</p>
+                    <strong>{incomingCandidate.releaseTitle}</strong>
+                    <p>{incomingCandidate.artist}</p>
                     <small>
-                      {item.releaseType} | {item.releaseDate}
+                      {incomingCandidate.releaseType} | {incomingCandidate.releaseDate} |{" "}
+                      {formatTrackDuration(incomingCandidate.durationMs)}
                     </small>
                     <b>Track list</b>
                     <ol>
-                      <li>{item.title}</li>
+                      <li>{incomingCandidate.title}</li>
                     </ol>
                     {item.review?.providerUrl && (
                       <a href={item.review.providerUrl} rel="noopener noreferrer" target="_blank">
@@ -4971,8 +5038,8 @@ function ReviewView({
                   <section>
                     <span>
                       {comparisonProvider
-                        ? `${reviewProviderDisplayName(comparisonProvider)} comparison`
-                        : "Canonical comparison"}
+                        ? `Proposed canonical match | ${reviewProviderDisplayName(comparisonProvider)}`
+                        : "Proposed canonical match"}
                     </span>
                     {comparisonArtwork ? (
                       <img alt="Comparison release artwork" src={comparisonArtwork} />
@@ -4981,14 +5048,15 @@ function ReviewView({
                         No stored {reviewProviderDisplayName(comparisonProvider ?? "mock")} artwork
                       </div>
                     )}
-                    <strong>{item.artist}</strong>
-                    <p>{item.releaseTitle}</p>
+                    <strong>{proposedCanonical.releaseTitle}</strong>
+                    <p>{proposedCanonical.artist}</p>
                     <small>
-                      {item.releaseType} | {item.releaseDate}
+                      {proposedCanonical.releaseType} | {proposedCanonical.releaseDate} |{" "}
+                      {formatTrackDuration(proposedCanonical.durationMs)}
                     </small>
                     <b>Track list</b>
                     <ol>
-                      <li>{item.title}</li>
+                      <li>{proposedCanonical.title}</li>
                     </ol>
                     {comparisonProvider &&
                       (comparisonProvider === "spotify" ? spotifyReviewUrl : comparisonSource) && (
@@ -5032,7 +5100,7 @@ function ReviewView({
                   </button>
                   <button
                     className="secondary-button"
-                    disabled={pending}
+                    disabled={pending || blockingArtistCreditMismatch}
                     onClick={() => onDecision(item, "retry", undefined, group.items)}
                     type="button"
                   >
@@ -5064,7 +5132,7 @@ function ReviewView({
                   {!group.items.some((candidate) => candidate.review?.provider === "spotify") && (
                     <button
                       className="secondary-button"
-                      disabled={pending}
+                      disabled={pending || blockingArtistCreditMismatch}
                       onClick={() => onDecision(item, "no_equivalent", undefined, group.items)}
                       type="button"
                     >
@@ -5072,7 +5140,7 @@ function ReviewView({
                     </button>
                   )}
                   <ManualSpotifyTrackReviewAction
-                    disabled={pending}
+                    disabled={pending || blockingArtistCreditMismatch}
                     item={item}
                     onConfirm={(spotifyTrackId) =>
                       onDecision(item, "confirm_track", spotifyTrackId, group.items)
@@ -5080,11 +5148,16 @@ function ReviewView({
                   />
                   <button
                     className="primary-button"
-                    disabled={pending}
+                    disabled={pending || blockingArtistCreditMismatch}
                     onClick={() => onDecision(item, "confirm", undefined, group.items)}
                     type="button"
                   >
-                    <Check size={15} /> {pending ? "Resolving..." : "Confirm recommended candidate"}
+                    <Check size={15} />{" "}
+                    {pending
+                      ? "Resolving..."
+                      : blockingArtistCreditMismatch
+                        ? "Artist mismatch cannot be confirmed"
+                        : "Confirm proposed match"}
                   </button>
                 </div>
               </article>
@@ -6483,7 +6556,28 @@ const feedItemResponseSchema = z.object({
     .object({
       candidateId: z.string().uuid(),
       deferredUntil: z.string().datetime().optional(),
+      exactIdentityMatch: z.boolean().optional(),
       groupKey: z.string().min(1).optional(),
+      incomingCandidate: z
+        .object({
+          artist: z.string(),
+          durationMs: z.number().int().positive().optional(),
+          releaseDate: z.string(),
+          releaseTitle: z.string(),
+          releaseType: z.enum(releaseTypes),
+          title: z.string(),
+        })
+        .optional(),
+      proposedCanonical: z
+        .object({
+          artist: z.string(),
+          durationMs: z.number().int().positive().optional(),
+          releaseDate: z.string(),
+          releaseTitle: z.string(),
+          releaseType: z.enum(releaseTypes),
+          title: z.string(),
+        })
+        .optional(),
       provider: z.enum([
         "mock",
         "spotify",
@@ -6495,6 +6589,7 @@ const feedItemResponseSchema = z.object({
         "tidal",
       ]),
       providerUrl: z.string().url().optional(),
+      warnings: z.array(z.enum(["artist_credit_mismatch", "duration_mismatch"])).optional(),
     })
     .optional(),
   saved: z.boolean(),
@@ -7046,6 +7141,14 @@ function formatDuration(milliseconds: number): string {
   if (minutes < 60) return `${minutes} min`;
   const hours = minutes / 60;
   return `${hours < 10 ? hours.toFixed(1) : Math.ceil(hours)} hr`;
+}
+
+function formatTrackDuration(milliseconds: number | undefined): string {
+  if (milliseconds === undefined) return "duration unavailable";
+  const totalSeconds = Math.round(milliseconds / 1_000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
 }
 
 function formatKnownCount(value: number | null): string {

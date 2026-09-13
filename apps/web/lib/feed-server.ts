@@ -1,11 +1,14 @@
 import {
+  exactStableTrackIdentityRule,
   parseAppleMusicReleaseArtwork,
   parseSpotifyReleaseArtwork,
+  primaryArtistCreditsOverlap,
   providerNames,
   safeProviderEvidenceUrl,
   type FeedFixtureItem,
   type ProviderName,
 } from "@radar/core";
+import { trackCandidateSchema } from "@radar/providers";
 import {
   createDatabase,
   manualMatchDecisions,
@@ -364,10 +367,10 @@ async function projectFeedItems(
   if (feedRows.length === 0) return [];
 
   const directCandidateIds = compact(feedRows.map((row) => row.candidateId));
-  const trackIds = compact(feedRows.map((row) => row.trackId));
+  const feedTrackIds = compact(feedRows.map((row) => row.trackId));
   const appearanceIds = compact(feedRows.map((row) => row.appearanceId));
-  const [trackRows, appearanceRows] = await Promise.all([
-    trackIds.length ? db.select().from(tracks).where(inArray(tracks.id, trackIds)) : [],
+  const [feedTrackRows, appearanceRows] = await Promise.all([
+    feedTrackIds.length ? db.select().from(tracks).where(inArray(tracks.id, feedTrackIds)) : [],
     appearanceIds.length
       ? db
           .select()
@@ -388,6 +391,13 @@ async function projectFeedItems(
     .where(
       inArray(releaseCandidates.id, [...new Set([...directCandidateIds, ...sourceCandidateIds])]),
     );
+  const proposedTrackIds = compact(candidateRows.map((row) => row.matchedTrackId));
+  const missingProposedTrackIds = proposedTrackIds.filter((id) => !feedTrackIds.includes(id));
+  const proposedTrackRows = missingProposedTrackIds.length
+    ? await db.select().from(tracks).where(inArray(tracks.id, missingProposedTrackIds))
+    : [];
+  const trackRows = [...feedTrackRows, ...proposedTrackRows];
+  const trackIds = compact([...feedTrackIds, ...proposedTrackIds]);
   const resolvedReleaseIds = compact([
     ...feedRows.map((row) => row.releaseId),
     ...appearanceRows.map((row) => row.releaseId),
@@ -474,6 +484,9 @@ async function projectFeedItems(
     const candidate = feed.candidateId ? candidateById.get(feed.candidateId) : undefined;
     if (!candidate) return [];
     const track = feed.trackId ? trackById.get(feed.trackId) : undefined;
+    const proposedTrack = candidate.matchedTrackId
+      ? trackById.get(candidate.matchedTrackId)
+      : undefined;
     const appearance = feed.appearanceId ? appearanceById.get(feed.appearanceId) : undefined;
     const release = releaseById.get(
       appearance?.releaseId ?? feed.releaseId ?? track?.releaseId ?? "",
@@ -481,6 +494,9 @@ async function projectFeedItems(
     const credits = [...(feed.trackId ? (creditsByTrack.get(feed.trackId) ?? []) : [])].sort(
       (left, right) => left.creditOrder - right.creditOrder,
     );
+    const proposedCredits = [
+      ...(candidate.matchedTrackId ? (creditsByTrack.get(candidate.matchedTrackId) ?? []) : []),
+    ].sort((left, right) => left.creditOrder - right.creditOrder);
     const appearanceCandidateIds = appearance
       ? (candidateIdsByAppearance.get(appearance.id) ?? []).map((row) => row.candidateId)
       : [];
@@ -493,6 +509,10 @@ async function projectFeedItems(
       return href ? [{ ...row, href }] : [];
     });
     const spotifyTrackHref = (externalIdsByTrack.get(feed.trackId ?? "") ?? [])
+      .filter((row) => row.provider === "spotify")
+      .map((row) => safeProviderEvidenceUrl("spotify", row.providerUrl))
+      .find((href) => href !== null);
+    const proposedSpotifyTrackHref = (externalIdsByTrack.get(candidate.matchedTrackId ?? "") ?? [])
       .filter((row) => row.provider === "spotify")
       .map((row) => safeProviderEvidenceUrl("spotify", row.providerUrl))
       .find((href) => href !== null);
@@ -523,6 +543,57 @@ async function projectFeedItems(
         ? "playable"
         : (spotify?.state ?? "unavailable");
     const reviewDecision = reviewDecisionByCandidate.get(candidate.id);
+    const parsedCandidate = trackCandidateSchema.safeParse(candidate.rawPayload);
+    const incomingCandidate = parsedCandidate.success ? parsedCandidate.data : undefined;
+    const canonicalRelease = proposedTrack?.releaseId
+      ? releaseById.get(proposedTrack.releaseId)
+      : undefined;
+    const canonicalArtist = proposedCredits.length
+      ? formatFeedArtistCredits(proposedCredits)
+      : undefined;
+    const incomingArtist = incomingCandidate
+      ? formatFeedArtistCredits(
+          incomingCandidate.credits.map((credit) => ({
+            creditedName: credit.name,
+            role: credit.role,
+          })),
+        )
+      : undefined;
+    const exactIdentityMatch = Boolean(
+      incomingCandidate &&
+      proposedTrack &&
+      exactStableTrackIdentityRule(incomingCandidate, {
+        discNumber: proposedTrack.discNumber,
+        ean: canonicalRelease?.ean,
+        isrc: proposedTrack.isrc,
+        musicbrainzRecordingId: proposedTrack.musicbrainzRecordingId,
+        musicbrainzReleaseGroupId: proposedTrack.musicbrainzReleaseGroupId,
+        normalizedTitle: proposedTrack.normalizedTitle,
+        providerExternalIds: externalIdsByTrack.get(proposedTrack.id) ?? [],
+        title: proposedTrack.title,
+        trackNumber: proposedTrack.trackNumber,
+        upc: canonicalRelease?.upc,
+      }),
+    );
+    const reviewWarnings: Array<"artist_credit_mismatch" | "duration_mismatch"> = [];
+    if (
+      incomingCandidate &&
+      proposedCredits.length > 0 &&
+      !primaryArtistCreditsOverlap(
+        incomingCandidate.credits,
+        proposedCredits.map((credit) => ({ name: credit.creditedName, role: credit.role })),
+      )
+    ) {
+      reviewWarnings.push("artist_credit_mismatch");
+    }
+    if (
+      incomingCandidate?.durationMs !== undefined &&
+      proposedTrack?.durationMs !== null &&
+      proposedTrack?.durationMs !== undefined &&
+      Math.abs(incomingCandidate.durationMs - proposedTrack.durationMs) > 2_000
+    ) {
+      reviewWarnings.push("duration_mismatch");
+    }
     const rawCandidateProvider = providerField(candidate.rawPayload, "provider");
     const reviewCandidateProvider: ProviderName =
       typeof rawCandidateProvider === "string" && isProviderName(rawCandidateProvider)
@@ -537,10 +608,15 @@ async function projectFeedItems(
       href: row.href,
       provider: providerLabel(row.provider),
     }));
-    if (spotifyTrackHref && !projectedSources.some((source) => source.provider === "Spotify")) {
+    const projectedSpotifyTrackHref =
+      feed.state === "needs_review" ? proposedSpotifyTrackHref : spotifyTrackHref;
+    if (
+      projectedSpotifyTrackHref &&
+      !projectedSources.some((source) => source.provider === "Spotify")
+    ) {
       projectedSources.push({
-        evidenceHref: spotifyTrackHref,
-        href: spotifyTrackHref,
+        evidenceHref: projectedSpotifyTrackHref,
+        href: projectedSpotifyTrackHref,
         provider: "Spotify",
       });
     }
@@ -571,10 +647,39 @@ async function projectFeedItems(
                 ...(reviewDecision?.decision === "defer" && reviewDecision.deferredUntil
                   ? { deferredUntil: reviewDecision.deferredUntil.toISOString() }
                   : {}),
+                exactIdentityMatch,
                 groupKey:
-                  release?.id && candidate.matchedTrackId
-                    ? `${release.id}:${candidate.matchedTrackId}`
+                  feed.releaseId && candidate.matchedTrackId
+                    ? `${feed.releaseId}:${candidate.matchedTrackId}`
                     : `candidate:${candidate.id}`,
+                ...(incomingCandidate && incomingArtist
+                  ? {
+                      incomingCandidate: {
+                        artist: incomingArtist,
+                        ...(incomingCandidate.durationMs !== undefined
+                          ? { durationMs: incomingCandidate.durationMs }
+                          : {}),
+                        releaseDate: incomingCandidate.releaseDate,
+                        releaseTitle: incomingCandidate.releaseTitle,
+                        releaseType: incomingCandidate.releaseType,
+                        title: incomingCandidate.title,
+                      },
+                    }
+                  : {}),
+                ...(proposedTrack && canonicalArtist && canonicalRelease
+                  ? {
+                      proposedCanonical: {
+                        artist: canonicalArtist,
+                        ...(proposedTrack.durationMs !== null
+                          ? { durationMs: proposedTrack.durationMs }
+                          : {}),
+                        releaseDate: canonicalRelease.releaseDate,
+                        releaseTitle: canonicalRelease.title,
+                        releaseType: canonicalRelease.releaseType,
+                        title: proposedTrack.title,
+                      },
+                    }
+                  : {}),
                 provider: reviewCandidateProvider,
                 ...(safeEvidence.find((row) => row.provider === reviewCandidateProvider)?.href
                   ? {
@@ -583,6 +688,7 @@ async function projectFeedItems(
                       )!.href,
                     }
                   : {}),
+                ...(reviewWarnings.length > 0 ? { warnings: reviewWarnings } : {}),
               },
             }
           : {}),

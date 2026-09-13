@@ -1,9 +1,64 @@
 # AI Handoff
 
-Updated: 2026-09-13 00:01 PDT
+Updated: 2026-09-13 01:33 PDT
 
 The dated sections below retain point-in-time evidence. This first section is the current operational
 record and supersedes older sections wherever counts, task state, or remaining verification differ.
+
+## Cross-Artist Release Review Correction (2026-09-13)
+
+- The Apple Music `Need You` candidate was Oliverse, Apple artist `1040447357`, Apple track
+  `6791204422`, ISRC `GB2LD2610341`, and duration 177,429 ms. Its 60% review proposal was an
+  unrelated 283,636 ms Spotify recording credited to Maurizzle. Title equality contributed 45%
+  and two absent version markers contributed 15%; artist credits, ISRC, duration, and UPC did not
+  agree. The review boundary prevented automatic merging, but the page projected the proposed
+  canonical track's artist into both comparison columns and made the proposal look safer than it
+  was.
+- A manual confirmation had been recorded at `2026-09-13T01:50:10.341Z`.
+  Before correcting it, a fresh custom-format production backup was created at
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-09-13T07-12-25-536Z.dump`.
+  It is 47,852,034 bytes, has the `PGDMP` signature, and SHA-256
+  `C4978620F3E2A61E6D5D2E371D6F28A06BE64B6BD5DC19E6BE25B55AE6029FD9`.
+- A guarded serializable transaction held both the global scan lock and exclusive Spotify playlist
+  writer lock, asserted every affected row, and converted the mistaken confirmation to the normal
+  `Keep separate` result. Canonical track `05e6e3bc-027c-40b8-a441-fd4f0effe703` now holds the
+  Oliverse credit, Apple evidence, original ISRC, duration, availability, release appearance, feed
+  row, and manual `separate` decision. It has zero Spotify external IDs, zero playlist export rows,
+  and zero pending or failed export operations. No provider request or playlist write was made.
+- The unrelated Spotify track `1Mi3a5d9yB4jZCROp1Tb2R` retains its original Spotify evidence and
+  legitimate August 5 playlist export. Its Apple linkage is now zero. Three later `already_present`
+  operations remain as terminal audit history; none added or duplicated a playlist item.
+- Metadata matching now discards same-title proposals when both sides have primary artist credits
+  and no normalized primary name overlaps. Exact stable identifiers continue to take precedence,
+  and same-primary records with differing featured credits still use review. The same predicate is
+  shared by the matcher, feed projection, and database decision boundary. Symbol-only primary
+  names retain a normalized literal identity instead of becoming an empty wildcard. The decision
+  boundary independently revalidates provider track ID, ISRC, barcode plus position, or
+  MusicBrainz identity from current rows rather than trusting a stored match-rule label.
+- Release review cards now label the incoming provider record and proposed canonical record
+  separately, including their actual artists, releases, dates, titles, and durations. Artist and
+  duration conflicts receive an explicit warning, and a Spotify URL is labeled as the proposed
+  comparison rather than the incoming track. For a cross-artist legacy review, only `Defer` and
+  `Keep separate` remain actionable. Direct database/API attempts to confirm, retry, submit another
+  Spotify track, or mark no Spotify equivalent are rejected, so browser controls cannot be
+  bypassed. Review projection treats the candidate's proposed track ID as authoritative even when
+  the feed track reference is stale or null. Grouped cards surface every sibling warning, bind the
+  displayed Spotify comparison to the mismatched proposal, and disable guarded actions if any
+  sibling has an unverified primary-artist conflict. A current exact stable identifier keeps the
+  warning visible but permits normal review actions; the UI, API boundary, and matcher derive that
+  exception from the same current provider ID, ISRC, barcode plus position, or MusicBrainz evidence.
+  Review grouping uses the same incoming release plus proposed track key in the UI and database.
+- The corrected Oliverse track remains intentionally ineligible for export until an exact Spotify
+  match is found. The confirmed Oliverse Spotify artist mapping and existing Apple-priority artist
+  reconciliation remain available to the normal scheduler; no manual provider scan was started for
+  this correction.
+- Validation passed: formatting, lint, type checking, 620 unit tests, 209 database integration
+  tests, a production Next.js build with 28 static pages, and 36 Chromium end-to-end tests. The
+  production doctor reported `READY`, PostgreSQL connected, all 31 migrations applied, no stale
+  locks, and no active Spotify cooldown. The verified Next.js child was stopped once and the
+  existing hidden supervisor restored it on `127.0.0.1:3000` under a new PID with a healthy
+  `/api/health` response. The live feed now shows the separate Oliverse `Need You` row with no
+  Spotify identity or export, while the unrelated Maurizzle row retains only its own Spotify state.
 
 ## Scheduler Ownership And Recovery Completion (2026-09-12)
 

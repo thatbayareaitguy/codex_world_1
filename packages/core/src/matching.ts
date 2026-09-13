@@ -1,62 +1,75 @@
 import { extractVersion, normalizeIdentifier, normalizeText, normalizedCredits } from "./normalize";
-import type { CanonicalTrack, MatchDecision, TrackCandidate } from "./types";
+import type {
+  CanonicalTrack,
+  MatchDecision,
+  MatchRule,
+  ProviderName,
+  TrackCandidate,
+} from "./types";
 
 const AUTOMATIC_THRESHOLD = 0.93;
 const DURATION_TOLERANCE_MS = 2_000;
+
+export type ExactStableTrackIdentityRule = Extract<
+  MatchRule,
+  "exact_provider_id" | "exact_isrc" | "exact_barcode_position" | "exact_musicbrainz"
+>;
+
+export interface StableTrackIdentityCandidate {
+  discNumber?: number | null | undefined;
+  ean?: string | null | undefined;
+  externalTrackId?: string | null | undefined;
+  isrc?: string | null | undefined;
+  musicbrainzRecordingId?: string | null | undefined;
+  musicbrainzReleaseGroupId?: string | null | undefined;
+  provider?: ProviderName | null | undefined;
+  title: string;
+  trackNumber?: number | null | undefined;
+  upc?: string | null | undefined;
+}
+
+export interface StableTrackIdentityTarget extends StableTrackIdentityCandidate {
+  normalizedTitle?: string | null | undefined;
+  providerExternalIds?:
+    | ReadonlyArray<{
+        externalId: string;
+        provider: ProviderName;
+      }>
+    | undefined;
+}
+
+export interface ExactStableTrackIdentityMatch<T extends StableTrackIdentityTarget> {
+  rule: ExactStableTrackIdentityRule;
+  target: T;
+}
 
 export function matchCandidate(
   candidate: TrackCandidate,
   tracks: readonly CanonicalTrack[],
 ): MatchDecision {
-  if (candidate.isrc) {
-    const normalized = normalizeIdentifier(candidate.isrc);
-    const exact = tracks.find(
-      (track) => track.isrc && normalizeIdentifier(track.isrc) === normalized,
-    );
-    if (exact) {
-      return automatic(exact.id, "exact_isrc", 1, [`ISRC ${normalized} is identical`]);
-    }
-  }
-
-  const barcode = candidate.upc ?? candidate.ean;
-  if (barcode && candidate.trackNumber) {
-    const normalized = normalizeIdentifier(barcode);
-    const exact = tracks.find((track) => {
-      const trackBarcode = track.upc ?? track.ean;
-      return (
-        trackBarcode !== undefined &&
-        normalizeIdentifier(trackBarcode) === normalized &&
-        track.trackNumber === candidate.trackNumber &&
-        (track.discNumber ?? 1) === (candidate.discNumber ?? 1)
-      );
-    });
-    if (exact) {
-      return automatic(exact.id, "exact_barcode_position", 0.99, [
-        "Barcode, disc, and track position are identical",
-      ]);
-    }
-  }
-
-  const mbExact = tracks.find((track) => {
-    if (
-      candidate.musicbrainzRecordingId &&
-      track.musicbrainzRecordingId === candidate.musicbrainzRecordingId
-    ) {
-      return true;
-    }
-    return Boolean(
-      candidate.musicbrainzReleaseGroupId &&
-      track.musicbrainzReleaseGroupId === candidate.musicbrainzReleaseGroupId &&
-      candidate.trackNumber !== undefined &&
-      track.trackNumber === candidate.trackNumber &&
-      (track.discNumber ?? 1) === (candidate.discNumber ?? 1) &&
-      normalizeText(track.title) === normalizeText(candidate.title),
-    );
-  });
-  if (mbExact) {
-    return automatic(mbExact.id, "exact_musicbrainz", 0.98, [
-      "MusicBrainz recording ID is identical, or release group, position, and title agree",
-    ]);
+  const exact = findExactStableTrackIdentity(candidate, tracks);
+  if (exact) {
+    const exactEvidence = {
+      exact_barcode_position: {
+        confidence: 0.99,
+        reason: "Barcode, disc, and track position are identical",
+      },
+      exact_isrc: {
+        confidence: 1,
+        reason: `ISRC ${normalizeIdentifier(candidate.isrc ?? "")} is identical`,
+      },
+      exact_musicbrainz: {
+        confidence: 0.98,
+        reason:
+          "MusicBrainz recording ID is identical, or release group, position, and title agree",
+      },
+      exact_provider_id: {
+        confidence: 1,
+        reason: "Provider track identifier is identical",
+      },
+    } satisfies Record<ExactStableTrackIdentityRule, { confidence: number; reason: string }>;
+    const evidence = exactEvidence[exact.rule];
+    return automatic(exact.target.id, exact.rule, evidence.confidence, [evidence.reason]);
   }
 
   const metadataCandidates = tracks
@@ -92,12 +105,85 @@ export function matchCandidate(
   };
 }
 
+export function exactStableTrackIdentityRule(
+  incoming: StableTrackIdentityCandidate,
+  proposed: StableTrackIdentityTarget,
+): ExactStableTrackIdentityRule | undefined {
+  return findExactStableTrackIdentity(incoming, [proposed])?.rule;
+}
+
+export function findExactStableTrackIdentity<T extends StableTrackIdentityTarget>(
+  incoming: StableTrackIdentityCandidate,
+  proposedTracks: readonly T[],
+): ExactStableTrackIdentityMatch<T> | undefined {
+  if (incoming.provider && incoming.externalTrackId) {
+    const providerExact = proposedTracks.find((track) =>
+      track.providerExternalIds?.some(
+        (externalId) =>
+          externalId.provider === incoming.provider &&
+          externalId.externalId === incoming.externalTrackId,
+      ),
+    );
+    if (providerExact) return { rule: "exact_provider_id", target: providerExact };
+  }
+
+  if (incoming.isrc) {
+    const normalized = normalizeIdentifier(incoming.isrc);
+    const isrcExact = proposedTracks.find(
+      (track) => track.isrc && normalizeIdentifier(track.isrc) === normalized,
+    );
+    if (isrcExact) return { rule: "exact_isrc", target: isrcExact };
+  }
+
+  const incomingBarcode = incoming.upc ?? incoming.ean;
+  if (incomingBarcode && incoming.trackNumber !== undefined && incoming.trackNumber !== null) {
+    const normalized = normalizeIdentifier(incomingBarcode);
+    const barcodeExact = proposedTracks.find((track) => {
+      const proposedBarcode = track.upc ?? track.ean;
+      return (
+        proposedBarcode !== undefined &&
+        proposedBarcode !== null &&
+        normalizeIdentifier(proposedBarcode) === normalized &&
+        track.trackNumber === incoming.trackNumber &&
+        (track.discNumber ?? 1) === (incoming.discNumber ?? 1)
+      );
+    });
+    if (barcodeExact) {
+      return { rule: "exact_barcode_position", target: barcodeExact };
+    }
+  }
+
+  if (incoming.musicbrainzRecordingId) {
+    const recordingExact = proposedTracks.find(
+      (track) => track.musicbrainzRecordingId === incoming.musicbrainzRecordingId,
+    );
+    if (recordingExact) return { rule: "exact_musicbrainz", target: recordingExact };
+  }
+
+  if (incoming.musicbrainzReleaseGroupId && incoming.trackNumber !== undefined) {
+    const releaseGroupExact = proposedTracks.find(
+      (track) =>
+        track.musicbrainzReleaseGroupId === incoming.musicbrainzReleaseGroupId &&
+        track.trackNumber === incoming.trackNumber &&
+        (track.discNumber ?? 1) === (incoming.discNumber ?? 1) &&
+        (track.normalizedTitle ?? normalizeText(track.title)) === normalizeText(incoming.title),
+    );
+    if (releaseGroupExact) return { rule: "exact_musicbrainz", target: releaseGroupExact };
+  }
+
+  return undefined;
+}
+
 function scoreMetadata(candidate: TrackCandidate, track: CanonicalTrack) {
   let confidence = 0;
   const reasons: string[] = [];
   const candidateTitle = normalizeText(candidate.title);
   const titleEqual = candidateTitle === track.normalizedTitle;
   if (!titleEqual) return { track, confidence, reasons, versionConflict: false };
+
+  if (!primaryArtistCreditsOverlap(candidate.credits, track.credits)) {
+    return { track, confidence, reasons, versionConflict: false };
+  }
 
   confidence += 0.45;
   reasons.push("Normalized titles are identical");
@@ -128,6 +214,30 @@ function scoreMetadata(candidate: TrackCandidate, track: CanonicalTrack) {
   }
 
   return { track, confidence: round(confidence), reasons, versionConflict };
+}
+
+export function primaryArtistCreditsOverlap(
+  incomingCredits: ReadonlyArray<{ name: string; role: string }>,
+  proposedCredits: ReadonlyArray<{ name: string; role: string }>,
+): boolean {
+  const incomingPrimaryCredits = incomingCredits.filter((credit) => credit.role === "primary");
+  const proposedPrimaryCredits = proposedCredits.filter((credit) => credit.role === "primary");
+  if (incomingPrimaryCredits.length === 0 || proposedPrimaryCredits.length === 0) return true;
+  const incomingPrimaryArtists = normalizedPrimaryArtistNames(incomingPrimaryCredits);
+  const proposedPrimaryArtists = normalizedPrimaryArtistNames(proposedPrimaryCredits);
+  return [...incomingPrimaryArtists].some((artist) => proposedPrimaryArtists.has(artist));
+}
+
+function normalizedPrimaryArtistNames(
+  credits: ReadonlyArray<{ name: string; role: string }>,
+): Set<string> {
+  return new Set(
+    credits.map((credit) => {
+      const normalized = normalizeText(credit.name);
+      const literal = credit.name.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
+      return normalized ? `normalized:${normalized}` : `literal:${literal}`;
+    }),
+  );
 }
 
 function automatic(

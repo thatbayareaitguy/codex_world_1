@@ -1,4 +1,9 @@
-import { normalizeIdentifier, normalizeText } from "@radar/core";
+import {
+  exactStableTrackIdentityRule,
+  normalizeIdentifier,
+  normalizeText,
+  primaryArtistCreditsOverlap,
+} from "@radar/core";
 import { trackCandidateSchema } from "@radar/providers";
 import { and, asc, eq, ne } from "drizzle-orm";
 import type { RadarDatabase } from "./client";
@@ -163,6 +168,20 @@ async function resolveFeedReviewInTransaction(
   }
 
   const payload = trackCandidateSchema.parse(candidate.rawPayload);
+
+  if (
+    (decision === "confirm" ||
+      decision === "confirm_track" ||
+      decision === "no_equivalent" ||
+      decision === "retry") &&
+    candidate.matchedTrackId &&
+    !(await reviewPrimaryArtistCreditsOverlap(tx, payload, candidate.matchedTrackId)) &&
+    !(await reviewHasExactStableIdentifierMatch(tx, payload, candidate.matchedTrackId))
+  ) {
+    throw new Error(
+      "Incoming and proposed canonical primary artist credits do not overlap; keep the records separate before matching or retrying",
+    );
+  }
 
   if (decision === "defer") {
     const deferredUntil = new Date(now.getTime() + 7 * 24 * 60 * 60_000);
@@ -353,6 +372,56 @@ async function resolveFeedReviewInTransaction(
     .set({ appearanceId, releaseId, state: "new", trackId, updatedAt: now })
     .where(eq(feedItems.id, feedItemId));
   return { decision, feedItemId, removed: false, state: "new" };
+}
+
+async function reviewPrimaryArtistCreditsOverlap(
+  tx: ReviewTransaction,
+  payload: ReviewCandidate,
+  proposedTrackId: string,
+): Promise<boolean> {
+  const proposedCredits = await tx
+    .select({ creditedName: trackCredits.creditedName, role: trackCredits.role })
+    .from(trackCredits)
+    .where(eq(trackCredits.trackId, proposedTrackId));
+  return primaryArtistCreditsOverlap(
+    payload.credits,
+    proposedCredits.map((credit) => ({ name: credit.creditedName, role: credit.role })),
+  );
+}
+
+async function reviewHasExactStableIdentifierMatch(
+  tx: ReviewTransaction,
+  payload: ReviewCandidate,
+  proposedTrackId: string,
+): Promise<boolean> {
+  const proposedTrack = await tx.query.tracks.findFirst({
+    where: eq(tracks.id, proposedTrackId),
+  });
+  if (!proposedTrack) return false;
+  const [proposedRelease, providerExternalIds] = await Promise.all([
+    proposedTrack.releaseId
+      ? tx.query.releases.findFirst({ where: eq(releases.id, proposedTrack.releaseId) })
+      : undefined,
+    tx
+      .select({ externalId: trackExternalIds.externalId, provider: trackExternalIds.provider })
+      .from(trackExternalIds)
+      .where(eq(trackExternalIds.trackId, proposedTrackId)),
+  ]);
+
+  return Boolean(
+    exactStableTrackIdentityRule(payload, {
+      discNumber: proposedTrack.discNumber,
+      ean: proposedRelease?.ean,
+      isrc: proposedTrack.isrc,
+      musicbrainzRecordingId: proposedTrack.musicbrainzRecordingId,
+      musicbrainzReleaseGroupId: proposedTrack.musicbrainzReleaseGroupId,
+      normalizedTitle: proposedTrack.normalizedTitle,
+      providerExternalIds,
+      title: proposedTrack.title,
+      trackNumber: proposedTrack.trackNumber,
+      upc: proposedRelease?.upc,
+    }),
+  );
 }
 
 async function queueGuardedPlaylistCheckpoint(tx: ReviewTransaction, now: Date): Promise<void> {

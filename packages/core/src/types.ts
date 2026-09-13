@@ -221,9 +221,27 @@ export interface FeedFixtureItem {
   review?: {
     candidateId: string;
     deferredUntil?: string;
+    exactIdentityMatch?: boolean;
     groupKey?: string;
+    incomingCandidate?: {
+      artist: string;
+      durationMs?: number;
+      releaseDate: string;
+      releaseTitle: string;
+      releaseType: ReleaseType;
+      title: string;
+    };
+    proposedCanonical?: {
+      artist: string;
+      durationMs?: number;
+      releaseDate: string;
+      releaseTitle: string;
+      releaseType: ReleaseType;
+      title: string;
+    };
     provider: ProviderName;
     providerUrl?: string;
+    warnings?: Array<"artist_credit_mismatch" | "duration_mismatch">;
   };
   spotifyArtwork?: SpotifyReleaseArtwork;
   appleMusicArtwork?: AppleMusicReleaseArtwork;

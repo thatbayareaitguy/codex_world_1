@@ -38,7 +38,7 @@ const releases: ProviderReleaseObservation[] = [
 
 const canonicalTracks: CanonicalTrack[] = [
   {
-    credits: [{ name: "Different Artist", role: "primary" }],
+    credits: [{ name: "YUSSI", role: "primary" }],
     id: "canonical-existing",
     normalizedTitle: "existing track",
     title: "Existing Track",

@@ -1597,9 +1597,9 @@ test("navigates every primary view and resolves manual review", async ({ page })
   await navigation.getByRole("link", { name: "Review queue 1" }).click();
   await expect(page.getByRole("heading", { name: "Review queue" })).toBeVisible();
   await expect(page.getByText(/Confidence: 90%/)).toBeVisible();
-  await expect(page.getByText(/Recommended candidate/)).toBeVisible();
+  await expect(page.getByText(/Incoming candidate/)).toBeVisible();
   await expect(page.getByText("Choose another candidate")).toBeVisible();
-  await page.getByRole("button", { name: "Confirm recommended candidate" }).click();
+  await page.getByRole("button", { name: "Confirm proposed match" }).click();
   await expect(page.getByText("No items need review.")).toBeVisible();
 
   await navigation.getByRole("link", { name: "History and Schedules" }).click();
@@ -1763,7 +1763,7 @@ test("persists a manual review decision across feed refresh and page reload", as
 
   await page.goto("/?e2e-scan-status=database#review");
   await expect(page.getByRole("heading", { name: "Static Bloom" })).toBeVisible();
-  await page.getByRole("button", { name: "Confirm recommended candidate" }).click();
+  await page.getByRole("button", { name: "Confirm proposed match" }).click();
   await expect(page.getByText("No items need review.")).toBeVisible();
   expect(decisionRequestCount).toBe(1);
 
@@ -1864,17 +1864,307 @@ test("groups mirrored provider records into one review decision", async ({ page 
   });
 
   await page.goto("/?e2e-scan-status=database#review");
-  const spotifyLinks = page.getByRole("link", { name: "Open Spotify track for NASTY" });
+  const spotifyLinks = page.getByRole("link", {
+    name: "Open proposed Spotify comparison: Anto - NASTY",
+  });
   await expect(spotifyLinks).toHaveCount(1);
   await expect(spotifyLinks).toHaveAttribute("href", spotifyUrl);
   await expect(page.getByRole("link", { name: "Open Apple Music candidate" })).toHaveCount(1);
   await expect(page.getByRole("link", { name: "Open Spotify evidence" })).toHaveCount(1);
   await expect(page.locator("article.release-review-card")).toHaveCount(1);
   await expect(page.getByRole("button", { name: "No Spotify equivalent" })).toHaveCount(0);
-  await expect(page.getByText("No stored Spotify track link is available yet.")).toHaveCount(0);
-  await page.getByRole("button", { name: "Confirm recommended candidate" }).click();
+  await expect(page.getByText("No stored proposed Spotify comparison link")).toHaveCount(0);
+  await page.getByRole("button", { name: "Confirm proposed match" }).click();
   await expect(page.getByText("No items need review.")).toBeVisible();
   expect(decisionRequestCount).toBe(1);
+});
+
+test("shows true review identities and blocks a cross-artist proposed merge", async ({ page }) => {
+  const spotifyUrl = "https://open.spotify.com/track/1nxmfCTmExLxSPAsRSeqXh";
+  const appleUrl = "https://music.apple.com/us/album/6791192063";
+  const review = {
+    ...feedFixtures[1]!,
+    artist: "Maurizzle",
+    confidence: 0.6,
+    id: "1f513181-192e-4d8f-b6e1-6a8327a411b8",
+    matchReason: "Normalized titles are identical; Version markers agree; Score is below 0.93",
+    releaseDate: "2026-09-11",
+    releaseTitle: "Need You - Single",
+    releaseType: "single" as const,
+    review: {
+      candidateId: "6cfa8123-04ce-43a8-a197-415e738fc8ef",
+      incomingCandidate: {
+        artist: "Oliverse",
+        durationMs: 231_000,
+        releaseDate: "2026-09-11",
+        releaseTitle: "Need You",
+        releaseType: "single" as const,
+        title: "Need You",
+      },
+      proposedCanonical: {
+        artist: "Maurizzle",
+        durationMs: 180_000,
+        releaseDate: "2026-09-11",
+        releaseTitle: "Need You - Single",
+        releaseType: "single" as const,
+        title: "Need You",
+      },
+      provider: "apple_music" as const,
+      providerUrl: appleUrl,
+      warnings: ["artist_credit_mismatch", "duration_mismatch"] as const,
+    },
+    sources: [
+      { evidenceHref: appleUrl, href: appleUrl, provider: "Apple Music" },
+      { evidenceHref: spotifyUrl, href: spotifyUrl, provider: "Spotify" },
+    ],
+    state: "needs_review" as const,
+    title: "Need You",
+  };
+
+  await page.route("**/api/musicbrainz/mappings", async (route) => {
+    await route.fulfill({ json: { mappings: [], reviews: [] } });
+  });
+  await page.route("**/api/feed**", async (route) => {
+    const revisionOnly = new URL(route.request().url()).searchParams.get("mode") === "revision";
+    await route.fulfill({
+      json: revisionOnly
+        ? { count: 1, revision: "cross-artist-review" }
+        : {
+            count: 1,
+            hasMore: false,
+            items: [review],
+            nextCursor: null,
+            revision: "cross-artist-review",
+            summary: { needsReview: 1, newThisWeek: 1, upcoming: 0 },
+            totalCount: 1,
+          },
+    });
+  });
+
+  await page.goto("/?e2e-scan-status=database#review");
+  const card = page.locator("article.release-review-card");
+  const incoming = card.locator(".release-review-comparison > section").first();
+  const proposed = card.locator(".release-review-comparison > section").nth(1);
+  await expect(incoming.getByText("Incoming candidate | Apple Music")).toBeVisible();
+  await expect(incoming.getByText("Oliverse", { exact: true })).toBeVisible();
+  await expect(proposed.getByText("Proposed canonical match | Spotify")).toBeVisible();
+  await expect(proposed.getByText("Maurizzle", { exact: true })).toBeVisible();
+  await expect(card.getByRole("alert")).toContainText("Artist mismatch");
+  await expect(card.getByRole("alert")).toContainText("Duration mismatch");
+  await expect(card.getByRole("alert")).toContainText("Choose Keep separate first");
+  await expect(
+    card.getByRole("link", {
+      name: "Open proposed Spotify comparison: Maurizzle - Need You",
+    }),
+  ).toHaveAttribute("href", spotifyUrl);
+  await expect(
+    card.getByRole("button", { name: "Artist mismatch cannot be confirmed" }),
+  ).toBeDisabled();
+  await expect(card.getByRole("button", { name: "Retry matching" })).toBeDisabled();
+  await expect(card.getByRole("button", { name: "No Spotify equivalent" })).toBeDisabled();
+  await expect(card.getByLabel("Spotify track link for Need You")).toBeDisabled();
+  await expect(card.getByRole("button", { name: "Confirm another Spotify track" })).toBeDisabled();
+  await expect(card.getByRole("button", { name: "Defer 7 days" })).toBeEnabled();
+  await expect(card.getByRole("button", { name: "Keep separate" })).toBeEnabled();
+});
+
+test("keeps exact-identity review actions available across differing artist credits", async ({
+  page,
+}) => {
+  const spotifyUrl = "https://open.spotify.com/track/1nxmfCTmExLxSPAsRSeqXh";
+  const appleUrl = "https://music.apple.com/us/album/need-you/6791192063";
+  const review = {
+    ...feedFixtures[1]!,
+    artist: "Maurizzle",
+    confidence: 0.6,
+    id: "08ed268b-6f0e-41ee-b17a-9112ddc13f55",
+    matchReason: "Stable identifier is identical; artist credits differ",
+    releaseDate: "2026-09-11",
+    releaseTitle: "Need You - Single",
+    releaseType: "single" as const,
+    review: {
+      candidateId: "3ab36697-6e83-4739-91c5-bc2fa0c059f2",
+      exactIdentityMatch: true,
+      incomingCandidate: {
+        artist: "Oliverse",
+        durationMs: 177_429,
+        releaseDate: "2026-09-11",
+        releaseTitle: "Need You",
+        releaseType: "single" as const,
+        title: "Need You",
+      },
+      proposedCanonical: {
+        artist: "Maurizzle",
+        durationMs: 177_429,
+        releaseDate: "2026-09-11",
+        releaseTitle: "Need You - Single",
+        releaseType: "single" as const,
+        title: "Need You",
+      },
+      provider: "apple_music" as const,
+      providerUrl: appleUrl,
+      warnings: ["artist_credit_mismatch"] as const,
+    },
+    sources: [
+      { evidenceHref: appleUrl, href: appleUrl, provider: "Apple Music" },
+      { evidenceHref: spotifyUrl, href: spotifyUrl, provider: "Spotify" },
+    ],
+    state: "needs_review" as const,
+    title: "Need You",
+  };
+
+  await page.route("**/api/musicbrainz/mappings", async (route) => {
+    await route.fulfill({ json: { mappings: [], reviews: [] } });
+  });
+  await page.route("**/api/feed**", async (route) => {
+    const revisionOnly = new URL(route.request().url()).searchParams.get("mode") === "revision";
+    await route.fulfill({
+      json: revisionOnly
+        ? { count: 1, revision: "exact-cross-artist-review" }
+        : {
+            count: 1,
+            hasMore: false,
+            items: [review],
+            nextCursor: null,
+            revision: "exact-cross-artist-review",
+            summary: { needsReview: 1, newThisWeek: 1, upcoming: 0 },
+            totalCount: 1,
+          },
+    });
+  });
+
+  await page.goto("/?e2e-scan-status=database#review");
+  const card = page.locator("article.release-review-card");
+  await expect(card.getByRole("alert")).toContainText("Artist mismatch");
+  await expect(card.getByRole("alert")).toContainText(
+    "A current stable identifier exactly matches, so review actions remain available.",
+  );
+  await expect(card.getByRole("alert")).not.toContainText("Choose Keep separate first");
+  await expect(card.getByRole("button", { name: "Confirm proposed match" })).toBeEnabled();
+  await expect(card.getByRole("button", { name: "Retry matching" })).toBeEnabled();
+  await expect(card.getByRole("button", { name: "No Spotify equivalent" })).toBeEnabled();
+  await expect(card.getByLabel("Spotify track link for Need You")).toBeEnabled();
+  await expect(card.getByRole("button", { name: "Confirm another Spotify track" })).toBeEnabled();
+});
+
+test("aggregates grouped mismatch warnings and blocks actions for a mismatched sibling", async ({
+  page,
+}) => {
+  const groupKey = "8d66954c-3873-44c1-a816-da392f493aaa:89d8518b-b43e-4bf3-a414-9a206acf818a";
+  const spotifyUrl = "https://open.spotify.com/track/1nxmfCTmExLxSPAsRSeqXh";
+  const appleUrl = "https://music.apple.com/us/album/6791192063";
+  const shared = {
+    ...feedFixtures[1]!,
+    artist: "Maurizzle",
+    releaseDate: "2026-09-11",
+    releaseTitle: "Need You - Single",
+    releaseType: "single" as const,
+    state: "needs_review" as const,
+    title: "Need You",
+  };
+  const durationSibling = {
+    ...shared,
+    id: "2be693c8-59f8-4bd5-af4f-b986d48fd758",
+    review: {
+      candidateId: "030864d8-2a48-4665-8147-3244656e4872",
+      groupKey,
+      incomingCandidate: {
+        artist: "Maurizzle",
+        durationMs: 120_000,
+        releaseDate: "2026-09-11",
+        releaseTitle: "Need You Apple Release",
+        releaseType: "single" as const,
+        title: "Need You",
+      },
+      proposedCanonical: {
+        artist: "Maurizzle",
+        durationMs: 180_000,
+        releaseDate: "2026-09-11",
+        releaseTitle: "Need You Spotify Release",
+        releaseType: "single" as const,
+        title: "Need You",
+      },
+      provider: "apple_music" as const,
+      providerUrl: appleUrl,
+      warnings: ["duration_mismatch"] as const,
+    },
+    sources: [{ evidenceHref: appleUrl, href: appleUrl, provider: "Apple Music" }],
+  };
+  const artistMismatchSibling = {
+    ...shared,
+    id: "cf9bcdaf-01a6-45e4-958d-bfce0b253488",
+    review: {
+      candidateId: "67d08852-8d3f-4d20-9b1b-1ba08025131d",
+      groupKey,
+      incomingCandidate: {
+        artist: "Oliverse",
+        durationMs: 177_000,
+        releaseDate: "2026-09-11",
+        releaseTitle: "Need You Apple Release",
+        releaseType: "single" as const,
+        title: "Need You",
+      },
+      proposedCanonical: {
+        artist: "Maurizzle",
+        durationMs: 180_000,
+        releaseDate: "2026-09-11",
+        releaseTitle: "Need You Spotify Release",
+        releaseType: "single" as const,
+        title: "Need You",
+      },
+      provider: "apple_music" as const,
+      providerUrl: `${appleUrl}?i=2`,
+      warnings: ["artist_credit_mismatch"] as const,
+    },
+    sources: [
+      { evidenceHref: `${appleUrl}?i=2`, href: `${appleUrl}?i=2`, provider: "Apple Music" },
+      { evidenceHref: spotifyUrl, href: spotifyUrl, provider: "Spotify" },
+    ],
+  };
+
+  await page.route("**/api/musicbrainz/mappings", async (route) => {
+    await route.fulfill({ json: { mappings: [], reviews: [] } });
+  });
+  await page.route("**/api/feed**", async (route) => {
+    const revisionOnly = new URL(route.request().url()).searchParams.get("mode") === "revision";
+    await route.fulfill({
+      json: revisionOnly
+        ? { count: 2, revision: "grouped-cross-artist-review" }
+        : {
+            count: 2,
+            hasMore: false,
+            items: [durationSibling, artistMismatchSibling],
+            nextCursor: null,
+            revision: "grouped-cross-artist-review",
+            summary: { needsReview: 1, newThisWeek: 2, upcoming: 0 },
+            totalCount: 2,
+          },
+    });
+  });
+
+  await page.goto("/?e2e-scan-status=database#review");
+  const card = page.locator("article.release-review-card");
+  await expect(card).toHaveCount(1);
+  await expect(card.getByText("Oliverse", { exact: true }).first()).toBeVisible();
+  await expect(card.getByRole("alert")).toContainText(
+    "incoming artist (Oliverse) does not match the proposed canonical artist (Maurizzle)",
+  );
+  await expect(card.getByRole("alert")).toContainText("Duration mismatch for Maurizzle - Need You");
+  await expect(
+    card.getByRole("link", {
+      name: "Open proposed Spotify comparison: Maurizzle - Need You",
+    }),
+  ).toHaveAttribute("href", spotifyUrl);
+  await expect(card.getByRole("button", { name: "Retry matching" })).toBeDisabled();
+  await expect(card.getByRole("button", { name: "No Spotify equivalent" })).toBeDisabled();
+  await expect(card.getByLabel("Spotify track link for Need You")).toBeDisabled();
+  await expect(
+    card.getByRole("button", { name: "Artist mismatch cannot be confirmed" }),
+  ).toBeDisabled();
+  await expect(card.getByRole("button", { name: "Defer 7 days" })).toBeEnabled();
+  await expect(
+    card.getByRole("button", { name: "Keep Apple Music separate" }).first(),
+  ).toBeEnabled();
 });
 
 test("Keep separate retains the existing and newly separated discoveries", async ({ page }) => {
