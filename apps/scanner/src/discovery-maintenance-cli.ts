@@ -1,7 +1,10 @@
 import {
   createDatabase,
+  getAppleMusicOperationalStatus,
   getRecurringDiscoveryScheduleStatus,
   getSpotifySchedulerStatus,
+  reconcileDiscoveryScheduleAfterCooldown,
+  reconcileDiscoverySchedulePriorityPhase,
 } from "@radar/db";
 import { loadProviderConfiguration } from "@radar/providers";
 import { randomUUID } from "node:crypto";
@@ -9,8 +12,13 @@ import {
   decideDiscoveryMaintenance,
   maintenanceDatabaseReadinessTimeoutMs,
   maintenanceDatabaseRetryIntervalMs,
+  maintenanceHardTerminationRecoveryDelayMs,
   maintenanceMaximumRuntimeMs,
+  maintenanceMinimumAppleRuntimeMs,
+  maintenanceMinimumProviderRuntimeMs,
+  maintenanceShutdownGraceMs,
   maintenanceStartupRecoveryDelayMs,
+  maintenanceTaskExecutionLimitMs,
   type DiscoveryMaintenanceDecision,
 } from "./discovery-maintenance";
 import { runDiscoverySchedulerTick } from "./discovery-scheduler-cli";
@@ -21,7 +29,6 @@ import {
 } from "./maintenance-diagnostics";
 import {
   inspectDockerDatabaseAvailability,
-  MaintenanceDatabaseReadinessError,
   waitForMaintenanceDatabase,
   type DockerDatabaseAvailability,
 } from "./maintenance-readiness";
@@ -33,6 +40,9 @@ import {
 } from "./windows-maintenance";
 
 loadLocalEnvironment();
+
+const startupRecoveryScheduledMarker = Symbol("startupRecoveryScheduled");
+const maintenanceBoundaryWakeMinimumDelayMs = 60_000;
 
 export async function runDiscoveryMaintenanceWindow(
   dependencies: {
@@ -52,10 +62,17 @@ export async function runDiscoveryMaintenanceWindow(
   const startedAt = now();
   const lifecycle = createMaintenanceLifecycleDiagnostics(runId, startedAt);
   const maximumRuntimeMs = dependencies.maximumRuntimeMs ?? maintenanceMaximumRuntimeMs;
+  const powerRequestMaximumRuntimeMs = Math.min(
+    maintenanceTaskExecutionLimitMs,
+    maximumRuntimeMs + maintenanceShutdownGraceMs,
+  );
   const updateStartupRecoveryWake =
     dependencies.updateStartupRecoveryWake ?? updateWindowsStartupRecoveryWake;
   return executeDiscoveryMaintenanceWindow({
     close: (connection: ReturnType<typeof createDatabase>) => connection.client.end(),
+    hardTerminationRecoveryAt: new Date(
+      startedAt.getTime() + maintenanceHardTerminationRecoveryDelayMs,
+    ),
     lifecycle,
     now,
     prepare: () =>
@@ -75,7 +92,7 @@ export async function runDiscoveryMaintenanceWindow(
           }
           return configuration;
         },
-        maximumRuntimeMs,
+        maximumRuntimeMs: powerRequestMaximumRuntimeMs,
         now,
         open: (configuration) => createDatabase(configuration.databaseUrl),
         probe: async (candidate) => {
@@ -96,15 +113,25 @@ export async function runDiscoveryMaintenanceWindow(
         lifecycle,
         now,
         observe: async (observedAt) => {
-          const [discovery, spotify] = await Promise.all([
+          await reconcileDiscoveryScheduleAfterCooldown(startup.connection.db, observedAt);
+          await reconcileDiscoverySchedulePriorityPhase(startup.connection.db, observedAt);
+          const [apple, discovery, spotify] = await Promise.all([
+            getAppleMusicOperationalStatus(startup.connection.db, observedAt),
             getRecurringDiscoveryScheduleStatus(startup.connection.db, observedAt),
             getSpotifySchedulerStatus(startup.connection.db, observedAt),
           ]);
-          return decideDiscoveryMaintenance({ discovery, spotify }, observedAt);
+          return decideDiscoveryMaintenance({ apple, discovery, spotify }, observedAt);
         },
-        runTick: () => runDiscoverySchedulerTick(startup.connection.db, startup.configuration),
+        runTick: ({ deadlineAt, remainingRuntimeMs }) =>
+          runDiscoverySchedulerTick(startup.connection.db, startup.configuration, {
+            appleMusicMaximumRuntimeMs: Math.max(60_000, remainingRuntimeMs - 60_000),
+            playlistDeadlineAt: deadlineAt,
+            priorityMaximumItems: 1,
+          }),
+        releasePower: false,
         sleep: dependencies.sleep ?? wait,
         startedAt,
+        updateStartupRecoveryWake,
         updateWake: updateWindowsMaintenanceWake,
         runId,
       }),
@@ -114,6 +141,7 @@ export async function runDiscoveryMaintenanceWindow(
 
 export async function executeDiscoveryMaintenanceWindow<Configuration, Connection, Result>(input: {
   close(connection: Connection): Promise<void>;
+  hardTerminationRecoveryAt: Date;
   lifecycle: MaintenanceLifecycleDiagnostics;
   now(): Date;
   prepare(): Promise<{
@@ -135,10 +163,27 @@ export async function executeDiscoveryMaintenanceWindow<Configuration, Connectio
     const startup = await input.prepare();
     connection = startup.connection;
     powerRequest = startup.powerRequest;
+    const observedAt = input.now();
+    try {
+      await input.updateStartupRecoveryWake(input.hardTerminationRecoveryAt);
+      input.lifecycle.startupRecoveryWake({
+        observedAt,
+        scheduledFor: input.hardTerminationRecoveryAt,
+        state: "scheduled",
+      });
+    } catch (error) {
+      input.lifecycle.startupRecoveryWake({
+        error: classifyStartupError(error),
+        observedAt,
+        scheduledFor: input.hardTerminationRecoveryAt,
+        state: "failed",
+      });
+      throw error;
+    }
     loopStarted = true;
     return await input.runLoop(startup);
   } catch (error) {
-    if (loopStarted) {
+    if (loopStarted || !wasStartupRecoveryScheduled(error)) {
       const observedAt = input.now();
       const scheduledFor = new Date(observedAt.getTime() + maintenanceStartupRecoveryDelayMs);
       try {
@@ -152,7 +197,8 @@ export async function executeDiscoveryMaintenanceWindow<Configuration, Connectio
           state: "failed",
         });
       }
-    } else {
+    }
+    if (!loopStarted) {
       input.lifecycle.finish({
         error: error instanceof Error ? error.message : "Maintenance failed.",
         finalReason: "startup_failure",
@@ -162,8 +208,11 @@ export async function executeDiscoveryMaintenanceWindow<Configuration, Connectio
     }
     throw error;
   } finally {
-    if (!loopStarted) await powerRequest?.release();
-    if (connection) await input.close(connection);
+    try {
+      await powerRequest?.release();
+    } finally {
+      if (connection) await input.close(connection);
+    }
   }
 }
 
@@ -190,12 +239,13 @@ export async function prepareDiscoveryMaintenanceStartup<Configuration, Connecti
   connection: Connection;
   powerRequest: WindowsPowerRequest;
 }> {
-  const powerRequest = input.acquirePower(input.maximumRuntimeMs, {
-    phase: "dependency_readiness",
-    reason: "startup_readiness",
-    runId: input.runId,
-  });
+  let powerRequest: WindowsPowerRequest | null = null;
   try {
+    powerRequest = input.acquirePower(input.maximumRuntimeMs, {
+      phase: "dependency_readiness",
+      reason: "startup_readiness",
+      runId: input.runId,
+    });
     const activation = await powerRequest.confirmActivation?.();
     input.lifecycle?.keepAwake({
       activatedAt: activation?.activatedAt ?? null,
@@ -214,41 +264,29 @@ export async function prepareDiscoveryMaintenanceStartup<Configuration, Connecti
       sleep: (milliseconds) => input.sleep(milliseconds),
       timeoutMs: input.readinessTimeoutMs,
     });
-    const clearedAt = input.now();
+    return { configuration, connection, powerRequest };
+  } catch (error) {
+    const observedAt = input.now();
+    const scheduledFor = new Date(observedAt.getTime() + maintenanceStartupRecoveryDelayMs);
+    let recoveryScheduled = false;
     try {
-      await input.updateStartupRecoveryWake(null);
+      await input.updateStartupRecoveryWake(scheduledFor);
+      input.lifecycle?.startupRecoveryWake({ observedAt, scheduledFor, state: "scheduled" });
+      recoveryScheduled = true;
+    } catch (wakeError) {
       input.lifecycle?.startupRecoveryWake({
-        observedAt: clearedAt,
-        scheduledFor: null,
-        state: "cleared",
-      });
-    } catch (error) {
-      input.lifecycle?.startupRecoveryWake({
-        error: classifyStartupError(error),
-        observedAt: clearedAt,
-        scheduledFor: null,
+        error: classifyStartupError(wakeError),
+        observedAt,
+        scheduledFor,
         state: "failed",
       });
     }
-    return { configuration, connection, powerRequest };
-  } catch (error) {
-    if (error instanceof MaintenanceDatabaseReadinessError) {
-      const observedAt = input.now();
-      const scheduledFor = new Date(observedAt.getTime() + maintenanceStartupRecoveryDelayMs);
-      try {
-        await input.updateStartupRecoveryWake(scheduledFor);
-        input.lifecycle?.startupRecoveryWake({ observedAt, scheduledFor, state: "scheduled" });
-      } catch (wakeError) {
-        input.lifecycle?.startupRecoveryWake({
-          error: classifyStartupError(wakeError),
-          observedAt,
-          scheduledFor,
-          state: "failed",
-        });
-      }
+    try {
+      await powerRequest?.release();
+    } catch (releaseError) {
+      throw recoveryScheduled ? markStartupRecoveryScheduled(releaseError) : releaseError;
     }
-    await powerRequest.release();
-    throw error;
+    throw recoveryScheduled ? markStartupRecoveryScheduled(error) : error;
   }
 }
 
@@ -262,10 +300,12 @@ export async function runDiscoveryMaintenanceLoop(input: {
   initialPowerRequest?: WindowsPowerRequest;
   now: () => Date;
   observe: (now: Date) => Promise<DiscoveryMaintenanceDecision>;
-  runTick: () => Promise<unknown>;
+  releasePower?: boolean;
+  runTick: (context: { deadlineAt: Date; remainingRuntimeMs: number }) => Promise<unknown>;
   sleep: (milliseconds: number) => Promise<void>;
   startedAt?: Date;
   updateWake: (wakeAt: Date | null) => Promise<void>;
+  updateStartupRecoveryWake?: (wakeAt: Date | null) => Promise<void>;
   runId?: string;
 }) {
   const startedAt = input.startedAt ?? input.now();
@@ -274,6 +314,25 @@ export async function runDiscoveryMaintenanceLoop(input: {
   let powerRequest: WindowsPowerRequest | null = input.initialPowerRequest ?? null;
   let ticks = 0;
   let finalDecision: DiscoveryMaintenanceDecision | null = null;
+  let runtimeYield = false;
+  const scheduleContinuation = async (observedAt: Date) => {
+    const scheduledFor = new Date(observedAt.getTime() + maintenanceStartupRecoveryDelayMs);
+    try {
+      if (!input.updateStartupRecoveryWake) {
+        throw new Error("Startup recovery wake updater is required for a maintenance yield.");
+      }
+      await input.updateStartupRecoveryWake(scheduledFor);
+      input.lifecycle?.startupRecoveryWake({ observedAt, scheduledFor, state: "scheduled" });
+    } catch (error) {
+      input.lifecycle?.startupRecoveryWake({
+        error: classifyStartupError(error),
+        observedAt,
+        scheduledFor,
+        state: "failed",
+      });
+      throw error;
+    }
+  };
   try {
     while (input.now() < deadline) {
       const observedAt = input.now();
@@ -297,22 +356,60 @@ export async function runDiscoveryMaintenanceLoop(input: {
         diagnosticPath: powerRequest.diagnosticPath ?? null,
         helperProcessId: activation?.helperProcessId ?? powerRequest.processId ?? null,
       });
-      await input.updateWake(decision.dynamicWakeAt);
       if (decision.waitUntil) {
-        await input.sleep(
-          Math.max(1_000, Math.min(60_000, decision.waitUntil.getTime() - observedAt.getTime())),
-        );
+        const waitMs = decision.waitUntil.getTime() - observedAt.getTime();
+        if (waitMs >= maintenanceBoundaryWakeMinimumDelayMs) {
+          // Keep one wake trigger armed for meaningful waits while this process holds the system
+          // awake. If the process is terminated outside normal error handling, the trigger can
+          // restart maintenance instead of leaving deferred work stranded. Sub-minute provider
+          // gate waits stay under the active keep-awake owner without rewriting the task trigger.
+          await input.updateWake(decision.waitUntil);
+        }
+        await input.sleep(Math.max(1_000, Math.min(60_000, waitMs)));
         continue;
       }
+      await input.updateWake(decision.dynamicWakeAt);
       if (!decision.runNow) break;
-      await input.runTick();
-      ticks += 1;
+      const remainingRuntimeMs = Math.max(0, deadline.getTime() - observedAt.getTime());
+      const minimumRuntimeMs =
+        decision.reason === "apple_due"
+          ? maintenanceMinimumAppleRuntimeMs
+          : maintenanceMinimumProviderRuntimeMs;
+      if (remainingRuntimeMs < minimumRuntimeMs) {
+        await scheduleContinuation(observedAt);
+        runtimeYield = true;
+        break;
+      }
+      try {
+        await input.runTick({ deadlineAt: deadline, remainingRuntimeMs });
+        ticks += 1;
+      } catch (error) {
+        if (!isExpectedMaintenanceContention(error)) throw error;
+        powerRequest.updateContext?.({
+          phase: "live_owner_wait",
+          reason: "maintenance_operation_contention",
+        });
+        await input.sleep(30_000);
+        continue;
+      }
       await input.sleep(1_000);
     }
+    const finishedAt = input.now();
+    const reachedDeadline = finishedAt >= deadline && finalDecision?.holdPower === true;
+    if (reachedDeadline && !runtimeYield) await scheduleContinuation(finishedAt);
     if (!finalDecision?.holdPower) await input.updateWake(finalDecision?.dynamicWakeAt ?? null);
+    if (!reachedDeadline && !runtimeYield && input.updateStartupRecoveryWake) {
+      await input.updateStartupRecoveryWake(null);
+      input.lifecycle?.startupRecoveryWake({
+        observedAt: finishedAt,
+        scheduledFor: null,
+        state: "cleared",
+      });
+    }
     const result = {
-      finalReason: finalDecision?.reason ?? "no_work",
-      finishedAt: input.now().toISOString(),
+      finalReason:
+        reachedDeadline || runtimeYield ? "runtime_yield" : (finalDecision?.reason ?? "no_work"),
+      finishedAt: finishedAt.toISOString(),
       startedAt: startedAt.toISOString(),
       ticks,
     };
@@ -331,8 +428,16 @@ export async function runDiscoveryMaintenanceLoop(input: {
     });
     throw error;
   } finally {
-    await powerRequest?.release();
+    if (input.releasePower !== false) await powerRequest?.release();
   }
+}
+
+export function isExpectedMaintenanceContention(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return (
+    /^Operation [A-Za-z0-9:_-]+ is already running\.$/.test(error.message) ||
+    /^A [a-z_]+ scan is already running\.?$/.test(error.message)
+  );
 }
 
 function wait(milliseconds: number): Promise<void> {
@@ -346,6 +451,23 @@ function classifyStartupError(error: unknown): string {
   }
   if (error instanceof Error && error.name) return error.name.slice(0, 80);
   return "unknown_error";
+}
+
+function markStartupRecoveryScheduled(error: unknown): unknown {
+  if ((typeof error === "object" && error !== null) || typeof error === "function") {
+    Object.defineProperty(error, startupRecoveryScheduledMarker, { value: true });
+    return error;
+  }
+  const wrapped = new Error(String(error));
+  Object.defineProperty(wrapped, startupRecoveryScheduledMarker, { value: true });
+  return wrapped;
+}
+
+function wasStartupRecoveryScheduled(error: unknown): boolean {
+  return (
+    ((typeof error === "object" && error !== null) || typeof error === "function") &&
+    Reflect.get(error, startupRecoveryScheduledMarker) === true
+  );
 }
 
 if (process.env.VITEST !== "true" && process.argv[1]?.endsWith("discovery-maintenance-cli.ts")) {

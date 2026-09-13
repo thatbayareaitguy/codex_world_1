@@ -1,6 +1,9 @@
 import {
+  acquireSpotifyPlaylistWriterLock,
   executeSpotifyPlaylistExport,
+  guardSpotifyPlaylistWriterClient,
   previewSpotifyPlaylistExport,
+  releaseSpotifyPlaylistWriterLock,
   SpotifyPlaylistExportError,
   type SpotifyPlaylistExportPreview,
 } from "@radar/db";
@@ -50,19 +53,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const playlistId = requireSpotifyPlaylistWriteRoute(configuration);
     const context = await createSpotifyServerContext();
     try {
-      const result = await executeSpotifyPlaylistExport(
-        context.db,
-        context.userId,
-        context.client,
-        {
-          playlistId,
-          policy: {
-            allowedPlaylistId: playlistId,
-            enabled: configuration.spotify.playlistWritesEnabled,
+      const lock = await acquireSpotifyPlaylistWriterLock(context.db, {
+        metadata: { mode: "web", purpose: "playlist_export" },
+      });
+      try {
+        const result = await executeSpotifyPlaylistExport(
+          context.db,
+          context.userId,
+          guardSpotifyPlaylistWriterClient(context.db, lock, context.client),
+          {
+            playlistId,
+            policy: {
+              allowedPlaylistId: playlistId,
+              enabled: configuration.spotify.playlistWritesEnabled,
+            },
           },
-        },
-      );
-      return NextResponse.json({ ...toResponse(result), run: result.run });
+        );
+        return NextResponse.json({ ...toResponse(result), run: result.run });
+      } finally {
+        await releaseSpotifyPlaylistWriterLock(context.db, lock);
+      }
     } finally {
       await context.close();
     }

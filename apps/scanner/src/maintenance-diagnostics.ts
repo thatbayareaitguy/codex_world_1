@@ -132,7 +132,9 @@ export function createMaintenanceLifecycleDiagnostics(
         scheduledFor: input.scheduledFor?.toISOString() ?? null,
         state: input.state,
       };
-      if (input.scheduledFor) record.readiness.finalResult = "timeout";
+      if (input.scheduledFor && record.readiness.finalResult !== "ready") {
+        record.readiness.finalResult = "timeout";
+      }
       persist();
     },
   };

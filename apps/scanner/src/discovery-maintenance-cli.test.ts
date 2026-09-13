@@ -8,7 +8,7 @@ import type { DiscoveryMaintenanceDecision } from "./discovery-maintenance";
 import type { MaintenanceLifecycleDiagnostics } from "./maintenance-diagnostics";
 
 describe("discovery maintenance startup", () => {
-  it("confirms provisional keep-awake before retrying PostgreSQL and clears recovery wake", async () => {
+  it("confirms provisional keep-awake before retrying PostgreSQL", async () => {
     const events: string[] = [];
     let clock = Date.parse("2026-09-08T15:50:00.000Z");
     let probes = 0;
@@ -62,7 +62,7 @@ describe("discovery maintenance startup", () => {
     ]);
     expect(probes).toBe(4);
     expect(result.connection).toEqual({ id: 4 });
-    expect(updateStartupRecoveryWake).toHaveBeenCalledWith(null);
+    expect(updateStartupRecoveryWake).not.toHaveBeenCalled();
     expect(release).not.toHaveBeenCalled();
   });
 
@@ -96,7 +96,7 @@ describe("discovery maintenance startup", () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
-  it("fails before database or provider-dependent work when helper activation fails", async () => {
+  it("arms startup recovery before failing when helper activation is not confirmed", async () => {
     const release = vi.fn(() => Promise.resolve());
     const loadConfiguration = vi.fn(() => ({ databaseUrl: "hidden" }));
     const updateStartupRecoveryWake = vi.fn(() => Promise.resolve());
@@ -122,8 +122,36 @@ describe("discovery maintenance startup", () => {
       }),
     ).rejects.toThrow("activation failed");
     expect(loadConfiguration).not.toHaveBeenCalled();
-    expect(updateStartupRecoveryWake).not.toHaveBeenCalled();
+    expect(updateStartupRecoveryWake).toHaveBeenCalledOnce();
+    expect(updateStartupRecoveryWake).toHaveBeenCalledWith(new Date("2026-09-08T15:57:00.000Z"));
     expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("arms startup recovery even when the keep-awake helper cannot be acquired", async () => {
+    const updateStartupRecoveryWake = vi.fn(() => Promise.resolve());
+
+    await expect(
+      prepareDiscoveryMaintenanceStartup({
+        acquirePower: () => {
+          throw new Error("keep-awake owner unavailable");
+        },
+        close: () => Promise.resolve(),
+        inspectDocker: () => Promise.resolve("not_inspectable"),
+        lifecycle: lifecycle(),
+        loadConfiguration: () => ({ databaseUrl: "hidden" }),
+        maximumRuntimeMs: 4 * 60 * 60_000,
+        now: () => new Date("2026-09-12T23:00:00.000Z"),
+        open: () => ({}),
+        probe: () => Promise.resolve(),
+        readinessTimeoutMs: 30_000,
+        retryIntervalMs: 10_000,
+        runId: "acquisition-failure",
+        sleep: () => Promise.resolve(),
+        updateStartupRecoveryWake,
+      }),
+    ).rejects.toThrow("keep-awake owner unavailable");
+    expect(updateStartupRecoveryWake).toHaveBeenCalledOnce();
+    expect(updateStartupRecoveryWake).toHaveBeenCalledWith(new Date("2026-09-12T23:07:00.000Z"));
   });
 });
 
@@ -148,9 +176,11 @@ describe("discovery maintenance window lifecycle", () => {
       events.push("loop-resolved");
       return result;
     });
+    const updateStartupRecoveryWake = vi.fn(() => Promise.resolve());
 
     const resultPromise = executeDiscoveryMaintenanceWindow({
       close,
+      hardTerminationRecoveryAt: new Date("2026-09-12T07:51:00.000Z"),
       lifecycle: lifecycle(),
       now: () => new Date("2026-09-12T03:50:00.000Z"),
       prepare: () =>
@@ -160,10 +190,12 @@ describe("discovery maintenance window lifecycle", () => {
           powerRequest: { release: () => Promise.resolve() },
         }),
       runLoop,
-      updateStartupRecoveryWake: () => Promise.resolve(),
+      updateStartupRecoveryWake,
     });
 
     await vi.waitFor(() => expect(runLoop).toHaveBeenCalledOnce());
+    expect(updateStartupRecoveryWake).toHaveBeenCalledOnce();
+    expect(updateStartupRecoveryWake).toHaveBeenCalledWith(new Date("2026-09-12T07:51:00.000Z"));
     expect(close).not.toHaveBeenCalled();
     expect(connection.closed).toBe(false);
 
@@ -173,23 +205,35 @@ describe("discovery maintenance window lifecycle", () => {
     expect(events).toEqual(["loop-started", "loop-resolved", "database-closed"]);
   });
 
-  it("schedules one internal recovery wake when the running loop fails", async () => {
+  it("overwrites the hard-termination deadman when the running loop fails", async () => {
+    const events: string[] = [];
     const observedAt = new Date("2026-09-12T03:51:00.000Z");
-    const close = vi.fn(() => Promise.resolve());
-    const updateStartupRecoveryWake = vi.fn(() => Promise.resolve());
+    const close = vi.fn(() => {
+      events.push("database-closed");
+      return Promise.resolve();
+    });
+    const release = vi.fn(() => {
+      events.push("power-released");
+      return Promise.resolve();
+    });
+    const updateStartupRecoveryWake = vi.fn(() => {
+      events.push("recovery-scheduled");
+      return Promise.resolve();
+    });
     const startupRecoveryWake = vi.fn();
     const diagnostics = { ...lifecycle(), startupRecoveryWake };
 
     await expect(
       executeDiscoveryMaintenanceWindow({
         close,
+        hardTerminationRecoveryAt: new Date("2026-09-12T07:51:00.000Z"),
         lifecycle: diagnostics,
         now: () => observedAt,
         prepare: () =>
           Promise.resolve({
             configuration: {},
             connection: { id: "production" },
-            powerRequest: { release: () => Promise.resolve() },
+            powerRequest: { release },
           }),
         runLoop: () => Promise.reject(new Error("Synthetic runtime failure")),
         updateStartupRecoveryWake,
@@ -197,14 +241,25 @@ describe("discovery maintenance window lifecycle", () => {
     ).rejects.toThrow("Synthetic runtime failure");
 
     const scheduledFor = new Date("2026-09-12T03:58:00.000Z");
-    expect(updateStartupRecoveryWake).toHaveBeenCalledOnce();
-    expect(updateStartupRecoveryWake).toHaveBeenCalledWith(scheduledFor);
-    expect(startupRecoveryWake).toHaveBeenCalledWith({
+    expect(updateStartupRecoveryWake).toHaveBeenCalledTimes(2);
+    expect(updateStartupRecoveryWake).toHaveBeenNthCalledWith(
+      1,
+      new Date("2026-09-12T07:51:00.000Z"),
+    );
+    expect(updateStartupRecoveryWake).toHaveBeenNthCalledWith(2, scheduledFor);
+    expect(startupRecoveryWake).toHaveBeenLastCalledWith({
       observedAt,
       scheduledFor,
       state: "scheduled",
     });
+    expect(release).toHaveBeenCalledOnce();
     expect(close).toHaveBeenCalledOnce();
+    expect(events).toEqual([
+      "recovery-scheduled",
+      "recovery-scheduled",
+      "power-released",
+      "database-closed",
+    ]);
   });
 });
 
@@ -236,9 +291,10 @@ describe("discovery maintenance loop", () => {
     const decisions = [decision("priority_work", true, true), decision("no_work", false, false)];
     let clock = Date.parse("2026-08-27T20:00:00.000Z");
     const runTick = vi.fn(() => Promise.resolve());
+    const updateStartupRecoveryWake = vi.fn(() => Promise.resolve());
     const result = await runDiscoveryMaintenanceLoop({
       acquirePower,
-      maximumRuntimeMs: 60_000,
+      maximumRuntimeMs: 21 * 60_000,
       now: () => new Date(clock),
       observe: () => Promise.resolve(decisions.shift()!),
       runTick,
@@ -246,12 +302,13 @@ describe("discovery maintenance loop", () => {
         clock += milliseconds;
         return Promise.resolve();
       },
+      updateStartupRecoveryWake,
       updateWake: () => Promise.resolve(),
       runId: "priority-run",
     });
     expect(result).toMatchObject({ finalReason: "no_work", ticks: 1 });
     expect(runTick).toHaveBeenCalledTimes(1);
-    expect(acquirePower).toHaveBeenCalledWith(60_000, {
+    expect(acquirePower).toHaveBeenCalledWith(21 * 60_000, {
       phase: "due_work",
       reason: "priority_work",
       runId: "priority-run",
@@ -262,12 +319,19 @@ describe("discovery maintenance loop", () => {
       runId: "priority-run",
     });
     expect(confirmActivation).toHaveBeenCalled();
+    expect(updateStartupRecoveryWake).toHaveBeenCalledOnce();
+    expect(updateStartupRecoveryWake).toHaveBeenCalledWith(null);
+    expect(runTick).toHaveBeenCalledWith({
+      deadlineAt: new Date("2026-08-27T20:21:00.000Z"),
+      remainingRuntimeMs: 21 * 60_000,
+    });
     expect(release).toHaveBeenCalledTimes(1);
   });
 
-  it("holds power only for an explicitly bounded near-term wait", async () => {
+  it("keeps sub-minute capacity waits under the active owner without trigger churn", async () => {
     const release = vi.fn(() => Promise.resolve());
     const acquirePower = vi.fn(() => ({ release }));
+    const updateWake = vi.fn(() => Promise.resolve());
     let clock = Date.parse("2026-08-27T20:00:00.000Z");
     const waitUntil = new Date(clock + 30_000);
     const decisions: DiscoveryMaintenanceDecision[] = [
@@ -291,14 +355,88 @@ describe("discovery maintenance loop", () => {
         clock += milliseconds;
         return Promise.resolve();
       },
-      updateWake: () => Promise.resolve(),
+      updateWake,
     });
     expect(acquirePower).toHaveBeenCalledWith(60_000, {
       phase: "near_term_capacity_wait",
       reason: "priority_capacity_wait",
       runId: "capacity-wait-run",
     });
+    expect(updateWake).toHaveBeenCalledOnce();
+    expect(updateWake).toHaveBeenCalledWith(null);
     expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears an armed boundary wake after a meaningful wait drains cleanly", async () => {
+    const release = vi.fn(() => Promise.resolve());
+    const updateWake = vi.fn(() => Promise.resolve());
+    let clock = Date.parse("2026-08-27T20:00:00.000Z");
+    const waitUntil = new Date(clock + 10 * 60_000);
+    const decisions: DiscoveryMaintenanceDecision[] = [
+      {
+        dynamicWakeAt: null,
+        holdPower: true,
+        reason: "priority_capacity_wait",
+        runNow: false,
+        waitUntil,
+      },
+      decision("no_work", false, false),
+    ];
+
+    await runDiscoveryMaintenanceLoop({
+      acquirePower: () => ({ release }),
+      maximumRuntimeMs: 15 * 60_000,
+      now: () => new Date(clock),
+      observe: () => Promise.resolve(decisions.shift()!),
+      runId: "clean-boundary-fallback-run",
+      runTick: () => Promise.resolve(),
+      sleep: (milliseconds) => {
+        clock += milliseconds;
+        return Promise.resolve();
+      },
+      updateWake,
+    });
+
+    expect(updateWake).toHaveBeenNthCalledWith(1, waitUntil);
+    expect(updateWake).toHaveBeenNthCalledWith(2, null);
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("arms a boundary wake before entering a near-term wait", async () => {
+    const release = vi.fn(() => Promise.resolve());
+    const waitUntil = new Date("2026-08-27T20:10:00.000Z");
+    const events: string[] = [];
+    const updateWake = vi.fn((wakeAt: Date | null) => {
+      events.push(`wake:${wakeAt?.toISOString() ?? "cleared"}`);
+      return Promise.resolve();
+    });
+
+    await expect(
+      runDiscoveryMaintenanceLoop({
+        acquirePower: () => ({ release }),
+        maximumRuntimeMs: 15 * 60_000,
+        now: () => new Date("2026-08-27T20:00:00.000Z"),
+        observe: () =>
+          Promise.resolve({
+            dynamicWakeAt: null,
+            holdPower: true,
+            reason: "priority_capacity_wait",
+            runNow: false,
+            waitUntil,
+          }),
+        runId: "boundary-fallback-run",
+        runTick: () => Promise.resolve(),
+        sleep: () => {
+          events.push("wait-started");
+          return Promise.reject(new Error("Synthetic wait interruption"));
+        },
+        updateWake,
+      }),
+    ).rejects.toThrow("Synthetic wait interruption");
+
+    expect(events).toEqual([`wake:${waitUntil.toISOString()}`, "wait-started"]);
+    expect(updateWake).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it("uses the shared keep-awake owner for a near-term broad capacity wait", async () => {
@@ -341,9 +479,10 @@ describe("discovery maintenance loop", () => {
     const acquirePower = vi.fn(() => ({ release }));
     let clock = Date.parse("2026-08-27T20:00:00.000Z");
     const runTick = vi.fn(() => Promise.resolve());
+    const updateStartupRecoveryWake = vi.fn(() => Promise.resolve());
     const result = await runDiscoveryMaintenanceLoop({
       acquirePower,
-      maximumRuntimeMs: 2_500,
+      maximumRuntimeMs: 20 * 60_000 + 2_500,
       now: () => new Date(clock),
       observe: () => Promise.resolve(decision("broad_work", true, true)),
       runTick,
@@ -352,10 +491,88 @@ describe("discovery maintenance loop", () => {
         return Promise.resolve();
       },
       updateWake: () => Promise.resolve(),
+      updateStartupRecoveryWake,
     });
     expect(result.ticks).toBe(3);
+    expect(result.finalReason).toBe("runtime_yield");
     expect(acquirePower).toHaveBeenCalledTimes(1);
+    expect(updateStartupRecoveryWake).toHaveBeenCalledOnce();
+    expect(updateStartupRecoveryWake).toHaveBeenCalledWith(new Date("2026-08-27T20:07:03.000Z"));
     expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("yields a due Apple workflow instead of starting it with too little runtime", async () => {
+    const now = new Date("2026-09-12T23:00:00.000Z");
+    const release = vi.fn(() => Promise.resolve());
+    const runTick = vi.fn(() => Promise.resolve());
+    const updateStartupRecoveryWake = vi.fn(() => Promise.resolve());
+
+    await expect(
+      runDiscoveryMaintenanceLoop({
+        acquirePower: () => ({ release }),
+        maximumRuntimeMs: 10 * 60_000,
+        now: () => now,
+        observe: () => Promise.resolve(decision("apple_due", true, true)),
+        runTick,
+        sleep: () => Promise.resolve(),
+        updateStartupRecoveryWake,
+        updateWake: () => Promise.resolve(),
+      }),
+    ).resolves.toMatchObject({ finalReason: "runtime_yield", ticks: 0 });
+    expect(runTick).not.toHaveBeenCalled();
+    expect(updateStartupRecoveryWake).toHaveBeenCalledOnce();
+    expect(updateStartupRecoveryWake).toHaveBeenCalledWith(new Date("2026-09-12T23:07:00.000Z"));
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("yields playlist work before its capacity wait could cross the task deadline", async () => {
+    const now = new Date("2026-09-12T23:00:00.000Z");
+    const release = vi.fn(() => Promise.resolve());
+    const runTick = vi.fn(() => Promise.resolve());
+    const updateStartupRecoveryWake = vi.fn(() => Promise.resolve());
+
+    await expect(
+      runDiscoveryMaintenanceLoop({
+        acquirePower: () => ({ release }),
+        maximumRuntimeMs: 19 * 60_000,
+        now: () => now,
+        observe: () => Promise.resolve(decision("playlist_work", true, true)),
+        runTick,
+        sleep: () => Promise.resolve(),
+        updateStartupRecoveryWake,
+        updateWake: () => Promise.resolve(),
+      }),
+    ).resolves.toMatchObject({ finalReason: "runtime_yield", ticks: 0 });
+    expect(runTick).not.toHaveBeenCalled();
+    expect(updateStartupRecoveryWake).toHaveBeenCalledOnce();
+    expect(updateStartupRecoveryWake).toHaveBeenCalledWith(new Date("2026-09-12T23:07:00.000Z"));
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("re-observes expected live-owner contention instead of failing maintenance", async () => {
+    const release = vi.fn(() => Promise.resolve());
+    const decisions = [decision("playlist_work", true, true), decision("no_work", false, false)];
+    let clock = Date.parse("2026-09-12T23:00:00.000Z");
+    const runTick = vi.fn(() =>
+      Promise.reject(new Error("Operation spotify:playlist-export is already running.")),
+    );
+
+    await expect(
+      runDiscoveryMaintenanceLoop({
+        acquirePower: () => ({ release }),
+        maximumRuntimeMs: 21 * 60_000,
+        now: () => new Date(clock),
+        observe: () => Promise.resolve(decisions.shift()!),
+        runTick,
+        sleep: (milliseconds) => {
+          clock += milliseconds;
+          return Promise.resolve();
+        },
+        updateWake: () => Promise.resolve(),
+      }),
+    ).resolves.toMatchObject({ finalReason: "no_work", ticks: 0 });
+    expect(runTick).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it("releases power when a scheduler tick fails", async () => {
@@ -363,7 +580,7 @@ describe("discovery maintenance loop", () => {
     await expect(
       runDiscoveryMaintenanceLoop({
         acquirePower: () => ({ release }),
-        maximumRuntimeMs: 60_000,
+        maximumRuntimeMs: 21 * 60_000,
         now: () => new Date("2026-08-27T20:00:00.000Z"),
         observe: () => Promise.resolve(decision("priority_work", true, true)),
         runTick: () => Promise.reject(new Error("Synthetic tick failure")),

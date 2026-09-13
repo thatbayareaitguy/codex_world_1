@@ -83,8 +83,8 @@ derived reconciliation rows transactionally.
 The preview runtime can read only `SPOTIFY_ALLOWED_PLAYLIST_ID` and constructs a Spotify client with
 writes disabled. Manual campaign export remains an explicit command and approval boundary. In the
 explicitly enabled recurring production workflow, Thursday and Friday use the same guarded exporter
-automatically after Apple-triggered Spotify resolution drains; repository defaults remain
-write-disabled. See [Apple-First Discovery And Spotify Reconciliation](apple-first-sync.md).
+at durable checkpoints before and during Apple-triggered Spotify resolution; repository defaults
+remain write-disabled. See [Apple-First Discovery And Spotify Reconciliation](apple-first-sync.md).
 
 ### First-week bootstrap into the recurring schedule
 
@@ -93,11 +93,13 @@ The first completed Apple-first campaign becomes the initial weekly Apple scan. 
 unfinished Spotify artist work moves into the rolling scheduler. The transition does not mark any
 unscanned Spotify artist complete.
 
-One global discovery schedule records the active campaign and enforces this order: provider
-cooldown, campaign playlist inbox, Apple-priority Spotify resolution, broad Spotify reconciliation,
-then the next weekly Apple scan. Apple-only, uncertain, and missing-Spotify-track reconciliation
-rows create dedicated Apple-priority work. Remaining unfinished campaign artists stay in the broad
-rolling backlog. Broad work cannot run while priority work remains.
+One global discovery schedule records the active campaign and enforces this order: any already
+pending playlist export, a due or incomplete weekly Apple job, Apple-priority Spotify resolution,
+newly eligible playlist export, priority-related repair work, and then broad Spotify reconciliation.
+A provider cooldown or rolling-capacity boundary pauses the affected step without advancing past it.
+Apple-only, uncertain, and missing-Spotify-track reconciliation rows create dedicated Apple-priority
+work. Remaining unfinished campaign artists stay in the broad rolling backlog. Broad work cannot run
+while priority work remains.
 
 Recurring operation uses durable local-time jobs. The full Apple watchlist scan is due Thursday at
 9:00 PM and the bounded catch-up scan is due Friday at 9:00 AM in
@@ -124,19 +126,20 @@ cooldowns, and next-run timestamps are persisted in PostgreSQL.
 
 The campaign playlist export uses only exact Spotify track IDs already proven eligible by the
 campaign reconciliation rows. A due Apple job is independent from Spotify readiness, so Friday
-catch-up may run during a Spotify cooldown; its resulting work is queued behind unresolved
-full-scan priority and the pending export resumes when Spotify is ready. After each Thursday or
-Friday Apple scan, Apple-triggered Spotify resolution runs first and the
-playlist checkpoint becomes ready when that priority queue drains. The successful final resolution
-is reconciled immediately, and the same unified tick invokes the existing guarded exporter without
-an interactive command. A later periodic tick provides restart recovery when the process exits at
-any earlier phase. Automatic execution requires recurring discovery, the Spotify scheduler, and
-playlist writes to be explicitly enabled in ignored local configuration. The exporter reads only
-playlist `4l6LaMPL6duulmFe3hRR4Y`, plans batched membership additions, and maintains newest-release-first
+catch-up may run during a Spotify cooldown; its resulting work remains queued until Spotify is
+ready. Eligible pending additions are exported before a due Apple job, and new exact matches are
+exported at checkpoints between bounded priority items rather than waiting for the entire priority
+queue to drain. The once-per-minute task performs local housekeeping and dispatches the separate
+maintenance task; it never performs provider or playlist work under its three-minute limit. A later
+minute tick supplies restart recovery by preserving or registering a maintenance wake. Automatic
+execution requires recurring discovery, the Spotify scheduler, and playlist writes to be explicitly
+enabled in ignored local configuration. The exporter reads only playlist
+`4l6LaMPL6duulmFe3hRR4Y`, adds at most three tracks or performs at most three actual playlist
+mutations per bounded unit, and resumes the same durable run. It maintains newest-release-first
 Custom Order with albums and EPs contiguous in disc then track order. Routine export uses only
-snapshot-aware range moves and never removes, re-adds, replaces, renames, or changes visibility. A Spotify 429
-changes the durable workflow to cooldown wait and preserves the partial export for automatic resume
-before any broad work.
+snapshot-aware range moves and never removes, re-adds, replaces, renames, or changes visibility. A
+Spotify 429 changes the durable workflow to cooldown wait and preserves the partial export for
+automatic resume before any broad work.
 
 Spotify request telemetry uses durable endpoint buckets: `artist_albums`, `album_detail`,
 `album_tracks`, `playlist_read`, `playlist_write`, and `oauth_or_other`. Artist catalog work has a

@@ -5,6 +5,7 @@ import { createDatabase } from "./client";
 import {
   attachDiscoveryScheduleAppleJobBatch,
   claimDiscoveryScheduleAppleJob,
+  discoveryAppleJobLeaseMs,
   finishDiscoveryScheduleAppleJob,
   getRecurringDiscoveryScheduleStatus,
   reconcileDiscoveryScheduleJobs,
@@ -68,6 +69,76 @@ describe.sequential("weekly discovery scheduler persistence", () => {
       status: "completed",
     });
     expect(await claimDiscoveryScheduleAppleJob(connection.db, now)).toBeNull();
+  });
+
+  it("marks an unstarted failed catch-up complete when a later full scan covered it", async () => {
+    const scheduledFor = new Date("2026-08-07T16:00:00.000Z");
+    await connection.db.insert(discoveryScheduleState).values({
+      id: "global",
+      lastAppleScanCompletedAt: new Date("2026-08-07T18:00:00.000Z"),
+      phase: "broad_spotify",
+    });
+    await connection.db.insert(discoveryScheduleJobs).values({
+      errorClassification: "scheduled_apple_scan_failed",
+      jobKey: "apple_catchup:2026-08-07",
+      jobType: "apple_catchup",
+      recoveryDeadline: new Date("2026-08-08T16:00:00.000Z"),
+      scheduledFor,
+      status: "failed",
+    });
+
+    await reconcileDiscoveryScheduleJobs(connection.db, new Date("2026-08-07T19:00:00.000Z"));
+
+    const job = await connection.db.query.discoveryScheduleJobs.findFirst({
+      where: eq(discoveryScheduleJobs.jobKey, "apple_catchup:2026-08-07"),
+    });
+    expect(job).toMatchObject({
+      completedAt: new Date("2026-08-07T18:00:00.000Z"),
+      errorClassification: "covered_by_later_full_scan",
+      status: "completed",
+    });
+  });
+
+  it("does not claim catch-up while an earlier full scan is leased", async () => {
+    const now = new Date("2026-08-07T19:00:00.000Z");
+    await reconcileDiscoveryScheduleJobs(connection.db, now);
+
+    const fullClaim = await claimDiscoveryScheduleAppleJob(connection.db, now);
+    expect(fullClaim?.jobType).toBe("apple_full");
+    expect(fullClaim!.leaseExpiresAt.getTime() - now.getTime()).toBe(discoveryAppleJobLeaseMs);
+    expect(discoveryAppleJobLeaseMs).toBeGreaterThan(3.5 * 60 * 60_000);
+    await expect(claimDiscoveryScheduleAppleJob(connection.db, now)).resolves.toBeNull();
+    await expect(
+      claimDiscoveryScheduleAppleJob(
+        connection.db,
+        new Date(now.getTime() + 3 * 60 * 60_000 + 60_000),
+      ),
+    ).resolves.toBeNull();
+    const reclaimed = await claimDiscoveryScheduleAppleJob(
+      connection.db,
+      new Date(now.getTime() + discoveryAppleJobLeaseMs + 60_000),
+    );
+    expect(reclaimed).toMatchObject({ id: fullClaim!.id, jobType: "apple_full" });
+  });
+
+  it("reclaims an Apple schedule lease immediately when its local owner process is dead", async () => {
+    const started = new Date("2026-08-07T19:00:00.000Z");
+    await reconcileDiscoveryScheduleJobs(connection.db, started);
+    const firstClaim = await claimDiscoveryScheduleAppleJob(connection.db, started);
+    expect(firstClaim).not.toBeNull();
+    await connection.db
+      .update(discoveryScheduleJobs)
+      .set({ leaseOwner: "local-pid:2147483647:00000000-0000-0000-0000-000000000000" })
+      .where(eq(discoveryScheduleJobs.id, firstClaim!.id));
+
+    const recoveredAt = new Date(started.getTime() + 7 * 60_000);
+    await reconcileDiscoveryScheduleJobs(connection.db, recoveredAt);
+    const recovered = await claimDiscoveryScheduleAppleJob(connection.db, recoveredAt);
+
+    expect(recovered).toMatchObject({ id: firstClaim!.id, jobType: firstClaim!.jobType });
+    expect(recovered!.leaseExpiresAt.getTime() - recoveredAt.getTime()).toBe(
+      discoveryAppleJobLeaseMs,
+    );
   });
 
   it("expires missed jobs after 24 hours and never stacks old jobs for execution", async () => {
@@ -196,7 +267,12 @@ describe.sequential("weekly discovery scheduler persistence", () => {
     const recoveryDeadline = new Date("2026-08-08T16:00:00.000Z");
     const [run] = await connection.db
       .insert(scanRuns)
-      .values({ provider: "apple_music", providersRequested: ["apple_music"], status: "paused" })
+      .values({
+        provider: "apple_music",
+        providersRequested: ["apple_music"],
+        status: "paused",
+        triggerType: "apple_catchup_scheduled",
+      })
       .returning({ id: scanRuns.id });
     const [batch] = await connection.db
       .insert(appleMusicScanBatches)
@@ -263,6 +339,51 @@ describe.sequential("weekly discovery scheduler persistence", () => {
     });
   });
 
+  it("reports an older linked Apple workflow as actionable after a newer occurrence exists", async () => {
+    const [run] = await connection.db
+      .insert(scanRuns)
+      .values({
+        provider: "apple_music",
+        providersRequested: ["apple_music"],
+        status: "paused",
+        triggerType: "apple_catchup_scheduled",
+      })
+      .returning({ id: scanRuns.id });
+    const [batch] = await connection.db
+      .insert(appleMusicScanBatches)
+      .values({ scanRunId: run!.id, status: "paused", totalArtists: 593 })
+      .returning({ id: appleMusicScanBatches.id });
+    await connection.db.insert(discoveryScheduleJobs).values([
+      {
+        appleMusicBatchId: batch!.id,
+        jobKey: "apple_catchup:2026-08-07",
+        jobType: "apple_catchup",
+        recoveryDeadline: new Date("2026-08-08T16:00:00.000Z"),
+        scanRunId: run!.id,
+        scheduledFor: new Date("2026-08-07T16:00:00.000Z"),
+        status: "scheduled",
+      },
+      {
+        completedAt: new Date("2026-08-14T18:00:00.000Z"),
+        jobKey: "apple_catchup:2026-08-14",
+        jobType: "apple_catchup",
+        recoveryDeadline: new Date("2026-08-15T16:00:00.000Z"),
+        scheduledFor: new Date("2026-08-14T16:00:00.000Z"),
+        status: "completed",
+      },
+    ]);
+
+    const status = await getRecurringDiscoveryScheduleStatus(
+      connection.db,
+      new Date("2026-08-15T19:00:00.000Z"),
+    );
+    expect(status.actionable).toMatchObject({
+      appleMusicBatchId: batch!.id,
+      scheduledFor: new Date("2026-08-07T16:00:00.000Z"),
+      status: "scheduled",
+    });
+  });
+
   it("yields a runtime-limited Apple job and resumes the same batch and scan run", async () => {
     const started = new Date("2026-08-07T19:00:00.000Z");
     await connection.db.insert(discoveryScheduleState).values({
@@ -306,6 +427,91 @@ describe.sequential("weekly discovery scheduler persistence", () => {
       .select({ id: discoveryScheduleJobs.id })
       .from(discoveryScheduleJobs)
       .where(eq(discoveryScheduleJobs.appleMusicBatchId, batch!.id));
+    expect(jobs).toHaveLength(1);
+  });
+
+  it("yields an Apple claim before a batch exists without failing the schedule job", async () => {
+    const started = new Date("2026-08-07T19:00:00.000Z");
+    await connection.db.insert(discoveryScheduleState).values({
+      id: "global",
+      lastAppleScanCompletedAt: new Date("2026-08-07T15:00:00.000Z"),
+      phase: "broad_spotify",
+    });
+    await reconcileDiscoveryScheduleJobs(connection.db, started);
+    const firstClaim = await claimDiscoveryScheduleAppleJob(connection.db, started);
+    expect(firstClaim).toMatchObject({
+      appleMusicBatchId: null,
+      jobType: "apple_catchup",
+      scanRunId: null,
+    });
+
+    expect(
+      await yieldDiscoveryScheduleAppleJob(
+        connection.db,
+        firstClaim!,
+        {
+          appleMusicBatchId: null,
+          errorClassification: "apple_scan_lock_contended",
+          scanRunId: null,
+        },
+        started,
+      ),
+    ).toBe(true);
+
+    const yielded = await connection.db.query.discoveryScheduleJobs.findFirst({
+      where: eq(discoveryScheduleJobs.id, firstClaim!.id),
+    });
+    expect(yielded).toMatchObject({
+      appleMusicBatchId: null,
+      errorClassification: "apple_scan_lock_contended",
+      leaseExpiresAt: null,
+      leaseOwner: null,
+      scanRunId: null,
+      status: "scheduled",
+    });
+  });
+
+  it("recovers an orphaned batch created just before an Apple schedule attachment crash", async () => {
+    const started = new Date("2026-08-07T19:00:00.000Z");
+    await connection.db.insert(discoveryScheduleState).values({
+      id: "global",
+      lastAppleScanCompletedAt: new Date("2026-08-07T15:00:00.000Z"),
+      phase: "broad_spotify",
+    });
+    await reconcileDiscoveryScheduleJobs(connection.db, started);
+    const firstClaim = await claimDiscoveryScheduleAppleJob(connection.db, started);
+    const [run] = await connection.db
+      .insert(scanRuns)
+      .values({
+        provider: "apple_music",
+        providersRequested: ["apple_music"],
+        status: "paused",
+        triggerType: "apple_catchup_scheduled",
+      })
+      .returning({ id: scanRuns.id });
+    const [orphanedBatch] = await connection.db
+      .insert(appleMusicScanBatches)
+      .values({
+        createdAt: new Date(started.getTime() + 1_000),
+        scanRunId: run!.id,
+        status: "paused",
+        totalArtists: 593,
+      })
+      .returning({ id: appleMusicScanBatches.id });
+
+    const afterLeaseExpiry = new Date(started.getTime() + discoveryAppleJobLeaseMs + 1_000);
+    await reconcileDiscoveryScheduleJobs(connection.db, afterLeaseExpiry);
+    const resumed = await claimDiscoveryScheduleAppleJob(connection.db, afterLeaseExpiry);
+
+    expect(resumed).toMatchObject({
+      appleMusicBatchId: orphanedBatch!.id,
+      id: firstClaim!.id,
+      scanRunId: run!.id,
+    });
+    const jobs = await connection.db
+      .select({ id: discoveryScheduleJobs.id })
+      .from(discoveryScheduleJobs)
+      .where(eq(discoveryScheduleJobs.appleMusicBatchId, orphanedBatch!.id));
     expect(jobs).toHaveLength(1);
   });
 });

@@ -24,6 +24,7 @@ import {
   finishMusicBrainzBatch,
   attachMusicBrainzBatchScanRun,
   createSpotifyRequestGate,
+  defaultSchedulerLimits,
   deferSpotifyRequests,
   claimNextSpotifyArtist,
   acquireOperationLock,
@@ -95,6 +96,7 @@ import {
 } from "./dry-run-report";
 import { runRedditScan } from "./reddit-scan";
 import { prepareSpotifyWork, type PreparedSpotifyWork } from "./spotify-scan-plan";
+import { providerScanTriggerType, type ScheduledScanTriggerType } from "./scan-trigger";
 
 export interface ScanSummary {
   discovered: number;
@@ -139,6 +141,7 @@ export interface ScanRuntime {
   deferSpotifyReleaseDetails?: boolean;
   reportProgress: (metadata: Record<string, unknown>, force?: boolean) => Promise<void>;
   requestGateWrapper?: (gate: SpotifyRequestGate) => SpotifyRequestGate;
+  scanTriggerType?: ScheduledScanTriggerType;
   schedulerContext?: {
     campaignId?: string;
     campaignMemberId?: string | null;
@@ -177,7 +180,7 @@ export async function runScan(
   options: ScannerOptions,
   lifecycle: Pick<
     ScanRuntime,
-    "appleMusicBatchId" | "appleMusicBatchReady" | "appleMusicMaximumRuntimeMs"
+    "appleMusicBatchId" | "appleMusicBatchReady" | "appleMusicMaximumRuntimeMs" | "scanTriggerType"
   > = {},
 ): Promise<ScanSummary> {
   const configuration = loadProviderConfiguration();
@@ -388,7 +391,13 @@ export async function runScanUnlocked(
       if (spotifyWork.paused) {
         const pausedRunId = options.dryRun
           ? undefined
-          : await createProviderScanRun(db, "spotify", options);
+          : await createProviderScanRun(
+              db,
+              "spotify",
+              options,
+              undefined,
+              runtime?.scanTriggerType,
+            );
         if (pausedRunId) {
           await attachSpotifyBatchScanRun(db, spotifyWork.batchId, pausedRunId);
           await db
@@ -483,7 +492,13 @@ export async function runScanUnlocked(
         }
         providerRunId = options.dryRun
           ? undefined
-          : await createProviderScanRun(db, provider.name, options);
+          : await createProviderScanRun(
+              db,
+              provider.name,
+              options,
+              undefined,
+              runtime?.scanTriggerType,
+            );
         if (provider.name === "spotify" && providerRunId && spotifyWork) {
           await attachSpotifyBatchScanRun(db, spotifyWork.batchId, providerRunId);
         }
@@ -1017,6 +1032,7 @@ export async function runScanUnlocked(
           providerRunId,
           outcomeStatus,
           aggregate,
+          runtime?.scanTriggerType,
         );
         await runtime?.reportProgress(
           {
@@ -1137,6 +1153,7 @@ async function buildProviders(
       }
       const ownerId = await ensureLocalOwner(db);
       if (!spotifyWork) throw new Error("Spotify scan work was not prepared.");
+      const schedulerLimits = defaultSchedulerLimits();
       const baseGate = createSpotifyRequestGate(
         db,
         configuration.spotify.minRequestIntervalMs,
@@ -1148,6 +1165,12 @@ async function buildProviders(
             limit: configuration.spotify.artistAlbums24HourLimit,
             priorityReserve: configuration.spotify.artistAlbumsPriorityReserve,
             reserveReleaseAfterHours: configuration.spotify.artistAlbumsReserveReleaseAfterHours,
+          },
+          rollingRequestBudget: {
+            playlistRequestReserve: schedulerLimits.playlistRequestReserve,
+            priorityRequestReserve: schedulerLimits.priorityRequestReserve,
+            rolling24HourLimit: configuration.spotify.scheduler.rolling24HourLimit,
+            rolling30MinuteLimit: configuration.spotify.scheduler.rolling30MinuteLimit,
           },
         },
       );
@@ -1273,6 +1296,7 @@ async function recordProviderFailure(
   runId?: string,
   status: "failed" | "cancelled" | "paused" | "rate_limited" = "failed",
   summary?: ScanSummary,
+  scheduledTriggerType?: ScheduledScanTriggerType,
 ): Promise<void> {
   const errorEvidence = {
     message: safeScanError(error),
@@ -1296,7 +1320,7 @@ async function recordProviderFailure(
     dryRun: options.dryRun,
     providersRequested: [provider],
     providersFailed: status === "failed" ? [provider] : [],
-    triggerType: options.provider ? "provider_manual" : "manual",
+    triggerType: providerScanTriggerType(provider, options, scheduledTriggerType),
     ...(options.artistId
       ? { artistFilter: options.artistId }
       : options.artistIds?.length
@@ -1746,6 +1770,7 @@ async function createProviderScanRun(
   provider: TrackCandidate["provider"],
   options: ScannerOptions,
   providerMetrics?: { failures: number; requests: number; waitMs: number },
+  scheduledTriggerType?: ScheduledScanTriggerType,
 ): Promise<string> {
   const [run] = await db
     .insert(scanRuns)
@@ -1756,11 +1781,7 @@ async function createProviderScanRun(
         Date.now() + loadProviderConfiguration().scanDetailRetentionDays * 86_400_000,
       ),
       providersRequested: [provider],
-      triggerType: options.full
-        ? "full_reconciliation"
-        : options.provider
-          ? "provider_manual"
-          : "manual",
+      triggerType: providerScanTriggerType(provider, options, scheduledTriggerType),
       metadata: scanRunMetadata(provider, providerMetrics),
       ...(options.artistId
         ? { artistFilter: options.artistId }

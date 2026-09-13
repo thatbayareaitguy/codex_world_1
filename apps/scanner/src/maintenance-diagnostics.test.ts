@@ -44,6 +44,15 @@ describe("maintenance lifecycle diagnostics", () => {
       postgresReady: true,
     });
     diagnostics.startupRecoveryWake({
+      observedAt: new Date("2026-09-04T15:50:11.500Z"),
+      scheduledFor: new Date("2026-09-04T19:51:00.000Z"),
+      state: "scheduled",
+    });
+    expect(read(directory, "latest.json")).toMatchObject({
+      readiness: { finalResult: "ready" },
+      startupRecoveryWake: { state: "scheduled" },
+    });
+    diagnostics.startupRecoveryWake({
       observedAt: new Date("2026-09-04T15:50:12.000Z"),
       scheduledFor: null,
       state: "cleared",
@@ -82,6 +91,27 @@ describe("maintenance lifecycle diagnostics", () => {
       state: "completed",
       startupRecoveryWake: { state: "cleared" },
       ticks: 2,
+    });
+  });
+
+  it("records a recovery wake as a readiness timeout only before the database is ready", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "radar-maintenance-test-"));
+    directories.push(directory);
+    const diagnostics = createMaintenanceLifecycleDiagnostics(
+      "maintenance-timeout",
+      new Date("2026-09-04T15:50:00.000Z"),
+      directory,
+    );
+
+    diagnostics.startupRecoveryWake({
+      observedAt: new Date("2026-09-04T15:55:00.000Z"),
+      scheduledFor: new Date("2026-09-04T16:02:00.000Z"),
+      state: "scheduled",
+    });
+
+    expect(read(directory, "maintenance-timeout.json")).toMatchObject({
+      readiness: { finalResult: "timeout" },
+      startupRecoveryWake: { state: "scheduled" },
     });
   });
 });

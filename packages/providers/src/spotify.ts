@@ -766,10 +766,10 @@ export class SpotifyClient {
     let refreshed = false;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       const method = options.method ?? "GET";
-      const endpointCategory = spotifyEndpointCategory(path, method);
       let permit: SpotifyRequestPermit | undefined;
       let permitCompleted = false;
       try {
+        const endpointCategory = spotifyEndpointCategory(path, method);
         // Token refresh uses the same global gate. Resolve it before claiming an API lease.
         const accessToken = await this.accessToken();
         if (this.requestGate) {
@@ -866,9 +866,12 @@ export class SpotifyClient {
                 : "request_failed",
           });
         }
+        // Playlist additions are non-idempotent. A timeout or 5xx can arrive after Spotify has
+        // committed the POST, so only a fresh playlist snapshot may decide whether to retry it.
         const retryable =
-          (error instanceof SpotifyHttpError && error.status >= 500) ||
-          (!(error instanceof SpotifyHttpError) && !(error instanceof z.ZodError));
+          method !== "POST" &&
+          ((error instanceof SpotifyHttpError && error.status >= 500) ||
+            (!(error instanceof SpotifyHttpError) && !(error instanceof z.ZodError)));
         if (!retryable || attempt >= 3) {
           this.metrics.failures += 1;
           throw error;

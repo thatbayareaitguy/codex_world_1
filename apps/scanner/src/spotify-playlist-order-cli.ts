@@ -1,12 +1,14 @@
 import {
-  acquireOperationLock,
+  acquireSpotifyPlaylistWriterLock,
   createDatabase,
   createSpotifyRequestGate,
+  defaultSchedulerLimits,
   ensureLocalOwner,
   executeSpotifyPlaylistCustomOrder,
+  guardSpotifyPlaylistWriterClient,
   hasVerifiedSpotifyPlaylistOrderCanary,
   previewSpotifyPlaylistCustomOrder,
-  releaseOperationLock,
+  releaseSpotifyPlaylistWriterLock,
   SpotifyTokenManager,
 } from "@radar/db";
 import {
@@ -60,11 +62,13 @@ async function main(): Promise<void> {
   }
   const connection = createDatabase(configuration.databaseUrl);
   try {
-    const lock = await acquireOperationLock(connection.db, {
-      lockKey: "spotify:playlist-order",
-      metadata: { mode, provider: "spotify" },
-      operationType: "spotify_playlist_export",
-    });
+    const schedulerLimits = defaultSchedulerLimits();
+    const lock =
+      mode === "dry-run"
+        ? null
+        : await acquireSpotifyPlaylistWriterLock(connection.db, {
+            metadata: { mode, purpose: "playlist_order" },
+          });
     try {
       const userId = await ensureLocalOwner(connection.db);
       const requestGate = createSpotifyRequestGate(
@@ -79,6 +83,12 @@ async function main(): Promise<void> {
             reserveReleaseAfterHours: configuration.spotify.artistAlbumsReserveReleaseAfterHours,
           },
           quotaLane: "playlist",
+          rollingRequestBudget: {
+            playlistRequestReserve: schedulerLimits.playlistRequestReserve,
+            priorityRequestReserve: schedulerLimits.priorityRequestReserve,
+            rolling24HourLimit: configuration.spotify.scheduler.rolling24HourLimit,
+            rolling30MinuteLimit: configuration.spotify.scheduler.rolling30MinuteLimit,
+          },
         },
       );
       const oauth = new SpotifyOAuthClient({
@@ -124,20 +134,26 @@ async function main(): Promise<void> {
       ) {
         throw new Error("Run and verify --canary before the full playlist reorder.");
       }
-      const execution = await executeSpotifyPlaylistCustomOrder(connection.db, userId, client, {
-        canary: mode === "canary",
-        forceRefresh: mode === "canary",
-        playlistId: configuration.spotify.allowedPlaylistId,
-        policy: {
-          allowedPlaylistId: configuration.spotify.allowedPlaylistId,
-          enabled: true,
+      if (!lock) throw new Error("Spotify playlist writer lock was not acquired.");
+      const execution = await executeSpotifyPlaylistCustomOrder(
+        connection.db,
+        userId,
+        guardSpotifyPlaylistWriterClient(connection.db, lock, client),
+        {
+          canary: mode === "canary",
+          forceRefresh: mode === "canary",
+          playlistId: configuration.spotify.allowedPlaylistId,
+          policy: {
+            allowedPlaylistId: configuration.spotify.allowedPlaylistId,
+            enabled: true,
+          },
         },
-      });
+      );
       process.stdout.write(
         `${JSON.stringify({ ...sanitizePreview(execution), result: execution.result }, null, 2)}\n`,
       );
     } finally {
-      await releaseOperationLock(connection.db, lock);
+      if (lock) await releaseSpotifyPlaylistWriterLock(connection.db, lock);
     }
   } finally {
     await connection.client.end();

@@ -29,6 +29,7 @@ import { and, asc, eq } from "drizzle-orm";
 import seedArtifact from "./apple-music-full-watchlist-identity-seeds-v1.json";
 import type { ScannerOptions } from "./args";
 import { providerIdentityOverrides } from "./provider-identity-overrides";
+import { providerScanTriggerType, type ScheduledScanTriggerType } from "./scan-trigger";
 
 export interface AppleMusicScanSummary {
   discovered: number;
@@ -44,6 +45,7 @@ export interface AppleMusicScanRuntime {
   appleMusicBatchReady?: (input: { batchId: string; scanRunId: string }) => Promise<void>;
   appleMusicMaximumRuntimeMs?: number;
   reportProgress?: (metadata: Record<string, unknown>, force?: boolean) => Promise<void>;
+  scanTriggerType?: ScheduledScanTriggerType;
   signal?: AbortSignal;
 }
 
@@ -159,11 +161,7 @@ export async function runAppleMusicScan(
           },
           provider: "apple_music",
           providersRequested: ["apple_music"],
-          triggerType: options.artistId
-            ? "provider_single_artist"
-            : options.artistIds?.length
-              ? "provider_cohort"
-              : "provider_manual",
+          triggerType: providerScanTriggerType("apple_music", options, runtime.scanTriggerType),
         })
         .returning()
     )[0];
@@ -171,7 +169,11 @@ export async function runAppleMusicScan(
   if (existingRun) {
     await db
       .update(scanRuns)
-      .set({ completedAt: null, providersFailed: [], status: "running" })
+      .set({
+        completedAt: null,
+        providersFailed: [],
+        status: "running",
+      })
       .where(eq(scanRuns.id, run.id));
   }
   await attachAppleMusicBatchScanRun(db, batchId, run.id);

@@ -1,6 +1,7 @@
 import {
   createDatabase,
   createSpotifyRequestGate,
+  defaultSchedulerLimits,
   ensureLocalOwner,
   SpotifyTokenManager,
 } from "@radar/db";
@@ -51,6 +52,15 @@ export async function runSpotifyLiveSmoke(
   const connection = createDatabase(configuration.databaseUrl);
   try {
     const userId = await ensureLocalOwner(connection.db);
+    const schedulerLimits = defaultSchedulerLimits();
+    const gateOptions = {
+      rollingRequestBudget: {
+        playlistRequestReserve: schedulerLimits.playlistRequestReserve,
+        priorityRequestReserve: schedulerLimits.priorityRequestReserve,
+        rolling24HourLimit: configuration.spotify.scheduler.rolling24HourLimit,
+        rolling30MinuteLimit: configuration.spotify.scheduler.rolling30MinuteLimit,
+      },
+    };
     const oauth = new SpotifyOAuthClient({
       clientId: configuration.spotify.clientId,
       clientSecret: configuration.spotify.clientSecret,
@@ -58,6 +68,9 @@ export async function runSpotifyLiveSmoke(
       requestGate: createSpotifyRequestGate(
         connection.db,
         configuration.spotify.minRequestIntervalMs,
+        undefined,
+        undefined,
+        gateOptions,
       ),
     });
     const tokens = new SpotifyTokenManager(
@@ -72,6 +85,9 @@ export async function runSpotifyLiveSmoke(
       requestGate: createSpotifyRequestGate(
         connection.db,
         configuration.spotify.minRequestIntervalMs,
+        undefined,
+        undefined,
+        gateOptions,
       ),
     });
 

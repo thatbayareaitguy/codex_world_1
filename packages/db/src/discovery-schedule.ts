@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { RadarDatabase } from "./client";
 import { reconcileSpotifySchedulerWork } from "./spotify-scheduler";
@@ -12,6 +12,7 @@ import {
   artistExternalIds,
   releaseProviderReconciliations,
   releaseCandidates,
+  scanRuns,
   spotifyProviderState,
   spotifyPlaylistExportOperations,
   spotifySchedulerState,
@@ -27,7 +28,30 @@ export const discoveryAppleFullHour = 21;
 export const discoveryAppleCatchupWeekday = 5;
 export const discoveryAppleCatchupHour = 9;
 export const discoveryAppleRecoveryWindowMs = 24 * 60 * 60_000;
-export const discoveryAppleJobLeaseMs = 3 * 60 * 60_000;
+// Scheduled Apple scans may run for up to 3.5 hours. Keep the durable schedule claim valid beyond
+// that runtime so another scheduler cannot recycle a legitimate in-flight job near its deadline.
+export const discoveryAppleJobLeaseMs = 4 * 60 * 60_000;
+const discoveryAppleLeaseOwnerPrefix = "local-pid";
+
+function discoveryAppleLeaseOwner(): string {
+  return `${discoveryAppleLeaseOwnerPrefix}:${process.pid}:${randomUUID()}`;
+}
+
+function discoveryAppleLeaseOwnerProcessId(owner: string | null): number | null {
+  const match = owner?.match(/^local-pid:(\d+):[0-9a-f-]+$/i);
+  if (!match) return null;
+  const processId = Number(match[1]);
+  return Number.isSafeInteger(processId) && processId > 0 ? processId : null;
+}
+
+function isLocalProcessAlive(processId: number): boolean {
+  try {
+    process.kill(processId, 0);
+    return true;
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "EPERM";
+  }
+}
 
 export type DiscoveryAppleJobType = "apple_full" | "apple_catchup";
 export type DiscoveryAppleJobStatus = "scheduled" | "leased" | "completed" | "failed" | "expired";
@@ -585,11 +609,54 @@ export async function reconcileDiscoveryScheduleJobs(
   ];
 
   await db.transaction(async (tx) => {
+    const leasedJobs = await tx
+      .select({
+        id: discoveryScheduleJobs.id,
+        leaseOwner: discoveryScheduleJobs.leaseOwner,
+      })
+      .from(discoveryScheduleJobs)
+      .where(eq(discoveryScheduleJobs.status, "leased"));
+    for (const leasedJob of leasedJobs) {
+      const ownerProcessId = discoveryAppleLeaseOwnerProcessId(leasedJob.leaseOwner);
+      if (ownerProcessId === null || isLocalProcessAlive(ownerProcessId)) continue;
+      await tx
+        .update(discoveryScheduleJobs)
+        .set({
+          errorClassification: "lease_owner_exited",
+          leaseExpiresAt: null,
+          leaseOwner: null,
+          status: sql`case when ${discoveryScheduleJobs.appleMusicBatchId} is not null or ${discoveryScheduleJobs.recoveryDeadline} >= ${now.toISOString()}::timestamptz then 'scheduled'::discovery_schedule_job_status else 'expired'::discovery_schedule_job_status end`,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(discoveryScheduleJobs.id, leasedJob.id),
+            eq(discoveryScheduleJobs.status, "leased"),
+            eq(discoveryScheduleJobs.leaseOwner, leasedJob.leaseOwner!),
+          ),
+        );
+    }
+    await tx
+      .update(discoveryScheduleJobs)
+      .set({
+        errorClassification: "schedule_lease_expired",
+        leaseExpiresAt: null,
+        leaseOwner: null,
+        status: sql`case when ${discoveryScheduleJobs.appleMusicBatchId} is not null or ${discoveryScheduleJobs.recoveryDeadline} >= ${now.toISOString()}::timestamptz then 'scheduled'::discovery_schedule_job_status else 'expired'::discovery_schedule_job_status end`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(discoveryScheduleJobs.status, "leased"),
+          lte(discoveryScheduleJobs.leaseExpiresAt, now),
+        ),
+      );
     const linkedFailedJobs = await tx
       .select({
         batchCompletedArtists: appleMusicScanBatches.completedArtists,
         batchFailedArtists: appleMusicScanBatches.failedArtists,
         batchId: appleMusicScanBatches.id,
+        batchStatus: appleMusicScanBatches.status,
         batchTotalArtists: appleMusicScanBatches.totalArtists,
         jobId: discoveryScheduleJobs.id,
       })
@@ -622,11 +689,17 @@ export async function reconcileDiscoveryScheduleJobs(
         );
       const allArtistsSucceeded =
         job.batchCompletedArtists === job.batchTotalArtists && job.batchFailedArtists === 0;
-      if (!allArtistsSucceeded && Number(unfinished[0]?.count ?? 0) === 0) continue;
+      const terminalPartial =
+        job.batchStatus === "partial" && Number(unfinished[0]?.count ?? 0) === 0;
+      if (!allArtistsSucceeded && !terminalPartial && Number(unfinished[0]?.count ?? 0) === 0) {
+        continue;
+      }
       await tx
         .update(discoveryScheduleJobs)
         .set({
-          errorClassification: "resumable_linked_batch_recovered",
+          errorClassification: terminalPartial
+            ? "terminal_partial_batch_recovered"
+            : "resumable_linked_batch_recovered",
           status: "scheduled",
           updatedAt: now,
         })
@@ -637,25 +710,43 @@ export async function reconcileDiscoveryScheduleJobs(
       .from(discoveryScheduleJobs)
       .where(
         and(
-          inArray(discoveryScheduleJobs.status, ["failed", "expired"]),
+          or(
+            inArray(discoveryScheduleJobs.status, ["failed", "expired"]),
+            and(
+              eq(discoveryScheduleJobs.status, "scheduled"),
+              inArray(discoveryScheduleJobs.errorClassification, [
+                "lease_owner_exited",
+                "schedule_lease_expired",
+              ]),
+            ),
+          ),
           sql`${discoveryScheduleJobs.appleMusicBatchId} is null`,
         ),
       );
     for (const job of orphanedJobs) {
-      const batch = await tx.query.appleMusicScanBatches.findFirst({
-        where: and(
-          inArray(appleMusicScanBatches.status, [
-            "pending",
-            "running",
-            "partial",
-            "paused",
-            "rate_limited",
-          ]),
-          gte(appleMusicScanBatches.createdAt, job.scheduledFor),
-          lte(appleMusicScanBatches.createdAt, job.recoveryDeadline),
-        ),
-        orderBy: [asc(appleMusicScanBatches.createdAt)],
-      });
+      const [batch] = await tx
+        .select({ id: appleMusicScanBatches.id, scanRunId: appleMusicScanBatches.scanRunId })
+        .from(appleMusicScanBatches)
+        .innerJoin(scanRuns, eq(scanRuns.id, appleMusicScanBatches.scanRunId))
+        .where(
+          and(
+            inArray(appleMusicScanBatches.status, [
+              "pending",
+              "running",
+              "partial",
+              "paused",
+              "rate_limited",
+            ]),
+            gte(appleMusicScanBatches.createdAt, job.scheduledFor),
+            lte(appleMusicScanBatches.createdAt, job.recoveryDeadline),
+            eq(
+              scanRuns.triggerType,
+              job.jobType === "apple_full" ? "apple_full_scheduled" : "apple_catchup_scheduled",
+            ),
+          ),
+        )
+        .orderBy(asc(appleMusicScanBatches.createdAt))
+        .limit(1);
       if (!batch) continue;
       const linked = await tx
         .select({ id: discoveryScheduleJobs.id })
@@ -674,20 +765,6 @@ export async function reconcileDiscoveryScheduleJobs(
         })
         .where(eq(discoveryScheduleJobs.id, job.id));
     }
-    await tx
-      .update(discoveryScheduleJobs)
-      .set({
-        leaseExpiresAt: null,
-        leaseOwner: null,
-        status: sql`case when ${discoveryScheduleJobs.appleMusicBatchId} is not null or ${discoveryScheduleJobs.recoveryDeadline} >= ${now.toISOString()}::timestamptz then 'scheduled'::discovery_schedule_job_status else 'expired'::discovery_schedule_job_status end`,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(discoveryScheduleJobs.status, "leased"),
-          lte(discoveryScheduleJobs.leaseExpiresAt, now),
-        ),
-      );
     await tx
       .update(discoveryScheduleJobs)
       .set({ status: "expired", updatedAt: now })
@@ -752,7 +829,8 @@ export async function reconcileDiscoveryScheduleJobs(
                   discoveryScheduleJobs.jobKey,
                   discoveryAppleJobKey(definition.jobType, scheduledFor),
                 ),
-                eq(discoveryScheduleJobs.status, "scheduled"),
+                inArray(discoveryScheduleJobs.status, ["scheduled", "failed", "expired"]),
+                isNull(discoveryScheduleJobs.appleMusicBatchId),
               ),
             );
         }
@@ -784,6 +862,21 @@ export async function claimDiscoveryScheduleAppleJob(
 ): Promise<DiscoveryAppleJobClaim | null> {
   await reconcileDiscoveryScheduleJobs(db, now);
   return db.transaction(async (tx) => {
+    // Serialize Apple job claims through the singleton schedule-state row. Without this lock, a
+    // maintenance process can lease the older full scan while the minute scheduler skips that
+    // locked row and leases Friday catch-up at the same time. The second scan then fails on the
+    // provider lock even though the full scan already covers its work.
+    await tx
+      .select({ id: discoveryScheduleState.id })
+      .from(discoveryScheduleState)
+      .where(eq(discoveryScheduleState.id, discoveryScheduleStateId))
+      .limit(1)
+      .for("update");
+    const activeAppleJob = await tx.query.discoveryScheduleJobs.findFirst({
+      where: eq(discoveryScheduleJobs.status, "leased"),
+    });
+    if (activeAppleJob) return null;
+
     let query = tx
       .select()
       .from(discoveryScheduleJobs)
@@ -802,7 +895,7 @@ export async function claimDiscoveryScheduleAppleJob(
     query = query.for("update", { skipLocked: true }) as typeof query;
     const [job] = await query;
     if (!job) return null;
-    const leaseOwner = randomUUID();
+    const leaseOwner = discoveryAppleLeaseOwner();
     const leaseExpiresAt = new Date(now.getTime() + discoveryAppleJobLeaseMs);
     const [claimed] = await tx
       .update(discoveryScheduleJobs)
@@ -864,17 +957,21 @@ export async function attachDiscoveryScheduleAppleJobBatch(
 export async function yieldDiscoveryScheduleAppleJob(
   db: RadarDatabase,
   claim: DiscoveryAppleJobClaim,
-  input: { appleMusicBatchId: string; errorClassification: string; scanRunId: string | null },
+  input: {
+    appleMusicBatchId: string | null;
+    errorClassification: string;
+    scanRunId: string | null;
+  },
   now = new Date(),
 ): Promise<boolean> {
   const [updated] = await db
     .update(discoveryScheduleJobs)
     .set({
-      appleMusicBatchId: input.appleMusicBatchId,
+      appleMusicBatchId: input.appleMusicBatchId ?? claim.appleMusicBatchId,
       errorClassification: input.errorClassification.slice(0, 100),
       leaseExpiresAt: null,
       leaseOwner: null,
-      scanRunId: input.scanRunId,
+      scanRunId: input.scanRunId ?? claim.scanRunId,
       status: "scheduled",
       updatedAt: now,
     })
@@ -893,7 +990,12 @@ export async function finishDiscoveryScheduleAppleJob(
   db: RadarDatabase,
   claim: DiscoveryAppleJobClaim,
   input:
-    | { appleMusicBatchId: string; scanRunId?: string | null; status: "completed" }
+    | {
+        appleMusicBatchId: string;
+        errorClassification?: string;
+        scanRunId?: string | null;
+        status: "completed";
+      }
     | { errorClassification: string; status: "failed" },
   now = new Date(),
 ): Promise<boolean> {
@@ -905,7 +1007,7 @@ export async function finishDiscoveryScheduleAppleJob(
           ? {
               appleMusicBatchId: input.appleMusicBatchId,
               completedAt: now,
-              errorClassification: null,
+              errorClassification: input.errorClassification?.slice(0, 100) ?? null,
               scanRunId: input.scanRunId ?? null,
             }
           : { errorClassification: input.errorClassification.slice(0, 100) }),
@@ -995,6 +1097,14 @@ export async function getRecurringDiscoveryScheduleStatus(db: RadarDatabase, now
         completedAt: discoveryScheduleJobs.completedAt,
         errorClassification: discoveryScheduleJobs.errorClassification,
         jobType: discoveryScheduleJobs.jobType,
+        leaseExpiresAt: discoveryScheduleJobs.leaseExpiresAt,
+        leaseOwner: discoveryScheduleJobs.leaseOwner,
+        nextRetryAt: sql<Date | null>`(
+          select min(${appleMusicArtistScans.retryEligibleAt})
+          from ${appleMusicArtistScans}
+          where ${appleMusicArtistScans.batchId} = ${discoveryScheduleJobs.appleMusicBatchId}
+            and ${appleMusicArtistScans.status} = 'retryable'
+        )`,
         recoveryDeadline: discoveryScheduleJobs.recoveryDeadline,
         scanRunId: discoveryScheduleJobs.scanRunId,
         scheduledFor: discoveryScheduleJobs.scheduledFor,
@@ -1018,6 +1128,15 @@ export async function getRecurringDiscoveryScheduleStatus(db: RadarDatabase, now
     jobs
       .filter((job) => job.jobType === type && job.scheduledFor > now)
       .sort((left, right) => left.scheduledFor.getTime() - right.scheduledFor.getTime())[0] ?? null;
+  const actionable =
+    jobs
+      .filter(
+        (job) =>
+          ["scheduled", "leased"].includes(job.status) &&
+          job.scheduledFor <= now &&
+          (job.recoveryDeadline >= now || Boolean(job.appleMusicBatchId)),
+      )
+      .sort((left, right) => left.scheduledFor.getTime() - right.scheduledFor.getTime())[0] ?? null;
   const pendingExport = state?.playlistInboxExportRunId
     ? await db
         .select({ count: sql<number>`count(*)::int` })
@@ -1030,6 +1149,7 @@ export async function getRecurringDiscoveryScheduleStatus(db: RadarDatabase, now
         )
     : [];
   return {
+    actionable,
     catchup: { latest: latest("apple_catchup"), next: next("apple_catchup") },
     full: { latest: latest("apple_full"), next: next("apple_full") },
     phase: state ? parseDiscoverySchedulePhase(state.phase) : "idle",

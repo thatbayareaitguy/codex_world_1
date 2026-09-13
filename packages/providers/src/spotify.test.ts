@@ -641,6 +641,31 @@ describe("SpotifyClient", () => {
     });
   });
 
+  it("does not retry an ambiguous playlist addition failure", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(profile))
+      .mockResolvedValueOnce(jsonResponse(playlist()))
+      .mockResolvedValue(jsonResponse({}, 503));
+    const sleep = vi.fn(() => Promise.resolve());
+    const client = new SpotifyClient({
+      accessToken: () => Promise.resolve("token"),
+      fetcher,
+      playlistWritePolicy: {
+        allowedPlaylistId: "1234567890123456789012",
+        enabled: true,
+      },
+      random: () => 0,
+      sleep,
+    });
+
+    await expect(
+      client.addPlaylistItemsAtPosition("1234567890123456789012", ["0000000000000000000001"], 0),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("reorders one bounded range only within the configured playlist", async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ snapshot_id: "reordered" }), {

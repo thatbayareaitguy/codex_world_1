@@ -108,6 +108,9 @@ export function sanitizedSchedulerOutput(
       : null,
     status: {
       backlog: result.status.backlog,
+      broadNextRunnableAt: result.status.broadNextRunnableAt,
+      broadRunnableCount: result.status.broadRunnableCount,
+      broadRollingRequestNextCapacityAt: result.status.broadRollingRequestNextCapacityAt,
       blockedCount: result.status.blockedCount,
       blockedReasons: result.status.blockedReasons,
       cooldownActive: result.status.cooldownActive,
@@ -117,6 +120,9 @@ export function sanitizedSchedulerOutput(
       mode: result.status.mode,
       nextBaseSlotAt: result.status.nextBaseSlotAt,
       overdueArtistCount: result.status.overdueArtistCount,
+      priorityNextRunnableAt: result.status.priorityNextRunnableAt,
+      priorityRollingRequestNextCapacityAt: result.status.priorityRollingRequestNextCapacityAt,
+      priorityRunnableCount: result.status.priorityRunnableCount,
       requestCounts: result.status.requestCounts,
       rollingRequestNextCapacityAt: result.status.rollingRequestNextCapacityAt,
       recentWork: result.status.recentWork
@@ -243,6 +249,7 @@ async function executeProductionWork(
         deferSpotifyReleaseDetails: true,
         reportProgress: () => Promise.resolve(),
         requestGateWrapper: context.wrapRequestGate,
+        scanTriggerType: "spotify_scheduled",
         schedulerContext: {
           ...(campaignContext(work) ?? {}),
           ...(work.discoveryReconciliationCampaignId
@@ -569,6 +576,7 @@ async function createSchedulerSpotifyClient(
   context: SpotifySchedulerExecutionContext,
 ): Promise<SpotifyClient> {
   const userId = await ensureLocalOwner(db);
+  const schedulerLimits = schedulerLimitsFromConfiguration(configuration);
   const gate = context.wrapRequestGate(
     createSpotifyRequestGate(
       db,
@@ -584,6 +592,12 @@ async function createSchedulerSpotifyClient(
           limit: configuration.spotify.artistAlbums24HourLimit,
           priorityReserve: configuration.spotify.artistAlbumsPriorityReserve,
           reserveReleaseAfterHours: configuration.spotify.artistAlbumsReserveReleaseAfterHours,
+        },
+        rollingRequestBudget: {
+          playlistRequestReserve: schedulerLimits.playlistRequestReserve,
+          priorityRequestReserve: schedulerLimits.priorityRequestReserve,
+          rolling24HourLimit: configuration.spotify.scheduler.rolling24HourLimit,
+          rolling30MinuteLimit: configuration.spotify.scheduler.rolling30MinuteLimit,
         },
       },
     ),

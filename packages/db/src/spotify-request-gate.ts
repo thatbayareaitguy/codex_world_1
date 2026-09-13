@@ -12,7 +12,9 @@ import { spotifyProviderState, spotifyRequestEvents, spotifySchedulerWork } from
 const spotifyStateId = "global";
 const leaseDurationMs = 30_000;
 const leaseStateRecheckMs = 250;
+const trailing30MinutesMs = 30 * 60_000;
 const trailing24HoursMs = 24 * 60 * 60_000;
+export const maximumSpotifyPlaylistCapacityWaitMs = 15 * 60_000;
 
 type SpotifyRequestGateTransaction = Parameters<Parameters<RadarDatabase["transaction"]>[0]>[0];
 type SpotifyRequestGateDatabase = RadarDatabase | SpotifyRequestGateTransaction;
@@ -28,6 +30,25 @@ export interface SpotifyArtistAlbumsBudgetLimits {
 export interface SpotifyRequestGateOptions {
   artistAlbumsBudget?: SpotifyArtistAlbumsBudgetLimits;
   quotaLane?: SpotifyQuotaLane;
+  rollingRequestBudget?: {
+    playlistRequestReserve: number;
+    priorityRequestReserve: number;
+    rolling24HourLimit: number;
+    rolling30MinuteLimit: number;
+  };
+  rollingCapacityWait?: {
+    deadlineAt?: Date;
+    maximumWaitMs: number;
+    now?: () => Date;
+    sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
+  };
+}
+
+export interface SpotifyRollingRequestBudgetLimits {
+  playlistRequestReserve: number;
+  priorityRequestReserve: number;
+  rolling24HourLimit: number;
+  rolling30MinuteLimit: number;
 }
 
 export interface SpotifyEndpointBudgetStatus {
@@ -57,18 +78,41 @@ export const defaultSpotifyArtistAlbumsBudget: SpotifyArtistAlbumsBudgetLimits =
   reserveReleaseAfterHours: 20,
 };
 
+export const defaultSpotifyRollingRequestBudget: SpotifyRollingRequestBudgetLimits = {
+  playlistRequestReserve: 20,
+  priorityRequestReserve: 200,
+  rolling24HourLimit: 1_200,
+  rolling30MinuteLimit: 30,
+};
+
 export class SpotifyEndpointBudgetError extends Error {
   readonly code = "spotify_endpoint_budget";
 
   constructor(
-    readonly endpointCategory: "artist_albums",
+    readonly endpointCategory: "artist_albums" | "rolling_requests",
     readonly nextCapacityAt: Date | null,
     readonly quotaLane: SpotifyQuotaLane,
   ) {
     super(
-      `Spotify Artist Albums trailing-24-hour budget is exhausted${nextCapacityAt ? ` until capacity returns after ${nextCapacityAt.toISOString()}` : ""}.`,
+      endpointCategory === "artist_albums"
+        ? `Spotify Artist Albums trailing-24-hour budget is exhausted${nextCapacityAt ? ` until capacity returns after ${nextCapacityAt.toISOString()}` : ""}.`
+        : `Spotify rolling request budget is exhausted${nextCapacityAt ? ` until capacity returns after ${nextCapacityAt.toISOString()}` : ""}.`,
     );
     this.name = "SpotifyEndpointBudgetError";
+  }
+}
+
+export class SpotifyRequestDeadlineError extends Error {
+  readonly code = "spotify_request_deadline";
+
+  constructor(
+    readonly deadlineAt: Date,
+    readonly nextCapacityAt: Date | null,
+  ) {
+    super(
+      `Spotify playlist work yielded at its maintenance deadline${nextCapacityAt ? ` before capacity returns after ${nextCapacityAt.toISOString()}` : ""}.`,
+    );
+    this.name = "SpotifyRequestDeadlineError";
   }
 }
 
@@ -141,6 +185,24 @@ export function createSpotifyRequestGate(
 ): SpotifyRequestGate {
   if (!Number.isInteger(minRequestIntervalMs) || minRequestIntervalMs < 10_000) {
     throw new Error("Spotify request interval must be at least 10000 milliseconds.");
+  }
+  if (options.rollingCapacityWait) {
+    if (options.quotaLane !== "playlist") {
+      throw new Error("Spotify rolling-capacity waits are restricted to playlist work.");
+    }
+    if (
+      !Number.isInteger(options.rollingCapacityWait.maximumWaitMs) ||
+      options.rollingCapacityWait.maximumWaitMs < 1 ||
+      options.rollingCapacityWait.maximumWaitMs > maximumSpotifyPlaylistCapacityWaitMs
+    ) {
+      throw new Error("Spotify playlist rolling-capacity waits must be between 1 and 900000 ms.");
+    }
+    if (
+      options.rollingCapacityWait.deadlineAt &&
+      !Number.isFinite(options.rollingCapacityWait.deadlineAt.getTime())
+    ) {
+      throw new Error("Spotify playlist rolling-capacity deadline must be a valid date.");
+    }
   }
   return {
     acquire: (input) =>
@@ -417,17 +479,25 @@ async function acquireSpotifyPermit(
   const artistAlbumsBudget = validateArtistAlbumsBudget(
     options.artistAlbumsBudget ?? defaultSpotifyArtistAlbumsBudget,
   );
+  const rollingRequestBudget = validateRollingRequestBudget(options.rollingRequestBudget);
   await ensureSpotifyState(db);
   await db
     .update(spotifyProviderState)
     .set({ queueDepth: sql`${spotifyProviderState.queueDepth} + 1`, updatedAt: new Date() })
     .where(eq(spotifyProviderState.id, spotifyStateId));
-  const queuedAt = Date.now();
+  const nowProvider = options.rollingCapacityWait?.now ?? (() => new Date());
+  const queuedAt = nowProvider().getTime();
+  const individualCapacityWaitDeadline =
+    queuedAt + (options.rollingCapacityWait?.maximumWaitMs ?? 0);
+  const sharedCapacityWaitDeadline = options.rollingCapacityWait?.deadlineAt?.getTime() ?? null;
   let claimed = false;
   try {
     while (true) {
       throwIfAborted(input.signal);
-      const now = new Date();
+      const now = nowProvider();
+      if (sharedCapacityWaitDeadline !== null && now.getTime() >= sharedCapacityWaitDeadline) {
+        throw new SpotifyRequestDeadlineError(options.rollingCapacityWait!.deadlineAt!, null);
+      }
       const status = await getSpotifyOperationalStatus(db, now);
       if (status.cooldownActive) {
         throw new SpotifyCooldownError(status.cooldownUntil, status.cooldownIndefinite);
@@ -444,6 +514,41 @@ async function acquireSpotifyPermit(
           );
         }
       }
+      const rollingCapacity = await getSpotifyRollingRequestCapacity(
+        db,
+        quotaLane,
+        rollingRequestBudget,
+        now,
+      );
+      if (!rollingCapacity.available) {
+        const nextCapacityAt = rollingCapacity.nextCapacityAt;
+        if (
+          options.rollingCapacityWait &&
+          quotaLane === "playlist" &&
+          nextCapacityAt &&
+          nextCapacityAt > now &&
+          nextCapacityAt.getTime() <= individualCapacityWaitDeadline &&
+          (sharedCapacityWaitDeadline === null ||
+            nextCapacityAt.getTime() < sharedCapacityWaitDeadline)
+        ) {
+          const delayMs = nextCapacityAt.getTime() - now.getTime();
+          const sleep = options.rollingCapacityWait.sleep ?? cancellableDelay;
+          await sleep(delayMs, input.signal);
+          continue;
+        }
+        if (
+          sharedCapacityWaitDeadline !== null &&
+          sharedCapacityWaitDeadline <= individualCapacityWaitDeadline &&
+          nextCapacityAt &&
+          nextCapacityAt.getTime() >= sharedCapacityWaitDeadline
+        ) {
+          throw new SpotifyRequestDeadlineError(
+            options.rollingCapacityWait!.deadlineAt!,
+            nextCapacityAt,
+          );
+        }
+        throw new SpotifyEndpointBudgetError("rolling_requests", nextCapacityAt, quotaLane);
+      }
       const waitUntil = Math.max(
         status.nextRequestAt?.getTime() ?? 0,
         await activeLeaseExpiry(db, now),
@@ -457,7 +562,7 @@ async function acquireSpotifyPermit(
       }
 
       const leaseToken = randomUUID();
-      const startedAt = new Date();
+      const startedAt = nowProvider();
       const [permit] = await db
         .update(spotifyProviderState)
         .set({
@@ -549,6 +654,86 @@ function validateArtistAlbumsBudget(
     throw new Error("Spotify Artist Albums reserve release must be from 1 to 24 hours.");
   }
   return value;
+}
+
+function validateRollingRequestBudget(
+  value: SpotifyRequestGateOptions["rollingRequestBudget"],
+): SpotifyRollingRequestBudgetLimits {
+  const candidate = {
+    ...defaultSpotifyRollingRequestBudget,
+    ...value,
+  };
+  if (
+    !Number.isInteger(candidate.rolling24HourLimit) ||
+    candidate.rolling24HourLimit < 1 ||
+    candidate.rolling24HourLimit > 10_000
+  ) {
+    throw new Error("Spotify rolling 24-hour request limit must be an integer from 1 to 10000.");
+  }
+  if (
+    !Number.isInteger(candidate.rolling30MinuteLimit) ||
+    candidate.rolling30MinuteLimit < 1 ||
+    candidate.rolling30MinuteLimit > 1_000
+  ) {
+    throw new Error("Spotify rolling 30-minute request limit must be an integer from 1 to 1000.");
+  }
+  if (!Number.isInteger(candidate.playlistRequestReserve) || candidate.playlistRequestReserve < 0) {
+    throw new Error("Spotify playlist request reserve must be a non-negative integer.");
+  }
+  if (!Number.isInteger(candidate.priorityRequestReserve) || candidate.priorityRequestReserve < 0) {
+    throw new Error("Spotify priority request reserve must be a non-negative integer.");
+  }
+  if (
+    candidate.playlistRequestReserve + candidate.priorityRequestReserve >=
+    candidate.rolling24HourLimit
+  ) {
+    throw new Error("Spotify rolling request reserves must remain below the 24-hour limit.");
+  }
+  return candidate;
+}
+
+async function getSpotifyRollingRequestCapacity(
+  db: SpotifyRequestGateDatabase,
+  quotaLane: SpotifyQuotaLane,
+  limits: SpotifyRollingRequestBudgetLimits,
+  now: Date,
+): Promise<{ available: boolean; nextCapacityAt: Date | null }> {
+  const longWindowStart = new Date(now.getTime() - trailing24HoursMs);
+  const starts = (
+    await db
+      .select({ startedAt: spotifyRequestEvents.startedAt })
+      .from(spotifyRequestEvents)
+      .where(gt(spotifyRequestEvents.startedAt, longWindowStart))
+      .orderBy(asc(spotifyRequestEvents.startedAt))
+  ).map((row) => row.startedAt);
+  const recentStarts = starts.filter(
+    (startedAt) => startedAt.getTime() > now.getTime() - trailing30MinutesMs,
+  );
+  const longLimit =
+    quotaLane === "broad"
+      ? limits.rolling24HourLimit - limits.priorityRequestReserve - limits.playlistRequestReserve
+      : quotaLane === "priority"
+        ? limits.rolling24HourLimit - limits.playlistRequestReserve
+        : limits.rolling24HourLimit;
+  const shortCapacityAt = nextCapacityAt(
+    recentStarts,
+    limits.rolling30MinuteLimit,
+    trailing30MinutesMs,
+  );
+  const longCapacityAt = nextCapacityAt(starts, longLimit, trailing24HoursMs);
+  const nextCapacity = laterDate(shortCapacityAt, longCapacityAt);
+  return { available: nextCapacity === null, nextCapacityAt: nextCapacity };
+}
+
+function nextCapacityAt(starts: readonly Date[], limit: number, windowMs: number): Date | null {
+  if (starts.length < limit) return null;
+  return new Date(starts[starts.length - limit]!.getTime() + windowMs);
+}
+
+function laterDate(left: Date | null, right: Date | null): Date | null {
+  if (!left) return right;
+  if (!right) return left;
+  return left > right ? left : right;
 }
 
 function spotifyQuotaCategory(value: string): string {

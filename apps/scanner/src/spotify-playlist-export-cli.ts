@@ -1,11 +1,15 @@
 import {
+  acquireSpotifyPlaylistWriterLock,
   createDatabase,
   createSpotifyRequestGate,
+  defaultSchedulerLimits,
   ensureLocalOwner,
   executeSpotifyPlaylistExport,
+  guardSpotifyPlaylistWriterClient,
   markDiscoveryPlaylistInboxStatus,
   prepareDiscoveryPlaylistInboxExport,
   previewSpotifyPlaylistExport,
+  releaseSpotifyPlaylistWriterLock,
   SpotifyTokenManager,
 } from "@radar/db";
 import {
@@ -195,6 +199,7 @@ async function main(): Promise<void> {
   }
   const connection = createDatabase(configuration.databaseUrl);
   try {
+    const schedulerLimits = defaultSchedulerLimits();
     const userId = await ensureLocalOwner(connection.db);
     const oauth = new SpotifyOAuthClient({
       clientId: configuration.spotify.clientId,
@@ -206,6 +211,17 @@ async function main(): Promise<void> {
       requestGate: createSpotifyRequestGate(
         connection.db,
         configuration.spotify.minRequestIntervalMs,
+        undefined,
+        undefined,
+        {
+          quotaLane: "playlist",
+          rollingRequestBudget: {
+            playlistRequestReserve: schedulerLimits.playlistRequestReserve,
+            priorityRequestReserve: schedulerLimits.priorityRequestReserve,
+            rolling24HourLimit: configuration.spotify.scheduler.rolling24HourLimit,
+            rolling30MinuteLimit: configuration.spotify.scheduler.rolling30MinuteLimit,
+          },
+        },
       ),
     });
     const tokens = new SpotifyTokenManager(
@@ -224,26 +240,50 @@ async function main(): Promise<void> {
       requestGate: createSpotifyRequestGate(
         connection.db,
         configuration.spotify.minRequestIntervalMs,
+        undefined,
+        undefined,
+        {
+          quotaLane: "playlist",
+          rollingRequestBudget: {
+            playlistRequestReserve: schedulerLimits.playlistRequestReserve,
+            priorityRequestReserve: schedulerLimits.priorityRequestReserve,
+            rolling24HourLimit: configuration.spotify.scheduler.rolling24HourLimit,
+            rolling30MinuteLimit: configuration.spotify.scheduler.rolling30MinuteLimit,
+          },
+        },
       ),
     });
-    if (options.live && options.discoveryInbox) {
-      await prepareDiscoveryPlaylistInboxExport(connection.db, options.campaignId!);
-    }
+    const writerLock = options.live
+      ? await acquireSpotifyPlaylistWriterLock(connection.db, {
+          metadata: { mode: "manual", purpose: "playlist_export" },
+        })
+      : null;
     let result:
       | Awaited<ReturnType<typeof executeSpotifyPlaylistExport>>
       | Awaited<ReturnType<typeof previewSpotifyPlaylistExport>>;
     try {
+      if (options.live && options.discoveryInbox) {
+        await prepareDiscoveryPlaylistInboxExport(connection.db, options.campaignId!);
+      }
       if (options.live) {
-        const execution = await executeSpotifyPlaylistExport(connection.db, userId, client, {
-          ...(options.campaignId ? { discoveryReconciliationCampaignId: options.campaignId } : {}),
-          ...(options.maxAdditions === undefined ? {} : { maxAdditions: options.maxAdditions }),
-          orderingPolicy: "release_date_custom_order",
-          playlistId: configuration.spotify.allowedPlaylistId,
-          policy: {
-            allowedPlaylistId: configuration.spotify.allowedPlaylistId,
-            enabled: configuration.spotify.playlistWritesEnabled,
+        if (!writerLock) throw new Error("Spotify playlist writer lock was not acquired.");
+        const execution = await executeSpotifyPlaylistExport(
+          connection.db,
+          userId,
+          guardSpotifyPlaylistWriterClient(connection.db, writerLock, client),
+          {
+            ...(options.campaignId
+              ? { discoveryReconciliationCampaignId: options.campaignId }
+              : {}),
+            ...(options.maxAdditions === undefined ? {} : { maxAdditions: options.maxAdditions }),
+            orderingPolicy: "release_date_custom_order",
+            playlistId: configuration.spotify.allowedPlaylistId,
+            policy: {
+              allowedPlaylistId: configuration.spotify.allowedPlaylistId,
+              enabled: configuration.spotify.playlistWritesEnabled,
+            },
           },
-        });
+        );
         result = execution;
         if (options.discoveryInbox) {
           await markDiscoveryPlaylistInboxStatus(connection.db, {
@@ -270,6 +310,8 @@ async function main(): Promise<void> {
         await markDiscoveryPlaylistInboxStatus(connection.db, { status: "failed" });
       }
       throw error;
+    } finally {
+      if (writerLock) await releaseSpotifyPlaylistWriterLock(connection.db, writerLock);
     }
     process.stdout.write(
       `${JSON.stringify(sanitizedSpotifyPlaylistExportOutput(result), null, 2)}\n`,

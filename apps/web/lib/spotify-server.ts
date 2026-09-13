@@ -1,6 +1,7 @@
 import {
   createDatabase,
   createSpotifyRequestGate,
+  defaultSchedulerLimits,
   ensureLocalOwner,
   SpotifyTokenManager,
   type RadarDatabase,
@@ -28,6 +29,7 @@ export async function createSpotifyServerContext(): Promise<SpotifyServerContext
     throw new Error("Spotify or database configuration is incomplete");
   }
   const connection = createDatabase(config.databaseUrl);
+  const schedulerLimits = defaultSchedulerLimits();
   const userId = await ensureLocalOwner(connection.db);
   const oauthClient = new SpotifyOAuthClient({
     clientId: config.spotify.clientId,
@@ -35,7 +37,20 @@ export async function createSpotifyServerContext(): Promise<SpotifyServerContext
     playlistWritesEnabled:
       config.spotify.playlistWritesEnabled && Boolean(config.spotify.allowedPlaylistId),
     redirectUri: config.spotify.redirectUri,
-    requestGate: createSpotifyRequestGate(connection.db, config.spotify.minRequestIntervalMs),
+    requestGate: createSpotifyRequestGate(
+      connection.db,
+      config.spotify.minRequestIntervalMs,
+      undefined,
+      undefined,
+      {
+        rollingRequestBudget: {
+          playlistRequestReserve: schedulerLimits.playlistRequestReserve,
+          priorityRequestReserve: schedulerLimits.priorityRequestReserve,
+          rolling24HourLimit: config.spotify.scheduler.rolling24HourLimit,
+          rolling30MinuteLimit: config.spotify.scheduler.rolling30MinuteLimit,
+        },
+      },
+    ),
   });
   const tokens = new SpotifyTokenManager(
     connection.db,
@@ -52,7 +67,20 @@ export async function createSpotifyServerContext(): Promise<SpotifyServerContext
         : {}),
       enabled: config.spotify.playlistWritesEnabled,
     },
-    requestGate: createSpotifyRequestGate(connection.db, config.spotify.minRequestIntervalMs),
+    requestGate: createSpotifyRequestGate(
+      connection.db,
+      config.spotify.minRequestIntervalMs,
+      undefined,
+      undefined,
+      {
+        rollingRequestBudget: {
+          playlistRequestReserve: schedulerLimits.playlistRequestReserve,
+          priorityRequestReserve: schedulerLimits.priorityRequestReserve,
+          rolling24HourLimit: config.spotify.scheduler.rolling24HourLimit,
+          rolling30MinuteLimit: config.spotify.scheduler.rolling30MinuteLimit,
+        },
+      },
+    ),
   });
   return {
     client,

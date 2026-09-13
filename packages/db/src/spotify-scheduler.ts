@@ -110,6 +110,13 @@ export interface SpotifySchedulerStatus {
   applePriorityCount: number;
   appleCatchupPriorityCount: number;
   backlog: Record<SpotifySchedulerWorkType, number>;
+  broadNextRunnableAt: Date | null;
+  broadRunnableCount: number;
+  broadRollingRequestNextCapacityAt: Date | null;
+  priorityNextRunnableAt: Date | null;
+  priorityRollingRequestNextCapacityAt: Date | null;
+  priorityRunnableCount: number;
+  priorityWorkCanRunWithoutArtistAlbums: boolean;
   blockedCount: number;
   blockedReasons: string[];
   cooldownActive: boolean;
@@ -671,7 +678,7 @@ export async function claimSpotifySchedulerWork(
     }
 
     await resumeDiscoveryScheduleAfterCooldown(tx, now);
-    await advanceDiscoverySchedulePhaseIfDrained(tx, now);
+    await reconcileDiscoverySchedulePriorityPhase(tx, now);
     const candidate = await selectSpotifySchedulerCandidate(tx, now, true, state.mode);
     if (!candidate) return null;
     if (
@@ -895,6 +902,9 @@ export async function getSpotifySchedulerStatus(
   const state = await db.query.spotifySchedulerState.findFirst({
     where: eq(spotifySchedulerState.id, spotifySchedulerStateId),
   });
+  const discoveryState = await db.query.discoveryScheduleState.findFirst({
+    where: eq(discoveryScheduleState.id, "global"),
+  });
   const limits = schedulerLimits(state?.effectiveConfiguration);
   const localDay = spotifySchedulerLocalDayWindow(now);
   const provider = await db.query.spotifyProviderState.findFirst({
@@ -934,6 +944,16 @@ export async function getSpotifySchedulerStatus(
     limits,
     now,
   );
+  const broadRollingRequestNextCapacityAt = nextSpotifyBroadRollingRequestCapacityAt(
+    requests.map((request) => request.startedAt),
+    limits,
+    now,
+  );
+  const priorityRollingRequestNextCapacityAt = nextSpotifyPriorityRollingRequestCapacityAt(
+    requests.map((request) => request.startedAt),
+    limits,
+    now,
+  );
   const completedLast24 = eligible.filter(
     (artist) =>
       artist.lastSuccessfulAt &&
@@ -961,6 +981,60 @@ export async function getSpotifySchedulerStatus(
     provider?.cooldownIndefinite || (provider?.cooldownUntil && provider.cooldownUntil > now),
   );
   const queuedCount = work.filter((item) => item.status === "queued").length;
+  const prioritySources =
+    state?.mode === "validation"
+      ? discoveryState && ["playlist_inbox", "weekly_apple"].includes(discoveryState.phase)
+        ? []
+        : ["validation"]
+      : discoveryState?.phase === "apple_priority"
+        ? ["apple_priority"]
+        : discoveryState?.phase === "apple_catchup_priority"
+          ? ["apple_catchup"]
+          : discoveryState &&
+              ["broad_spotify", "playlist_inbox", "weekly_apple"].includes(discoveryState.phase)
+            ? []
+            : ["apple_priority", "apple_catchup"];
+  const workEligibilityAt = (item: (typeof work)[number], includeBaseSlot: boolean): Date => {
+    const candidates = [item.dueAt, item.notBefore].filter(
+      (value): value is Date => value !== null,
+    );
+    if (item.status === "leased" && item.leaseExpiresAt) candidates.push(item.leaseExpiresAt);
+    if (includeBaseSlot && item.workType === "base_artist" && state?.nextBaseSlotAt) {
+      candidates.push(state.nextBaseSlotAt);
+    }
+    return new Date(Math.max(...candidates.map((value) => value.getTime())));
+  };
+  const priorityCandidates = work.filter(
+    (item) => ["queued", "leased"].includes(item.status) && prioritySources.includes(item.source),
+  );
+  const runnablePriority = priorityCandidates.filter(
+    (item) => workEligibilityAt(item, false) <= now,
+  );
+  const priorityNextRunnableAt = earliestFutureEligibility(
+    priorityCandidates.map((item) => workEligibilityAt(item, false)),
+    now,
+  );
+  const broadPhaseAllowsWork =
+    !discoveryState || ["broad_spotify", "idle"].includes(discoveryState.phase);
+  const broadCandidates = broadPhaseAllowsWork
+    ? work.filter(
+        (item) =>
+          ["queued", "leased"].includes(item.status) &&
+          !["apple_priority", "apple_catchup"].includes(item.source),
+      )
+    : [];
+  const runnableBroad = broadCandidates.filter((item) => workEligibilityAt(item, true) <= now);
+  const broadNextRunnableAt = earliestFutureEligibility(
+    broadCandidates.map((item) => workEligibilityAt(item, true)),
+    now,
+  );
+  const priorityWorkCanRunWithoutArtistAlbums = runnablePriority.some(
+    (item) =>
+      item.workType === "release_detail" ||
+      item.workType === "release_tracks" ||
+      (item.workType === "track_resolution" &&
+        ["isrc", "manual"].includes(item.trackResolutionMode ?? "")),
+  );
   const slotMs = spotifySchedulerWindowMs / Math.max(1, eligible.length);
   const earliest = cooldownActive
     ? (provider?.cooldownUntil ?? null)
@@ -1016,6 +1090,13 @@ export async function getSpotifySchedulerStatus(
         (item) => item.workType === "track_resolution" && item.status === "queued",
       ).length,
     },
+    broadNextRunnableAt,
+    broadRunnableCount: runnableBroad.length,
+    broadRollingRequestNextCapacityAt,
+    priorityNextRunnableAt,
+    priorityRollingRequestNextCapacityAt,
+    priorityRunnableCount: runnablePriority.length,
+    priorityWorkCanRunWithoutArtistAlbums,
     blockedCount: work.filter((item) => item.status === "blocked").length,
     blockedReasons: [
       ...new Set(
@@ -1101,6 +1182,80 @@ export function nextSpotifyRollingRequestCapacityAt(
   if (!nextShortWindow) return nextLongWindow;
   if (!nextLongWindow) return nextShortWindow;
   return nextShortWindow > nextLongWindow ? nextShortWindow : nextLongWindow;
+}
+
+export function nextSpotifyBroadRollingRequestCapacityAt(
+  requestStarts: readonly Date[],
+  limits: Pick<
+    SpotifySchedulerLimits,
+    | "maxRequestsPerTick"
+    | "playlistRequestReserve"
+    | "priorityRequestReserve"
+    | "rolling24HourLimit"
+    | "rolling30MinuteLimit"
+  >,
+  now: Date,
+): Date | null {
+  const broadRequestCeiling = Math.max(
+    0,
+    limits.rolling24HourLimit -
+      limits.priorityRequestReserve -
+      limits.playlistRequestReserve -
+      limits.maxRequestsPerTick,
+  );
+  const nextShortWindow = nextRequestCapacityForWindow(
+    requestStarts,
+    limits.rolling30MinuteLimit,
+    spotifySchedulerShortWindowMs,
+    now,
+  );
+  const nextLongWindow = nextRequestCapacityForWindow(
+    requestStarts,
+    broadRequestCeiling + 1,
+    spotifySchedulerWindowMs,
+    now,
+  );
+  if (!nextShortWindow) return nextLongWindow;
+  if (!nextLongWindow) return nextShortWindow;
+  return nextShortWindow > nextLongWindow ? nextShortWindow : nextLongWindow;
+}
+
+export function nextSpotifyPriorityRollingRequestCapacityAt(
+  requestStarts: readonly Date[],
+  limits: Pick<
+    SpotifySchedulerLimits,
+    "playlistRequestReserve" | "rolling24HourLimit" | "rolling30MinuteLimit"
+  >,
+  now: Date,
+): Date | null {
+  const priorityRequestCeiling = Math.max(
+    0,
+    limits.rolling24HourLimit - limits.playlistRequestReserve,
+  );
+  const nextShortWindow = nextRequestCapacityForWindow(
+    requestStarts,
+    limits.rolling30MinuteLimit,
+    spotifySchedulerShortWindowMs,
+    now,
+  );
+  const nextLongWindow = nextRequestCapacityForWindow(
+    requestStarts,
+    priorityRequestCeiling,
+    spotifySchedulerWindowMs,
+    now,
+  );
+  if (!nextShortWindow) return nextLongWindow;
+  if (!nextLongWindow) return nextShortWindow;
+  return nextShortWindow > nextLongWindow ? nextShortWindow : nextLongWindow;
+}
+
+function earliestFutureEligibility(values: readonly Date[], now: Date): Date | null {
+  return values
+    .filter((value) => value > now)
+    .reduce<Date | null>(
+      (earliest, value) => (!earliest || value < earliest ? value : earliest),
+      null,
+    );
 }
 
 function nextRequestCapacityForWindow(
@@ -1391,7 +1546,7 @@ function toClaim(row: typeof spotifySchedulerWork.$inferSelect): SpotifySchedule
   };
 }
 
-async function advanceDiscoverySchedulePhaseIfDrained(
+export async function reconcileDiscoverySchedulePriorityPhase(
   db: SchedulerDatabase,
   now: Date,
 ): Promise<void> {

@@ -1,11 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
   decideDiscoveryMaintenance,
+  maintenanceHardTerminationRecoveryDelayMs,
+  maintenanceMaximumRuntimeMs,
+  maintenanceShutdownGraceMs,
+  maintenanceTaskExecutionLimitMs,
   maintenanceWakeLeadMs,
   type DiscoveryMaintenanceSnapshot,
 } from "./discovery-maintenance";
 
 describe("discovery maintenance decisions", () => {
+  it("keeps the application deadline inside PT4H and the deadman after it", () => {
+    expect(maintenanceTaskExecutionLimitMs).toBe(4 * 60 * 60_000);
+    expect(maintenanceMaximumRuntimeMs).toBe(
+      maintenanceTaskExecutionLimitMs - maintenanceShutdownGraceMs,
+    );
+    expect(maintenanceHardTerminationRecoveryDelayMs).toBe(
+      maintenanceTaskExecutionLimitMs + 60_000,
+    );
+  });
+
   it("holds power for an Apple job due within ten minutes", () => {
     const now = new Date("2026-08-28T03:50:00.000Z");
     const snapshot = baseSnapshot();
@@ -54,6 +68,133 @@ describe("discovery maintenance decisions", () => {
     });
   });
 
+  it("does not hide older resumable Apple work behind a newer occurrence", () => {
+    const now = new Date("2026-09-12T23:00:00.000Z");
+    const snapshot = baseSnapshot();
+    snapshot.discovery.actionable = {
+      appleMusicBatchId: "older-resumable-batch",
+      recoveryDeadline: new Date("2026-09-05T16:00:00.000Z"),
+      scheduledFor: new Date("2026-09-04T16:00:00.000Z"),
+      status: "scheduled",
+    };
+    snapshot.discovery.catchup.latest = {
+      recoveryDeadline: new Date("2026-09-12T16:00:00.000Z"),
+      scheduledFor: new Date("2026-09-11T16:00:00.000Z"),
+      status: "completed",
+    };
+
+    expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
+      holdPower: true,
+      reason: "apple_due",
+      runNow: true,
+    });
+  });
+
+  it("resumes overdue Apple work before waiting for a different near-term occurrence", () => {
+    const now = new Date("2026-09-11T15:50:00.000Z");
+    const snapshot = baseSnapshot();
+    snapshot.discovery.actionable = {
+      appleMusicBatchId: "older-resumable-batch",
+      recoveryDeadline: new Date("2026-09-05T16:00:00.000Z"),
+      scheduledFor: new Date("2026-09-04T16:00:00.000Z"),
+      status: "scheduled",
+    };
+    snapshot.discovery.catchup.next = {
+      recoveryDeadline: new Date("2026-09-12T16:00:00.000Z"),
+      scheduledFor: new Date("2026-09-11T16:00:00.000Z"),
+      status: "scheduled",
+    };
+
+    expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
+      holdPower: true,
+      reason: "apple_due",
+      runNow: true,
+      waitUntil: null,
+    });
+  });
+
+  it("recognizes active Apple work before waiting for a different near-term occurrence", () => {
+    const now = new Date("2026-09-11T15:50:00.000Z");
+    const snapshot = baseSnapshot();
+    snapshot.discovery.actionable = {
+      appleMusicBatchId: "active-batch",
+      recoveryDeadline: new Date("2026-09-12T16:00:00.000Z"),
+      scheduledFor: new Date("2026-09-11T15:00:00.000Z"),
+      status: "leased",
+    };
+    snapshot.discovery.catchup.next = {
+      recoveryDeadline: new Date("2026-09-12T16:00:00.000Z"),
+      scheduledFor: new Date("2026-09-11T16:00:00.000Z"),
+      status: "scheduled",
+    };
+
+    expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
+      holdPower: true,
+      reason: "apple_active",
+      runNow: false,
+    });
+  });
+
+  it("releases power and schedules a wake while a due Apple job is in persisted cooldown", () => {
+    const now = new Date("2026-09-11T16:00:00.000Z");
+    const snapshot = baseSnapshot();
+    snapshot.apple.cooldownActive = true;
+    snapshot.apple.cooldownUntil = new Date("2026-09-11T18:00:00.000Z");
+    snapshot.discovery.catchup.latest = {
+      recoveryDeadline: new Date("2026-09-12T16:00:00.000Z"),
+      scheduledFor: now,
+      status: "scheduled",
+    };
+
+    expect(decideDiscoveryMaintenance(snapshot, now)).toEqual({
+      dynamicWakeAt: new Date("2026-09-11T17:50:00.000Z"),
+      holdPower: false,
+      reason: "apple_capacity_wait",
+      runNow: false,
+      waitUntil: null,
+    });
+  });
+
+  it("holds briefly without claiming a due Apple job while its request lease is active", () => {
+    const now = new Date("2026-09-11T16:00:00.000Z");
+    const snapshot = baseSnapshot();
+    snapshot.apple.leaseActive = true;
+    snapshot.discovery.catchup.latest = {
+      recoveryDeadline: new Date("2026-09-12T16:00:00.000Z"),
+      scheduledFor: now,
+      status: "scheduled",
+    };
+
+    expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
+      dynamicWakeAt: null,
+      holdPower: true,
+      reason: "apple_capacity_wait",
+      runNow: false,
+      waitUntil: new Date("2026-09-11T16:01:00.000Z"),
+    });
+  });
+
+  it("releases power and wakes for retryable Apple artists deferred beyond fifteen minutes", () => {
+    const now = new Date("2026-09-11T16:00:00.000Z");
+    const nextRetryAt = new Date("2026-09-11T18:00:00.000Z");
+    const snapshot = baseSnapshot();
+    snapshot.discovery.catchup.latest = {
+      appleMusicBatchId: "deferred-batch",
+      nextRetryAt,
+      recoveryDeadline: new Date("2026-09-12T16:00:00.000Z"),
+      scheduledFor: now,
+      status: "scheduled",
+    };
+
+    expect(decideDiscoveryMaintenance(snapshot, now)).toEqual({
+      dynamicWakeAt: new Date(nextRetryAt.getTime() - maintenanceWakeLeadMs),
+      holdPower: false,
+      reason: "apple_capacity_wait",
+      runNow: false,
+      waitUntil: null,
+    });
+  });
+
   it("keeps the PC awake while another scheduler process owns the Apple lease", () => {
     const now = new Date("2026-09-04T16:05:00.000Z");
     const snapshot = baseSnapshot();
@@ -81,17 +222,110 @@ describe("discovery maintenance decisions", () => {
     const priority = baseSnapshot();
     priority.discovery.phase = "apple_catchup_priority";
     priority.spotify.appleCatchupPriorityCount = 1;
+    priority.spotify.priorityRunnableCount = 1;
     expect(decideDiscoveryMaintenance(priority, fridayEvening)).toMatchObject({
       reason: "priority_work",
       runNow: true,
     });
     const broad = baseSnapshot();
     broad.spotify.dueArtistCount = 100;
+    broad.spotify.broadRunnableCount = 100;
     expect(decideDiscoveryMaintenance(broad, fridayEvening)).toMatchObject({
       reason: "no_work",
       runNow: false,
     });
   });
+
+  it("exports runnable pending tracks before resuming a due or active Apple workflow", () => {
+    const now = new Date("2026-09-12T23:00:00.000Z");
+    for (const status of ["scheduled", "leased"]) {
+      const snapshot = baseSnapshot();
+      snapshot.discovery.phase = "playlist_inbox";
+      snapshot.discovery.playlistInbox.status = "ready";
+      snapshot.discovery.catchup.latest = {
+        appleMusicBatchId: "existing-batch",
+        recoveryDeadline: new Date("2026-09-13T23:00:00.000Z"),
+        scheduledFor: new Date("2026-09-12T20:00:00.000Z"),
+        status,
+      };
+
+      expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
+        holdPower: true,
+        reason: "playlist_work",
+        runNow: true,
+      });
+    }
+  });
+
+  it("exports runnable playlist work before waiting for a near-term fixed Apple start", () => {
+    const now = new Date("2026-09-11T03:50:00.000Z");
+    const snapshot = baseSnapshot();
+    snapshot.discovery.phase = "playlist_inbox";
+    snapshot.discovery.playlistInbox.status = "ready";
+    snapshot.discovery.full.next = {
+      recoveryDeadline: new Date("2026-09-12T04:00:00.000Z"),
+      scheduledFor: new Date("2026-09-11T04:00:00.000Z"),
+      status: "scheduled",
+    };
+
+    expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
+      holdPower: true,
+      reason: "playlist_work",
+      runNow: true,
+      waitUntil: null,
+    });
+  });
+
+  it("defers playlist work until the general rolling request gate has capacity", () => {
+    const now = new Date("2026-09-12T23:00:00.000Z");
+    const nextCapacityAt = new Date("2026-09-13T01:00:00.000Z");
+    const snapshot = baseSnapshot();
+    snapshot.discovery.phase = "playlist_inbox";
+    snapshot.discovery.playlistInbox.status = "partial";
+    snapshot.spotify.rollingRequestNextCapacityAt = nextCapacityAt;
+
+    expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
+      dynamicWakeAt: new Date(nextCapacityAt.getTime() - maintenanceWakeLeadMs),
+      holdPower: false,
+      reason: "playlist_capacity_wait",
+      runNow: false,
+      waitUntil: null,
+    });
+  });
+
+  it("holds power for playlist capacity returning within fifteen minutes", () => {
+    const now = new Date("2026-09-12T23:00:00.000Z");
+    const nextCapacityAt = new Date(now.getTime() + 10 * 60_000);
+    const snapshot = baseSnapshot();
+    snapshot.discovery.phase = "playlist_inbox";
+    snapshot.discovery.playlistInbox.status = "ready";
+    snapshot.spotify.rollingRequestNextCapacityAt = nextCapacityAt;
+
+    expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
+      dynamicWakeAt: null,
+      holdPower: true,
+      reason: "playlist_capacity_wait",
+      runNow: false,
+      waitUntil: nextCapacityAt,
+    });
+  });
+
+  it.each(["ready", "exporting", "partial", "failed"])(
+    "keeps %s playlist work eligible for guarded inspection",
+    (status) => {
+      const snapshot = baseSnapshot();
+      snapshot.discovery.phase = "playlist_inbox";
+      snapshot.discovery.playlistInbox.status = status;
+
+      expect(
+        decideDiscoveryMaintenance(snapshot, new Date("2026-09-12T23:00:00.000Z")),
+      ).toMatchObject({
+        holdPower: true,
+        reason: "playlist_work",
+        runNow: true,
+      });
+    },
+  );
 
   it("schedules one wake ten minutes before rolling capacity returns", () => {
     const now = new Date("2026-08-28T08:00:00.000Z");
@@ -99,6 +333,7 @@ describe("discovery maintenance decisions", () => {
     const snapshot = baseSnapshot();
     snapshot.discovery.phase = "apple_priority";
     snapshot.spotify.applePriorityCount = 3;
+    snapshot.spotify.priorityRunnableCount = 3;
     snapshot.spotify.endpointBudget.artistAlbums.priorityRemaining = 0;
     snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt = nextCapacityAt;
     const decision = decideDiscoveryMaintenance(snapshot, now);
@@ -108,13 +343,30 @@ describe("discovery maintenance decisions", () => {
     expect(decision).toMatchObject({ holdPower: false, reason: "priority_capacity_wait" });
   });
 
-  it("waits for general rolling request capacity even when Artist Albums capacity remains", () => {
+  it("runs priority track work that does not require Artist Albums capacity", () => {
+    const snapshot = baseSnapshot();
+    snapshot.discovery.phase = "apple_priority";
+    snapshot.spotify.applePriorityCount = 3;
+    snapshot.spotify.priorityRunnableCount = 3;
+    snapshot.spotify.endpointBudget.artistAlbums.priorityRemaining = 0;
+    snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt = new Date(
+      "2026-09-13T00:00:00.000Z",
+    );
+    snapshot.spotify.priorityWorkCanRunWithoutArtistAlbums = true;
+
+    expect(
+      decideDiscoveryMaintenance(snapshot, new Date("2026-09-12T20:00:00.000Z")),
+    ).toMatchObject({ holdPower: true, reason: "priority_work", runNow: true });
+  });
+
+  it("waits for priority rolling request capacity even when Artist Albums capacity remains", () => {
     const now = new Date("2026-09-12T09:55:00.000Z");
     const nextCapacityAt = new Date("2026-09-12T11:20:00.000Z");
     const snapshot = baseSnapshot();
     snapshot.discovery.phase = "apple_priority";
     snapshot.spotify.applePriorityCount = 62;
-    snapshot.spotify.rollingRequestNextCapacityAt = nextCapacityAt;
+    snapshot.spotify.priorityRunnableCount = 62;
+    snapshot.spotify.priorityRollingRequestNextCapacityAt = nextCapacityAt;
 
     expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
       dynamicWakeAt: new Date(nextCapacityAt.getTime() - maintenanceWakeLeadMs),
@@ -125,6 +377,33 @@ describe("discovery maintenance decisions", () => {
     });
   });
 
+  it("uses the reserved priority boundary while playlist work keeps the general boundary", () => {
+    const now = new Date("2026-09-12T09:55:00.000Z");
+    const priorityCapacityAt = new Date("2026-09-12T10:40:00.000Z");
+    const generalCapacityAt = new Date("2026-09-12T12:00:00.000Z");
+    const priority = baseSnapshot();
+    priority.discovery.phase = "apple_priority";
+    priority.spotify.applePriorityCount = 1;
+    priority.spotify.priorityRunnableCount = 1;
+    priority.spotify.priorityRollingRequestNextCapacityAt = priorityCapacityAt;
+    priority.spotify.rollingRequestNextCapacityAt = generalCapacityAt;
+
+    expect(decideDiscoveryMaintenance(priority, now)).toMatchObject({
+      dynamicWakeAt: new Date(priorityCapacityAt.getTime() - maintenanceWakeLeadMs),
+      reason: "priority_capacity_wait",
+    });
+
+    const playlist = baseSnapshot();
+    playlist.discovery.phase = "playlist_inbox";
+    playlist.discovery.playlistInbox.status = "ready";
+    playlist.spotify.priorityRollingRequestNextCapacityAt = priorityCapacityAt;
+
+    expect(decideDiscoveryMaintenance(playlist, now)).toMatchObject({
+      reason: "playlist_work",
+      runNow: true,
+    });
+  });
+
   it("uses the later capacity return when both rolling and Artist Albums budgets are exhausted", () => {
     const now = new Date("2026-09-12T09:55:00.000Z");
     const rollingCapacityAt = new Date("2026-09-12T10:30:00.000Z");
@@ -132,7 +411,8 @@ describe("discovery maintenance decisions", () => {
     const snapshot = baseSnapshot();
     snapshot.discovery.phase = "apple_priority";
     snapshot.spotify.applePriorityCount = 1;
-    snapshot.spotify.rollingRequestNextCapacityAt = rollingCapacityAt;
+    snapshot.spotify.priorityRunnableCount = 1;
+    snapshot.spotify.priorityRollingRequestNextCapacityAt = rollingCapacityAt;
     snapshot.spotify.endpointBudget.artistAlbums.priorityRemaining = 0;
     snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt = artistAlbumsCapacityAt;
 
@@ -148,6 +428,7 @@ describe("discovery maintenance decisions", () => {
     const snapshot = baseSnapshot();
     snapshot.discovery.phase = "apple_priority";
     snapshot.spotify.applePriorityCount = 2;
+    snapshot.spotify.priorityRunnableCount = 2;
     snapshot.spotify.endpointBudget.artistAlbums.priorityRemaining = 0;
     snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt = new Date(
       now.getTime() + 12 * 60_000,
@@ -157,6 +438,23 @@ describe("discovery maintenance decisions", () => {
       holdPower: true,
       reason: "priority_capacity_wait",
       runNow: false,
+    });
+  });
+
+  it("releases power and wakes for Apple-priority work deferred beyond fifteen minutes", () => {
+    const now = new Date("2026-09-12T16:00:00.000Z");
+    const nextRunnableAt = new Date("2026-09-12T18:00:00.000Z");
+    const snapshot = baseSnapshot();
+    snapshot.discovery.phase = "apple_priority";
+    snapshot.spotify.applePriorityCount = 4;
+    snapshot.spotify.priorityNextRunnableAt = nextRunnableAt;
+
+    expect(decideDiscoveryMaintenance(snapshot, now)).toEqual({
+      dynamicWakeAt: new Date(nextRunnableAt.getTime() - maintenanceWakeLeadMs),
+      holdPower: false,
+      reason: "priority_deferred_wait",
+      runNow: false,
+      waitUntil: null,
     });
   });
 
@@ -175,6 +473,7 @@ describe("discovery maintenance decisions", () => {
   it("keeps broad Spotify work out of Thursday and Friday priority windows", () => {
     const snapshot = baseSnapshot();
     snapshot.spotify.dueArtistCount = 10;
+    snapshot.spotify.broadRunnableCount = 10;
     expect(
       decideDiscoveryMaintenance(snapshot, new Date("2026-08-28T03:00:00.000Z")),
     ).toMatchObject({ reason: "no_work", runNow: false });
@@ -186,6 +485,7 @@ describe("discovery maintenance decisions", () => {
   it("allows bounded broad work on Saturday", () => {
     const snapshot = baseSnapshot();
     snapshot.spotify.dueArtistCount = 10;
+    snapshot.spotify.broadRunnableCount = 10;
     expect(
       decideDiscoveryMaintenance(snapshot, new Date("2026-08-29T16:00:00.000Z")),
     ).toMatchObject({ holdPower: true, reason: "broad_work", runNow: true });
@@ -196,6 +496,7 @@ describe("discovery maintenance decisions", () => {
     const nextCapacityAt = new Date(now.getTime() + 90 * 60_000);
     const snapshot = baseSnapshot();
     snapshot.spotify.dueArtistCount = 10;
+    snapshot.spotify.broadRunnableCount = 10;
     snapshot.spotify.endpointBudget.artistAlbums.broadRemaining = 0;
     snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt = nextCapacityAt;
     const decision = decideDiscoveryMaintenance(snapshot, now);
@@ -212,7 +513,8 @@ describe("discovery maintenance decisions", () => {
     const nextCapacityAt = new Date(now.getTime() + 90 * 60_000);
     const snapshot = baseSnapshot();
     snapshot.spotify.dueArtistCount = 10;
-    snapshot.spotify.rollingRequestNextCapacityAt = nextCapacityAt;
+    snapshot.spotify.broadRunnableCount = 10;
+    snapshot.spotify.broadRollingRequestNextCapacityAt = nextCapacityAt;
 
     expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
       dynamicWakeAt: new Date(nextCapacityAt.getTime() - maintenanceWakeLeadMs),
@@ -222,11 +524,29 @@ describe("discovery maintenance decisions", () => {
     });
   });
 
+  it("uses the reserved broad rolling boundary instead of the later general boundary", () => {
+    const now = new Date("2026-08-29T16:00:00.000Z");
+    const broadCapacityAt = new Date(now.getTime() + 45 * 60_000);
+    const generalCapacityAt = new Date(now.getTime() + 3 * 60 * 60_000);
+    const snapshot = baseSnapshot();
+    snapshot.spotify.dueArtistCount = 10;
+    snapshot.spotify.broadRunnableCount = 10;
+    snapshot.spotify.broadRollingRequestNextCapacityAt = broadCapacityAt;
+    snapshot.spotify.rollingRequestNextCapacityAt = generalCapacityAt;
+
+    expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
+      dynamicWakeAt: new Date(broadCapacityAt.getTime() - maintenanceWakeLeadMs),
+      holdPower: false,
+      reason: "broad_capacity_wait",
+    });
+  });
+
   it("holds power for a near-term broad capacity return", () => {
     const now = new Date("2026-08-29T16:00:00.000Z");
     const nextCapacityAt = new Date(now.getTime() + 12 * 60_000);
     const snapshot = baseSnapshot();
     snapshot.spotify.dueArtistCount = 10;
+    snapshot.spotify.broadRunnableCount = 10;
     snapshot.spotify.endpointBudget.artistAlbums.broadRemaining = 0;
     snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt = nextCapacityAt;
     expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
@@ -238,10 +558,27 @@ describe("discovery maintenance decisions", () => {
     });
   });
 
+  it("releases power and wakes for broad work deferred beyond fifteen minutes", () => {
+    const now = new Date("2026-09-12T16:00:00.000Z");
+    const nextRunnableAt = new Date("2026-09-12T18:00:00.000Z");
+    const snapshot = baseSnapshot();
+    snapshot.spotify.backlog.release_detail = 3;
+    snapshot.spotify.broadNextRunnableAt = nextRunnableAt;
+
+    expect(decideDiscoveryMaintenance(snapshot, now)).toEqual({
+      dynamicWakeAt: new Date(nextRunnableAt.getTime() - maintenanceWakeLeadMs),
+      holdPower: false,
+      reason: "broad_deferred_wait",
+      runNow: false,
+      waitUntil: null,
+    });
+  });
+
   it("does not schedule a broad capacity wake after the daily budget is exhausted", () => {
     const now = new Date("2026-08-29T16:00:00.000Z");
     const snapshot = baseSnapshot();
     snapshot.spotify.dueArtistCount = 10;
+    snapshot.spotify.broadRunnableCount = 10;
     snapshot.spotify.endpointBudget.artistAlbums.broadRemaining = 0;
     snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt = new Date(
       now.getTime() + 90 * 60_000,
@@ -259,6 +596,7 @@ describe("discovery maintenance decisions", () => {
     const now = new Date("2026-09-03T04:00:00.000Z");
     const snapshot = baseSnapshot();
     snapshot.spotify.dueArtistCount = 10;
+    snapshot.spotify.broadRunnableCount = 10;
     snapshot.spotify.endpointBudget.artistAlbums.broadRemaining = 0;
     snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt = new Date(
       "2026-09-03T15:51:39.000Z",
@@ -276,7 +614,9 @@ describe("discovery maintenance decisions", () => {
     const snapshot = baseSnapshot();
     snapshot.discovery.phase = "apple_priority";
     snapshot.spotify.applePriorityCount = 2;
+    snapshot.spotify.priorityRunnableCount = 2;
     snapshot.spotify.dueArtistCount = 10;
+    snapshot.spotify.broadRunnableCount = 10;
     expect(
       decideDiscoveryMaintenance(snapshot, new Date("2026-08-29T16:00:00.000Z")),
     ).toMatchObject({ holdPower: true, reason: "priority_work", runNow: true });
@@ -288,6 +628,7 @@ describe("discovery maintenance decisions", () => {
     const snapshot = baseSnapshot();
     snapshot.discovery.phase = "apple_priority";
     snapshot.spotify.applePriorityCount = 2;
+    snapshot.spotify.priorityRunnableCount = 2;
     snapshot.spotify.cooldownActive = true;
     snapshot.spotify.cooldownUntil = cooldownUntil;
     expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
@@ -301,7 +642,15 @@ describe("discovery maintenance decisions", () => {
 
 function baseSnapshot(): DiscoveryMaintenanceSnapshot {
   return {
+    apple: {
+      cooldownActive: false,
+      cooldownIndefinite: false,
+      cooldownUntil: null,
+      leaseActive: false,
+      nextRequestAt: null,
+    },
     discovery: {
+      actionable: null,
       catchup: { latest: null, next: null },
       full: { latest: null, next: null },
       phase: "broad_spotify",
@@ -317,6 +666,9 @@ function baseSnapshot(): DiscoveryMaintenanceSnapshot {
         release_tracks: 0,
         track_resolution: 0,
       },
+      broadNextRunnableAt: null,
+      broadRunnableCount: 0,
+      broadRollingRequestNextCapacityAt: null,
       cooldownActive: false,
       cooldownUntil: null,
       dailyBudget: {
@@ -346,6 +698,10 @@ function baseSnapshot(): DiscoveryMaintenanceSnapshot {
         },
         playlist: { reads: 0, writes: 0 },
       },
+      priorityNextRunnableAt: null,
+      priorityRollingRequestNextCapacityAt: null,
+      priorityRunnableCount: 0,
+      priorityWorkCanRunWithoutArtistAlbums: false,
       rollingRequestNextCapacityAt: null,
     },
   };

@@ -10,6 +10,7 @@ import {
   getSpotifySchedulerStatus,
   planSpotifySchedulerTick,
   queueSpotifyTrackResolutionWork,
+  reconcileDiscoverySchedulePriorityPhase,
   reconcileDeferredPriorityTrackResolutionWork,
   reconcileSpotifySchedulerWork,
   setSpotifySchedulerMode,
@@ -555,6 +556,137 @@ describe("Spotify rolling scheduler persistence", () => {
       last30Minutes: 0,
     });
     expect(status.rollingRequestNextCapacityAt).toBeNull();
+  });
+
+  it("distinguishes deferred Apple-priority work from currently runnable priority work", async () => {
+    const now = new Date("2026-09-12T16:00:00.000Z");
+    const notBefore = new Date(now.getTime() + 2 * 60 * 60_000);
+    const artistId = await createArtist("Deferred priority", true, true);
+    await setSpotifySchedulerMode(db, "automatic", now);
+    await db.insert(discoveryScheduleState).values({ id: "global", phase: "apple_priority" });
+    await db.insert(spotifySchedulerWork).values({
+      artistId,
+      dueAt: now,
+      notBefore,
+      priority: -100,
+      source: "apple_priority",
+      spotifyAlbumId: "deferred-priority-release",
+      workKey: `deferred-priority:${artistId}`,
+      workType: "release_detail",
+    });
+
+    const status = await getSpotifySchedulerStatus(db, now);
+
+    expect(status.applePriorityCount).toBe(1);
+    expect(status.priorityRunnableCount).toBe(0);
+    expect(status.priorityNextRunnableAt).toEqual(notBefore);
+    expect(status.priorityWorkCanRunWithoutArtistAlbums).toBe(false);
+  });
+
+  it("distinguishes deferred broad work from currently runnable broad work", async () => {
+    const now = new Date("2026-09-12T16:00:00.000Z");
+    const notBefore = new Date(now.getTime() + 2 * 60 * 60_000);
+    const artistId = await createArtist("Deferred broad", true, true);
+    await setSpotifySchedulerMode(db, "automatic", now);
+    await db.insert(discoveryScheduleState).values({ id: "global", phase: "broad_spotify" });
+    await db.insert(spotifySchedulerWork).values({
+      artistId,
+      dueAt: now,
+      notBefore,
+      source: "repair",
+      spotifyAlbumId: "deferred-broad-release",
+      workKey: `deferred-broad:${artistId}`,
+      workType: "release_detail",
+    });
+
+    const status = await getSpotifySchedulerStatus(db, now);
+
+    expect(status.backlog.release_detail).toBe(1);
+    expect(status.broadRunnableCount).toBe(0);
+    expect(status.broadNextRunnableAt).toEqual(notBefore);
+  });
+
+  it("treats an expired sole Apple-priority lease as runnable after a worker exits", async () => {
+    const now = new Date("2026-09-12T16:00:00.000Z");
+    const artistId = await createArtist("Expired priority lease", true, true);
+    await setSpotifySchedulerMode(db, "automatic", now);
+    await db.insert(discoveryScheduleState).values({ id: "global", phase: "apple_priority" });
+    await db.insert(spotifySchedulerWork).values({
+      artistId,
+      dueAt: now,
+      leaseExpiresAt: new Date(now.getTime() - 1_000),
+      leaseOwner: "dead-worker",
+      priority: -100,
+      source: "apple_priority",
+      status: "leased",
+      spotifyAlbumId: "expired-priority-release",
+      workKey: `expired-priority:${artistId}`,
+      workType: "release_detail",
+    });
+
+    const status = await getSpotifySchedulerStatus(db, now);
+
+    expect(status.priorityRunnableCount).toBe(1);
+    expect(status.priorityNextRunnableAt).toBeNull();
+  });
+
+  it("makes the playlist checkpoint ready after the sole priority item completes", async () => {
+    const now = new Date("2026-09-12T16:00:00.000Z");
+    const artistId = await createArtist("Final priority item", true, true);
+    await setSpotifySchedulerMode(db, "automatic", now);
+    await db.insert(discoveryScheduleState).values({
+      applePriorityQueuedCount: 1,
+      id: "global",
+      phase: "apple_priority",
+      playlistInboxStatus: "pending",
+    });
+    await db.insert(spotifySchedulerWork).values({
+      artistId,
+      dueAt: now,
+      expectedSpotifyArtistId: `spotify-${artistId}`,
+      priority: -100,
+      source: "apple_priority",
+      workKey: `final-priority:${artistId}`,
+      workType: "artist_reconciliation",
+    });
+    const claim = await claimSpotifySchedulerWork(db, now);
+    expect(claim).toMatchObject({ source: "apple_priority" });
+    expect(await finishSpotifySchedulerWork(db, claim!, { status: "completed" }, now)).toBe(true);
+
+    await reconcileDiscoverySchedulePriorityPhase(db, now);
+
+    expect(await db.query.discoveryScheduleState.findFirst()).toMatchObject({
+      applePriorityQueuedCount: 0,
+      phase: "playlist_inbox",
+      playlistInboxStatus: "ready",
+    });
+  });
+
+  it("waits for a live sole broad lease and exposes it as runnable after expiry", async () => {
+    const now = new Date("2026-09-12T16:00:00.000Z");
+    const leaseExpiresAt = new Date(now.getTime() + 90_000);
+    const artistId = await createArtist("Live broad lease", true, true);
+    await setSpotifySchedulerMode(db, "automatic", now);
+    await db.insert(discoveryScheduleState).values({ id: "global", phase: "broad_spotify" });
+    await db.insert(spotifySchedulerWork).values({
+      artistId,
+      dueAt: now,
+      leaseExpiresAt,
+      leaseOwner: "live-worker",
+      source: "repair",
+      status: "leased",
+      spotifyAlbumId: "live-broad-release",
+      workKey: `live-broad:${artistId}`,
+      workType: "release_detail",
+    });
+
+    const active = await getSpotifySchedulerStatus(db, now);
+    const expired = await getSpotifySchedulerStatus(db, new Date(leaseExpiresAt.getTime() + 1_000));
+
+    expect(active.broadRunnableCount).toBe(0);
+    expect(active.broadNextRunnableAt).toEqual(leaseExpiresAt);
+    expect(expired.broadRunnableCount).toBe(1);
+    expect(expired.broadNextRunnableAt).toBeNull();
   });
 
   it("reports the next general rolling-request capacity boundary", async () => {

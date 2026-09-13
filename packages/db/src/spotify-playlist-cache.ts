@@ -33,6 +33,42 @@ export class SpotifyPlaylistSnapshotYieldError extends Error {
   }
 }
 
+export async function resumeSpotifyPlaylistSnapshotRefresh(
+  db: RadarDatabase,
+  userId: string,
+  client: SpotifyPlaylistSnapshotClient,
+  playlistId: string,
+  options: { maxReadPages: number; policy: SpotifyPlaylistWritePolicy },
+): Promise<boolean> {
+  const targetPlaylistId = assertSpotifyPlaylistWriteTarget(options.policy, playlistId);
+  if (!Number.isInteger(options.maxReadPages) || options.maxReadPages < 1) {
+    throw new Error("Spotify playlist snapshot maximum read pages must be a positive integer.");
+  }
+  const pageReader = client.getPlaylistItemsPage;
+  if (!pageReader) return false;
+  let state = await loadPlaylistSnapshotRefresh(db, userId, targetPlaylistId);
+  if (!state) return false;
+  let pagesRead = 0;
+  while (state.nextOffset !== null && pagesRead < options.maxReadPages) {
+    const page: SpotifyPlaylistItemsPage = await pageReader.call(
+      client,
+      targetPlaylistId,
+      state.nextOffset,
+    );
+    state = {
+      ...state,
+      items: [...state.items, ...page.items],
+      nextOffset: page.nextOffset,
+    };
+    await persistPlaylistSnapshotRefresh(db, userId, state);
+    pagesRead += 1;
+  }
+  if (state.nextOffset !== null) {
+    throw new SpotifyPlaylistSnapshotYieldError(state.nextOffset);
+  }
+  return true;
+}
+
 export async function upsertSpotifyPlaylistTarget(
   db: RadarDatabase,
   userId: string,
@@ -80,8 +116,11 @@ export async function loadVerifiedSpotifyPlaylistSnapshot(
     ? assertSpotifyPlaylistWriteTarget(options.policy, playlist.id)
     : playlist.id;
   const target = await upsertSpotifyPlaylistTarget(db, userId, playlistId, playlist.name);
-  const remoteSnapshotMatches = target.snapshotId === playlist.snapshot_id;
+  const cachedSnapshotVerified = target.snapshotVerifiedAt !== null;
+  const remoteSnapshotMatches =
+    cachedSnapshotVerified && target.snapshotId === playlist.snapshot_id;
   const trustedMutationSnapshotMatches =
+    cachedSnapshotVerified &&
     options.trustedMutationSnapshotId !== undefined &&
     target.snapshotId === options.trustedMutationSnapshotId;
   if (
@@ -148,6 +187,8 @@ async function readBoundedConsistentSpotifyPlaylistSnapshot(
     await clearPlaylistSnapshotRefresh(db, userId, initialPlaylist.id);
     state = null;
   }
+  const completedBeforeRead = state?.nextOffset === null;
+  const creatingState = state === null;
   state ??= {
     items: [],
     nextOffset: 0,
@@ -155,6 +196,7 @@ async function readBoundedConsistentSpotifyPlaylistSnapshot(
     snapshotId: initialPlaylist.snapshot_id,
     startedAt: new Date().toISOString(),
   };
+  if (creatingState) await persistPlaylistSnapshotRefresh(db, userId, state);
 
   let pagesRead = 0;
   while (state.nextOffset !== null && pagesRead < options.maxReadPages) {
@@ -171,6 +213,10 @@ async function readBoundedConsistentSpotifyPlaylistSnapshot(
     throw new SpotifyPlaylistSnapshotYieldError(state.nextOffset);
   }
 
+  if (completedBeforeRead) {
+    await clearPlaylistSnapshotRefresh(db, userId, initialPlaylist.id);
+    return { items: state.items, playlist: initialPlaylist };
+  }
   const verified = await client.getPlaylist(initialPlaylist.id);
   if (verified.snapshot_id !== state.snapshotId) {
     await clearPlaylistSnapshotRefresh(db, userId, initialPlaylist.id);
@@ -270,9 +316,10 @@ export async function persistSpotifyPlaylistSnapshot(
   targetId: string,
   snapshotId: string,
   items: readonly SpotifyPlaylistItemSnapshot[],
-  options: { canaryVerified?: boolean } = {},
+  options: { canaryVerified?: boolean; verified?: boolean } = {},
 ): Promise<void> {
   const now = new Date();
+  const verified = options.verified ?? true;
   await db
     .update(playlistTargets)
     .set({
@@ -280,7 +327,7 @@ export async function persistSpotifyPlaylistSnapshot(
       ...(options.canaryVerified ? { orderCanaryVerifiedAt: now } : {}),
       snapshotId,
       snapshotItems: items.map((item, position) => ({ ...item, position })),
-      snapshotVerifiedAt: now,
+      snapshotVerifiedAt: verified ? now : null,
       updatedAt: now,
     })
     .where(eq(playlistTargets.id, targetId));

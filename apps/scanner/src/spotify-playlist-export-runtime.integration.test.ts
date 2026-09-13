@@ -9,6 +9,7 @@ import {
   type SpotifyPlaylistExportExecution,
   SpotifyCooldownError,
   SpotifyPlaylistSnapshotYieldError,
+  SpotifyRequestDeadlineError,
 } from "@radar/db";
 import { loadProviderConfiguration } from "@radar/providers";
 import { eq } from "drizzle-orm";
@@ -199,7 +200,7 @@ describe.sequential("automatic discovery playlist export", () => {
   });
 
   it("immediately reclaims an export lock whose local owner process is proven dead", async () => {
-    const now = new Date("2026-09-08T19:30:00.000Z");
+    const now = new Date();
     await connection.db.insert(discoveryScheduleState).values({
       id: "global",
       phase: "playlist_inbox",
@@ -235,7 +236,7 @@ describe.sequential("automatic discovery playlist export", () => {
   });
 
   it("protects an export lock whose local owner process is still alive", async () => {
-    const now = new Date("2026-09-08T19:30:00.000Z");
+    const now = new Date();
     await connection.db.insert(discoveryScheduleState).values({
       id: "global",
       phase: "playlist_inbox",
@@ -246,7 +247,7 @@ describe.sequential("automatic discovery playlist export", () => {
       expiresAt: new Date(now.getTime() + 60 * 60_000),
       lockKey: "spotify:playlist-export",
       metadata: {
-        heartbeatAt: new Date(now.getTime() - 60 * 60_000).toISOString(),
+        heartbeatAt: now.toISOString(),
         ownerHost: "test-host",
         ownerPid: 424242,
       },
@@ -270,7 +271,7 @@ describe.sequential("automatic discovery playlist export", () => {
   });
 
   it("reclaims an unverifiable abandoned lock after the five-minute fallback TTL", async () => {
-    const now = new Date("2026-09-08T19:30:00.000Z");
+    const now = new Date();
     await connection.db.insert(discoveryScheduleState).values({
       id: "global",
       phase: "playlist_inbox",
@@ -374,6 +375,41 @@ describe.sequential("automatic discovery playlist export", () => {
         where: eq(discoveryScheduleState.id, "global"),
       }),
     ).toMatchObject({ phase: "playlist_inbox", playlistInboxStatus: "partial" });
+    expect(await connection.db.select().from(operationLocks)).toHaveLength(0);
+  });
+
+  it("yields at the shared maintenance deadline and preserves the same export run", async () => {
+    await connection.db.insert(discoveryScheduleState).values({
+      id: "global",
+      phase: "playlist_inbox",
+      playlistInboxStatus: "ready",
+    });
+    const runId = randomUUID();
+    const deadlineAt = new Date(Date.now() + 60_000);
+    const nextCapacityAt = new Date(deadlineAt.getTime() + 5 * 60_000);
+    const executeExport: typeof executeSpotifyPlaylistExport = vi.fn(() =>
+      Promise.reject(new SpotifyRequestDeadlineError(deadlineAt, nextCapacityAt)),
+    );
+    const loadResumableRunId = vi.fn(() => Promise.resolve(runId));
+
+    await expect(
+      runAutomaticDiscoveryPlaylistExport(connection.db, configuration(), {
+        deadlineAt,
+        executeExport,
+        loadResumableRunId,
+      }),
+    ).resolves.toEqual({ deadlineAt, nextCapacityAt, reason: "runtime_yield" });
+    expect(executeExport).toHaveBeenCalledOnce();
+    expect(loadResumableRunId).toHaveBeenCalled();
+    expect(
+      await connection.db.query.discoveryScheduleState.findFirst({
+        where: eq(discoveryScheduleState.id, "global"),
+      }),
+    ).toMatchObject({
+      phase: "playlist_inbox",
+      playlistInboxExportRunId: runId,
+      playlistInboxStatus: "partial",
+    });
     expect(await connection.db.select().from(operationLocks)).toHaveLength(0);
   });
 

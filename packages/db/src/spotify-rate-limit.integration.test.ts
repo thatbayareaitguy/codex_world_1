@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDatabase, type RadarDatabase } from "./client";
 import {
   cancelSpotifyBatch,
@@ -21,6 +21,7 @@ import {
   reconcileStaleSpotifyQueueDepth,
   SpotifyCooldownError,
   SpotifyEndpointBudgetError,
+  SpotifyRequestDeadlineError,
 } from "./spotify-request-gate";
 import {
   artists,
@@ -84,7 +85,7 @@ describe("Spotify global request gate", () => {
         method: "GET",
         quotaLane: "broad" as const,
         queueWaitMs: 0,
-        startedAt: new Date(now.getTime() - index * 1_000),
+        startedAt: new Date(now.getTime() - 31 * 60_000 - index * 1_000),
         status: 200,
       })),
     );
@@ -112,6 +113,313 @@ describe("Spotify global request gate", () => {
     const permit = await playlistGate.acquire({ endpointCategory: "playlist_read", method: "GET" });
     await playlistGate.complete(permit, { status: 200 });
     expect((await getSpotifyEndpointBudgetStatus(db)).playlist.reads).toBe(1);
+  });
+
+  it("preserves rolling capacity for priority and playlist lanes", async () => {
+    const now = new Date();
+    await db.insert(spotifyRequestEvents).values(
+      Array.from({ length: 5 }, (_, index) => ({
+        endpointCategory: "album_detail",
+        id: randomUUID(),
+        method: "GET",
+        quotaLane: "broad" as const,
+        queueWaitMs: 0,
+        startedAt: new Date(now.getTime() - index * 1_000),
+        status: 200,
+      })),
+    );
+    const rollingRequestBudget = {
+      playlistRequestReserve: 2,
+      priorityRequestReserve: 3,
+      rolling24HourLimit: 10,
+      rolling30MinuteLimit: 10,
+    };
+
+    await expect(
+      createSpotifyRequestGate(db, 10_000, undefined, undefined, {
+        quotaLane: "broad",
+        rollingRequestBudget,
+      }).acquire({ endpointCategory: "album_detail", method: "GET" }),
+    ).rejects.toMatchObject({
+      endpointCategory: "rolling_requests",
+      quotaLane: "broad",
+    });
+
+    const priorityGate = createSpotifyRequestGate(db, 10_000, undefined, undefined, {
+      quotaLane: "priority",
+      rollingRequestBudget,
+    });
+    const permit = await priorityGate.acquire({ endpointCategory: "album_detail", method: "GET" });
+    await priorityGate.complete(permit, { status: 200 });
+    expect(permit.eventId).toBeTruthy();
+  });
+
+  it("leaves the final rolling reserve to playlist work and enforces the global ceiling", async () => {
+    const rollingRequestBudget = {
+      playlistRequestReserve: 2,
+      priorityRequestReserve: 3,
+      rolling24HourLimit: 10,
+      rolling30MinuteLimit: 20,
+    };
+    const seedEvents = async (count: number) => {
+      const now = new Date();
+      await db.insert(spotifyRequestEvents).values(
+        Array.from({ length: count }, (_, index) => ({
+          endpointCategory: "album_detail",
+          id: randomUUID(),
+          method: "GET",
+          quotaLane: "priority" as const,
+          queueWaitMs: 0,
+          startedAt: new Date(now.getTime() - index * 1_000),
+          status: 200,
+        })),
+      );
+    };
+    await seedEvents(8);
+
+    await expect(
+      createSpotifyRequestGate(db, 10_000, undefined, undefined, {
+        quotaLane: "priority",
+        rollingRequestBudget,
+      }).acquire({ endpointCategory: "album_detail", method: "GET" }),
+    ).rejects.toMatchObject({
+      endpointCategory: "rolling_requests",
+      quotaLane: "priority",
+    });
+
+    const playlistGate = createSpotifyRequestGate(db, 10_000, undefined, undefined, {
+      quotaLane: "playlist",
+      rollingRequestBudget,
+    });
+    const first = await playlistGate.acquire({ endpointCategory: "playlist_read", method: "GET" });
+    await playlistGate.complete(first, { status: 200 });
+    await db
+      .update(spotifyProviderState)
+      .set({ nextRequestAt: null })
+      .where(eq(spotifyProviderState.id, "global"));
+    const second = await playlistGate.acquire({
+      endpointCategory: "playlist_write",
+      method: "POST",
+    });
+    await playlistGate.complete(second, { status: 201 });
+    await db
+      .update(spotifyProviderState)
+      .set({ nextRequestAt: null })
+      .where(eq(spotifyProviderState.id, "global"));
+
+    await expect(
+      playlistGate.acquire({ endpointCategory: "playlist_read", method: "GET" }),
+    ).rejects.toMatchObject({
+      endpointCategory: "rolling_requests",
+      quotaLane: "playlist",
+    });
+  });
+
+  it("enforces the global rolling 30-minute ceiling for playlist work", async () => {
+    const now = new Date();
+    await db.insert(spotifyRequestEvents).values(
+      Array.from({ length: 3 }, (_, index) => ({
+        endpointCategory: "playlist_read",
+        id: randomUUID(),
+        method: "GET",
+        quotaLane: "playlist" as const,
+        queueWaitMs: 0,
+        startedAt: new Date(now.getTime() - index * 1_000),
+        status: 200,
+      })),
+    );
+
+    let rejection: unknown;
+    try {
+      await createSpotifyRequestGate(db, 10_000, undefined, undefined, {
+        quotaLane: "playlist",
+        rollingRequestBudget: {
+          playlistRequestReserve: 2,
+          priorityRequestReserve: 3,
+          rolling24HourLimit: 10,
+          rolling30MinuteLimit: 3,
+        },
+      }).acquire({ endpointCategory: "playlist_read", method: "GET" });
+    } catch (error) {
+      rejection = error;
+    }
+    expect(rejection).toBeInstanceOf(SpotifyEndpointBudgetError);
+    if (!(rejection instanceof SpotifyEndpointBudgetError)) return;
+    expect(rejection.endpointCategory).toBe("rolling_requests");
+    expect(rejection.nextCapacityAt).toBeInstanceOf(Date);
+    expect(rejection.quotaLane).toBe("playlist");
+  });
+
+  it("lets opted-in playlist work wait for known near-term rolling capacity", async () => {
+    let clock = new Date("2026-09-13T02:00:00.000Z");
+    await db.insert(spotifyRequestEvents).values({
+      endpointCategory: "playlist_read",
+      id: randomUUID(),
+      method: "GET",
+      quotaLane: "playlist",
+      queueWaitMs: 0,
+      startedAt: new Date(clock.getTime() - 30 * 60_000 + 10_000),
+      status: 200,
+    });
+    const waits: number[] = [];
+    const gate = createSpotifyRequestGate(db, 10_000, undefined, undefined, {
+      quotaLane: "playlist",
+      rollingCapacityWait: {
+        maximumWaitMs: 15 * 60_000,
+        now: () => clock,
+        sleep: (milliseconds) => {
+          waits.push(milliseconds);
+          clock = new Date(clock.getTime() + milliseconds);
+          return Promise.resolve();
+        },
+      },
+      rollingRequestBudget: {
+        playlistRequestReserve: 0,
+        priorityRequestReserve: 0,
+        rolling24HourLimit: 100,
+        rolling30MinuteLimit: 1,
+      },
+    });
+
+    const permit = await gate.acquire({ endpointCategory: "playlist_read", method: "GET" });
+    await gate.complete(permit, { status: 200 });
+
+    expect(waits).toEqual([10_000]);
+    expect(permit.queueWaitMs).toBe(10_000);
+  });
+
+  it("uses one shared deadline across sequential playlist capacity waits", async () => {
+    const startedAt = new Date("2026-09-13T02:00:00.000Z");
+    let clock = startedAt;
+    await db.insert(spotifyRequestEvents).values([
+      {
+        endpointCategory: "playlist_read",
+        id: randomUUID(),
+        method: "GET",
+        quotaLane: "playlist",
+        queueWaitMs: 0,
+        startedAt: new Date(startedAt.getTime() - 22 * 60_000),
+        status: 200,
+      },
+      {
+        endpointCategory: "playlist_read",
+        id: randomUUID(),
+        method: "GET",
+        quotaLane: "playlist",
+        queueWaitMs: 0,
+        startedAt: new Date(startedAt.getTime() - 14 * 60_000),
+        status: 200,
+      },
+    ]);
+    const waits: number[] = [];
+    const deadlineAt = new Date(startedAt.getTime() + 12 * 60_000);
+    const gate = createSpotifyRequestGate(db, 10_000, undefined, undefined, {
+      quotaLane: "playlist",
+      rollingCapacityWait: {
+        deadlineAt,
+        maximumWaitMs: 15 * 60_000,
+        now: () => clock,
+        sleep: (milliseconds) => {
+          waits.push(milliseconds);
+          clock = new Date(clock.getTime() + milliseconds);
+          return Promise.resolve();
+        },
+      },
+      rollingRequestBudget: {
+        playlistRequestReserve: 0,
+        priorityRequestReserve: 0,
+        rolling24HourLimit: 100,
+        rolling30MinuteLimit: 2,
+      },
+    });
+
+    const first = await gate.acquire({ endpointCategory: "playlist_read", method: "GET" });
+    await gate.complete(first, { status: 200 });
+
+    let rejection: unknown;
+    try {
+      await gate.acquire({ endpointCategory: "playlist_read", method: "GET" });
+    } catch (error) {
+      rejection = error;
+    }
+    expect(rejection).toBeInstanceOf(SpotifyRequestDeadlineError);
+    if (!(rejection instanceof SpotifyRequestDeadlineError)) return;
+    expect(rejection.deadlineAt).toEqual(deadlineAt);
+    expect(rejection.nextCapacityAt).toEqual(new Date(startedAt.getTime() + 16 * 60_000));
+    expect(waits).toEqual([8 * 60_000]);
+  });
+
+  it("cancels an opted-in playlist capacity wait", async () => {
+    const clock = new Date("2026-09-13T02:00:00.000Z");
+    await db.insert(spotifyRequestEvents).values({
+      endpointCategory: "playlist_read",
+      id: randomUUID(),
+      method: "GET",
+      quotaLane: "playlist",
+      queueWaitMs: 0,
+      startedAt: new Date(clock.getTime() - 30 * 60_000 + 10_000),
+      status: 200,
+    });
+    const controller = new AbortController();
+    const gate = createSpotifyRequestGate(db, 10_000, undefined, undefined, {
+      quotaLane: "playlist",
+      rollingCapacityWait: {
+        maximumWaitMs: 15 * 60_000,
+        now: () => clock,
+        sleep: (_milliseconds, signal) => {
+          const cancellation = new Error("Synthetic playlist wait cancellation");
+          controller.abort(cancellation);
+          return Promise.reject(signal?.reason instanceof Error ? signal.reason : cancellation);
+        },
+      },
+      rollingRequestBudget: {
+        playlistRequestReserve: 0,
+        priorityRequestReserve: 0,
+        rolling24HourLimit: 100,
+        rolling30MinuteLimit: 1,
+      },
+    });
+
+    await expect(
+      gate.acquire({
+        endpointCategory: "playlist_read",
+        method: "GET",
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("Synthetic playlist wait cancellation");
+  });
+
+  it("yields when playlist rolling capacity is beyond the opted-in wait bound", async () => {
+    const clock = new Date("2026-09-13T02:00:00.000Z");
+    await db.insert(spotifyRequestEvents).values({
+      endpointCategory: "playlist_read",
+      id: randomUUID(),
+      method: "GET",
+      quotaLane: "playlist",
+      queueWaitMs: 0,
+      startedAt: new Date(clock.getTime() - 10 * 60_000),
+      status: 200,
+    });
+    const sleep = vi.fn(() => Promise.resolve());
+    const gate = createSpotifyRequestGate(db, 10_000, undefined, undefined, {
+      quotaLane: "playlist",
+      rollingCapacityWait: { maximumWaitMs: 15 * 60_000, now: () => clock, sleep },
+      rollingRequestBudget: {
+        playlistRequestReserve: 0,
+        priorityRequestReserve: 0,
+        rolling24HourLimit: 100,
+        rolling30MinuteLimit: 1,
+      },
+    });
+
+    await expect(
+      gate.acquire({ endpointCategory: "playlist_read", method: "GET" }),
+    ).rejects.toMatchObject({
+      endpointCategory: "rolling_requests",
+      nextCapacityAt: new Date(clock.getTime() + 20 * 60_000),
+      quotaLane: "playlist",
+    });
+    expect(sleep).not.toHaveBeenCalled();
   });
 
   it("does not report broad capacity after priority work consumes the total allowance", async () => {

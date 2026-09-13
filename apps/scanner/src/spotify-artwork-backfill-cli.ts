@@ -3,6 +3,7 @@ import {
   createDatabase,
   createSpotifyArtworkBackfillRepository,
   createSpotifyRequestGate,
+  defaultSchedulerLimits,
   ensureLocalOwner,
   releaseOperationLock,
   SpotifyTokenManager,
@@ -41,9 +42,20 @@ try {
     });
     try {
       const userId = await ensureLocalOwner(connection.db);
+      const schedulerLimits = defaultSchedulerLimits();
       const gate = createSpotifyRequestGate(
         connection.db,
         configuration.spotify.minRequestIntervalMs,
+        undefined,
+        undefined,
+        {
+          rollingRequestBudget: {
+            playlistRequestReserve: schedulerLimits.playlistRequestReserve,
+            priorityRequestReserve: schedulerLimits.priorityRequestReserve,
+            rolling24HourLimit: configuration.spotify.scheduler.rolling24HourLimit,
+            rolling30MinuteLimit: configuration.spotify.scheduler.rolling30MinuteLimit,
+          },
+        },
       );
       const oauth = new SpotifyOAuthClient({
         clientId: configuration.spotify.clientId,

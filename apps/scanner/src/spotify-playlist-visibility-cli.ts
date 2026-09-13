@@ -1,11 +1,13 @@
 import {
-  acquireOperationLock,
+  acquireSpotifyPlaylistWriterLock,
   createDatabase,
   createSpotifyRequestGate,
+  defaultSchedulerLimits,
   ensureLocalOwner,
   executeSpotifyPlaylistVisibility,
+  guardSpotifyPlaylistWriterClient,
   previewSpotifyPlaylistVisibility,
-  releaseOperationLock,
+  releaseSpotifyPlaylistWriterLock,
   SpotifyTokenManager,
 } from "@radar/db";
 import {
@@ -60,11 +62,13 @@ async function main(): Promise<void> {
 
   const connection = createDatabase(configuration.databaseUrl);
   try {
-    const lock = await acquireOperationLock(connection.db, {
-      lockKey: "spotify:playlist-export",
-      metadata: { mode, provider: "spotify", purpose: "authorized_playlist_visibility" },
-      operationType: "spotify_playlist_export",
-    });
+    const schedulerLimits = defaultSchedulerLimits();
+    const lock =
+      mode === "dry-run"
+        ? null
+        : await acquireSpotifyPlaylistWriterLock(connection.db, {
+            metadata: { mode, purpose: "authorized_playlist_visibility" },
+          });
     try {
       const userId = await ensureLocalOwner(connection.db);
       const requestGate = createSpotifyRequestGate(
@@ -72,7 +76,15 @@ async function main(): Promise<void> {
         configuration.spotify.minRequestIntervalMs,
         undefined,
         undefined,
-        { quotaLane: "playlist" },
+        {
+          quotaLane: "playlist",
+          rollingRequestBudget: {
+            playlistRequestReserve: schedulerLimits.playlistRequestReserve,
+            priorityRequestReserve: schedulerLimits.priorityRequestReserve,
+            rolling24HourLimit: configuration.spotify.scheduler.rolling24HourLimit,
+            rolling30MinuteLimit: configuration.spotify.scheduler.rolling30MinuteLimit,
+          },
+        },
       );
       const oauth = new SpotifyOAuthClient({
         clientId: configuration.spotify.clientId,
@@ -99,13 +111,18 @@ async function main(): Promise<void> {
 
       const result =
         mode === "live"
-          ? await executeSpotifyPlaylistVisibility(connection.db, userId, client, {
-              playlistId: configuration.spotify.allowedPlaylistId,
-              policy: {
-                allowedPlaylistId: configuration.spotify.allowedPlaylistId,
-                enabled: true,
+          ? await executeSpotifyPlaylistVisibility(
+              connection.db,
+              userId,
+              guardSpotifyPlaylistWriterClient(connection.db, requireWriterLock(lock), client),
+              {
+                playlistId: configuration.spotify.allowedPlaylistId,
+                policy: {
+                  allowedPlaylistId: configuration.spotify.allowedPlaylistId,
+                  enabled: true,
+                },
               },
-            })
+            )
           : await previewSpotifyPlaylistVisibility(
               connection.db,
               userId,
@@ -114,11 +131,16 @@ async function main(): Promise<void> {
             );
       process.stdout.write(`${JSON.stringify(sanitizeResult(mode, result), null, 2)}\n`);
     } finally {
-      await releaseOperationLock(connection.db, lock);
+      if (lock) await releaseSpotifyPlaylistWriterLock(connection.db, lock);
     }
   } finally {
     await connection.client.end();
   }
+}
+
+function requireWriterLock<T>(lock: T | null): T {
+  if (!lock) throw new Error("Spotify playlist writer lock was not acquired.");
+  return lock;
 }
 
 function sanitizeResult(

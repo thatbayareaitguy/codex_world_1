@@ -3,6 +3,7 @@ import {
   createDatabase,
   createSpotifyReleaseReconciliationRepository,
   createSpotifyRequestGate,
+  defaultSchedulerLimits,
   ensureLocalOwner,
   getSpotifyOperationalStatus,
   heartbeatOperationLock,
@@ -149,8 +150,22 @@ async function main(): Promise<void> {
       operationType: "spotify_release_track_reconciliation",
     });
     try {
+      const schedulerLimits = defaultSchedulerLimits();
       const gate = budgetSpotifyRequestGate(
-        createSpotifyRequestGate(connection.db, configuration.spotify.minRequestIntervalMs),
+        createSpotifyRequestGate(
+          connection.db,
+          configuration.spotify.minRequestIntervalMs,
+          undefined,
+          undefined,
+          {
+            rollingRequestBudget: {
+              playlistRequestReserve: schedulerLimits.playlistRequestReserve,
+              priorityRequestReserve: schedulerLimits.priorityRequestReserve,
+              rolling24HourLimit: configuration.spotify.scheduler.rolling24HourLimit,
+              rolling30MinuteLimit: configuration.spotify.scheduler.rolling30MinuteLimit,
+            },
+          },
+        ),
         configuration.spotify.maxRequestsPerRun,
       );
       const oauth = new SpotifyOAuthClient({

@@ -1,6 +1,211 @@
 # AI Handoff
 
-Updated: 2026-09-12 16:20 PDT
+Updated: 2026-09-13 00:01 PDT
+
+The dated sections below retain point-in-time evidence. This first section is the current operational
+record and supersedes older sections wherever counts, task state, or remaining verification differ.
+
+## Scheduler Ownership And Recovery Completion (2026-09-12)
+
+- This correction started from clean HEAD and upstream
+  `42dbe75ff635af7d2240608caaee24c6ab2512c0` on
+  `codex/release-radar-hardening`. `outputs/` remains unrelated and excluded. No `.env`, credential,
+  provider schedule, fixed playlist target, matching rule, or playlist ordering policy was changed.
+- The final dispatch failure was in the Windows trigger-update helper. It assembled a multi-statement
+  PowerShell script with `.join("; ")`, which produced an invalid `}; elseif` token boundary. The
+  script failed before it could register the maintenance wake, while the direct `conhost.exe`
+  wrapper still exposed Task Scheduler result 0. The helper now joins statements with newlines.
+  The recurring coordinator also writes bounded, secret-safe evidence to
+  `%LOCALAPPDATA%\TSNewMusicRadar\logs\recurring-scheduler\latest.json`; its most recent failure is
+  retained separately in `last-failure.json`. Diagnostic-file failure is fail-open and cannot block
+  dispatch.
+- The once-per-minute task is now a coordinator only. It performs local feed and queue
+  reconciliation, observes durable work and capacity, and creates or preserves the maintenance
+  wake. It never runs Apple, Spotify, or playlist operations inside its three-minute task limit.
+  The maintenance task is the only scheduled owner of provider and playlist execution. It confirms
+  one non-admin `ES_CONTINUOUS | ES_SYSTEM_REQUIRED` helper before work, runs one bounded unit at a
+  time, and re-observes state between units.
+- The maintenance application stops at 3 hours 55 minutes under the Windows task's four-hour limit,
+  leaving five minutes for release and persistence. A scheduled Apple scan may use at most 3.5
+  hours, while its durable schedule lease lasts four hours. A due Apple workflow is not started with
+  less than 15 minutes remaining. Playlist, priority, and broad work require 20 minutes, reserving
+  the maximum 15-minute capacity wait plus the five-minute shutdown margin. Every automatic export
+  path shares the maintenance application's absolute deadline, including sequential gate waits.
+  Deadline exhaustion yields the same durable export run and inbox as `runtime_yield` without
+  starting another request. Runtime limits, retryable Apple items, cooldowns, and temporary
+  contention yield the same schedule job, Apple batch, scan run, and completed artist progress for
+  a later invocation. Only one Apple job may be leased at once, a dead local lease owner can be
+  reclaimed, and scheduled full and catch-up trigger types cannot be confused with a manual scan.
+- After PostgreSQL becomes ready, maintenance arms one deadman `StartupRecoveryWake` for its start
+  time plus four hours and one minute. This covers the verified Windows behavior where the required
+  `conhost.exe --headless` wrapper can return 0 even when Node exits nonzero. A clean finish clears
+  it, while a runtime yield or caught failure replaces it with a wake seven minutes later. Failure
+  to arm the deadman fails startup. Task Scheduler restart-on-failure remains configured but is not
+  the sole recovery mechanism. Readiness diagnostics now preserve `finalResult: "ready"` after a
+  successful database probe while this deadman is armed.
+- Maintenance priority remains: pending playlist export, due or incomplete Apple work,
+  Apple-priority Spotify reconciliation, newly eligible export, priority repair, then broad Spotify
+  only Saturday through Wednesday. Thursday and Friday never run broad Spotify work. Runnable,
+  deferred, cooldown, Apple request-lease, Artist Albums, and rolling-request capacity are evaluated
+  separately so queued but currently non-runnable work does not keep the PC awake or cause a tight
+  no-work loop.
+- In `apple_priority` and `apple_catchup_priority`, a pending or completed playlist inbox receives an
+  export-first checkpoint before another priority item is claimed. Eligible tracks are therefore
+  not stranded behind a large reconciliation queue. A no-change checkpoint uses no provider
+  request, creates no export ledger, and continues priority work in the same wake.
+- The shared Spotify gate permits at most 30 request starts per rolling 30 minutes and 1,200 per
+  rolling 24 hours. The 24-hour plan reserves 200 starts for priority work and 20 for playlist work.
+  Broad scheduling also leaves enough room for its maximum six-request unit. Capacity waits over 15
+  minutes release keep-awake and maintain one `DynamicCapacityWake` ten minutes before the later
+  applicable boundary. Short waits remain under the confirmed helper.
+- Automatic playlist execution still targets only `4l6LaMPL6duulmFe3hRR4Y`, adds at most three
+  tracks and performs at most three actual playlist mutation calls per bounded export unit, and
+  resumes the same durable export run. Automatic, manual CLI, ordering, visibility, and browser
+  write paths now
+  share one database writer lock with host and PID evidence and a 30-second heartbeat. A claimant
+  never renews another owner's lease. Proven-dead owners and explicit release-intent records are
+  reclaimable immediately; unverifiable owners use a five-minute fallback; and a stale lock whose
+  PID is still live is retained for one heartbeat observation window, then reclaimed only if its
+  heartbeat does not advance. Release intent is persisted before deletion so an interrupted release
+  cannot strand a two-hour lock. Every addition, Custom Order move, and authorized visibility write
+  rechecks the owner token immediately before the provider mutation, fencing an old process after
+  recovery transfers ownership. Ambiguous post-write additions are reconciled from a fresh playlist
+  snapshot before retry; they are never blindly retried or allowed to create duplicate tracks.
+  Custom Order, Spotify Date Added and Added By provenance, unmanaged user-added tracks, ownership,
+  collaboration, and snapshot safeguards are unchanged.
+- Final task inspection retained exactly the five fixed Pacific trigger groups:
+  `BroadMorningWake` Saturday through Wednesday at 08:50, `BroadEveningWake` Saturday through
+  Wednesday at 20:50, `ThursdayAppleWake` Thursday at 20:50, `FridayCatchupWake` Friday at 08:50,
+  and `FridayPriorityFallbackWake` Friday at 20:50. Permitted temporary triggers are at most one
+  `DynamicCapacityWake` and at most one `StartupRecoveryWake`. The startup trigger is armed as a
+  deadman during each active maintenance run and is absent after a clean drain. The recurring task
+  remains awake-only, hidden, `IgnoreNew`,
+  `StartWhenAvailable`, and limited to three minutes. Maintenance remains hidden, `WakeToRun`,
+  `IgnoreNew`, `StartWhenAvailable`, and limited to four hours. Task Scheduler Operational history
+  is enabled.
+- Post-fix live evidence confirms the corrected ownership chain. A natural recurring tick at
+  17:52:30 PDT dispatched maintenance, and `DynamicCapacityWake` started it at 17:52:45. Maintenance
+  run `994406d6-5ee1-4756-b12b-f6226a73bde2` activated helper PID 33412 under owner PID 15684,
+  confirmed PostgreSQL on its first attempt, and completed five bounded ticks. At 17:57:43 it found
+  the next safe capacity boundary, registered one wake for 18:12:50, and stopped. Keep-awake was
+  released by 17:57:44 with `finalReleased=true`; there is no active owner. This validates natural
+  recurring dispatch, dynamic maintenance launch, bounded work, capacity handoff, and helper
+  release. It does not by itself assert that the remaining weekly reconciliation queue is drained.
+- Final live review found and corrected one additional playlist-capacity starvation path. When the
+  rolling 30-minute gate returned only one request slot at a time, an export invocation could spend
+  that slot on its first account or playlist safety read, yield on the next read, and restart the
+  same preamble without advancing its durable snapshot cursor. Automatic playlist requests now
+  wait inside the same exclusive writer session when the database gives a known capacity boundary
+  no more than 15 minutes away. Unknown or later capacity still yields normally to one
+  `DynamicCapacityWake`. The initial account identity comes from the already authorized OAuth row,
+  while a fresh target playlist read and the provider client's live account, ownership, and
+  non-collaborative checks still run before every write. A new snapshot cursor is persisted before
+  the first page, existing cursors advance before repeated metadata work, and final playlist
+  metadata must confirm the snapshot before a plan or write proceeds.
+- Natural maintenance run `2203a2ed-77f5-4b7a-b176-0c6f9695ba95` started from
+  `DynamicCapacityWake` at 18:42:52 PDT with zero missed runs. It activated helper PID 42252 under
+  limited-user owner PID 46584, kept both processes hidden, and held through the known 18:52:52
+  boundary. The same previously partial export run `da910b2b-7235-4cfd-8f2c-6d75c359ca84`
+  advanced its durable snapshot from offset 550 to all 1,443 items through successful
+  `playlist_read` calls, with no repeated OAuth traffic, and completed at 18:56:04. One priority
+  unit then made seven tracks eligible. Export run `b69ccf80-a5dc-4851-8a29-6a50b0eaf140`
+  performed exactly three successful bounded additions, persisted four additions for continuation,
+  and left the target snapshot with 1,446 unique track IDs and no duplicates. At 18:57:47 the run
+  released its database writer lock, released keep-awake with `finalReleased=true`, and installed
+  one dynamic wake for 19:12:54, ten minutes before later capacity. There was no 429, cooldown,
+  provider error, overlapping live writer, or manual provider invocation.
+- Later natural maintenance runs continued the same durable state. Run
+  `ba9e6f5c-721b-4b83-babc-59df075edbbc` ran from 19:12:55 to 19:27:48. Run
+  `39dd4827-a10d-4f10-bab0-e9db89a7e17b` ran from 19:42:56 to 19:57:53 and added three more tracks.
+  Its old readiness value of `timeout` was the reporting defect described above, not a database
+  timeout. Run `4ccc07e2-5b0d-4db6-8d6b-cc5b51464f4c` ran from 20:12:59 to 20:27:59, found
+  PostgreSQL healthy on attempt one, and correctly recorded `ready`. Its non-admin keep-awake helper
+  held from 20:13:00 to 20:28:04 and recorded `finalReleased=true`; its deadman was armed for
+  00:13:59 and then cleared. Task Scheduler recorded result 0, zero missed runs, and an expected
+  `IgnoreNew` event when the already-armed 20:22 trigger fired during the live owner. The run used 30
+  Spotify requests with zero 429s, cooldowns, or provider errors and released every database lock.
+  At that checkpoint, export `b69ccf80-a5dc-4851-8a29-6a50b0eaf140` had six exported and one pending.
+  A changed remote playlist snapshot correctly caused verification to restart rather than write
+  against stale state.
+- That continuation launched naturally as run `b7ca6b0a-7f7d-448c-99ff-5f8f5fa31cc2` at 20:43:04,
+  held keep-awake from 20:43:05 through 20:58:03, and exited with result 0 and zero missed runs. The
+  fixed 20:50 wake and the still-armed 20:53 dynamic trigger both arrived during the live owner;
+  Task Scheduler recorded `IgnoreNew` for each and no second writer ran. The same export run wrote
+  its final pending track, Sub Zero's `You Had It`, at 20:55:35 with one successful attempt. All
+  seven planned additions are exported exactly once, the target cache has 1,450 items and 1,450
+  distinct track IDs, the final track appears once, and pending additions are zero. At that
+  checkpoint, the run remained `partial` only while its required post-write full snapshot
+  verification continued from a durable cursor. That verification state could not replay a
+  completed addition.
+- Natural run `d6ff3c88-1575-4b12-91e4-28a2295a2d97` ran from 21:43:09 to 21:58:03 and completed
+  export `b69ccf80-a5dc-4851-8a29-6a50b0eaf140`. Its four provider writes were required Custom Order
+  moves, not additions. The completed run records seven additions, 1,352 already present, zero
+  pending, zero failed, and every addition attempted exactly once. Final snapshot verification
+  found 1,450 playlist items and 1,450 distinct track IDs. The same wake then resolved Zedd's
+  `You're Still The One (Candy Crush Version)` through exact ISRC `USUM72608216`; that newly
+  eligible track correctly opened the next playlist checkpoint. The bounded snapshot read yielded
+  at offset 250 before creating an export run. The maintenance task exited 0 with zero missed runs,
+  zero overlap, zero 429s, no cooldown, no lease, no writer lock, and clean helper and deadman
+  release.
+- The next existing `DynamicCapacityWake` launched natural run
+  `aee57f92-4854-4daa-8332-4ba36ecaeaa0` at 22:13:09. It held the same hidden non-admin helper
+  through the known 22:23:09 capacity boundary, completed the durable snapshot read, created export
+  `fc398aa0-c408-4b61-8c02-9a80514cef4a`, and added the Zedd track once at 22:27:42. The one
+  operation is exported with one attempt and zero pending or failed operations. The target now has
+  1,451 items and 1,451 distinct track IDs; both the Zedd track and the prior final Sub Zero track
+  occur once. The run used 30 Spotify requests, including one successful addition and no reorder
+  writes, with zero 429s or classified errors. It finished at 22:28:05 with Task Scheduler result 0
+  and zero missed runs, released keep-awake with `finalReleased=true`, cleared the deadman, and left
+  no lock, lease, or cooldown. Export `fc398aa0-c408-4b61-8c02-9a80514cef4a` remains `partial` only
+  for required post-write snapshot verification from its durable cursor. One
+  `DynamicCapacityWake` at 22:43:11 was scheduled to continue that verification.
+- That wake launched natural run `4b6207c8-825d-46fb-a480-a0cb86b7aac0`, which ran from 22:43:11
+  to 22:58:07 and exited with result 0 and zero missed runs. It used its bounded slice for 29
+  successful playlist reads and one OAuth request, performed no addition or reorder write, and
+  produced no 429 or classified error. The full read found 1,451 items, but Spotify's playlist
+  metadata still returned the older pre-write snapshot ID. The verifier therefore retained export
+  `fc398aa0-c408-4b61-8c02-9a80514cef4a` as `partial` instead of falsely finalizing against stale
+  metadata. Its only addition remains exported once with zero pending or failed operations, and the
+  target still has 1,451 distinct track IDs. Keep-awake released, the deadman cleared, and no lock,
+  lease, or cooldown remained. One `DynamicCapacityWake` at 23:13:15 remains for another safe
+  metadata verification after capacity returns.
+- Run `f8f4936f-2631-4cf5-85f4-49224dffa300` launched naturally from that wake and ran from
+  23:13:15 to 23:28:11. Spotify's metadata had advanced to the final post-write snapshot, so the
+  scanner correctly discarded the completed read tied to the old ID and restarted bounded
+  verification against the final ID. Thirty successful reads advanced the durable cursor to item
+  1,450 of 1,451 without any write, 429, or error. Export `fc398aa0-c408-4b61-8c02-9a80514cef4a`
+  still has its one addition exported once and zero pending or failed operations. The task exited 0
+  with zero missed runs, released keep-awake and its deadman, and left no lock, lease, or cooldown.
+  One `DynamicCapacityWake` at 23:43:18 remains to read the final page and perform terminal snapshot
+  verification.
+- Run `82db2c6d-2cc8-4c58-9bf4-991b193b4f65` launched naturally from that wake and closed export
+  `fc398aa0-c408-4b61-8c02-9a80514cef4a` as completed at 23:53:41. Its final counts are one addition,
+  1,359 already present, zero failed, zero ordering conflicts, and the Zedd addition still occurs
+  once. The same maintenance owner then resolved BIJOU's `Mamacita` through exact ISRC
+  `QZS7J2692271` and added Spotify track `0Z39edeodvysnN4UVI4wEf` once at 23:54:34 under new export
+  `d733ce8b-e3c1-436e-b026-788213010af2`. That run has one exported operation and zero pending or
+  failed operations; it is `partial` only for its normal post-write snapshot verification. The
+  target now has 1,452 items and 1,452 distinct track IDs. Across the wake there were 30 successful
+  requests, no reorder write, 429, or classified error. It exited 0 at 23:58:19 with zero missed
+  runs, released keep-awake and the deadman, and left no lock, lease, or cooldown. One
+  `DynamicCapacityWake` remains at 00:13:21 for the new BIJOU verification. This proves a complete
+  add, bounded yield, repeated capacity wake, terminal verification, and same-run closure cycle,
+  followed immediately by legitimate new priority progress rather than zero-change churn.
+- The recurring scheduler was intentionally isolated for about three minutes while the writer-lock
+  correction was made. Its retained `last-failure.json` records that controlled disabled-task
+  interval at 20:02. Later minute ticks are completing with result 0 and zero missed runs, so the
+  retained file is historical evidence rather than current scheduler failure.
+- The only production data correction in this review followed the verified backup below. An August
+  4 Apple partial scan had processed 228 artists, inserted 191 records, produced 25 reviews, and
+  recorded zero item errors, but no longer had resumable batch state. The completed August 7 full
+  scan processed all 583 artists with zero failures and superseded it. The old row's original status
+  and counts remain unchanged; only resolution metadata now marks it
+  `superseded_by_completed_full_apple_scan`. Production doctor consequently reports no unresolved
+  failed scans while preserving two resolved historical records.
+- A fresh custom-format backup made before production recovery is
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-09-12T23-39-53-411Z.dump`.
+  It is 46,826,197 bytes, has the PostgreSQL custom-format signature, and SHA-256
+  `DC877B8B642AF09F0D11074C3493AE2B8BBB7577A4E393B2F7F7978F29F3EE3D`.
 
 ## Dynamic Capacity Wake Race And Live Weekly Export Recovery (2026-09-12)
 
@@ -36,10 +241,11 @@ Updated: 2026-09-12 16:20 PDT
   normal bounded playlist checkpoints. The recurring task was restored enabled at 16:27:35 PDT;
   Task Scheduler recorded 14 intentionally skipped minute triggers from the controlled isolation
   period. Its 16:28:29 post-restore invocation completed with result 0 and the missed-run count
-  returned to zero. Cross-task safety continues to come from durable work leases, the
-  concurrency-one provider gate, and the single playlist-operation lock. The controlled
-  maintenance task remained active and healthy under its single keep-awake owner while this
-  evidence was recorded.
+  returned to zero. The maintenance task was still active when this intermediate evidence was
+  recorded, but it later failed at 16:42:32 PDT after colliding with a concurrent playlist writer.
+  That later result supersedes the earlier health impression. The current correction gives every
+  playlist writer the same durable owner lock and makes maintenance re-observe expected live-owner
+  contention instead of treating it as a terminal window failure.
 - A fresh pre-recovery custom-format backup is
   `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-09-12T23-13-56-709Z.dump`.
   It is 46,083,815 bytes, has the `PGDMP` signature, and SHA-256
@@ -336,9 +542,9 @@ Finger (Levity Remix)` were committed by its first bounded continuation. `Never 
   `C:\WINDOWS\System32\conhost.exe --headless "C:\Program Files\nodejs\node.exe" --env-file="%LOCALAPPDATA%\TSNewMusicRadar\production-scheduler.env" --import tsx "...\apps\scanner\src\discovery-maintenance-cli.ts"`.
   The minute task remains separate, enabled, awake-only, direct `conhost.exe --headless node.exe
 --import tsx`, and non-overlapping.
-- Task Scheduler Operational history is disabled and requires an Administrator Terminal on this
-  PC. The exact optional command is
-  `wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true`.
+- At this September 6 inspection, Task Scheduler Operational history was disabled and required an
+  Administrator Terminal. It was enabled before the September 12 validation recorded at the top of
+  this file.
 
 ### Backup and validation
 
@@ -405,13 +611,14 @@ Finger (Levity Remix)` were committed by its first bounded continuation. `Never 
 - The capacity time must itself fall on Saturday through Wednesday in Pacific time. A natural
   Wednesday-night tick initially exposed that the first implementation would schedule a Thursday
   morning wake even though broad work is disabled Thursday and Friday. The guard was added before
-  commit, and the next ordinary minute tick removed that trigger at 21:10:26 with result 0. The
-  maintenance task returned to exactly its four fixed triggers and next runs Thursday at 20:50.
+  commit, and the next ordinary minute tick removed that trigger at 21:10:26 with result 0. At this
+  dated checkpoint, before the Friday evening fallback was added, the maintenance task returned to
+  its then-current four fixed triggers and next run Thursday at 20:50.
 - A live task-only test used future times and made no provider request: the first update created one
   `DynamicCapacityWake`, the second replaced it while the count remained one, and cleanup removed
-  it. Throughout the test the fixed IDs remained `BroadMorningWake`, `BroadEveningWake`,
-  `ThursdayAppleWake`, and `FridayCatchupWake`. Final state has zero temporary dynamic wakes,
-  `WakeToRun=true`, `IgnoreNew`, and `StartWhenAvailable=true`.
+  it. Throughout that test the then-current fixed IDs remained `BroadMorningWake`,
+  `BroadEveningWake`, `ThursdayAppleWake`, and `FridayCatchupWake`. The checkpoint ended with zero
+  temporary dynamic wakes, `WakeToRun=true`, `IgnoreNew`, and `StartWhenAvailable=true`.
 - Offline loop tests prove a near-term broad wait acquires the shared keep-awake owner with reason
   `broad_capacity_wait`, releases it when work becomes non-runnable, and uses the same durable
   activation, owner, helper, reason, phase, release, and abnormal-recovery evidence as the already
@@ -445,11 +652,10 @@ Finger (Levity Remix)` were committed by its first bounded continuation. `Never 
   schedulers enabled and MusicBrainz disabled. This pre-existing configuration split explains why
   provider enabled labels in System Status do not represent the production task. No `.env` was
   changed in this pass. Aligning the web-only flags is a separate configuration correction.
-- Task Scheduler Operational history is still disabled. The current limited identity can inspect
-  the setting but cannot enable it, and `powercfg /waketimers` likewise requires elevation. From an
-  Administrator Terminal, enable future task event history with
-  `wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true`. Neither limitation blocks
-  normal task execution.
+- At this dated inspection, Task Scheduler Operational history was still disabled and the limited
+  identity could not enable it. It was enabled later and was active during the September 12 final
+  validation recorded at the top of this file. `powercfg /waketimers` may still require elevation,
+  but that does not block task execution or the scanner's independent keep-awake evidence.
 
 ### Validation
 
@@ -628,9 +834,10 @@ after four hours.
 
 Idempotent re-registration was live-verified at 17:23 PDT. After re-registration, the minute task
 still had exactly one `MinuteScheduler` trigger, `WakeToRun=false`, `IgnoreNew`, a three-minute
-limit, and last result 0 with zero missed runs. The maintenance task still had exactly the four
-fixed triggers, no duplicate `DynamicCapacityWake`, `WakeToRun=true`, `IgnoreNew`, a four-hour
-limit, and the next run at 20:50 PDT.
+limit, and last result 0 with zero missed runs. At this dated checkpoint, before the Friday evening
+fallback was added, the maintenance task had its then-current four fixed triggers, no duplicate
+`DynamicCapacityWake`, `WakeToRun=true`, `IgnoreNew`, a four-hour limit, and the next run at 20:50
+PDT.
 
 ## One-Time Wake Validation
 
@@ -826,9 +1033,9 @@ backup, and this work did not make any live review decision.
   21:02:44.068Z, requested release at 21:02:45.611Z, completed release at 21:02:45.816Z, final state
   `released`, and no remaining owner. Both optional `powercfg` observations reported informational
   `access_denied`. No database, provider, scheduler, or playlist path was imported or invoked.
-- Task Scheduler Operational history remains disabled. Enabling it was attempted without elevation
-  and Windows returned access denied. From an Administrator Terminal, run:
-  `wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true`.
+- At this August 28 inspection, Task Scheduler Operational history was disabled. An unelevated
+  enable attempt returned access denied. It was enabled before the September 12 validation recorded
+  at the top of this file.
 - The reusable one-time validation registration now requires an explicit future `-RunAt` value and
   keeps the direct hidden `conhost.exe --headless node.exe --import tsx` action, limited-user
   principal, `WakeToRun`, `StartWhenAvailable`, and `IgnoreNew`. It does not alter production
@@ -936,15 +1143,15 @@ backup, and this work did not make any live review decision.
 - In-app browser smoke: a cache-busted System status reload rendered Database, provider, scanner,
   and scheduling status with no load-error text and no browser error logs.
 
-## Remaining Verification
+## Remaining Verification At The August 28 Checkpoint
 
 - Wake from signed-in sleep and resumption of production work are live-validated. The corrected
   non-admin helper activation, durable evidence, graceful release, optional access-denied handling,
   and absence of a leftover owner are also live-validated while Windows remained awake.
-- One final sleep test is needed only to prove the corrected helper prevents sleep for the entire
-  hold interval under the scheduled Limited identity. Register a future one-time validation with an
-  explicit `-RunAt`, put the signed-in PC into ordinary sleep before it, and inspect
-  `wake-validation-latest.json` plus the matching keep-awake run record afterward. Do not change or
-  move the four production maintenance triggers.
-- Task Scheduler Operational history can be enabled only from an Administrator Terminal on this PC
-  with `wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true`.
+- At this August 28 checkpoint, one final sleep test was still needed to prove that the corrected
+  helper prevented sleep for the entire hold interval under the scheduled Limited identity. That
+  wake behavior was validated later. The current production schedule has five fixed trigger groups,
+  including the Friday evening fallback, as recorded at the top of this file.
+- At this checkpoint, Task Scheduler Operational history required an Administrator Terminal and
+  could be enabled with
+  `wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true`. It is now enabled.

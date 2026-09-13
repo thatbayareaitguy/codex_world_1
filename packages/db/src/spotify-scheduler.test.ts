@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   defaultSchedulerLimits,
+  nextSpotifyBroadRollingRequestCapacityAt,
+  nextSpotifyPriorityRollingRequestCapacityAt,
   nextSpotifyRollingRequestCapacityAt,
   staggerSpotifyArtistsAcrossWindow,
   spotifySchedulerShortWindowMs,
@@ -82,5 +84,45 @@ describe("Spotify rolling scheduler planning", () => {
       new Date(starts[0]!.getTime() + spotifySchedulerShortWindowMs),
     );
     expect(nextSpotifyRollingRequestCapacityAt(starts.slice(1), limits, now)).toBeNull();
+  });
+
+  it("reports broad capacity at the reserved rolling ceiling", () => {
+    const now = new Date("2026-09-12T10:00:00.000Z");
+    const limits = {
+      maxRequestsPerTick: 6,
+      playlistRequestReserve: 20,
+      priorityRequestReserve: 200,
+      rolling24HourLimit: 1_200,
+      rolling30MinuteLimit: 30,
+    };
+    const starts = Array.from(
+      { length: 975 },
+      (_, index) => new Date(now.getTime() - (23 * 60 * 60_000 - index * 1_000)),
+    );
+
+    expect(nextSpotifyRollingRequestCapacityAt(starts, limits, now)).toBeNull();
+    expect(nextSpotifyBroadRollingRequestCapacityAt(starts, limits, now)).toEqual(
+      new Date(starts[0]!.getTime() + spotifySchedulerWindowMs),
+    );
+    expect(nextSpotifyBroadRollingRequestCapacityAt(starts.slice(1), limits, now)).toBeNull();
+  });
+
+  it("keeps the final rolling reserve available for playlist requests", () => {
+    const now = new Date("2026-09-12T10:00:00.000Z");
+    const limits = {
+      playlistRequestReserve: 20,
+      rolling24HourLimit: 1_200,
+      rolling30MinuteLimit: 30,
+    };
+    const starts = Array.from(
+      { length: 1_180 },
+      (_, index) => new Date(now.getTime() - (23 * 60 * 60_000 - index * 1_000)),
+    );
+
+    expect(nextSpotifyRollingRequestCapacityAt(starts, limits, now)).toBeNull();
+    expect(nextSpotifyPriorityRollingRequestCapacityAt(starts, limits, now)).toEqual(
+      new Date(starts[0]!.getTime() + spotifySchedulerWindowMs),
+    );
+    expect(nextSpotifyPriorityRollingRequestCapacityAt(starts.slice(1), limits, now)).toBeNull();
   });
 });

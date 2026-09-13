@@ -39,8 +39,10 @@ import {
   invalidateSpotifyPlaylistSnapshot,
   loadVerifiedSpotifyPlaylistSnapshot,
   persistSpotifyPlaylistSnapshot,
+  resumeSpotifyPlaylistSnapshotRefresh,
   upsertSpotifyPlaylistTarget,
 } from "./spotify-playlist-cache";
+import { SpotifyCooldownError, SpotifyEndpointBudgetError } from "./spotify-request-gate";
 
 type SpotifyPlaylistOrderingPolicy = "canonical" | "discovery_inbox" | "release_date_custom_order";
 
@@ -96,7 +98,7 @@ export interface SpotifyPlaylistExportExecution extends SpotifyPlaylistExportPre
     pending: number;
     resumed: boolean;
     skipped: number;
-    status: "completed" | "partial";
+    status: "completed" | "failed" | "partial";
   };
 }
 
@@ -119,6 +121,7 @@ export async function previewSpotifyPlaylistExport(
   options: {
     discoveryReconciliationCampaignId?: string;
     orderingPolicy?: SpotifyPlaylistOrderingPolicy;
+    retryFailedExports?: boolean;
   } = {},
 ): Promise<SpotifyPlaylistExportPreview> {
   const playlistId = spotifyPlaylistIdSchema.parse(configuredPlaylistId);
@@ -151,10 +154,11 @@ export async function executeSpotifyPlaylistExport(
     orderingPolicy?: SpotifyPlaylistOrderingPolicy;
     playlistId: string;
     policy: SpotifyPlaylistWritePolicy;
+    retryFailedExports?: boolean;
   },
 ): Promise<SpotifyPlaylistExportExecution> {
   const playlistId = assertSpotifyPlaylistWriteTarget(input.policy, input.playlistId);
-  await requireSpotifyPlaylistWriteScope(db, userId);
+  const profile = await requireSpotifyPlaylistWriteScope(db, userId);
   if (
     input.maxAdditions !== undefined &&
     (!Number.isInteger(input.maxAdditions) || input.maxAdditions < 1)
@@ -174,7 +178,12 @@ export async function executeSpotifyPlaylistExport(
     );
   }
 
-  const profile = await client.getCurrentUser();
+  if (input.maxPlaylistReadPages !== undefined) {
+    await resumeSpotifyPlaylistSnapshotRefresh(db, userId, client, playlistId, {
+      maxReadPages: input.maxPlaylistReadPages,
+      policy: input.policy,
+    });
+  }
   const playlist = await client.getPlaylist(playlistId);
   assertPlaylistIdentity(playlistId, playlist.id);
   assertOwnedNonCollaborativeSpotifyPlaylist(playlist, profile);
@@ -197,6 +206,7 @@ export async function executeSpotifyPlaylistExport(
     run.snapshotAfter &&
     target.snapshotId === run.snapshotAfter &&
     Array.isArray(target.snapshotItems) &&
+    target.snapshotVerifiedAt !== null &&
     orderingPolicy === "release_date_custom_order" &&
     input.maxMutations !== undefined
   ) {
@@ -216,6 +226,8 @@ export async function executeSpotifyPlaylistExport(
     policy: input.policy,
     ...(trustedMutationSnapshotId ? { trustedMutationSnapshotId } : {}),
   });
+  assertPlaylistIdentity(playlistId, snapshot.playlist.id);
+  assertOwnedNonCollaborativeSpotifyPlaylist(snapshot.playlist, profile);
   const playlistItems = snapshot.items;
   const preview = await buildPreview(
     db,
@@ -229,6 +241,9 @@ export async function executeSpotifyPlaylistExport(
         ? { discoveryReconciliationCampaignId: input.discoveryReconciliationCampaignId }
         : {}),
       orderingPolicy,
+      ...(input.retryFailedExports === undefined
+        ? {}
+        : { retryFailedExports: input.retryFailedExports }),
     },
     snapshot.cacheHit,
   );
@@ -263,47 +278,84 @@ export async function executeSpotifyPlaylistExport(
 
   await reconcilePendingOperations(db, run.id, target.id, playlistItems);
   let pending = await loadPendingOperations(db, run.id);
-  if (input.maxAdditions !== undefined) pending = pending.slice(0, input.maxAdditions);
+  const additionLimit = Math.min(
+    input.maxAdditions ?? Number.MAX_SAFE_INTEGER,
+    input.maxMutations ?? Number.MAX_SAFE_INTEGER,
+  );
+  pending = pending.slice(0, additionLimit);
   let additionsAttempted = 0;
+  let additionMutationCalls = 0;
+  let additionSnapshotRequiresVerification = false;
   let orderingYielded = false;
   let reorderAttempted = false;
   let snapshotAfter = snapshot.playlist.snapshot_id;
   let workingItems = playlistItems.slice().sort((left, right) => left.position - right.position);
 
   try {
-    for (const group of groupPendingOperations(pending)) {
+    const pendingGroups =
+      input.maxMutations === undefined
+        ? groupPendingOperations(pending)
+        : pending.map((operation) => [operation]);
+    for (const group of pendingGroups) {
       additionsAttempted += group.length;
+      await markOperationsAttemptStarted(
+        db,
+        group.map((operation) => operation.id),
+      );
+      additionMutationCalls += 1;
       try {
         snapshotAfter = await client.addPlaylistItemsAtPosition(
           playlistId,
           group.map((item) => item.providerTrackId),
           group[0]!.insertPosition,
         );
+        additionSnapshotRequiresVerification = true;
         workingItems = insertExportedItems(workingItems, preview.plan.orderedItems, group);
-        await persistSpotifyPlaylistSnapshot(db, target.id, snapshotAfter, workingItems);
+        await persistSpotifyPlaylistSnapshot(db, target.id, snapshotAfter, workingItems, {
+          verified: false,
+        });
         for (const operation of group) {
           await markOperationExported(db, target.id, operation, true);
         }
       } catch (error) {
-        if (isGlobalSpotifyWriteFailure(error)) throw error;
+        if (isDefiniteNoPlaylistWrite(error)) {
+          await restoreOperationsAfterDefiniteNoWrite(db, group);
+          throw error;
+        }
+        if (isGlobalSpotifyWriteFailure(error) || !isSafeBatchSplitFailure(error)) throw error;
+        if (group.length === 1) {
+          await markOperationFailed(db, group[0]!.id, safeErrorCode(error));
+          continue;
+        }
         let failedBefore = 0;
         for (const operation of group) {
+          await markOperationsAttemptStarted(db, [operation.id]);
+          additionMutationCalls += 1;
           try {
             snapshotAfter = await client.addPlaylistItemsAtPosition(
               playlistId,
               [operation.providerTrackId],
               Math.max(0, operation.insertPosition - failedBefore),
             );
+            additionSnapshotRequiresVerification = true;
             workingItems = insertExportedItems(workingItems, preview.plan.orderedItems, [
               {
                 ...operation,
                 insertPosition: Math.max(0, operation.insertPosition - failedBefore),
               },
             ]);
-            await persistSpotifyPlaylistSnapshot(db, target.id, snapshotAfter, workingItems);
+            await persistSpotifyPlaylistSnapshot(db, target.id, snapshotAfter, workingItems, {
+              verified: false,
+            });
             await markOperationExported(db, target.id, operation, true);
           } catch (itemError) {
-            if (isGlobalSpotifyWriteFailure(itemError)) throw itemError;
+            if (isDefiniteNoPlaylistWrite(itemError)) {
+              await restoreOperationsAfterDefiniteNoWrite(db, [operation]);
+              throw itemError;
+            }
+            if (isGlobalSpotifyWriteFailure(itemError) || !isSafeBatchSplitFailure(itemError)) {
+              throw itemError;
+            }
             failedBefore += 1;
             await markOperationFailed(db, operation.id, safeErrorCode(itemError));
           }
@@ -311,12 +363,16 @@ export async function executeSpotifyPlaylistExport(
       }
     }
     const countsBeforeOrdering = await loadOperationCounts(db, run.id);
-    if (countsBeforeOrdering.pending === 0 && orderingPolicy === "release_date_custom_order") {
+    if (
+      countsBeforeOrdering.pending === 0 &&
+      orderingPolicy === "release_date_custom_order" &&
+      !additionSnapshotRequiresVerification
+    ) {
       const orderPlan = planSpotifyPlaylistReleaseDateOrder(workingItems);
       const availableOrderingMutations =
         input.maxMutations === undefined
           ? orderPlan.moves.length
-          : Math.max(0, input.maxMutations - additionsAttempted);
+          : Math.max(0, input.maxMutations - additionMutationCalls);
       const moves = orderPlan.moves.slice(0, availableOrderingMutations);
       orderingYielded = moves.length < orderPlan.moves.length;
       for (const move of moves) {
@@ -330,7 +386,11 @@ export async function executeSpotifyPlaylistExport(
       }
     }
   } catch (error) {
-    if (reorderAttempted) {
+    if (
+      reorderAttempted ||
+      additionSnapshotRequiresVerification ||
+      (additionMutationCalls > 0 && !isDefiniteNoPlaylistWrite(error))
+    ) {
       await invalidateSpotifyPlaylistSnapshot(db, userId, playlistId);
     }
     await db
@@ -339,12 +399,23 @@ export async function executeSpotifyPlaylistExport(
       .where(eq(spotifyPlaylistExportRuns.id, run.id));
     throw error;
   }
-  await persistSpotifyPlaylistSnapshot(db, target.id, snapshotAfter, workingItems);
+  await persistSpotifyPlaylistSnapshot(db, target.id, snapshotAfter, workingItems, {
+    verified: !additionSnapshotRequiresVerification,
+  });
   await reconcilePendingOperations(db, run.id, target.id, workingItems);
+  await finalizeExhaustedOperations(db, run.id, target.id);
   const counts = await loadOperationCounts(db, run.id);
+  const retryableFailures = await countRetryableFailedOperations(db, run.id);
   const status =
-    counts.pending === 0 && counts.failed === 0 && !orderingYielded ? "completed" : "partial";
-  const finishedAt = status === "completed" ? new Date() : null;
+    counts.pending === 0 &&
+    counts.failed === 0 &&
+    !orderingYielded &&
+    !additionSnapshotRequiresVerification
+      ? "completed"
+      : counts.pending === 0 && counts.failed > 0 && retryableFailures === 0
+        ? "failed"
+        : "partial";
+  const finishedAt = status === "completed" || status === "failed" ? new Date() : null;
   await db
     .update(spotifyPlaylistExportRuns)
     .set({
@@ -385,6 +456,7 @@ async function buildPreview(
   options: {
     discoveryReconciliationCampaignId?: string;
     orderingPolicy?: SpotifyPlaylistOrderingPolicy;
+    retryFailedExports?: boolean;
   } = {},
   cacheHit = false,
 ): Promise<SpotifyPlaylistExportPreview> {
@@ -395,8 +467,13 @@ async function buildPreview(
         options.discoveryReconciliationCampaignId,
       )
     : await loadCanonicalExportCandidates(db, userId);
-  const managedRows = await db
-    .select({ providerTrackId: playlistExports.providerTrackId })
+  const exportRows = await db
+    .select({
+      appOwned: playlistExports.appOwned,
+      errorCode: playlistExports.errorCode,
+      providerTrackId: playlistExports.providerTrackId,
+      status: playlistExports.status,
+    })
     .from(playlistExports)
     .innerJoin(playlistTargets, eq(playlistTargets.id, playlistExports.playlistTargetId))
     .where(
@@ -404,16 +481,33 @@ async function buildPreview(
         eq(playlistTargets.userId, userId),
         eq(playlistTargets.provider, "spotify"),
         eq(playlistTargets.providerPlaylistId, playlistId),
-        eq(playlistExports.appOwned, true),
-        eq(playlistExports.status, "exported"),
       ),
     );
+  const terminalFailedTrackIds = new Set(
+    exportRows
+      .filter(
+        (row) =>
+          row.status === "failed" && row.errorCode === "playlist_addition_attempts_exhausted",
+      )
+      .map((row) => row.providerTrackId),
+  );
+  const plannedCandidates =
+    options.retryFailedExports === false
+      ? candidates.filter(
+          (candidate) =>
+            !candidate.providerTrackId || !terminalFailedTrackIds.has(candidate.providerTrackId),
+        )
+      : candidates;
   return {
     cacheHit,
     plan: planSpotifyPlaylistExport(
-      candidates,
+      plannedCandidates,
       playlistItems,
-      new Set(managedRows.map((row) => row.providerTrackId)),
+      new Set(
+        exportRows
+          .filter((row) => row.appOwned && row.status === "exported")
+          .map((row) => row.providerTrackId),
+      ),
       options.orderingPolicy ?? "release_date_custom_order",
     ),
     target: {
@@ -613,23 +707,37 @@ export async function inspectSpotifyPlaylistCheckpoint(
           ),
         )
     : [];
-  const [candidates, managedRows] = await Promise.all([
+  const [candidates, exportRows] = await Promise.all([
     loadCanonicalExportCandidates(db, userId),
     db
-      .select({ providerTrackId: playlistExports.providerTrackId })
+      .select({
+        appOwned: playlistExports.appOwned,
+        errorCode: playlistExports.errorCode,
+        providerTrackId: playlistExports.providerTrackId,
+        status: playlistExports.status,
+      })
       .from(playlistExports)
-      .where(
-        and(
-          eq(playlistExports.playlistTargetId, target.id),
-          eq(playlistExports.appOwned, true),
-          eq(playlistExports.status, "exported"),
-        ),
-      ),
+      .where(eq(playlistExports.playlistTargetId, target.id)),
   ]);
+  const terminalFailedTrackIds = new Set(
+    exportRows
+      .filter(
+        (row) =>
+          row.status === "failed" && row.errorCode === "playlist_addition_attempts_exhausted",
+      )
+      .map((row) => row.providerTrackId),
+  );
   const plan = planSpotifyPlaylistExport(
-    candidates,
+    candidates.filter(
+      (candidate) =>
+        !candidate.providerTrackId || !terminalFailedTrackIds.has(candidate.providerTrackId),
+    ),
     target.snapshotItems,
-    new Set(managedRows.map((row) => row.providerTrackId)),
+    new Set(
+      exportRows
+        .filter((row) => row.appOwned && row.status === "exported")
+        .map((row) => row.providerTrackId),
+    ),
     "release_date_custom_order",
   );
   const actionableBlockedTrackIds = new Set(
@@ -656,7 +764,7 @@ export async function inspectSpotifyPlaylistCheckpoint(
           ? "periodic_reconciliation"
           : "none";
   return {
-    blockedCount: actionableBlockedTrackIds.size,
+    blockedCount: actionableBlockedTrackIds.size + terminalFailedTrackIds.size,
     duplicateAppearanceCount: plan.skips.filter(
       (skip) => skip.reason === "duplicate_recording_appearance",
     ).length,
@@ -762,9 +870,12 @@ function compareProviderCandidates(
   );
 }
 
-async function requireSpotifyPlaylistWriteScope(db: RadarDatabase, userId: string): Promise<void> {
+async function requireSpotifyPlaylistWriteScope(
+  db: RadarDatabase,
+  userId: string,
+): Promise<{ account_id: string; id: string }> {
   const account = await db.query.oauthAccounts.findFirst({
-    columns: { scopes: true },
+    columns: { providerAccountId: true, providerUserId: true, scopes: true },
     where: and(
       eq(oauthAccounts.userId, userId),
       eq(oauthAccounts.provider, "spotify"),
@@ -777,6 +888,10 @@ async function requireSpotifyPlaylistWriteScope(db: RadarDatabase, userId: strin
       "missing_write_scope",
     );
   }
+  return {
+    account_id: account.providerAccountId,
+    id: account.providerUserId ?? account.providerAccountId,
+  };
 }
 
 function assertPlaylistIdentity(expected: string, actual: string): void {
@@ -807,6 +922,24 @@ async function loadResumableRun(
       inArray(spotifyPlaylistExportRuns.status, ["planned", "running", "partial"]),
     ),
   });
+}
+
+export async function loadResumableSpotifyPlaylistExportRunId(
+  db: RadarDatabase,
+  userId: string,
+  playlistId: string,
+  orderingPolicy: SpotifyPlaylistOrderingPolicy = "release_date_custom_order",
+): Promise<string | null> {
+  const target = await db.query.playlistTargets.findFirst({
+    where: and(
+      eq(playlistTargets.userId, userId),
+      eq(playlistTargets.provider, "spotify"),
+      eq(playlistTargets.providerPlaylistId, playlistId),
+    ),
+  });
+  if (!target) return null;
+  const run = await loadResumableRun(db, target.id, playlistId, null, orderingPolicy);
+  return run?.id ?? null;
 }
 
 async function createExportRun(
@@ -880,6 +1013,8 @@ async function createExportRun(
 }
 
 interface PendingOperation {
+  attemptCount: number;
+  errorCode: string | null;
   id: string;
   insertPosition: number;
   providerTrackId: string;
@@ -892,6 +1027,8 @@ async function loadPendingOperations(
 ): Promise<PendingOperation[]> {
   const rows = await db
     .select({
+      attemptCount: spotifyPlaylistExportOperations.attemptCount,
+      errorCode: spotifyPlaylistExportOperations.errorCode,
       id: spotifyPlaylistExportOperations.id,
       insertPosition: spotifyPlaylistExportOperations.insertPosition,
       providerTrackId: spotifyPlaylistExportOperations.providerTrackId,
@@ -914,6 +1051,8 @@ async function loadPendingOperations(
       );
     }
     return {
+      attemptCount: row.attemptCount,
+      errorCode: row.errorCode,
       id: row.id,
       insertPosition: row.insertPosition,
       providerTrackId: row.providerTrackId,
@@ -973,8 +1112,53 @@ async function reconcilePendingOperations(
   const pending = await loadPendingOperations(db, runId);
   for (const operation of pending) {
     if (present.has(operation.providerTrackId)) {
-      await markOperationExported(db, targetId, operation, false);
+      await markOperationExported(
+        db,
+        targetId,
+        operation,
+        operation.errorCode === "playlist_addition_in_flight",
+      );
+    } else if (
+      operation.errorCode === "playlist_addition_in_flight" &&
+      operation.attemptCount >= 3
+    ) {
+      await markOperationFailed(db, operation.id, "playlist_addition_attempts_exhausted");
     }
+  }
+}
+
+async function markOperationsAttemptStarted(
+  db: RadarDatabase,
+  operationIds: string[],
+): Promise<void> {
+  if (operationIds.length === 0) return;
+  await db
+    .update(spotifyPlaylistExportOperations)
+    .set({
+      attemptCount: sql`${spotifyPlaylistExportOperations.attemptCount} + 1`,
+      completedAt: null,
+      errorCode: "playlist_addition_in_flight",
+      status: "pending",
+      updatedAt: new Date(),
+    })
+    .where(inArray(spotifyPlaylistExportOperations.id, operationIds));
+}
+
+async function restoreOperationsAfterDefiniteNoWrite(
+  db: RadarDatabase,
+  operations: readonly PendingOperation[],
+): Promise<void> {
+  const now = new Date();
+  for (const operation of operations) {
+    await db
+      .update(spotifyPlaylistExportOperations)
+      .set({
+        attemptCount: sql`greatest(${spotifyPlaylistExportOperations.attemptCount} - 1, 0)`,
+        errorCode: operation.errorCode,
+        status: "pending",
+        updatedAt: now,
+      })
+      .where(eq(spotifyPlaylistExportOperations.id, operation.id));
   }
 }
 
@@ -1009,7 +1193,6 @@ async function markOperationExported(
     await tx
       .update(spotifyPlaylistExportOperations)
       .set({
-        attemptCount: sql`${spotifyPlaylistExportOperations.attemptCount} + 1`,
         completedAt: now,
         errorCode: null,
         status: "exported",
@@ -1027,13 +1210,72 @@ async function markOperationFailed(
   await db
     .update(spotifyPlaylistExportOperations)
     .set({
-      attemptCount: sql`${spotifyPlaylistExportOperations.attemptCount} + 1`,
       completedAt: new Date(),
       errorCode,
       status: "failed",
       updatedAt: new Date(),
     })
     .where(eq(spotifyPlaylistExportOperations.id, operationId));
+}
+
+async function finalizeExhaustedOperations(
+  db: RadarDatabase,
+  runId: string,
+  targetId: string,
+): Promise<void> {
+  const exhausted = await db
+    .select({
+      providerTrackId: spotifyPlaylistExportOperations.providerTrackId,
+      trackId: spotifyPlaylistExportOperations.trackId,
+    })
+    .from(spotifyPlaylistExportOperations)
+    .where(
+      and(
+        eq(spotifyPlaylistExportOperations.runId, runId),
+        eq(spotifyPlaylistExportOperations.action, "add"),
+        eq(spotifyPlaylistExportOperations.status, "failed"),
+        sql`${spotifyPlaylistExportOperations.attemptCount} >= 3`,
+      ),
+    );
+  if (exhausted.length === 0) return;
+  const now = new Date();
+  for (const operation of exhausted) {
+    if (!operation.providerTrackId || !operation.trackId) continue;
+    await db
+      .insert(playlistExports)
+      .values({
+        appOwned: true,
+        errorCode: "playlist_addition_attempts_exhausted",
+        playlistTargetId: targetId,
+        providerTrackId: operation.providerTrackId,
+        status: "failed",
+        trackId: operation.trackId,
+      })
+      .onConflictDoUpdate({
+        target: [playlistExports.playlistTargetId, playlistExports.providerTrackId],
+        set: {
+          errorCode: "playlist_addition_attempts_exhausted",
+          exportedAt: null,
+          status: "failed",
+          updatedAt: now,
+        },
+      });
+  }
+}
+
+async function countRetryableFailedOperations(db: RadarDatabase, runId: string): Promise<number> {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(spotifyPlaylistExportOperations)
+    .where(
+      and(
+        eq(spotifyPlaylistExportOperations.runId, runId),
+        eq(spotifyPlaylistExportOperations.action, "add"),
+        eq(spotifyPlaylistExportOperations.status, "failed"),
+        lt(spotifyPlaylistExportOperations.attemptCount, 3),
+      ),
+    );
+  return Number(row?.count ?? 0);
 }
 
 async function loadOperationCounts(db: RadarDatabase, runId: string) {
@@ -1055,6 +1297,21 @@ function isGlobalSpotifyWriteFailure(error: unknown): boolean {
     error instanceof SpotifyPlaylistExportError ||
     (error instanceof SpotifyHttpError && [401, 403, 429].includes(error.status))
   );
+}
+
+function isSafeBatchSplitFailure(error: unknown): boolean {
+  return error instanceof SpotifyHttpError && error.status === 400;
+}
+
+function isDefiniteNoPlaylistWrite(error: unknown): boolean {
+  if (error instanceof SpotifyCooldownError || error instanceof SpotifyEndpointBudgetError) {
+    return true;
+  }
+  if (error instanceof SpotifyPlaylistWriteDeniedError) return true;
+  if (error instanceof SpotifyHttpError) {
+    return error.endpointCategory === "oauth_token" || [401, 403, 429].includes(error.status);
+  }
+  return error instanceof Error && error.message === "Spotify reconnect is required";
 }
 
 function safeErrorCode(error: unknown): string {

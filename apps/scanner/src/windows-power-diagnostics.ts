@@ -1,13 +1,16 @@
 import {
-  closeSync,
   existsSync,
+  linkSync,
   mkdirSync,
-  openSync,
+  readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 
 export type KeepAwakeDiagnosticState =
@@ -87,15 +90,6 @@ export function claimKeepAwakeOwner(input: {
   mkdirSync(input.directory, { recursive: true });
   const paths = keepAwakeDiagnosticPaths(input.directory, input.runId);
   recoverAbandonedOwner(paths.ownerPath, input.now, input.processAlive);
-  let descriptor: number;
-  try {
-    descriptor = openSync(paths.ownerPath, "wx");
-  } catch (error) {
-    if (isAlreadyExistsError(error)) {
-      throw new Error("A scanner keep-awake owner is already active; refusing a duplicate owner.");
-    }
-    throw error;
-  }
   const timestamp = input.now.toISOString();
   const record: KeepAwakeDiagnosticRecord = {
     abnormalExitDetectedAt: null,
@@ -117,9 +111,12 @@ export function claimKeepAwakeOwner(input: {
     version: 1,
   };
   try {
-    writeFileSync(descriptor, serialize(record), "utf8");
-  } finally {
-    closeSync(descriptor);
+    writeExclusiveJsonSync(paths.ownerPath, record);
+  } catch (error) {
+    if (isAlreadyExistsError(error)) {
+      throw new Error("A scanner keep-awake owner is already active; refusing a duplicate owner.");
+    }
+    throw error;
   }
   writeRecordSync(paths.recordPath, record);
   return { paths, record };
@@ -129,12 +126,13 @@ export function updateKeepAwakeRecordSync(
   paths: KeepAwakeDiagnosticPaths,
   updates: Partial<KeepAwakeDiagnosticRecord>,
 ): KeepAwakeDiagnosticRecord {
-  const record = { ...readRecordSync(paths.recordPath), ...updates };
+  const current = mergeMarkers(
+    readRecordSync(paths.recordPath),
+    readJsonSync<HelperMarker>(paths.activationPath),
+    readJsonSync<HelperMarker>(paths.releasePath),
+  );
+  const record = { ...current, ...updates };
   writeRecordSync(paths.recordPath, record);
-  const owner = readJsonSync<KeepAwakeDiagnosticRecord>(paths.ownerPath);
-  if (!record.finalReleased && owner?.runId === record.runId) {
-    writeFileSync(paths.ownerPath, serialize(record), "utf8");
-  }
   return record;
 }
 
@@ -163,8 +161,6 @@ export async function requestKeepAwakeRelease(
     state: "release_requested",
   };
   await writeJson(paths.recordPath, updated);
-  const owner = await readJson<KeepAwakeDiagnosticRecord>(paths.ownerPath);
-  if (owner?.runId === record.runId) await writeJson(paths.ownerPath, updated);
 }
 
 export async function finalizeKeepAwakeRelease(
@@ -198,9 +194,8 @@ function recoverAbandonedOwner(
   if (!existsSync(ownerPath)) return;
   const owner = readJsonSync<KeepAwakeDiagnosticRecord>(ownerPath);
   if (!owner) {
-    throw new Error(
-      "The scanner keep-awake owner record is unreadable; refusing to create a duplicate owner.",
-    );
+    recoverCorruptOwner(ownerPath, now, processAlive);
+    return;
   }
   if (processAlive(owner.ownerProcessId)) {
     throw new Error("A scanner keep-awake owner is already active; refusing a duplicate owner.");
@@ -220,7 +215,6 @@ function recoverAbandonedOwner(
       state: "recovery_pending",
     };
     writeRecordSync(paths.recordPath, pending);
-    writeFileSync(ownerPath, serialize(pending), "utf8");
     throw new Error(
       "A keep-awake helper from an exited owner is still releasing; retry after it exits.",
     );
@@ -292,6 +286,112 @@ function writeRecordSync(path: string, record: KeepAwakeDiagnosticRecord): void 
 
 async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, serialize(value), "utf8");
+}
+
+function writeExclusiveJsonSync(path: string, value: unknown): void {
+  const temporaryPath = temporaryJsonPath(path);
+  try {
+    writeFileSync(temporaryPath, serialize(value), { encoding: "utf8", flag: "wx" });
+    // Linking a complete same-volume temporary file gives us an atomic create-if-absent claim.
+    // A crash can leave an extra temporary hard link, but never a truncated active owner.
+    linkSync(temporaryPath, path);
+  } finally {
+    rmSync(temporaryPath, { force: true });
+  }
+}
+
+function recoverCorruptOwner(
+  ownerPath: string,
+  now: Date,
+  processAlive: (processId: number) => boolean,
+): void {
+  const directory = dirname(ownerPath);
+  const candidates = readdirSync(directory)
+    .filter(
+      (name) =>
+        name.endsWith(".json") &&
+        name !== "active-owner.json" &&
+        !name.includes(".activated.") &&
+        !name.includes(".released.") &&
+        !name.includes(".corrupt-"),
+    )
+    .map((name) => readJsonSync<KeepAwakeDiagnosticRecord>(resolve(directory, name)))
+    .filter((record): record is KeepAwakeDiagnosticRecord => isKeepAwakeRecord(record))
+    .map((record) => {
+      const paths = keepAwakeDiagnosticPaths(directory, record.runId);
+      return {
+        paths,
+        record: mergeMarkers(
+          record,
+          readJsonSync<HelperMarker>(paths.activationPath),
+          readJsonSync<HelperMarker>(paths.releasePath),
+        ),
+      };
+    })
+    .filter(({ record }) => !record.finalReleased);
+
+  const liveOwner = candidates.find(({ record }) => processAlive(record.ownerProcessId));
+  if (liveOwner) {
+    throw new Error("A scanner keep-awake owner is already active; refusing a duplicate owner.");
+  }
+  const liveHelper = candidates.find(
+    ({ record }) => record.helperProcessId && processAlive(record.helperProcessId),
+  );
+  if (liveHelper) {
+    const detectedAt = now.toISOString();
+    const pending: KeepAwakeDiagnosticRecord = {
+      ...liveHelper.record,
+      abnormalExitDetectedAt: liveHelper.record.abnormalExitDetectedAt ?? detectedAt,
+      contextUpdatedAt: detectedAt,
+      state: "recovery_pending",
+    };
+    writeRecordSync(liveHelper.paths.recordPath, pending);
+    throw new Error(
+      "A keep-awake helper from an exited owner is still releasing; retry after it exits.",
+    );
+  }
+
+  if (candidates.length === 0) {
+    const ageMs = now.getTime() - statSync(ownerPath).mtimeMs;
+    if (ageMs < 30_000) {
+      throw new Error(
+        "The scanner keep-awake owner record is unreadable and recent; retrying is required before recovery.",
+      );
+    }
+  }
+
+  const detectedAt = now.toISOString();
+  for (const candidate of candidates) {
+    const recovered: KeepAwakeDiagnosticRecord = {
+      ...candidate.record,
+      abnormalExitDetectedAt: candidate.record.abnormalExitDetectedAt ?? detectedAt,
+      contextUpdatedAt: detectedAt,
+      finalReleased: true,
+      recoveredAt: detectedAt,
+      releaseReason: candidate.record.releaseReason ?? "corrupt_owner_recovered",
+      releasedAt: candidate.record.releasedAt ?? detectedAt,
+      state: "recovered_after_abnormal_exit",
+    };
+    writeRecordSync(candidate.paths.recordPath, recovered);
+    rmSync(candidate.paths.releaseSignalPath, { force: true });
+  }
+  const archivePath = `${ownerPath}.corrupt-${detectedAt.replace(/[:.]/g, "-")}`;
+  renameSync(ownerPath, archivePath);
+}
+
+function isKeepAwakeRecord(value: unknown): value is KeepAwakeDiagnosticRecord {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Partial<KeepAwakeDiagnosticRecord>;
+  return (
+    record.version === 1 &&
+    typeof record.runId === "string" &&
+    typeof record.ownerProcessId === "number" &&
+    typeof record.finalReleased === "boolean"
+  );
+}
+
+function temporaryJsonPath(path: string): string {
+  return `${path}.${process.pid}.${randomUUID()}.tmp`;
 }
 
 function serialize(value: unknown): string {

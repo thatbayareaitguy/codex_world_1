@@ -2,6 +2,7 @@ import {
   consumeOAuthState,
   createDatabase,
   createSpotifyRequestGate,
+  defaultSchedulerLimits,
   ensureLocalOwner,
   upsertSpotifyAccount,
 } from "@radar/db";
@@ -41,6 +42,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const connection = createDatabase(config.databaseUrl);
     try {
+      const schedulerLimits = defaultSchedulerLimits();
+      const gateOptions = {
+        rollingRequestBudget: {
+          playlistRequestReserve: schedulerLimits.playlistRequestReserve,
+          priorityRequestReserve: schedulerLimits.priorityRequestReserve,
+          rolling24HourLimit: config.spotify.scheduler.rolling24HourLimit,
+          rolling30MinuteLimit: config.spotify.scheduler.rolling30MinuteLimit,
+        },
+      };
       const encryptedVerifier = await consumeOAuthState(
         connection.db,
         flowId,
@@ -54,13 +64,25 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         playlistWritesEnabled:
           config.spotify.playlistWritesEnabled && Boolean(config.spotify.allowedPlaylistId),
         redirectUri: config.spotify.redirectUri,
-        requestGate: createSpotifyRequestGate(connection.db, config.spotify.minRequestIntervalMs),
+        requestGate: createSpotifyRequestGate(
+          connection.db,
+          config.spotify.minRequestIntervalMs,
+          undefined,
+          undefined,
+          gateOptions,
+        ),
       });
       const tokens = await oauth.exchangeCode(code, verifier);
       if (!tokens.refresh_token) throw new Error("Spotify did not return a refresh token");
       const api = new SpotifyClient({
         accessToken: () => Promise.resolve(tokens.access_token),
-        requestGate: createSpotifyRequestGate(connection.db, config.spotify.minRequestIntervalMs),
+        requestGate: createSpotifyRequestGate(
+          connection.db,
+          config.spotify.minRequestIntervalMs,
+          undefined,
+          undefined,
+          gateOptions,
+        ),
       });
       const profile = await api.getCurrentUser();
       const userId = await ensureLocalOwner(connection.db);
