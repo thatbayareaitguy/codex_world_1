@@ -1,9 +1,52 @@
 # AI Handoff
 
-Updated: 2026-09-13 20:00 PDT
+Updated: 2026-09-13 22:55 PDT
 
 The dated sections below retain point-in-time evidence. This first section is the current operational
 record and supersedes older sections wherever counts, task state, or remaining verification differ.
+
+## Capacity Recovery Follow-Up (2026-09-13, evening)
+
+- The first unattended repaired episode ran at 20:50, 21:10, and 21:40 PDT. Weekly waiting
+  tracks fell from 45 to 34; unattempted waiting tracks fell from 44 to 33. Eleven new matches
+  became ready for export, but no playlist write occurred. Sixty requests succeeded: 48 playlist
+  reads, eleven matching GETs, and one token POST. No new 429 occurred.
+- The third launch stopped at 21:43 with `MaintenanceEpisodeWaitLimitError`. The episode recorded
+  892,054 ms of reserved capacity waiting and 1,412,245 ms of conservative hold time. All three
+  helpers recorded `finalReleased=true`; no maintenance process remained. This proves release of
+  the application's sleep inhibition, not that Windows actually slept.
+- Proven cause: capacity recovery subtracted a ten-minute lead from the database's next-runnable
+  boundary. Both retries therefore started before requests could run, spending most of the shared
+  fifteen-minute wait allowance. The readback had durable progress at offset 1,400, not a permanently
+  stuck cursor. The earlier completion claim did not establish end-to-end production delivery.
+- Fix: capacity/cooldown/deferred recovery starts at the actual next-runnable boundary. Fixed
+  Thursday/Friday Apple warm-up times, three-launch maximum, original 3h55 deadline, shared wait
+  allowance, quotas, cooldown enforcement, and writer fencing remain unchanged.
+- A new connected regression uses the real maintenance decision and loop, durable episode ledger,
+  PostgreSQL request gate, playlist export engine, guarded Spotify client, and injected synthetic
+  HTTP responses. The old policy reproduced wait-budget exhaustion. The fixed policy delivers
+  eleven additions over a 1,500-item playlist in three launches from cold cache, or two launches
+  from a saved 1,400-item cursor. Both preserve original ordering/provenance, read each required
+  page once, and reserve under five minutes of capacity waiting. Windows power calls and clock
+  advancement remain simulated; this is not live provider or unattended deployment proof.
+- Both discovery tasks were quiesced before editing, with no active executor. Verified backup:
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-09-14T05-37-53-665Z.dump`;
+  49,416,708 bytes; SHA-256 `a0b1ad8b26308d96dcc2c570b57640daea463ae88030d924e8515a67237ec49b`.
+  PostgreSQL archive listing succeeded. No production data, cursor, queue, cooldown, episode ledger,
+  credentials, environment file, or Windows power setting was reset or changed.
+- Validation passed: formatting, lint, TypeScript, 632 unit tests, 212 database integration tests,
+  production builds, and all 37 Chromium tests. A filesystem-heavy unit timeout was reproduced;
+  its test-only timeout now allows 30 seconds for the unchanged 100 real filesystem inspections.
+  Four parallel browser checks initially failed; the complete serial rerun passed with unchanged
+  assertions and UI code. No skipped database suite is counted as a pass.
+- Deployed and read back at 22:55 PDT: loopback health is OK; all three tasks are enabled; only
+  maintenance can wake Windows; maintenance restart count remains zero and its five fixed triggers
+  are unchanged. No extra wake was created. The episode still records three launches and exactly
+  the same hold/wait totals. No Spotify request occurred in the preceding 30 minutes.
+- Eleven production additions and 34 matching tracks remain outstanding. Do not bypass tonight's
+  exhausted episode to claim delivery; the next fixed maintenance window is September 14 at 08:50
+  PDT. The scheduling defect is fixed and regression-tested, but live delivery after this follow-up
+  is still unverified. Existing code-rollback instructions apply without restoring stale DB state.
 
 ## Weekly Delivery And Sleep Repair (2026-09-13)
 

@@ -71,7 +71,10 @@ describe("fixed-window maintenance episodes", () => {
       capacityWaitMs: 900_000,
       reason: "launch_limit",
     });
-  });
+    // One hundred real filesystem inspections can exceed the default five-second
+    // test timeout on Windows. Keep every attempt and assertion; this changes no
+    // application deadline or wait allowance.
+  }, 30_000);
 
   it("refuses after the original deadline even if no process has ever launched", () => {
     const f = fixture("2026-09-11T08:00:00Z");

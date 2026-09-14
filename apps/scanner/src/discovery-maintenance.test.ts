@@ -5,7 +5,6 @@ import {
   maintenanceMaximumRuntimeMs,
   maintenanceShutdownGraceMs,
   maintenanceTaskExecutionLimitMs,
-  maintenanceWakeLeadMs,
   type DiscoveryMaintenanceSnapshot,
 } from "./discovery-maintenance";
 
@@ -180,7 +179,7 @@ describe("discovery maintenance decisions", () => {
     };
 
     expect(decideDiscoveryMaintenance(snapshot, now)).toEqual({
-      dynamicWakeAt: new Date("2026-09-11T17:50:00.000Z"),
+      dynamicWakeAt: new Date("2026-09-11T18:00:00.000Z"),
       holdPower: false,
       reason: "apple_capacity_wait",
       runNow: false,
@@ -220,7 +219,7 @@ describe("discovery maintenance decisions", () => {
     };
 
     expect(decideDiscoveryMaintenance(snapshot, now)).toEqual({
-      dynamicWakeAt: new Date(nextRetryAt.getTime() - maintenanceWakeLeadMs),
+      dynamicWakeAt: nextRetryAt,
       holdPower: false,
       reason: "apple_capacity_wait",
       runNow: false,
@@ -318,7 +317,7 @@ describe("discovery maintenance decisions", () => {
     snapshot.spotify.rollingRequestNextCapacityAt = nextCapacityAt;
 
     expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
-      dynamicWakeAt: new Date(nextCapacityAt.getTime() - maintenanceWakeLeadMs),
+      dynamicWakeAt: nextCapacityAt,
       holdPower: false,
       reason: "playlist_capacity_wait",
       runNow: false,
@@ -360,7 +359,7 @@ describe("discovery maintenance decisions", () => {
     },
   );
 
-  it("schedules one wake ten minutes before rolling capacity returns", () => {
+  it("schedules one wake when rolling capacity returns, never ten minutes early", () => {
     const now = new Date("2026-08-28T08:00:00.000Z");
     const nextCapacityAt = new Date("2026-08-28T09:30:00.000Z");
     const snapshot = baseSnapshot();
@@ -370,9 +369,7 @@ describe("discovery maintenance decisions", () => {
     snapshot.spotify.endpointBudget.artistAlbums.priorityRemaining = 0;
     snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt = nextCapacityAt;
     const decision = decideDiscoveryMaintenance(snapshot, now);
-    expect(decision.dynamicWakeAt?.getTime()).toBe(
-      nextCapacityAt.getTime() - maintenanceWakeLeadMs,
-    );
+    expect(decision.dynamicWakeAt).toEqual(nextCapacityAt);
     expect(decision).toMatchObject({ holdPower: false, reason: "priority_capacity_wait" });
   });
 
@@ -402,7 +399,7 @@ describe("discovery maintenance decisions", () => {
     snapshot.spotify.priorityRollingRequestNextCapacityAt = nextCapacityAt;
 
     expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
-      dynamicWakeAt: new Date(nextCapacityAt.getTime() - maintenanceWakeLeadMs),
+      dynamicWakeAt: nextCapacityAt,
       holdPower: false,
       reason: "priority_capacity_wait",
       runNow: false,
@@ -422,7 +419,7 @@ describe("discovery maintenance decisions", () => {
     priority.spotify.rollingRequestNextCapacityAt = generalCapacityAt;
 
     expect(decideDiscoveryMaintenance(priority, now)).toMatchObject({
-      dynamicWakeAt: new Date(priorityCapacityAt.getTime() - maintenanceWakeLeadMs),
+      dynamicWakeAt: priorityCapacityAt,
       reason: "priority_capacity_wait",
     });
 
@@ -450,7 +447,7 @@ describe("discovery maintenance decisions", () => {
     snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt = artistAlbumsCapacityAt;
 
     expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
-      dynamicWakeAt: new Date(artistAlbumsCapacityAt.getTime() - maintenanceWakeLeadMs),
+      dynamicWakeAt: artistAlbumsCapacityAt,
       holdPower: false,
       reason: "priority_capacity_wait",
     });
@@ -483,7 +480,7 @@ describe("discovery maintenance decisions", () => {
     snapshot.spotify.priorityNextRunnableAt = nextRunnableAt;
 
     expect(decideDiscoveryMaintenance(snapshot, now)).toEqual({
-      dynamicWakeAt: new Date(nextRunnableAt.getTime() - maintenanceWakeLeadMs),
+      dynamicWakeAt: nextRunnableAt,
       holdPower: false,
       reason: "priority_deferred_wait",
       runNow: false,
@@ -655,7 +652,7 @@ describe("discovery maintenance decisions", () => {
     ).toMatchObject({ holdPower: true, reason: "priority_work", runNow: true });
   });
 
-  it("never bypasses a priority cooldown and wakes ten minutes before it ends", () => {
+  it("never bypasses a priority cooldown and wakes when it ends", () => {
     const now = new Date("2026-08-28T03:00:00.000Z");
     const cooldownUntil = new Date("2026-08-28T05:00:00.000Z");
     const snapshot = baseSnapshot();
@@ -665,7 +662,7 @@ describe("discovery maintenance decisions", () => {
     snapshot.spotify.cooldownActive = true;
     snapshot.spotify.cooldownUntil = cooldownUntil;
     expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
-      dynamicWakeAt: new Date(cooldownUntil.getTime() - maintenanceWakeLeadMs),
+      dynamicWakeAt: cooldownUntil,
       holdPower: false,
       reason: "cooldown_wait",
       runNow: false,

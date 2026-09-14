@@ -12,6 +12,14 @@ The numeric Spotify quota and consistency delay remain unknown; returned snapsho
 Local limits remain conservative application limits, not provider approval or guaranteed capacity.
 Successful mutation acknowledgments must remain distinguishable from complete remote readback.
 
+### Capacity recovery follow-up (2026-09-13, evening)
+
+Rechecked the same official Spotify rate-limit and playlist guidance before the follow-up repair.
+Capacity-driven recovery now starts at the locally calculated capacity boundary, not ten minutes
+early. Fixed Apple warm-up times, API permissions, request limits, ownership checks, and provider
+capabilities are unchanged. Synthetic HTTP fixtures exercise the real playlist client and gate;
+no provider request is made by validation.
+
 ## Dormant MusicBrainz adapter (disabled by default)
 
 MusicBrainz is not part of production or normal GUI operation. `MUSICBRAINZ_ENABLED=false` is the

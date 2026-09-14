@@ -306,7 +306,7 @@ episodes defer work to the next fixed wake without forcing Windows to sleep.
 
 If pending priority or playlist work is blocked by a stored Spotify cooldown or rolling capacity,
 the scheduler maintains at most one `DynamicCapacityWake` trigger on the maintenance task. It is set
-for ten minutes before the database-calculated next runnable time, only inside the episode and
+for the database-calculated next runnable time, never before capacity returns, only inside the episode and
 with a recovery launch remaining. Routine playlist verification and ordinary broad backlog never
 create dynamic wakes. A wait fitting the remaining cumulative allowance
 holds a hidden Windows system-required power request only when that wait ends before the shared

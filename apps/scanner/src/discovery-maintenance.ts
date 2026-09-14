@@ -3,7 +3,6 @@ import type { AppleMusicOperationalStatus, SpotifySchedulerStatus } from "@radar
 export const maintenanceTaskName = "TS New Music Radar Maintenance Window";
 export const maintenanceDynamicTriggerId = "DynamicCapacityWake";
 export const maintenanceStartupRecoveryTriggerId = "StartupRecoveryWake";
-export const maintenanceWakeLeadMs = 10 * 60_000;
 export const maintenanceNearTermWaitMs = 15 * 60_000;
 export const maintenanceTaskExecutionLimitMs = 4 * 60 * 60_000;
 export const maintenanceShutdownGraceMs = 5 * 60_000;
@@ -362,9 +361,10 @@ function blockedDecision(
     };
   }
   return {
-    dynamicWakeAt: new Date(
-      Math.max(now.getTime() + 60_000, nextRunnableAt.getTime() - maintenanceWakeLeadMs),
-    ),
+    // A capacity recovery cannot perform work before this boundary. Waking early
+    // consumes a scarce launch and the shared wait allowance without useful work.
+    // Fixed Apple warm-up wakes are separate and retain their existing schedule.
+    dynamicWakeAt: nextRunnableAt,
     holdPower: false,
     reason,
     runNow: false,
