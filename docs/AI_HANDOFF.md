@@ -1,6 +1,6 @@
 # AI Handoff
 
-Updated: 2026-09-13 17:47 PDT
+Updated: 2026-09-13 20:00 PDT
 
 The dated sections below retain point-in-time evidence. This first section is the current operational
 record and supersedes older sections wherever counts, task state, or remaining verification differ.
@@ -69,7 +69,11 @@ record and supersedes older sections wherever counts, task state, or remaining v
   tracks `origin/codex/release-radar-hardening`. No files were staged and no new commit or push
   occurred in that rejected attempt. The owner subsequently explicitly approved committing and
   pushing the repair and both preserved commits to that repository and branch.
-- Pending: authorized commit/push and natural unattended maintenance evidence. No synthetic test proves actual Windows wake/sleep
+- Publication completed after explicit owner approval: repair commit `034d7d7` was pushed to
+  `origin/codex/release-radar-hardening`, including preserved ancestors `52ffc20` and `783e5ad`.
+  Local HEAD and upstream both read back `034d7d77019892fd2c788e0635b67efc7d970e03`.
+  Only unrelated `outputs/` remained untracked. This documentation update records that result.
+- Pending: natural unattended maintenance evidence. No synthetic test proves actual Windows wake/sleep
   behavior or a future unattended Thursday/Friday cycle. Rollback instructions are in
   `docs/local-development.md`; preserve current DB/write history/cooldowns and the episode ledger,
   never restore a stale DB as a code rollback.
