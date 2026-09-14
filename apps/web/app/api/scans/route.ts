@@ -24,6 +24,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSameOrigin, enforceRateLimit } from "../../../lib/request-security";
 import { launchScanNow } from "../../../lib/scan-launcher";
+import { inspectMaintenanceEpisode } from "../../../../scanner/src/maintenance-episode";
+import { decideDiscoveryMaintenance } from "../../../../scanner/src/discovery-maintenance";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -133,6 +135,23 @@ export async function GET(request?: NextRequest): Promise<NextResponse> {
       : history.entries.filter((entry) => entry.provider !== "musicbrainz");
     const defaultHistory = selectDefaultScanHistoryEntry(visibleHistory);
     const requestedProviders = configuredScanProviders(configuration, activeScanLock?.metadata);
+    const episodeNow = new Date();
+    const episode = process.env.LOCALAPPDATA ? inspectMaintenanceEpisode(episodeNow) : null;
+    const maintenanceDecision = decideDiscoveryMaintenance(
+      { apple: appleMusicOperational, discovery: discoverySchedule, spotify: spotifyScheduler },
+      episodeNow,
+    );
+    const requestedWake =
+      episode?.allowed && !maintenanceDecision.reason.startsWith("broad_")
+        ? maintenanceDecision.runNow || maintenanceDecision.holdPower
+          ? new Date(episodeNow.getTime() + 15_000)
+          : maintenanceDecision.dynamicWakeAt
+        : null;
+    const nextAllowedWakeAt = episode
+      ? requestedWake && requestedWake < new Date(episode.deadlineAt)
+        ? requestedWake.toISOString()
+        : episode.nextFixedWakeAt
+      : null;
     return NextResponse.json(
       {
         appleMusic: {
@@ -143,7 +162,10 @@ export async function GET(request?: NextRequest): Promise<NextResponse> {
           ? describeActiveScan(activeScanLock, visibleRuns, requestedProviders)
           : null,
         defaultHistoryId: defaultHistory?.id ?? null,
-        discoverySchedule,
+        discoverySchedule: {
+          ...discoverySchedule,
+          maintenanceEpisode: episode ? { ...episode, nextAllowedWakeAt } : null,
+        },
         history: visibleHistory,
         historyHasMore: history.hasMore,
         historyNextCursor: history.nextCursor,

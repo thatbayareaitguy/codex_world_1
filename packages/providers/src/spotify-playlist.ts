@@ -67,8 +67,10 @@ export type SpotifyPlaylistExportSkipReason =
   | "malformed_spotify_track_id"
   | "missing_spotify_match"
   | "needs_review"
+  | "upcoming"
   | "not_followed_artist"
   | "uncertain_spotify_match";
+// Release timing is independent of review/manual-match state.
 
 export interface SpotifyPlaylistExportSkip {
   feedItemId: string;
@@ -150,13 +152,20 @@ export function planSpotifyPlaylistExport(
   playlistItems: readonly SpotifyPlaylistSnapshotItem[],
   appManagedTrackIds: ReadonlySet<string>,
   orderingPolicy: SpotifyPlaylistExportOrderingPolicy = "release_date_custom_order",
+  now = new Date(),
 ): SpotifyPlaylistExportPlan {
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
   const skips: SpotifyPlaylistExportSkip[] = [];
   const eligible = candidates
     .slice()
     .sort(compareSpotifyPlaylistCandidates)
     .filter((candidate) => {
-      const reason = spotifyPlaylistExportSkipReason(candidate);
+      const reason = spotifyPlaylistExportSkipReason(candidate, today);
       if (!reason) return true;
       skips.push(toSkip(candidate, reason));
       return false;
@@ -584,9 +593,11 @@ export function isExactSpotifyIdentity(matchRule: string, confidence: number): b
 
 function spotifyPlaylistExportSkipReason(
   candidate: SpotifyPlaylistExportCandidate,
+  today: string,
 ): SpotifyPlaylistExportSkipReason | null {
   if (!candidate.followedArtist) return "not_followed_artist";
   if (candidate.feedState === "dismissed") return "feed_dismissed";
+  if (candidate.releaseDate > today) return "upcoming";
   if (!candidate.providerTrackId) return "missing_spotify_match";
   if (!spotifyTrackIdSchema.safeParse(candidate.providerTrackId).success) {
     return "malformed_spotify_track_id";

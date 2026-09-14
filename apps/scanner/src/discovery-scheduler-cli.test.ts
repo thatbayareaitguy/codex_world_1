@@ -91,7 +91,7 @@ describe("discovery scheduler CLI", () => {
   it("preserves an imminent dynamic wake when the minute tick enters the keep-awake window", async () => {
     const updateWake = vi.fn(() => Promise.resolve());
     const ensureWake = vi.fn(() => Promise.resolve());
-    let now = new Date("2026-09-12T23:00:00.000Z");
+    let now = new Date("2026-09-12T16:00:00.000Z");
 
     await applyRecurringDynamicMaintenanceWake(
       {
@@ -99,11 +99,11 @@ describe("discovery scheduler CLI", () => {
         holdPower: true,
         reason: "priority_capacity_wait",
         runNow: false,
-        waitUntil: new Date("2026-09-12T23:10:43.072Z"),
+        waitUntil: new Date("2026-09-12T16:10:43.072Z"),
       },
       { ensureWake, now: () => now, updateWake },
     );
-    now = new Date("2026-09-12T23:01:00.000Z");
+    now = new Date("2026-09-12T16:01:00.000Z");
     await applyRecurringDynamicMaintenanceWake(
       {
         dynamicWakeAt: null,
@@ -117,8 +117,8 @@ describe("discovery scheduler CLI", () => {
 
     expect(updateWake).not.toHaveBeenCalled();
     expect(ensureWake).toHaveBeenCalledTimes(2);
-    expect(ensureWake).toHaveBeenNthCalledWith(1, new Date("2026-09-12T23:00:15.000Z"));
-    expect(ensureWake).toHaveBeenNthCalledWith(2, new Date("2026-09-12T23:01:15.000Z"));
+    expect(ensureWake).toHaveBeenNthCalledWith(1, new Date("2026-09-12T16:00:15.000Z"));
+    expect(ensureWake).toHaveBeenNthCalledWith(2, new Date("2026-09-12T16:01:15.000Z"));
   });
 
   it("still updates or clears a dynamic wake when maintenance need has ended", async () => {
@@ -133,7 +133,7 @@ describe("discovery scheduler CLI", () => {
         runNow: false,
         waitUntil: null,
       },
-      { updateWake },
+      { updateWake, now: () => new Date("2026-09-13T03:50:00Z") },
     );
     await applyRecurringDynamicMaintenanceWake(
       {
@@ -143,7 +143,7 @@ describe("discovery scheduler CLI", () => {
         runNow: false,
         waitUntil: null,
       },
-      { updateWake },
+      { updateWake, now: () => new Date("2026-09-13T03:50:00Z") },
     );
 
     expect(updateWake).toHaveBeenNthCalledWith(1, wakeAt);
@@ -162,7 +162,7 @@ describe("discovery scheduler CLI", () => {
     const now = new Date("2026-09-12T23:00:00.000Z");
     const applyWake = vi.fn(() => {
       events.push("dispatch");
-      return Promise.resolve();
+      return Promise.resolve(false);
     });
 
     await expect(
@@ -210,7 +210,7 @@ describe("discovery scheduler CLI", () => {
           return Promise.resolve({ candidatesUpdated: 0, feedItemsUpdated: 0 });
         }),
       }),
-    ).resolves.toEqual({ decision, dispatchedToMaintenance: true });
+    ).resolves.toEqual({ decision, dispatchedToMaintenance: false });
 
     expect(events).toEqual([
       "owner",

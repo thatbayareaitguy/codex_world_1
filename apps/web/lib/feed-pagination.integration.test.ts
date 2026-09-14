@@ -306,6 +306,30 @@ describe.sequential("database feed pagination", () => {
       "Unreleased Album Track 1",
       "Unreleased Album Track 2",
     ]);
+    await connection.db
+      .update(feedItems)
+      .set({ state: "needs_review" })
+      .where(
+        inArray(
+          feedItems.id,
+          rows
+            .filter((row) => row.providerTrackId === upcomingTrackIds[0])
+            .map((row) => row.feedId),
+        ),
+      );
+    const bothUpcoming = await loadDatabaseFeedPage(databaseUrl, {
+      filters: { search: "Future Grouped Album", state: "upcoming" },
+      secret: cursorSecret,
+    });
+    const bothReview = await loadDatabaseFeedPage(databaseUrl, {
+      filters: { search: "Future Grouped Album", state: "needs_review" },
+      secret: cursorSecret,
+    });
+    expect(bothUpcoming.items.map((item) => item.title).sort()).toEqual([
+      "Unreleased Album Track 1",
+      "Unreleased Album Track 2",
+    ]);
+    expect(bothReview.items.map((item) => item.title)).toEqual(["Unreleased Album Track 1"]);
   });
 
   it("projects incoming and proposed identities with cross-artist review warnings", async () => {

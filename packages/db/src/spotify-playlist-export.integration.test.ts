@@ -1,16 +1,28 @@
 import type { FeedState } from "@radar/core";
-import { SpotifyHttpError } from "@radar/providers";
+import { SpotifyHttpError, withProviderExecutionBudget } from "@radar/providers";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { getDiscoveryWorkTurn, recordDiscoveryWorkTurn } from "./discovery-work-turn";
 import type { SpotifyPlaylistExportClient } from "./spotify-playlist-export";
 import { and, eq, sql } from "drizzle-orm";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDatabase } from "./client";
 import {
   executeSpotifyPlaylistExport,
   inspectSpotifyPlaylistCheckpoint,
   previewSpotifyPlaylistExport,
   surfaceUncertainSpotifyMatchesForReview,
+  verifySpotifyPlaylistCheckpoint,
 } from "./spotify-playlist-export";
-import { SpotifyCooldownError, SpotifyEndpointBudgetError } from "./spotify-request-gate";
+import {
+  SpotifyCooldownError,
+  SpotifyEndpointBudgetError,
+  createSpotifyRequestGate,
+  defaultSpotifyRollingRequestBudget,
+} from "./spotify-request-gate";
+import { SpotifyPlaylistMetadataLagError } from "./spotify-playlist-evidence";
+import { SpotifyPlaylistSnapshotYieldError } from "./spotify-playlist-cache";
 import {
   artistFollows,
   artists,
@@ -30,13 +42,36 @@ import {
   trackCredits,
   tracks,
   users,
+  spotifyProviderState,
+  spotifyRequestEvents,
 } from "./schema";
 
 const databaseUrl =
   process.env.TEST_DATABASE_URL ?? "postgres://radar:radar@127.0.0.1:5433/radar_test";
 const connection = createDatabase(databaseUrl);
 const db = connection.db;
-const playlistId = "1234567890123456789012";
+const playlistId = "4l6LaMPL6duulmFe3hRR4Y";
+// Black-box application boundary: do not pull application source into the database
+// package's compilation root. This contract describes only the public test surface.
+interface EpisodeContract {
+  deadlineAt: Date;
+  reserveWait: (milliseconds: number) => void;
+  recoveryWake: (requested: Date | null) => Date | null;
+  finish: () => void;
+}
+const episodeModulePath = "../../../apps/scanner/src/maintenance-episode";
+const { claimMaintenanceEpisode, inspectMaintenanceEpisode } = (await import(
+  episodeModulePath
+)) as {
+  claimMaintenanceEpisode: (
+    runId: string,
+    options: { directory: string; processAlive: () => boolean },
+  ) => EpisodeContract | null;
+  inspectMaintenanceEpisode: (
+    now: Date,
+    options: { directory: string; processAlive: () => boolean },
+  ) => { launches: number; capacityWaitMs: number; holdMs: number };
+};
 
 describe.sequential("Spotify canonical playlist export", () => {
   beforeEach(async () => {
@@ -49,6 +84,227 @@ describe.sequential("Spotify canonical playlist export", () => {
   afterAll(async () => {
     await connection.client.end();
   });
+
+  it("simulates Thu-Fri bounded delivery over 1500 items with the configured gate, restart, lag and uncertain writes", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "radar-weekly-cycle-"));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const fixedWindows = ["2026-09-11T03:50:00Z", "2026-09-11T15:50:00Z", "2026-09-12T03:50:00Z"];
+    vi.setSystemTime(new Date(fixedWindows[0]!));
+    await db.delete(spotifyRequestEvents);
+    await db.delete(spotifyProviderState);
+    const fixture = await createExactBatchFixture(17);
+    // Matching starts unresolved; a synthetic exact match is persisted after each
+    // gated matching request. No real HTTP or provider account is involved.
+    await db.update(releaseCandidates).set({ matchConfidence: "0.700", matchRule: "metadata" });
+    const original = Array.from({ length: 1500 }, (_, index) =>
+      String(10000 + index).padStart(22, "0"),
+    );
+    let loseResponse = true;
+    const raw = new FakePlaylistClient([...original], undefined, 50, () => {
+      if (loseResponse) {
+        loseResponse = false;
+        return new Error("synthetic lost write acknowledgment");
+      }
+      return undefined;
+    });
+    const originalProvenance = (await raw.getPlaylistItems()).map(
+      ({ trackId, addedAt, addedById }) => ({ trackId, addedAt, addedById }),
+    );
+    let matched = 0;
+    let lagInjected = false;
+    let editInjected = false;
+    let initialPages: number | null = null;
+    let totalUnits = 0;
+    const requestStarts: number[] = [];
+    try {
+      for (const fixed of fixedWindows) {
+        vi.setSystemTime(new Date(fixed));
+        for (let launch = 0; launch < 3; launch += 1) {
+          const episode = claimMaintenanceEpisode(`simulation-${fixed}-${launch}`, {
+            directory,
+            processAlive: () => false,
+          });
+          if (!episode) break;
+          const signal = new AbortController().signal;
+          const playlistGate = createSpotifyRequestGate(db, 10_000, undefined, undefined, {
+            quotaLane: "playlist",
+            rollingRequestBudget: defaultSpotifyRollingRequestBudget,
+            rollingCapacityWait: {
+              maximumWaitMs: 900_000,
+              deadlineAt: episode.deadlineAt,
+              sleep: (milliseconds) => {
+                vi.setSystemTime(Date.now() + milliseconds);
+                return Promise.resolve();
+              },
+            },
+          });
+          const matchingGate = createSpotifyRequestGate(db, 10_000, undefined, undefined, {
+            quotaLane: "priority",
+            rollingRequestBudget: defaultSpotifyRollingRequestBudget,
+          });
+          const request = async <T>(method: string, callback: () => Promise<T>) => {
+            vi.setSystemTime(Date.now() + 10_000);
+            const gate = method === "MATCH" ? matchingGate : playlistGate;
+            const permit = await gate.acquire({
+              endpointCategory:
+                method === "MATCH"
+                  ? "track_resolution"
+                  : method === "GET"
+                    ? "playlist_read"
+                    : "playlist_write",
+              method: method === "MATCH" ? "GET" : method,
+            });
+            requestStarts.push(permit.startedAt.getTime());
+            try {
+              return await callback();
+            } finally {
+              await gate.complete(permit, { status: 200 });
+            }
+          };
+          const client: SpotifyPlaylistExportClient = {
+            getCurrentUser: () => request("GET", () => raw.getCurrentUser()),
+            getPlaylist: (id) => request("GET", () => raw.getPlaylist(id)),
+            getPlaylistItems: () => request("GET", () => raw.getPlaylistItems()),
+            getPlaylistItemsPage: (id, offset) =>
+              request("GET", () => raw.getPlaylistItemsPage(id, offset)),
+            addPlaylistItemsAtPosition: (id, ids, position) =>
+              request("POST", () => raw.addPlaylistItemsAtPosition(id, ids, position)),
+            reorderPlaylistItems: (id, move) =>
+              request("PUT", () => raw.reorderPlaylistItems(id, move)),
+          };
+          const recovery: { at: Date | null } = { at: null };
+          await withProviderExecutionBudget(
+            { signal, reserveCapacityWait: episode.reserveWait },
+            async () => {
+              for (
+                let unit = 0;
+                unit < 100 && Date.now() < episode.deadlineAt.getTime();
+                unit += 1
+              ) {
+                totalUnits += 1;
+                const inspection = await inspectSpotifyPlaylistCheckpoint(
+                  db,
+                  fixture.userId,
+                  playlistId,
+                  { recordReady: true },
+                );
+                const last = await getDiscoveryWorkTurn(db);
+                try {
+                  if (matched < 17 && (last === "delivery" || !inspection.shouldDeliver)) {
+                    await request("MATCH", async () => {
+                      await db
+                        .update(releaseCandidates)
+                        .set({ matchConfidence: "1.000", matchRule: "exact_isrc" })
+                        .where(
+                          eq(releaseCandidates.providerTrackId, fixture.providerTrackIds[matched]!),
+                        );
+                    });
+                    matched += 1;
+                    await recordDiscoveryWorkTurn(db, "matching");
+                  } else if (
+                    inspection.workKind === "uncertain" ||
+                    inspection.workKind === "verification"
+                  ) {
+                    await recordDiscoveryWorkTurn(db, "delivery");
+                    await verifySpotifyPlaylistCheckpoint(
+                      db,
+                      fixture.userId,
+                      client,
+                      playlistId,
+                      6,
+                    );
+                    initialPages ??= raw.pageReadOffsets.length;
+                  } else if (inspection.shouldDeliver) {
+                    await recordDiscoveryWorkTurn(db, "delivery");
+                    const result = await executeSpotifyPlaylistExport(db, fixture.userId, client, {
+                      playlistId,
+                      policy: { enabled: true, allowedPlaylistId: playlistId },
+                      maxAdditions: 3,
+                      maxMutations: 3,
+                      maxPlaylistReadPages: 6,
+                    });
+                    expect(result.run.additionsAttempted).toBeLessThanOrEqual(3);
+                    if (!lagInjected && raw.addCalls.length > 1) {
+                      raw.reportedSnapshotId = "snapshot-2";
+                      lagInjected = true;
+                    }
+                  } else if (inspection.flushDeadlineAt && matched === 17) {
+                    vi.setSystemTime(
+                      Math.max(Date.now() + 10_000, Date.parse(inspection.flushDeadlineAt)),
+                    );
+                  } else if (matched === 17 && !editInjected) {
+                    raw.externalInsert("8888888888888888888888", raw.items.length);
+                    editInjected = true;
+                    await verifySpotifyPlaylistCheckpoint(
+                      db,
+                      fixture.userId,
+                      client,
+                      playlistId,
+                      6,
+                    );
+                  } else if (matched === 17) break;
+                } catch (error) {
+                  if (error instanceof SpotifyPlaylistSnapshotYieldError) continue;
+                  if (error instanceof SpotifyPlaylistMetadataLagError) {
+                    const pages = raw.pageReadOffsets.length;
+                    raw.reportedSnapshotId = null;
+                    vi.setSystemTime(error.checkNotBefore);
+                    expect(raw.pageReadOffsets.length).toBe(pages);
+                    continue;
+                  }
+                  if (error instanceof SpotifyEndpointBudgetError) {
+                    recovery.at = error.nextCapacityAt;
+                    break;
+                  }
+                  if (
+                    error instanceof Error &&
+                    error.message === "synthetic lost write acknowledgment"
+                  )
+                    continue;
+                  throw error;
+                }
+              }
+            },
+          );
+          // One simulated crash leaves no finish marker. A fresh owner must retain
+          // the same deadline, launch count, and wait reservations.
+          if (launch !== 0) episode.finish();
+          if (!recovery.at || !episode.recoveryWake(recovery.at)) break;
+          vi.setSystemTime(recovery.at.getTime() + 1);
+        }
+        const status = inspectMaintenanceEpisode(new Date(), {
+          directory,
+          processAlive: () => false,
+        });
+        expect(status.launches).toBeLessThanOrEqual(3);
+        expect(status.capacityWaitMs).toBeLessThanOrEqual(900_000);
+        expect(status.holdMs).toBeLessThanOrEqual(235 * 60_000);
+      }
+      expect(matched).toBe(17);
+      expect(initialPages).toBe(30);
+      expect(lagInjected && editInjected).toBe(true);
+      expect(raw.items).toHaveLength(1518);
+      expect(new Set(raw.items).size).toBe(1518);
+      expect(raw.items.slice(0, 17)).toEqual(fixture.providerTrackIds);
+      expect(raw.items.filter((id) => original.includes(id))).toEqual(original);
+      expect(
+        (await raw.getPlaylistItems())
+          .filter((item) => original.includes(item.trackId))
+          .map(({ trackId, addedAt, addedById }) => ({ trackId, addedAt, addedById })),
+      ).toEqual(originalProvenance);
+      expect(raw.addCalls.flatMap((call) => call.trackIds)).toHaveLength(17);
+      expect(raw.pageReadOffsets.filter((offset) => offset === 0).length).toBeLessThanOrEqual(5);
+      expect(totalUnits).toBeLessThan(100);
+      expect(
+        requestStarts.every(
+          (value, index) => index === 0 || value - requestStarts[index - 1]! >= 10_000,
+        ),
+      ).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 60_000);
 
   it("previews canonical exact and manual matches while caching the verified snapshot", async () => {
     const fixture = await createFixture({ includeIneligible: true, writeScope: false });
@@ -309,7 +565,9 @@ describe.sequential("Spotify canonical playlist export", () => {
         ).toBeLessThanOrEqual(3);
       } while (result.run.status !== "completed");
 
-      expect(invocationCount).toBe(Math.ceil(trackCount / 3) + 1);
+      expect(invocationCount).toBe(Math.ceil(trackCount / 3));
+      expect(client.itemReadCalls).toBe(1);
+      expect((await db.query.playlistTargets.findFirst())?.snapshotVerifiedAt).toBeNull();
       expect(runIds.size).toBe(1);
       expect(client.items).toEqual([...fixture.providerTrackIds, userTrack]);
       expect(new Set(client.items).size).toBe(client.items.length);
@@ -346,23 +604,16 @@ describe.sequential("Spotify canonical playlist export", () => {
     ).rejects.toMatchObject({ name: "SpotifyPlaylistSnapshotYieldError", nextOffset: 4 });
     const added = await executeSpotifyPlaylistExport(db, fixture.userId, client, input);
 
-    expect(added.run).toMatchObject({ additionsAttempted: 1, status: "partial" });
+    expect(added.run).toMatchObject({ additionsAttempted: 1, status: "completed" });
     expect(client.pageReadOffsets).toEqual([0, 2, 4]);
     expect(client.items).toEqual([fixture.providerTrackIds[0], ...existingTracks]);
-    await expect(
-      executeSpotifyPlaylistExport(db, fixture.userId, client, input),
-    ).rejects.toMatchObject({ name: "SpotifyPlaylistSnapshotYieldError", nextOffset: 2 });
-    await expect(
-      executeSpotifyPlaylistExport(db, fixture.userId, client, input),
-    ).rejects.toMatchObject({ name: "SpotifyPlaylistSnapshotYieldError", nextOffset: 4 });
     const completed = await executeSpotifyPlaylistExport(db, fixture.userId, client, input);
     expect(completed.run).toMatchObject({
       additionsAttempted: 0,
-      id: added.run.id,
       status: "completed",
     });
-    expect(client.pageReadOffsets).toEqual([0, 2, 4, 0, 2, 4]);
-    await expect(tableCount(providerCache)).resolves.toBe(0);
+    expect(client.pageReadOffsets).toEqual([0, 2, 4]);
+    expect((await db.query.playlistTargets.findFirst())?.snapshotVerifiedAt).toBeNull();
   });
 
   it("makes durable snapshot progress when only one playlist request is available per checkpoint", async () => {
@@ -386,7 +637,8 @@ describe.sequential("Spotify canonical playlist export", () => {
       playlistId: input.playlistId,
       policy: input.policy,
     });
-    expect(added.run).toMatchObject({ additionsAttempted: 1, status: "partial" });
+    expect(added.run).toMatchObject({ additionsAttempted: 1, status: "completed" });
+    client.externalInsert("8888888888888888888888", client.items.length);
     const playlistReadsBefore = client.playlistReadCalls;
     let completed: Awaited<ReturnType<typeof executeSpotifyPlaylistExport>> | null = null;
     let invocations = 0;
@@ -404,12 +656,11 @@ describe.sequential("Spotify canonical playlist export", () => {
 
     expect(completed?.run).toMatchObject({
       additionsAttempted: 0,
-      id: added.run.id,
       pending: 0,
       status: "completed",
     });
-    expect(invocations).toBe(5);
-    expect(client.pageReadOffsets).toEqual([0, 2, 4]);
+    expect(invocations).toBe(6);
+    expect(client.pageReadOffsets).toEqual([0, 2, 4, 6]);
     expect(client.playlistReadCalls - playlistReadsBefore).toBe(2);
     expect(client.profileReadCalls).toBe(0);
     expect(client.addCalls).toHaveLength(1);
@@ -443,7 +694,7 @@ describe.sequential("Spotify canonical playlist export", () => {
     expect(new Set(client.items).size).toBe(client.items.length);
   });
 
-  it("continues a partial reorder from its mutation snapshot while playlist metadata lags", async () => {
+  it("defers a partial reorder while a recorded predecessor snapshot is returned", async () => {
     const fixture = await createExactBatchFixture(10);
     const unmanagedTrack = "9999999999999999999999";
     const client = new FakePlaylistClient([
@@ -464,16 +715,16 @@ describe.sequential("Spotify canonical playlist export", () => {
     const pageReadsAfterFirstTick = client.pageReadOffsets.length;
     const itemMetadataAfterFirstTick = await loadPlaylistItemMetadata(fixture.userId);
 
-    client.reportedSnapshotId = "stale-playlist-metadata-snapshot";
-    const second = await executeSpotifyPlaylistExport(db, fixture.userId, client, input);
-
-    expect(second.run).toMatchObject({ id: first.run.id, resumed: true, status: "partial" });
+    client.reportedSnapshotId = "snapshot-1";
+    await expect(
+      executeSpotifyPlaylistExport(db, fixture.userId, client, input),
+    ).rejects.toMatchObject({ name: "SpotifyPlaylistMetadataLagError" });
     expect(client.pageReadOffsets).toHaveLength(pageReadsAfterFirstTick);
-    expect(client.reorderCalls).toBe(6);
+    expect(client.reorderCalls).toBe(3);
     expect(await loadPlaylistItemMetadata(fixture.userId)).toEqual(itemMetadataAfterFirstTick);
 
     client.reportedSnapshotId = null;
-    let completed = second;
+    let completed = first;
     while (completed.run.status !== "completed") {
       completed = await executeSpotifyPlaylistExport(db, fixture.userId, client, input);
     }
@@ -730,7 +981,7 @@ describe.sequential("Spotify canonical playlist export", () => {
     expect(client.addCalls).toEqual([{ position: 0, trackIds: [fixture.exactProviderTrackId] }]);
     expect(client.items).toEqual([fixture.exactProviderTrackId, userTrack]);
     expect(client.itemReadCalls).toBe(1);
-    expect(result.run.status).toBe("partial");
+    expect(result.run.status).toBe("completed");
     const completed = await executeSpotifyPlaylistExport(db, fixture.userId, client, {
       discoveryReconciliationCampaignId: campaignId,
       orderingPolicy: "release_date_custom_order",
@@ -746,7 +997,8 @@ describe.sequential("Spotify canonical playlist export", () => {
       orderingPolicy: "release_date_custom_order",
       status: "completed",
     });
-    expect(completed.run.id).toBe(result.run.id);
+    expect(completed.run.additionsAttempted).toBe(0);
+    expect(client.itemReadCalls).toBe(1);
   });
 });
 
@@ -889,6 +1141,7 @@ class FakePlaylistClient implements SpotifyPlaylistExportClient {
     const addedAt = this.addedAtByTrackId.get(trackId);
     return {
       ...(addedAt ? { addedAt } : {}),
+      addedById: "synthetic-owner",
       position,
       trackId,
     };

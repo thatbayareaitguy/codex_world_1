@@ -20,12 +20,41 @@ import {
   automaticPlaylistExportMaxAdditions,
   automaticPlaylistExportMaxMutations,
   automaticPlaylistExportMaxReadPages,
-  runAutomaticDiscoveryPlaylistExport,
+  runAutomaticDiscoveryPlaylistExport as executeAutomaticCheckpoint,
 } from "./spotify-playlist-export-runtime";
 
 const databaseUrl =
   process.env.TEST_DATABASE_URL ?? "postgres://radar:radar@127.0.0.1:5433/radar_test";
 const playlistId = "4l6LaMPL6duulmFe3hRR4Y";
+// These lifecycle tests inject both the ready work inspection and the export body.
+// The database playlist suite separately exercises real inspection and mutations.
+const runAutomaticDiscoveryPlaylistExport: typeof executeAutomaticCheckpoint = (
+  db,
+  config,
+  dependencies = {},
+) =>
+  executeAutomaticCheckpoint(db, config, {
+    ...dependencies,
+    inspectCheckpoint: () =>
+      Promise.resolve({
+        workKind: "mutations",
+        verificationPending: false,
+        uncertainOperationCount: 0,
+        oldestReadyAt: null,
+        flushDeadlineAt: null,
+        shouldDeliver: true,
+        checkNotBefore: null,
+        blockedCount: 0,
+        duplicateAppearanceCount: 0,
+        exportedCount: 0,
+        pendingAdditionCount: 3,
+        pendingOperationCount: 3,
+        reason: "pending_additions",
+        reorderMoveCount: 0,
+        shouldRun: true,
+        skippedCount: 0,
+      }),
+  });
 
 describe.sequential("automatic discovery playlist export", () => {
   const connection = createDatabase(databaseUrl);
@@ -153,7 +182,7 @@ describe.sequential("automatic discovery playlist export", () => {
     ).toMatchObject({ phase: "playlist_inbox", playlistInboxStatus: "exporting" });
   });
 
-  it("yields a partial export cleanly and resumes the same run on the next minute tick", async () => {
+  it("yields a partial export to matching and resumes the same run in another maintenance unit", async () => {
     await connection.db.insert(discoveryScheduleState).values({
       id: "global",
       phase: "playlist_inbox",
@@ -173,7 +202,7 @@ describe.sequential("automatic discovery playlist export", () => {
         where: eq(discoveryScheduleState.id, "global"),
       }),
     ).toMatchObject({
-      phase: "playlist_inbox",
+      phase: "broad_spotify",
       playlistInboxExportRunId: runId,
       playlistInboxStatus: "partial",
     });
@@ -181,6 +210,12 @@ describe.sequential("automatic discovery playlist export", () => {
 
     await expect(
       runAutomaticDiscoveryPlaylistExport(connection.db, configuration(), { executeExport }),
+    ).resolves.toMatchObject({ reason: "not_due" });
+    await expect(
+      runAutomaticDiscoveryPlaylistExport(connection.db, configuration(), {
+        executeExport,
+        deliveryOnly: true,
+      }),
     ).resolves.toMatchObject({ reason: "completed", runId });
     expect(executeExport).toHaveBeenCalledTimes(2);
     expect(executeExport).toHaveBeenNthCalledWith(
@@ -354,7 +389,7 @@ describe.sequential("automatic discovery playlist export", () => {
       await connection.db.query.discoveryScheduleState.findFirst({
         where: eq(discoveryScheduleState.id, "global"),
       }),
-    ).toMatchObject({ phase: "cooldown_wait", playlistInboxStatus: "partial" });
+    ).toMatchObject({ phase: "broad_spotify", playlistInboxStatus: "partial" });
   });
 
   it("treats a bounded snapshot-page yield as resumable rather than failed", async () => {
@@ -374,7 +409,7 @@ describe.sequential("automatic discovery playlist export", () => {
       await connection.db.query.discoveryScheduleState.findFirst({
         where: eq(discoveryScheduleState.id, "global"),
       }),
-    ).toMatchObject({ phase: "playlist_inbox", playlistInboxStatus: "partial" });
+    ).toMatchObject({ phase: "broad_spotify", playlistInboxStatus: "partial" });
     expect(await connection.db.select().from(operationLocks)).toHaveLength(0);
   });
 
@@ -406,7 +441,7 @@ describe.sequential("automatic discovery playlist export", () => {
         where: eq(discoveryScheduleState.id, "global"),
       }),
     ).toMatchObject({
-      phase: "playlist_inbox",
+      phase: "broad_spotify",
       playlistInboxExportRunId: runId,
       playlistInboxStatus: "partial",
     });

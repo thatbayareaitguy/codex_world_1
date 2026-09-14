@@ -1,9 +1,78 @@
 # AI Handoff
 
-Updated: 2026-09-13 01:33 PDT
+Updated: 2026-09-13 17:47 PDT
 
 The dated sections below retain point-in-time evidence. This first section is the current operational
 record and supersedes older sections wherever counts, task state, or remaining verification differ.
+
+## Weekly Delivery And Sleep Repair (2026-09-13)
+
+- Started from `783e5ad8a8a4bd3897bed5a3523303cc14b2ffb5`, two commits ahead of upstream
+  `42dbe75`. Preserve `52ffc20` and `783e5ad`; unrelated `outputs/` remains excluded.
+- The two discovery tasks were disabled at approximately 16:40 PDT with no active provider
+  executor. Both discovery tasks were re-enabled at 17:37 PDT after validation. The web watchdog
+  remains awake-only. No provider request, playlist write, environment-file edit, or
+  power-setting change was made for this repair's tests.
+- Verified custom-format production backup:
+  `C:\Users\taysh\AppData\Local\TSNewMusicRadar\backups\ts-new-music-radar-2026-09-14T00-35-02-543Z.dump`.
+  Size 49,347,845 bytes; SHA-256
+  `1c57f81d1b024e412ead4040384fed9a5508f524343d734eb3d3c3e7653177b3`.
+  `pg_restore --list` completed successfully. No database restoration or queue reset was performed.
+- Sanitized production evidence at 17:31 PDT: latest Thursday cycle has 81 canonical tracks,
+  19 with a targeted matching attempt this cycle, 45 with queued/leased/blocked matching work,
+  and 44 of those without an attempt. Oldest waiting work was created September 11 at 17:27 PDT.
+  These are track-work counts, not artist scan counts or new playlist additions.
+- Delivery inspection: zero additions, zero reorder moves, zero pending operations, zero uncertain
+  writes; routine reconciliation only. It finds 1,369 eligible appearances already represented in
+  the cache, not 1,369 newly added tracks. Global blocked count 161 is not the weekly backlog.
+  Last 24 hours: 776 playlist reads (one 429), 37 playlist writes, 80 OAuth/other requests. Last
+  Spotify request remains 12:33 PDT; persisted cooldown ends 17:55:51 PDT. Zero operation locks.
+- Repairs separate mutation/uncertain/verification queues, alternate bounded matching and delivery,
+  flush small batches after ten minutes, and atomically preserve acknowledged deltas and history.
+  Routine verification runs only with spare capacity in an active maintenance window. Snapshot
+  equality is not a full readback; added-at/by provenance remains unverified until reconciliation.
+- Fixed Pacific windows are unchanged. Initial plus at most two recovery launches share the
+  original fixed-window 3h55 deadline and cumulative 15-minute capacity-wait allowance. The durable
+  filesystem episode ledger counts failed startups and crashes. Coordinator dispatch and deadman
+  retries cannot renew it. Maintenance's unmanaged Windows restart count is removed. Ordinary
+  broad backlog and routine verification do not create dynamic wakes.
+- The historical four-hour, one-tick run entered playlist work after its capacity wait. Existing
+  logs do not identify the exact stalled await. Proven code gaps were missing inherited cancellation
+  across API/OAuth/gates and an unbounded task-update subprocess. Requests and gate waits now share
+  owner cancellation; maintenance DB statements and closes are bounded. Helpers check release,
+  parent liveness, and an absolute deadline before and after compilation, preventing late activation.
+- Test proof: formatting, lint, type checking, 632 unit tests, 210 PostgreSQL integration tests, production build,
+  and 37 Chromium tests passed. The synthetic 1,500-item Thu/Fri component simulation uses the real
+  configured Spotify database gate, bounded batches, persisted matching turns, cursor recovery,
+  a simulated crash, known metadata lag, an external edit, and an uncertain write response. It
+  asserts no duplicates, no replay of acknowledged additions, preserved original provenance,
+  matching/delivery progress, ten-second request starts, and bounded launch/hold/wait counts.
+  Episode and helper tests cover repeated dispatch, deadline exhaustion, and activation failures.
+- Deployment readback: all three application tasks enabled, direct `conhost.exe` actions, five
+  unchanged maintenance trigger groups, `WakeToRun` false for minute coordinator and web watchdog,
+  true for maintenance; maintenance `RestartCount=0`, execution limit `PT4H`. No temporary trigger
+  remains. Next maintenance is September 13 at 20:50 PDT. The rebuilt loopback health endpoint
+  responds and the live history UI shows weekly matching and separate verification status.
+- Natural coordinator proof at 17:41 PDT: completed without error, `dispatchedToMaintenance=false`,
+  no recovery wake, no provider request. The installed episode ledger begins with this deployment;
+  its zero hold/wait totals do not retroactively describe older incident runs. A live UI check also
+  corrected zero-duration rounding and made dispatch diagnostics reflect the episode gate result.
+- Production-config doctor confirms DB connectivity, all 31 migrations, available credentials
+  without revealing them, and no stale locks. The known finite Spotify cooldown is expected and
+  untouched. Direct Node invocation cannot infer pnpm's user-agent version; `pnpm --version`
+  independently confirms 11.9.0. Do not confuse default `.env` doctor capability flags with the
+  protected scheduled-task environment overlay.
+- Final loopback health and live UI readback at 17:47 PDT passed, including explicit zero-minute
+  hold/wait values. Automatic permission review rejected the combined commit/push command before
+  execution, citing publication of private code to an unverified remote. Read-only checks confirm
+  the existing origin is `https://github.com/thatbayareaitguy/codex_world_1.git` and the current branch
+  tracks `origin/codex/release-radar-hardening`. No files were staged and no new commit or push
+  occurred in that rejected attempt. The owner subsequently explicitly approved committing and
+  pushing the repair and both preserved commits to that repository and branch.
+- Pending: authorized commit/push and natural unattended maintenance evidence. No synthetic test proves actual Windows wake/sleep
+  behavior or a future unattended Thursday/Friday cycle. Rollback instructions are in
+  `docs/local-development.md`; preserve current DB/write history/cooldowns and the episode ledger,
+  never restore a stale DB as a code rollback.
 
 ## Cross-Artist Release Review Correction (2026-09-13)
 

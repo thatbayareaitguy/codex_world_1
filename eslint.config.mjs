@@ -6,6 +6,7 @@ export default tseslint.config(
     ignores: [
       "**/.next/**",
       "**/.next-e2e/**",
+      "**/.next-verify/**",
       "**/dist/**",
       "**/coverage/**",
       "outputs/**",

@@ -6,17 +6,20 @@ import {
   reconcileDiscoveryScheduleAfterCooldown,
   reconcileDiscoverySchedulePriorityPhase,
 } from "@radar/db";
-import { loadProviderConfiguration } from "@radar/providers";
+import {
+  loadProviderConfiguration,
+  withProviderExecutionBudget,
+  providerCancellableDelay,
+} from "@radar/providers";
 import { randomUUID } from "node:crypto";
+import { claimMaintenanceEpisode } from "./maintenance-episode";
 import {
   decideDiscoveryMaintenance,
   maintenanceDatabaseReadinessTimeoutMs,
   maintenanceDatabaseRetryIntervalMs,
-  maintenanceHardTerminationRecoveryDelayMs,
   maintenanceMaximumRuntimeMs,
   maintenanceMinimumAppleRuntimeMs,
   maintenanceMinimumProviderRuntimeMs,
-  maintenanceShutdownGraceMs,
   maintenanceStartupRecoveryDelayMs,
   maintenanceTaskExecutionLimitMs,
   type DiscoveryMaintenanceDecision,
@@ -61,82 +64,137 @@ export async function runDiscoveryMaintenanceWindow(
   const runId = dependencies.runId ?? randomUUID();
   const startedAt = now();
   const lifecycle = createMaintenanceLifecycleDiagnostics(runId, startedAt);
-  const maximumRuntimeMs = dependencies.maximumRuntimeMs ?? maintenanceMaximumRuntimeMs;
-  const powerRequestMaximumRuntimeMs = Math.min(
-    maintenanceTaskExecutionLimitMs,
-    maximumRuntimeMs + maintenanceShutdownGraceMs,
+  const episode = claimMaintenanceEpisode(runId, { now });
+  if (!episode) {
+    lifecycle.finish({ finalReason: "episode_deferred", finishedAt: now(), ticks: 0 });
+    return {
+      finalReason: "episode_deferred",
+      finishedAt: now().toISOString(),
+      startedAt: startedAt.toISOString(),
+      ticks: 0,
+    };
+  }
+  const maximumRuntimeMs = Math.min(
+    dependencies.maximumRuntimeMs ?? maintenanceMaximumRuntimeMs,
+    episode.deadlineAt.getTime() - startedAt.getTime(),
   );
-  const updateStartupRecoveryWake =
-    dependencies.updateStartupRecoveryWake ?? updateWindowsStartupRecoveryWake;
-  return executeDiscoveryMaintenanceWindow({
-    close: (connection: ReturnType<typeof createDatabase>) => connection.client.end(),
-    hardTerminationRecoveryAt: new Date(
-      startedAt.getTime() + maintenanceHardTerminationRecoveryDelayMs,
-    ),
-    lifecycle,
-    now,
-    prepare: () =>
-      prepareDiscoveryMaintenanceStartup<
-        ReturnType<typeof loadProviderConfiguration>,
-        ReturnType<typeof createDatabase>
-      >({
-        acquirePower: dependencies.acquirePower ?? acquireWindowsSystemPowerRequest,
-        close: (candidate) => candidate.client.end(),
-        inspectDocker: dependencies.inspectDocker ?? (() => inspectDockerDatabaseAvailability()),
-        lifecycle,
-        loadConfiguration: () => {
-          const configuration = loadProviderConfiguration();
-          if (!configuration.databaseUrl) throw new Error("DATABASE_URL is required.");
-          if (!configuration.discoverySchedulerEnabled) {
-            throw new Error("Recurring discovery execution is disabled.");
-          }
-          return configuration;
-        },
-        maximumRuntimeMs: powerRequestMaximumRuntimeMs,
-        now,
-        open: (configuration) => createDatabase(configuration.databaseUrl),
-        probe: async (candidate) => {
-          await candidate.client.unsafe("select 1 as ready");
-        },
-        readinessTimeoutMs:
-          dependencies.databaseReadinessTimeoutMs ?? maintenanceDatabaseReadinessTimeoutMs,
-        retryIntervalMs: dependencies.databaseRetryIntervalMs ?? maintenanceDatabaseRetryIntervalMs,
-        runId,
-        sleep: dependencies.sleep ?? wait,
-        updateStartupRecoveryWake,
-      }),
-    runLoop: (startup) =>
-      runDiscoveryMaintenanceLoop({
-        acquirePower: acquireWindowsSystemPowerRequest,
-        initialPowerRequest: startup.powerRequest,
-        maximumRuntimeMs,
-        lifecycle,
-        now,
-        observe: async (observedAt) => {
-          await reconcileDiscoveryScheduleAfterCooldown(startup.connection.db, observedAt);
-          await reconcileDiscoverySchedulePriorityPhase(startup.connection.db, observedAt);
-          const [apple, discovery, spotify] = await Promise.all([
-            getAppleMusicOperationalStatus(startup.connection.db, observedAt),
-            getRecurringDiscoveryScheduleStatus(startup.connection.db, observedAt),
-            getSpotifySchedulerStatus(startup.connection.db, observedAt),
-          ]);
-          return decideDiscoveryMaintenance({ apple, discovery, spotify }, observedAt);
-        },
-        runTick: ({ deadlineAt, remainingRuntimeMs }) =>
-          runDiscoverySchedulerTick(startup.connection.db, startup.configuration, {
-            appleMusicMaximumRuntimeMs: Math.max(60_000, remainingRuntimeMs - 60_000),
-            playlistDeadlineAt: deadlineAt,
-            priorityMaximumItems: 1,
-          }),
-        releasePower: false,
-        sleep: dependencies.sleep ?? wait,
-        startedAt,
-        updateStartupRecoveryWake,
-        updateWake: updateWindowsMaintenanceWake,
-        runId,
-      }),
-    updateStartupRecoveryWake,
-  });
+  const powerRequestMaximumRuntimeMs = Math.min(maintenanceTaskExecutionLimitMs, maximumRuntimeMs);
+  const updateStartupRecoveryWake = (requested: Date | null) =>
+    (dependencies.updateStartupRecoveryWake ?? updateWindowsStartupRecoveryWake)(
+      episode.recoveryWake(requested),
+    );
+  const controller = new AbortController();
+  const boundedLifecycle: MaintenanceLifecycleDiagnostics = {
+    ...lifecycle,
+    startupRecoveryWake: (event) => {
+      const scheduledFor = episode.recoveryWake(event.scheduledFor);
+      lifecycle.startupRecoveryWake({
+        ...event,
+        scheduledFor,
+        state: event.state === "failed" ? "failed" : scheduledFor ? "scheduled" : "cleared",
+      });
+    },
+  };
+  const acquirePower: typeof acquireWindowsSystemPowerRequest = (milliseconds, context = {}) =>
+    (dependencies.acquirePower ?? acquireWindowsSystemPowerRequest)(milliseconds, {
+      ...context,
+      deadlineAt: episode.deadlineAt,
+    });
+  const deadlineTimer = setTimeout(
+    () => controller.abort(new Error("Maintenance episode deadline reached.")),
+    maximumRuntimeMs,
+  );
+  try {
+    return await withProviderExecutionBudget(
+      { signal: controller.signal, reserveCapacityWait: episode.reserveWait },
+      () =>
+        executeDiscoveryMaintenanceWindow({
+          close: (connection: ReturnType<typeof createDatabase>) =>
+            connection.client.end({ timeout: 5 }),
+          // Arm an in-episode deadman. The minute coordinator can also recover a dead
+          // owner, but neither path can renew the original episode allowance.
+          hardTerminationRecoveryAt: new Date(
+            startedAt.getTime() + maintenanceStartupRecoveryDelayMs,
+          ),
+          lifecycle: boundedLifecycle,
+          now,
+          prepare: () =>
+            prepareDiscoveryMaintenanceStartup<
+              ReturnType<typeof loadProviderConfiguration>,
+              ReturnType<typeof createDatabase>
+            >({
+              acquirePower,
+              close: (candidate) => candidate.client.end({ timeout: 5 }),
+              inspectDocker:
+                dependencies.inspectDocker ?? (() => inspectDockerDatabaseAvailability()),
+              lifecycle: boundedLifecycle,
+              loadConfiguration: () => {
+                const configuration = loadProviderConfiguration();
+                if (!configuration.databaseUrl) throw new Error("DATABASE_URL is required.");
+                if (!configuration.discoverySchedulerEnabled) {
+                  throw new Error("Recurring discovery execution is disabled.");
+                }
+                return configuration;
+              },
+              maximumRuntimeMs: powerRequestMaximumRuntimeMs,
+              now,
+              open: (configuration) =>
+                createDatabase(configuration.databaseUrl, { statementTimeoutMs: 30_000 }),
+              probe: async (candidate) => {
+                await candidate.client.unsafe("select 1 as ready");
+              },
+              readinessTimeoutMs:
+                dependencies.databaseReadinessTimeoutMs ?? maintenanceDatabaseReadinessTimeoutMs,
+              retryIntervalMs:
+                dependencies.databaseRetryIntervalMs ?? maintenanceDatabaseRetryIntervalMs,
+              runId,
+              sleep: dependencies.sleep ?? wait,
+              updateStartupRecoveryWake,
+            }),
+          runLoop: (startup) =>
+            runDiscoveryMaintenanceLoop({
+              acquirePower,
+              initialPowerRequest: startup.powerRequest,
+              maximumRuntimeMs,
+              lifecycle: boundedLifecycle,
+              now,
+              observe: async (observedAt) => {
+                await reconcileDiscoveryScheduleAfterCooldown(startup.connection.db, observedAt);
+                await reconcileDiscoverySchedulePriorityPhase(startup.connection.db, observedAt);
+                const [apple, discovery, spotify] = await Promise.all([
+                  getAppleMusicOperationalStatus(startup.connection.db, observedAt),
+                  getRecurringDiscoveryScheduleStatus(startup.connection.db, observedAt),
+                  getSpotifySchedulerStatus(startup.connection.db, observedAt),
+                ]);
+                return decideDiscoveryMaintenance({ apple, discovery, spotify }, observedAt, {
+                  allowRoutineVerification: true,
+                });
+              },
+              runTick: ({ deadlineAt, remainingRuntimeMs, reason }) =>
+                runDiscoverySchedulerTick(startup.connection.db, startup.configuration, {
+                  appleMusicMaximumRuntimeMs: Math.max(60_000, remainingRuntimeMs - 60_000),
+                  playlistDeadlineAt: deadlineAt,
+                  priorityMaximumItems: 1,
+                  verificationOnly:
+                    reason === "routine_verification" || reason === "playlist_reconciliation",
+                }),
+              releasePower: false,
+              sleep: dependencies.sleep ?? wait,
+              startedAt,
+              updateStartupRecoveryWake,
+              updateWake: (requested) =>
+                updateWindowsMaintenanceWake(episode.recoveryWake(requested)),
+              reserveWait: episode.reserveWait,
+              runId,
+            }),
+          updateStartupRecoveryWake,
+        }),
+    );
+  } finally {
+    clearTimeout(deadlineTimer);
+    controller.abort(new Error("Maintenance owner exited."));
+    episode.finish();
+  }
 }
 
 export async function executeDiscoveryMaintenanceWindow<Configuration, Connection, Result>(input: {
@@ -301,12 +359,17 @@ export async function runDiscoveryMaintenanceLoop(input: {
   now: () => Date;
   observe: (now: Date) => Promise<DiscoveryMaintenanceDecision>;
   releasePower?: boolean;
-  runTick: (context: { deadlineAt: Date; remainingRuntimeMs: number }) => Promise<unknown>;
+  runTick: (context: {
+    deadlineAt: Date;
+    remainingRuntimeMs: number;
+    reason: DiscoveryMaintenanceDecision["reason"];
+  }) => Promise<unknown>;
   sleep: (milliseconds: number) => Promise<void>;
   startedAt?: Date;
   updateWake: (wakeAt: Date | null) => Promise<void>;
   updateStartupRecoveryWake?: (wakeAt: Date | null) => Promise<void>;
   runId?: string;
+  reserveWait?: (milliseconds: number) => void;
 }) {
   const startedAt = input.startedAt ?? input.now();
   const runId = input.runId ?? randomUUID();
@@ -365,7 +428,9 @@ export async function runDiscoveryMaintenanceLoop(input: {
           // gate waits stay under the active keep-awake owner without rewriting the task trigger.
           await input.updateWake(decision.waitUntil);
         }
-        await input.sleep(Math.max(1_000, Math.min(60_000, waitMs)));
+        const sleepMs = Math.max(1_000, Math.min(60_000, waitMs));
+        input.reserveWait?.(sleepMs);
+        await input.sleep(sleepMs);
         continue;
       }
       await input.updateWake(decision.dynamicWakeAt);
@@ -381,7 +446,7 @@ export async function runDiscoveryMaintenanceLoop(input: {
         break;
       }
       try {
-        await input.runTick({ deadlineAt: deadline, remainingRuntimeMs });
+        await input.runTick({ deadlineAt: deadline, remainingRuntimeMs, reason: decision.reason });
         ticks += 1;
       } catch (error) {
         if (!isExpectedMaintenanceContention(error)) throw error;
@@ -389,6 +454,7 @@ export async function runDiscoveryMaintenanceLoop(input: {
           phase: "live_owner_wait",
           reason: "maintenance_operation_contention",
         });
+        input.reserveWait?.(30_000);
         await input.sleep(30_000);
         continue;
       }
@@ -441,7 +507,7 @@ export function isExpectedMaintenanceContention(error: unknown): boolean {
 }
 
 function wait(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+  return providerCancellableDelay(milliseconds);
 }
 
 function classifyStartupError(error: unknown): string {

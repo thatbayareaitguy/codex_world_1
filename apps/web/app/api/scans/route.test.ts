@@ -1,5 +1,16 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type * as MaintenanceModule from "../../../../scanner/src/discovery-maintenance";
+vi.mock("../../../../scanner/src/discovery-maintenance", async (importOriginal) => ({
+  ...(await importOriginal<typeof MaintenanceModule>()),
+  decideDiscoveryMaintenance: () => ({
+    runNow: false,
+    holdPower: false,
+    dynamicWakeAt: null,
+    waitUntil: null,
+    reason: "no_work",
+  }),
+}));
 
 const {
   end,

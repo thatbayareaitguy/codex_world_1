@@ -140,7 +140,10 @@ export async function loadDatabaseFeedPage(
             )
           END) AS "needs_review",
           count(*) FILTER (
-            WHERE "feed_items"."state" = 'upcoming'
+            WHERE ("feed_items"."state" = 'upcoming' OR (
+              "feed_items"."state" = 'needs_review' AND
+              COALESCE("releases"."release_date", "release_candidates"."release_date") >
+              (current_timestamp AT TIME ZONE 'America/Los_Angeles')::date))
               AND COALESCE("releases"."release_date", "release_candidates"."release_date")
               BETWEEN current_date AND current_date + 30
           ) AS "upcoming"
@@ -222,6 +225,10 @@ async function selectFeedGroups(
     clauses.push(`("feed"."saved_at" IS NOT NULL OR "feed"."state" = 'saved')`);
   } else if (filters.state === "listened") {
     clauses.push(`("feed"."listened_at" IS NOT NULL OR "feed"."state" = 'listened')`);
+  } else if (filters.state === "upcoming") {
+    clauses.push(`("feed"."state" = 'upcoming' OR ("feed"."state" = 'needs_review' AND
+      COALESCE("release"."release_date", "candidate"."release_date") >
+      (current_timestamp AT TIME ZONE 'America/Los_Angeles')::date))`);
   } else if (filters.state) {
     clauses.push(`"feed"."state" = ${bind(filters.state)}::feed_state`);
   }

@@ -282,7 +282,41 @@ interface DiscoveryScheduleJobStatus {
   status: "scheduled" | "leased" | "completed" | "failed" | "expired";
 }
 
+function isUpcomingFeedItem(item: FeedFixtureItem): boolean {
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  return item.state === "upcoming" || (item.state === "needs_review" && item.releaseDate > today);
+}
+
 interface DiscoveryScheduleStatus {
+  weeklyMatching?:
+    | {
+        scheduledFor: string | null;
+        totalTracks: number;
+        attemptedTracks: number;
+        unattemptedWaitingTracks: number;
+        waitingTracks: number;
+        oldestWaitingAt: string | null;
+      }
+    | undefined;
+  maintenanceEpisode?:
+    | {
+        nextFixedWakeAt: string;
+        nextAllowedWakeAt?: string | null | undefined;
+        deadlineAt: string;
+        launches: number;
+        recoveryLaunches: number;
+        capacityWaitMs: number;
+        holdMs: number;
+        allowed: boolean;
+        reason: string;
+      }
+    | null
+    | undefined;
   catchup: { latest: DiscoveryScheduleJobStatus | null; next: DiscoveryScheduleJobStatus | null };
   full: { latest: DiscoveryScheduleJobStatus | null; next: DiscoveryScheduleJobStatus | null };
   phase:
@@ -294,6 +328,20 @@ interface DiscoveryScheduleStatus {
     | "broad_spotify"
     | "weekly_apple";
   playlistInbox: {
+    delivery?:
+      | {
+          workKind: string;
+          pendingAdditionCount: number;
+          pendingOperationCount: number;
+          reorderMoveCount: number;
+          uncertainOperationCount: number;
+          verificationPending: boolean;
+          oldestReadyAt: string | null;
+          flushDeadlineAt: string | null;
+          checkNotBefore: string | null;
+        }
+      | null
+      | undefined;
     exportRunId: string | null;
     pendingCount: number;
     status: "pending" | "ready" | "exporting" | "partial" | "completed" | "failed";
@@ -793,7 +841,9 @@ export function RadarShell({
             ? item.saved
             : activeFilter === "listened"
               ? item.listened
-              : item.state === activeFilter);
+              : activeFilter === "upcoming"
+                ? isUpcomingFeedItem(item)
+                : item.state === activeFilter);
         const queryMatches =
           !normalizedQuery ||
           `${item.artist} ${item.title} ${item.releaseTitle}`
@@ -2076,6 +2126,56 @@ function FeedView({
                     operations {discoverySchedule.playlistInbox.pendingCount}
                   </dd>
                 </div>
+              </dl>
+              <dl className="spotify-scan-grid scheduler-status-grid">
+                {discoverySchedule.playlistInbox.delivery && (
+                  <div>
+                    <dt>Delivery and verification</dt>
+                    <dd>
+                      {discoverySchedule.playlistInbox.delivery.pendingAdditionCount} additions,{" "}
+                      {discoverySchedule.playlistInbox.delivery.reorderMoveCount} reorder moves,{" "}
+                      {discoverySchedule.playlistInbox.delivery.uncertainOperationCount} uncertain
+                      writes. Verification:{" "}
+                      {discoverySchedule.playlistInbox.delivery.verificationPending
+                        ? "pending, awake-window only"
+                        : "current"}
+                      .
+                    </dd>
+                  </div>
+                )}
+                {discoverySchedule.weeklyMatching && (
+                  <div>
+                    <dt>Weekly track matching</dt>
+                    <dd>
+                      {discoverySchedule.weeklyMatching.attemptedTracks} attempted this cycle;{" "}
+                      {discoverySchedule.weeklyMatching.unattemptedWaitingTracks} waiting without an
+                      attempt; {discoverySchedule.weeklyMatching.waitingTracks} waiting total.
+                      {discoverySchedule.weeklyMatching.oldestWaitingAt &&
+                        ` Oldest waiting since ${new Date(discoverySchedule.weeklyMatching.oldestWaitingAt).toLocaleString()}.`}
+                    </dd>
+                  </div>
+                )}
+                {discoverySchedule.maintenanceEpisode && (
+                  <div>
+                    <dt>Maintenance sleep limits</dt>
+                    <dd>
+                      Recovery launches {discoverySchedule.maintenanceEpisode.recoveryLaunches}/2.
+                      Cumulative hold (conservative):{" "}
+                      {discoverySchedule.maintenanceEpisode.holdMs === 0
+                        ? "0 min"
+                        : formatDuration(discoverySchedule.maintenanceEpisode.holdMs)}
+                      ; capacity wait:{" "}
+                      {discoverySchedule.maintenanceEpisode.capacityWaitMs === 0
+                        ? "0 min"
+                        : formatDuration(discoverySchedule.maintenanceEpisode.capacityWaitMs)}{" "}
+                      / 15 minutes.
+                      {` Episode deadline: ${new Date(discoverySchedule.maintenanceEpisode.deadlineAt).toLocaleString()}. Next allowed wake: ${new Date(discoverySchedule.maintenanceEpisode.nextAllowedWakeAt ?? discoverySchedule.maintenanceEpisode.nextFixedWakeAt).toLocaleString()}. `}
+                      {discoverySchedule.maintenanceEpisode.allowed
+                        ? "An in-episode recovery is permitted for substantive work."
+                        : `Recovery unavailable: ${titleCase(discoverySchedule.maintenanceEpisode.reason)}.`}
+                    </dd>
+                  </div>
+                )}
               </dl>
               <small>
                 Full scan: Thursday 9:00 PM. Catch-up: Friday 9:00 AM. Times use America/Los_Angeles
@@ -6895,6 +6995,30 @@ const discoveryScheduleJobSchema = z.object({
 });
 
 const discoveryScheduleStatusSchema = z.object({
+  weeklyMatching: z
+    .object({
+      scheduledFor: z.string().nullable(),
+      totalTracks: z.number(),
+      attemptedTracks: z.number(),
+      unattemptedWaitingTracks: z.number(),
+      waitingTracks: z.number(),
+      oldestWaitingAt: z.string().nullable(),
+    })
+    .optional(),
+  maintenanceEpisode: z
+    .object({
+      nextAllowedWakeAt: z.string().nullable().optional(),
+      nextFixedWakeAt: z.string(),
+      deadlineAt: z.string(),
+      launches: z.number(),
+      recoveryLaunches: z.number(),
+      capacityWaitMs: z.number(),
+      holdMs: z.number(),
+      allowed: z.boolean(),
+      reason: z.string(),
+    })
+    .nullable()
+    .optional(),
   catchup: z.object({
     latest: discoveryScheduleJobSchema.nullable(),
     next: discoveryScheduleJobSchema.nullable(),
@@ -6913,6 +7037,20 @@ const discoveryScheduleStatusSchema = z.object({
     "weekly_apple",
   ]),
   playlistInbox: z.object({
+    delivery: z
+      .object({
+        workKind: z.string(),
+        pendingAdditionCount: z.number(),
+        pendingOperationCount: z.number(),
+        reorderMoveCount: z.number(),
+        uncertainOperationCount: z.number(),
+        verificationPending: z.boolean(),
+        oldestReadyAt: z.string().nullable(),
+        flushDeadlineAt: z.string().nullable(),
+        checkNotBefore: z.string().nullable(),
+      })
+      .nullable()
+      .optional(),
     exportRunId: z.string().uuid().nullable(),
     pendingCount: z.number().int().nonnegative(),
     status: z.enum(["pending", "ready", "exporting", "partial", "completed", "failed"]),
@@ -7281,6 +7419,9 @@ function FeedItem({
                   <span className={`state state-${item.state}`}>{stateLabel}</span>
                 )}
                 {item.saved && item.state !== "saved" && <span className="state-saved">Saved</span>}
+                {item.state === "needs_review" && isUpcomingFeedItem(item) && (
+                  <span className="state state-upcoming">Upcoming</span>
+                )}
                 {item.listened && item.state !== "listened" && (
                   <span className="state-listened">Listened</span>
                 )}

@@ -10,6 +10,25 @@ import {
 } from "./spotify-playlist";
 
 describe("Spotify playlist planning", () => {
+  it("blocks future releases even with manual confirmation or needs-review state", () => {
+    for (const feedState of ["new", "upcoming", "needs_review"] as const) {
+      const plan = planSpotifyPlaylistExport(
+        [
+          candidate("future", "0000000000000000000001", {
+            releaseDate: "2026-09-18",
+            manuallyConfirmed: true,
+            feedState,
+          }),
+        ],
+        [],
+        new Set(),
+        "release_date_custom_order",
+        new Date("2026-09-18T06:59:00Z"),
+      );
+      expect(plan.additions).toHaveLength(0);
+      expect(plan.skips[0]?.reason).toBe("upcoming");
+    }
+  });
   it("deduplicates exact matches and rejects ambiguous tracks", () => {
     const plan = planSpotifyPlaylistSync(
       [

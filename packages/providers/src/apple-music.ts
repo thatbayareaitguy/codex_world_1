@@ -7,6 +7,7 @@ import {
 } from "@radar/core";
 import { createHash, createPrivateKey, sign, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { providerCancellableDelay, providerExecutionSignal } from "./execution-budget";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import type { DiscoveryProvider, ScanContext } from "./contracts";
@@ -884,6 +885,7 @@ export class AppleMusicClient {
     signal?: AbortSignal,
     identityScope = "catalog",
   ): Promise<T> {
+    signal = providerExecutionSignal(signal);
     this.assertEnabled();
     assertAllowedAppleMusicUrl(url, this.storefront, {
       fieldPath: "request.target",
@@ -903,6 +905,7 @@ export class AppleMusicClient {
     }
     let lastError: unknown;
     for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
+      providerExecutionSignal(signal);
       this.assertBudgets();
       const permit = await this.options.persistence.acquire({
         endpointCategory,
@@ -963,7 +966,7 @@ export class AppleMusicClient {
           );
           if (response.status >= 500 && attempt < this.maxRetries) {
             lastError = error;
-            await this.sleep(
+            await (signal ? (ms: number) => providerCancellableDelay(ms, signal) : this.sleep)(
               retryAfterSeconds === undefined ? 250 * 2 ** attempt : retryAfterSeconds * 1_000,
             );
             continue;
@@ -1021,6 +1024,7 @@ export class AppleMusicClient {
     );
     const onAbort = () => controller.abort(signal?.reason);
     signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
     const cleanup = () => {
       clearTimeout(timeout);
       signal?.removeEventListener("abort", onAbort);

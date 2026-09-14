@@ -7,6 +7,8 @@ import {
   executeSpotifyPlaylistExport,
   guardSpotifyPlaylistWriterClient,
   inspectSpotifyPlaylistCheckpoint,
+  verifySpotifyPlaylistCheckpoint,
+  deferSpotifyPlaylistCheckpoint,
   loadResumableSpotifyPlaylistExportRunId,
   maximumSpotifyPlaylistCapacityWaitMs,
   markDiscoveryPlaylistInboxStatus,
@@ -19,6 +21,7 @@ import {
   SpotifyEndpointBudgetError,
   SpotifyRequestDeadlineError,
   SpotifyPlaylistSnapshotYieldError,
+  SpotifyPlaylistMetadataLagError,
   type RadarDatabase,
   type SpotifyPlaylistWriterProcessLiveness,
 } from "@radar/db";
@@ -104,6 +107,9 @@ export async function runAutomaticDiscoveryPlaylistExport(
   db: RadarDatabase,
   configuration: ProviderConfiguration,
   dependencies: {
+    verificationOnly?: boolean;
+    deliveryOnly?: boolean;
+    inspectCheckpoint?: typeof inspectSpotifyPlaylistCheckpoint;
     executeExport?: typeof executeSpotifyPlaylistExport;
     deadlineAt?: Date;
     inspectProcess?: (pid: number) => SpotifyPlaylistWriterProcessLiveness;
@@ -167,10 +173,13 @@ export async function runAutomaticDiscoveryPlaylistExport(
   let currentExportRunId: string | null = null;
   let userId: string | null = null;
   try {
-    const claimed = await claimAutomaticDiscoveryPlaylistInboxExport(db);
+    const claimed =
+      dependencies.verificationOnly ||
+      dependencies.deliveryOnly ||
+      (await claimAutomaticDiscoveryPlaylistInboxExport(db));
     if (!claimed) return { reason: "not_due" as const };
     userId = await ensureLocalOwner(db);
-    const inspection = await inspectSpotifyPlaylistCheckpoint(
+    const inspection = await (dependencies.inspectCheckpoint ?? inspectSpotifyPlaylistCheckpoint)(
       db,
       userId,
       configuration.spotify.allowedPlaylistId,
@@ -178,6 +187,13 @@ export async function runAutomaticDiscoveryPlaylistExport(
     if (!inspection.shouldRun) {
       await markDiscoveryPlaylistInboxStatus(db, { status: "completed" });
       return { inspection, reason: "no_changes" as const };
+    }
+    if (
+      (!dependencies.verificationOnly && !inspection.shouldDeliver) ||
+      (inspection.checkNotBefore && new Date(inspection.checkNotBefore) > now)
+    ) {
+      await markDiscoveryPlaylistInboxStatus(db, { status: "partial", yieldToMatching: true });
+      return { reason: "not_due" as const, inspection };
     }
     currentExportRunId = await (
       dependencies.loadResumableRunId ?? loadResumableSpotifyPlaylistExportRunId
@@ -223,6 +239,15 @@ export async function runAutomaticDiscoveryPlaylistExport(
       },
       requestGate,
     });
+    if (dependencies.verificationOnly) {
+      return await verifySpotifyPlaylistCheckpoint(
+        db,
+        userId,
+        client,
+        configuration.spotify.allowedPlaylistId,
+        automaticPlaylistExportMaxReadPages,
+      );
+    }
     const execution = await (dependencies.executeExport ?? executeSpotifyPlaylistExport)(
       db,
       userId,
@@ -243,6 +268,7 @@ export async function runAutomaticDiscoveryPlaylistExport(
     await markDiscoveryPlaylistInboxStatus(db, {
       exportRunId: execution.run.id,
       status: execution.run.status,
+      yieldToMatching: true,
     });
     return {
       reason:
@@ -255,6 +281,18 @@ export async function runAutomaticDiscoveryPlaylistExport(
       sanitized: sanitizedSpotifyPlaylistExportOutput(execution),
     };
   } catch (error) {
+    if (
+      userId &&
+      !(error instanceof SpotifyPlaylistSnapshotYieldError) &&
+      !(error instanceof SpotifyPlaylistMetadataLagError)
+    ) {
+      await deferSpotifyPlaylistCheckpoint(
+        db,
+        userId,
+        configuration.spotify.allowedPlaylistId,
+        new Date((dependencies.now?.() ?? new Date()).getTime() + 5 * 60_000),
+      );
+    }
     if (userId) {
       try {
         currentExportRunId = await (
@@ -264,10 +302,19 @@ export async function runAutomaticDiscoveryPlaylistExport(
         // Preserve the original export failure if diagnostic recovery also fails.
       }
     }
+    if (error instanceof SpotifyPlaylistMetadataLagError) {
+      await markDiscoveryPlaylistInboxStatus(db, {
+        exportRunId: currentExportRunId,
+        status: "partial",
+        yieldToMatching: true,
+      });
+      return { reason: "metadata_lag" as const, checkNotBefore: error.checkNotBefore };
+    }
     if (error instanceof SpotifyPlaylistSnapshotYieldError) {
       await markDiscoveryPlaylistInboxStatus(db, {
         exportRunId: currentExportRunId,
         status: "partial",
+        yieldToMatching: true,
       });
       return {
         nextOffset: error.nextOffset,
@@ -278,6 +325,7 @@ export async function runAutomaticDiscoveryPlaylistExport(
       await markDiscoveryPlaylistInboxStatus(db, {
         exportRunId: currentExportRunId,
         status: "partial",
+        yieldToMatching: true,
       });
       return {
         nextCapacityAt: error.nextCapacityAt,
@@ -288,6 +336,7 @@ export async function runAutomaticDiscoveryPlaylistExport(
       await markDiscoveryPlaylistInboxStatus(db, {
         exportRunId: currentExportRunId,
         status: "partial",
+        yieldToMatching: true,
       });
       return {
         deadlineAt: error.deadlineAt,
@@ -299,6 +348,7 @@ export async function runAutomaticDiscoveryPlaylistExport(
       exportRunId: currentExportRunId,
       pauseForCooldown: isSpotifyCooldown(error),
       status: "partial",
+      yieldToMatching: true,
     });
     throw error;
   } finally {
@@ -319,7 +369,13 @@ export async function inspectAutomaticDiscoveryPlaylistCheckpoint(
     return { reason: "capability_disabled" as const, shouldRun: false };
   }
   const userId = await ensureLocalOwner(db);
-  return inspectSpotifyPlaylistCheckpoint(db, userId, configuration.spotify.allowedPlaylistId);
+  const inspection = await inspectSpotifyPlaylistCheckpoint(
+    db,
+    userId,
+    configuration.spotify.allowedPlaylistId,
+    { recordReady: true },
+  );
+  return { ...inspection, shouldRun: inspection.shouldDeliver };
 }
 
 function isSpotifyCooldown(error: unknown): boolean {

@@ -7,6 +7,9 @@ import {
   getAppleMusicOperationalStatus,
   getRecurringDiscoveryScheduleStatus,
   getSpotifySchedulerStatus,
+  getDiscoveryWorkTurn,
+  recordDiscoveryWorkTurn,
+  inspectSpotifyPlaylistCheckpoint,
   ensureLocalOwner,
   markBroadDiscoveryPlaylistCheckpointPending,
   matureReleasedFeedItems,
@@ -23,7 +26,7 @@ import {
   type SpotifySchedulerLimits,
   type SpotifySchedulerStatus,
 } from "@radar/db";
-import { loadProviderConfiguration } from "@radar/providers";
+import { loadProviderConfiguration, spotifyAuthorizedPlaylistId } from "@radar/providers";
 import { eq } from "drizzle-orm";
 import { loadLocalEnvironment } from "./local-env";
 import { createRecurringSchedulerDiagnostics } from "./recurring-scheduler-diagnostics";
@@ -39,6 +42,7 @@ import {
   type DiscoveryMaintenanceDecision,
 } from "./discovery-maintenance";
 import { ensureWindowsMaintenanceWake, updateWindowsMaintenanceWake } from "./windows-maintenance";
+import { inspectMaintenanceEpisode, type MaintenanceEpisodeStatus } from "./maintenance-episode";
 
 loadLocalEnvironment();
 
@@ -253,7 +257,7 @@ export async function runPendingPriorityPlaylistCheckpoint(
   const status = await (dependencies.getStatus ?? getRecurringDiscoveryScheduleStatus)(db);
   if (
     !["apple_priority", "apple_catchup_priority"].includes(status.phase) ||
-    !["pending", "completed"].includes(status.playlistInbox.status)
+    !["pending", "completed", "partial", "failed"].includes(status.playlistInbox.status)
   ) {
     return null;
   }
@@ -376,7 +380,7 @@ export async function runRecurringDiscoverySchedulerTick(
   db: ReturnType<typeof createDatabase>["db"],
   now = new Date(),
   dependencies: {
-    applyWake?: (decision: DiscoveryMaintenanceDecision) => Promise<void>;
+    applyWake?: (decision: DiscoveryMaintenanceDecision) => Promise<void | boolean>;
     decide?: typeof decideDiscoveryMaintenance;
     ensureOwner?: typeof ensureLocalOwner;
     getAppleStatus?: typeof getAppleMusicOperationalStatus;
@@ -399,6 +403,11 @@ export async function runRecurringDiscoverySchedulerTick(
   );
   await (dependencies.reconcileCooldown ?? reconcileDiscoveryScheduleAfterCooldown)(db);
   await (dependencies.reconcilePriorityPhase ?? reconcileDiscoverySchedulePriorityPhase)(db, now);
+  if (!dependencies.getDiscoveryStatus)
+    await inspectSpotifyPlaylistCheckpoint(db, userId, spotifyAuthorizedPlaylistId, {
+      now,
+      recordReady: true,
+    });
 
   const [apple, discovery, spotify] = await Promise.all([
     (dependencies.getAppleStatus ?? getAppleMusicOperationalStatus)(db, now),
@@ -409,11 +418,13 @@ export async function runRecurringDiscoverySchedulerTick(
     { apple, discovery, spotify },
     now,
   );
-  await (dependencies.applyWake ?? applyRecurringDynamicMaintenanceWake)(decision);
+  const dispatched = await (dependencies.applyWake ?? applyRecurringDynamicMaintenanceWake)(
+    decision,
+  );
   return {
     decision,
     dispatchedToMaintenance:
-      decision.runNow || decision.holdPower || decision.dynamicWakeAt !== null,
+      dispatched ?? (decision.runNow || decision.holdPower || decision.dynamicWakeAt !== null),
   };
 }
 
@@ -424,6 +435,7 @@ export async function runDiscoverySchedulerTick(
     appleMusicMaximumRuntimeMs?: number;
     playlistDeadlineAt?: Date;
     priorityMaximumItems?: number;
+    verificationOnly?: boolean;
   } = {},
 ): Promise<unknown> {
   const userId = await ensureLocalOwner(db);
@@ -431,14 +443,44 @@ export async function runDiscoverySchedulerTick(
   await surfaceUncertainSpotifyMatchesForReview(db, userId);
   await reconcileStaleSpotifyQueueDepth(db);
   await reconcileDeferredPriorityTrackResolutionWork(db);
+  await reconcileDiscoverySchedulePriorityPhase(db, new Date());
+  if (options.verificationOnly)
+    return {
+      playlist: await runAutomaticDiscoveryPlaylistExport(db, configuration, {
+        verificationOnly: true,
+        ...(options.playlistDeadlineAt ? { deadlineAt: options.playlistDeadlineAt } : {}),
+      }),
+    };
+  const lastUnit = await getDiscoveryWorkTurn(db);
+  const preferMatching = lastUnit === "delivery";
+  const delivery = await inspectSpotifyPlaylistCheckpoint(db, userId, spotifyAuthorizedPlaylistId, {
+    recordReady: true,
+  });
+  if (
+    delivery.shouldDeliver &&
+    (!preferMatching || (await getSpotifySchedulerStatus(db)).priorityRunnableCount === 0)
+  ) {
+    await recordDiscoveryWorkTurn(db, "delivery");
+    return {
+      playlist: await runAutomaticDiscoveryPlaylistExport(db, configuration, {
+        deliveryOnly: true,
+        ...(options.playlistDeadlineAt ? { deadlineAt: options.playlistDeadlineAt } : {}),
+      }),
+    };
+  }
 
   // A completed Apple workflow deliberately leaves a pending priority checkpoint while
   // reconciliation is active. Flush any already-eligible tracks before claiming another Apple
   // job. A local no-change inspection falls through to the normal Apple/priority selection.
-  const pendingPriorityPlaylist = await runPendingPriorityPlaylistCheckpoint(db, configuration, {
-    ...(options.playlistDeadlineAt ? { deadlineAt: options.playlistDeadlineAt } : {}),
-  });
-  if (pendingPriorityPlaylist) return { playlist: pendingPriorityPlaylist };
+  const pendingPriorityPlaylist = preferMatching
+    ? null
+    : await runPendingPriorityPlaylistCheckpoint(db, configuration, {
+        ...(options.playlistDeadlineAt ? { deadlineAt: options.playlistDeadlineAt } : {}),
+      });
+  if (pendingPriorityPlaylist) {
+    await recordDiscoveryWorkTurn(db, "delivery");
+    return { playlist: pendingPriorityPlaylist };
+  }
 
   const action = await selectDiscoverySchedulerAction(db);
   const route = action.route;
@@ -453,6 +495,7 @@ export async function runDiscoverySchedulerTick(
     });
   }
   if (route === "playlist_export") {
+    await recordDiscoveryWorkTurn(db, "delivery");
     return {
       playlist: await runAutomaticDiscoveryPlaylistExport(db, configuration, {
         ...(options.playlistDeadlineAt ? { deadlineAt: options.playlistDeadlineAt } : {}),
@@ -460,8 +503,10 @@ export async function runDiscoverySchedulerTick(
     };
   }
   if (route === "spotify_priority") {
+    await recordDiscoveryWorkTurn(db, "matching");
     return {
       spotifyPriority: await runDynamicSpotifyPriorityPhase(db, configuration, {
+        ...(preferMatching ? { runCheckpoint: () => Promise.resolve(null) } : {}),
         ...(options.playlistDeadlineAt ? { deadlineAt: options.playlistDeadlineAt } : {}),
         ...(options.priorityMaximumItems === undefined
           ? {}
@@ -498,16 +543,35 @@ export async function applyRecurringDynamicMaintenanceWake(
     ensureWake?: (wakeAt: Date) => Promise<void>;
     now?: () => Date;
     updateWake?: (wakeAt: Date | null) => Promise<void>;
+    inspectEpisode?: (now: Date) => MaintenanceEpisodeStatus;
   } = {},
-): Promise<void> {
+): Promise<boolean> {
+  const observedAt = dependencies.now?.() ?? new Date();
+  const episode = (dependencies.inspectEpisode ?? inspectMaintenanceEpisode)(observedAt);
+  if (episode.reason === "active_owner") return false;
+  if (
+    !episode.allowed ||
+    decision.reason.startsWith("broad_") ||
+    decision.reason === "routine_verification" ||
+    decision.reason === "no_work"
+  ) {
+    await (dependencies.updateWake ?? updateWindowsMaintenanceWake)(null);
+    return false;
+  }
+  const requestedAt =
+    decision.holdPower || decision.runNow
+      ? new Date(observedAt.getTime() + recurringMaintenanceDispatchDelayMs)
+      : decision.dynamicWakeAt;
+  if (!requestedAt || requestedAt >= new Date(episode.deadlineAt)) {
+    await (dependencies.updateWake ?? updateWindowsMaintenanceWake)(null);
+    return false;
+  }
   if (decision.holdPower || decision.runNow) {
-    const dispatchAt = new Date(
-      (dependencies.now?.() ?? new Date()).getTime() + recurringMaintenanceDispatchDelayMs,
-    );
-    await (dependencies.ensureWake ?? ensureWindowsMaintenanceWake)(dispatchAt);
-    return;
+    await (dependencies.ensureWake ?? ensureWindowsMaintenanceWake)(requestedAt);
+    return true;
   }
   await (dependencies.updateWake ?? updateWindowsMaintenanceWake)(decision.dynamicWakeAt);
+  return true;
 }
 
 type RunScan = typeof runScan;

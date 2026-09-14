@@ -7,7 +7,6 @@ export const maintenanceWakeLeadMs = 10 * 60_000;
 export const maintenanceNearTermWaitMs = 15 * 60_000;
 export const maintenanceTaskExecutionLimitMs = 4 * 60 * 60_000;
 export const maintenanceShutdownGraceMs = 5 * 60_000;
-export const maintenanceHardTerminationRecoveryDelayMs = maintenanceTaskExecutionLimitMs + 60_000;
 export const maintenanceMaximumRuntimeMs =
   maintenanceTaskExecutionLimitMs - maintenanceShutdownGraceMs;
 export const maintenanceMinimumAppleRuntimeMs = 15 * 60_000;
@@ -27,7 +26,16 @@ export interface DiscoveryMaintenanceSnapshot {
     catchup: { latest: MaintenanceAppleJob | null; next: MaintenanceAppleJob | null };
     full: { latest: MaintenanceAppleJob | null; next: MaintenanceAppleJob | null };
     phase: string;
-    playlistInbox: { pendingCount: number; status: string };
+    playlistInbox: {
+      pendingCount: number;
+      status: string;
+      delivery?: {
+        workKind: string;
+        shouldDeliver: boolean;
+        checkNotBefore: string | null;
+        flushDeadlineAt: string | null;
+      } | null;
+    };
   };
   spotify: Pick<
     SpotifySchedulerStatus,
@@ -65,6 +73,8 @@ export interface DiscoveryMaintenanceDecision {
     | "no_work"
     | "playlist_capacity_wait"
     | "playlist_work"
+    | "playlist_reconciliation"
+    | "routine_verification"
     | "priority_capacity_wait"
     | "priority_deferred_wait"
     | "priority_work";
@@ -83,6 +93,7 @@ interface MaintenanceAppleJob {
 export function decideDiscoveryMaintenance(
   snapshot: DiscoveryMaintenanceSnapshot,
   now = new Date(),
+  options: { allowRoutineVerification?: boolean } = {},
 ): DiscoveryMaintenanceDecision {
   const appleJobs = [
     snapshot.discovery.actionable,
@@ -100,9 +111,10 @@ export function decideDiscoveryMaintenance(
   const nextApple = [snapshot.discovery.full.next, snapshot.discovery.catchup.next]
     .filter((job): job is MaintenanceAppleJob => job !== null && job.status === "scheduled")
     .sort((left, right) => left.scheduledFor.getTime() - right.scheduledFor.getTime())[0];
-  const playlistDue =
-    snapshot.discovery.phase === "playlist_inbox" &&
-    ["ready", "exporting", "partial", "failed"].includes(snapshot.discovery.playlistInbox.status);
+  const playlistDue = snapshot.discovery.playlistInbox.delivery
+    ? snapshot.discovery.playlistInbox.delivery.shouldDeliver
+    : snapshot.discovery.phase === "playlist_inbox" &&
+      ["ready", "exporting", "partial", "failed"].includes(snapshot.discovery.playlistInbox.status);
   const priorityDue = snapshot.spotify.priorityRunnableCount > 0;
   const blockedWork = playlistDue || priorityDue;
 
@@ -200,6 +212,14 @@ export function decideDiscoveryMaintenance(
     );
   }
   if (snapshot.spotify.priorityNextRunnableAt) {
+    const flushAt = snapshot.discovery.playlistInbox.delivery?.flushDeadlineAt;
+    if (
+      flushAt &&
+      new Date(flushAt) > now &&
+      new Date(flushAt) < snapshot.spotify.priorityNextRunnableAt
+    ) {
+      return blockedDecision("playlist_capacity_wait", new Date(flushAt), now);
+    }
     const nextRunnableAt = latestCapacityAt(
       snapshot.spotify.priorityNextRunnableAt,
       snapshot.spotify.cooldownActive ? snapshot.spotify.cooldownUntil : null,
@@ -211,6 +231,39 @@ export function decideDiscoveryMaintenance(
     );
   }
 
+  const delivery = snapshot.discovery.playlistInbox.delivery;
+  const checkAt = delivery?.checkNotBefore ? new Date(delivery.checkNotBefore) : null;
+  if (delivery?.workKind === "uncertain") {
+    if (snapshot.spotify.cooldownActive)
+      return blockedDecision("cooldown_wait", snapshot.spotify.cooldownUntil, now);
+    const capacityAt = latestCapacityAt(
+      checkAt && checkAt > now ? checkAt : null,
+      snapshot.spotify.rollingRequestNextCapacityAt,
+    );
+    if (capacityAt) return blockedDecision("playlist_capacity_wait", capacityAt, now);
+    return runDecision("playlist_reconciliation");
+  }
+  if (delivery?.workKind === "mutations" && checkAt && checkAt > now) {
+    return blockedDecision(
+      "playlist_capacity_wait",
+      latestCapacityAt(
+        checkAt,
+        snapshot.spotify.cooldownActive ? snapshot.spotify.cooldownUntil : null,
+      ),
+      now,
+    );
+  }
+  if (
+    options.allowRoutineVerification &&
+    delivery?.workKind === "verification" &&
+    (!checkAt || checkAt <= now) &&
+    !snapshot.spotify.cooldownActive &&
+    snapshot.spotify.rollingRequestNextCapacityAt === null
+  )
+    return runDecision("routine_verification");
+  const flushAt = delivery?.flushDeadlineAt;
+  if (flushAt && new Date(flushAt) > now)
+    return blockedDecision("playlist_capacity_wait", new Date(flushAt), now);
   const broadAllowed = isBroadSpotifyDay(now);
   const broadBacklog = snapshot.spotify.broadRunnableCount > 0;
   const broadCapacity =
@@ -224,7 +277,7 @@ export function decideDiscoveryMaintenance(
     return runDecision("broad_work");
   }
   if (broadAllowed && broadBacklog && snapshot.spotify.cooldownActive) {
-    return blockedDecision("cooldown_wait", snapshot.spotify.cooldownUntil, now);
+    return blockedDecision("broad_capacity_wait", snapshot.spotify.cooldownUntil, now);
   }
   const broadDailyCapacity =
     snapshot.spotify.dailyBudget.broadArtistsUsed <
@@ -263,11 +316,7 @@ export function decideDiscoveryMaintenance(
       snapshot.spotify.broadNextRunnableAt,
       snapshot.spotify.cooldownActive ? snapshot.spotify.cooldownUntil : broadCapacityAt,
     );
-    return blockedDecision(
-      snapshot.spotify.cooldownActive ? "cooldown_wait" : "broad_deferred_wait",
-      nextRunnableAt,
-      now,
-    );
+    return blockedDecision("broad_deferred_wait", nextRunnableAt, now);
   }
   return {
     dynamicWakeAt: null,
@@ -296,6 +345,9 @@ function blockedDecision(
   nextRunnableAt: Date | null,
   now: Date,
 ): DiscoveryMaintenanceDecision {
+  if (reason.startsWith("broad_")) {
+    return { dynamicWakeAt: null, holdPower: false, reason, runNow: false, waitUntil: null };
+  }
   if (!nextRunnableAt) {
     return { dynamicWakeAt: null, holdPower: false, reason, runNow: false, waitUntil: null };
   }
@@ -321,7 +373,13 @@ function blockedDecision(
 }
 
 function runDecision(
-  reason: "apple_due" | "broad_work" | "playlist_work" | "priority_work",
+  reason:
+    | "apple_due"
+    | "broad_work"
+    | "playlist_work"
+    | "priority_work"
+    | "playlist_reconciliation"
+    | "routine_verification",
 ): DiscoveryMaintenanceDecision {
   return { dynamicWakeAt: null, holdPower: true, reason, runNow: true, waitUntil: null };
 }

@@ -24,6 +24,8 @@ export * from "./spotify-scheduler";
 export * from "./spotify-sync-campaign";
 export * from "./spotify-playlist-export";
 export * from "./spotify-playlist-cache";
+export * from "./spotify-playlist-evidence";
+export * from "./discovery-work-turn";
 export * from "./spotify-playlist-lock";
 export * from "./spotify-playlist-order";
 export * from "./spotify-playlist-visibility";

@@ -34,6 +34,7 @@ export interface WindowsPowerRequestContext {
 }
 
 interface SpawnDependencies extends Partial<WindowsPowerRequestContext> {
+  deadlineAt?: Date;
   diagnosticDirectory?: string;
   now?: () => Date;
   ownerProcessId?: number;
@@ -52,6 +53,12 @@ export function acquireWindowsSystemPowerRequest(
   if (platform !== "win32") return { release: () => Promise.resolve() };
   const spawnProcess = dependencies.spawnProcess ?? spawn;
   const now = dependencies.now ?? (() => new Date());
+  const deadlineAt = new Date(
+    Math.min(
+      now().getTime() + maximumRuntimeMs,
+      dependencies.deadlineAt?.getTime() ?? Number.POSITIVE_INFINITY,
+    ),
+  );
   const ownerProcessId = dependencies.ownerProcessId ?? process.pid;
   const processAliveCheck = dependencies.processAlive ?? processAlive;
   const runId = dependencies.runId ?? randomUUID();
@@ -71,8 +78,12 @@ export function acquireWindowsSystemPowerRequest(
   });
   const maximumSeconds = Math.max(60, Math.ceil(maximumRuntimeMs / 1_000));
   const script = [
+    "$parentId=[int]$env:RADAR_POWER_PARENT_PID",
+    "$deadline=[DateTimeOffset]::Parse($env:RADAR_POWER_DEADLINE).UtcDateTime",
+    "if ((Test-Path -LiteralPath $env:RADAR_POWER_RELEASE_PATH) -or -not (Get-Process -Id $parentId -ErrorAction SilentlyContinue) -or [DateTime]::UtcNow -ge $deadline) { exit 0 }",
     "$signature='[DllImport(\"kernel32.dll\")] public static extern uint SetThreadExecutionState(uint esFlags);'",
     "Add-Type -MemberDefinition $signature -Name PowerRequest -Namespace Radar",
+    "if ((Test-Path -LiteralPath $env:RADAR_POWER_RELEASE_PATH) -or -not (Get-Process -Id $parentId -ErrorAction SilentlyContinue) -or [DateTime]::UtcNow -ge $deadline) { exit 0 }",
     "$continuous=0x80000000",
     "$systemRequired=0x00000001",
     "$activation=[Radar.PowerRequest]::SetThreadExecutionState($continuous -bor $systemRequired)",
@@ -80,8 +91,6 @@ export function acquireWindowsSystemPowerRequest(
     "$activatedAt=[DateTimeOffset]::UtcNow.ToString('O')",
     "$activationRecord=[ordered]@{ version=1; runId=$env:RADAR_POWER_RUN_ID; ownerProcessId=[int]$env:RADAR_POWER_PARENT_PID; helperProcessId=$PID; reason=$env:RADAR_POWER_REASON; phase=$env:RADAR_POWER_PHASE; state='active'; activatedAt=$activatedAt }",
     "$activationRecord | ConvertTo-Json -Compress | Set-Content -LiteralPath $env:RADAR_POWER_ACTIVATION_PATH -Encoding utf8",
-    "$deadline=[DateTime]::UtcNow.AddSeconds([int]$env:RADAR_POWER_MAX_SECONDS)",
-    "$parentId=[int]$env:RADAR_POWER_PARENT_PID",
     "$releaseReason='maximum_runtime_reached'",
     "try { while ([DateTime]::UtcNow -lt $deadline) { if (Test-Path -LiteralPath $env:RADAR_POWER_RELEASE_PATH) { $releaseReason='release_requested'; break }; if (-not (Get-Process -Id $parentId -ErrorAction SilentlyContinue)) { $releaseReason='owner_process_exited'; break }; Start-Sleep -Milliseconds 250 } } finally { [void][Radar.PowerRequest]::SetThreadExecutionState($continuous); $releasedAt=[DateTimeOffset]::UtcNow.ToString('O'); $releaseRecord=[ordered]@{ version=1; runId=$env:RADAR_POWER_RUN_ID; ownerProcessId=$parentId; helperProcessId=$PID; reason=$env:RADAR_POWER_REASON; phase=$env:RADAR_POWER_PHASE; state='released'; releaseReason=$releaseReason; releasedAt=$releasedAt }; $releaseRecord | ConvertTo-Json -Compress | Set-Content -LiteralPath $env:RADAR_POWER_RELEASE_MARKER_PATH -Encoding utf8 }",
   ].join("\n");
@@ -95,6 +104,7 @@ export function acquireWindowsSystemPowerRequest(
           ...process.env,
           RADAR_POWER_ACTIVATION_PATH: claimed.paths.activationPath,
           RADAR_POWER_MAX_SECONDS: String(maximumSeconds),
+          RADAR_POWER_DEADLINE: deadlineAt.toISOString(),
           RADAR_POWER_PARENT_PID: String(ownerProcessId),
           RADAR_POWER_PHASE: phase,
           RADAR_POWER_REASON: reason,
@@ -165,7 +175,13 @@ export function acquireWindowsSystemPowerRequest(
         await delay(50);
       }
       releaseStarted = true;
-      await stopPowerRequest(child, claimed.paths, now, dependencies.releaseGraceMs ?? 2_000);
+      releasePromise ??= stopPowerRequest(
+        child,
+        claimed.paths,
+        now,
+        dependencies.releaseGraceMs ?? 2_000,
+      );
+      await releasePromise;
       throw new Error("Windows keep-awake activation was not confirmed within five seconds.");
     },
     diagnosticPath: claimed.paths.recordPath,
@@ -342,9 +358,12 @@ function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<boole
     const finish = (exited: boolean) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timer);
+      child.removeListener("exit", onExit);
       resolve(exited);
     };
-    child.once("exit", () => finish(true));
+    const onExit = () => finish(true);
+    child.once("exit", onExit);
     const timer = setTimeout(() => finish(false), Math.max(0, timeoutMs));
     timer.unref();
   });
@@ -395,14 +414,27 @@ function runHiddenPowerShell(
         windowsHide: true,
       },
     );
+    const timer = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {
+        /* The updater may already have exited. */
+      }
+      reject(new Error("Windows maintenance task update exceeded twenty seconds."));
+    }, 20_000);
+    timer.unref();
     const collectDiagnosticOutput = (chunk: unknown) => {
       if (diagnosticOutput.length >= 2_000) return;
       diagnosticOutput += String(chunk).slice(0, 2_000 - diagnosticOutput.length);
     };
     child.stdout?.on("data", collectDiagnosticOutput);
     child.stderr?.on("data", collectDiagnosticOutput);
-    child.once("error", reject);
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
     child.once("exit", (code) => {
+      clearTimeout(timer);
       if (code === 0) resolve();
       else {
         const detail = diagnosticOutput.replaceAll(/\s+/g, " ").trim().slice(0, 500);

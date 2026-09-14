@@ -1553,7 +1553,25 @@ export async function reconcileDiscoverySchedulePriorityPhase(
   const state = await db.query.discoveryScheduleState.findFirst({
     where: eq(discoveryScheduleState.id, "global"),
   });
-  if (!state || !["apple_priority", "apple_catchup_priority"].includes(state.phase)) return;
+  if (!state) return;
+  if (state.phase === "playlist_inbox") {
+    const [full, catchup] = await Promise.all([
+      countActivePrioritySource(db, "apple_priority"),
+      countActivePrioritySource(db, "apple_catchup"),
+    ]);
+    if (full + catchup > 0) {
+      await db
+        .update(discoveryScheduleState)
+        .set({
+          phase: full > 0 ? "apple_priority" : "apple_catchup_priority",
+          applePriorityQueuedCount: full + catchup,
+          updatedAt: now,
+        })
+        .where(eq(discoveryScheduleState.id, "global"));
+    }
+    return;
+  }
+  if (!["apple_priority", "apple_catchup_priority"].includes(state.phase)) return;
   const activeSource =
     state.phase === "apple_catchup_priority" ? "apple_catchup" : "apple_priority";
   const active = await db

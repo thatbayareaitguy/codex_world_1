@@ -322,6 +322,7 @@ describe("discovery maintenance loop", () => {
     expect(updateStartupRecoveryWake).toHaveBeenCalledOnce();
     expect(updateStartupRecoveryWake).toHaveBeenCalledWith(null);
     expect(runTick).toHaveBeenCalledWith({
+      reason: "priority_work",
       deadlineAt: new Date("2026-08-27T20:21:00.000Z"),
       remainingRuntimeMs: 21 * 60_000,
     });

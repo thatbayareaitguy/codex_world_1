@@ -8,6 +8,13 @@ import { assertSpotifyPlaylistWriteTarget } from "@radar/providers";
 import { and, eq } from "drizzle-orm";
 import type { RadarDatabase } from "./client";
 import { playlistTargets, providerCache } from "./schema";
+import {
+  clearSpotifyPlaylistMutationEvidence,
+  loadSpotifyPlaylistMutationEvidence,
+  saveSpotifyPlaylistMutationEvidence,
+  SpotifyPlaylistMetadataLagError,
+  type PlaylistEvidenceDatabase,
+} from "./spotify-playlist-evidence";
 
 export interface SpotifyPlaylistSnapshotClient {
   getPlaylist: (id: string, signal?: AbortSignal) => Promise<SpotifyPlaylist>;
@@ -117,6 +124,31 @@ export async function loadVerifiedSpotifyPlaylistSnapshot(
     : playlist.id;
   const target = await upsertSpotifyPlaylistTarget(db, userId, playlistId, playlist.name);
   const cachedSnapshotVerified = target.snapshotVerifiedAt !== null;
+  const proof = await loadSpotifyPlaylistMutationEvidence(db, target.id);
+  const coherentAcknowledgment =
+    proof?.snapshotId === target.snapshotId && Array.isArray(target.snapshotItems);
+  if (
+    !options.forceRefresh &&
+    coherentAcknowledgment &&
+    target.snapshotId === playlist.snapshot_id
+  ) {
+    await clearPlaylistSnapshotRefresh(db, userId, playlistId);
+    // Snapshot identity confirms membership/order derived from successful writes. It does not
+    // fill added_at/added_by for new items, or constitute a full remote readback.
+    return { cacheHit: true, items: target.snapshotItems!, playlist, targetId: target.id };
+  }
+  if (coherentAcknowledgment && proof.previousSnapshotIds.includes(playlist.snapshot_id)) {
+    const delayMs = Math.min(30 * 60_000, 2 ** Math.min(proof.lagChecks, 4) * 60_000);
+    const checkNotBefore = new Date(Date.now() + delayMs);
+    await saveSpotifyPlaylistMutationEvidence(db, target.id, {
+      ...proof,
+      lagChecks: proof.lagChecks + 1,
+      checkNotBefore: checkNotBefore.toISOString(),
+    });
+    // Equality with a recorded predecessor is evidence of lag, never snapshot-age ordering.
+    // Defer even a requested reconciliation instead of rereading every page against old metadata.
+    throw new SpotifyPlaylistMetadataLagError(checkNotBefore);
+  }
   const remoteSnapshotMatches =
     cachedSnapshotVerified && target.snapshotId === playlist.snapshot_id;
   const trustedMutationSnapshotMatches =
@@ -130,13 +162,7 @@ export async function loadVerifiedSpotifyPlaylistSnapshot(
     Array.isArray(target.snapshotItems)
   ) {
     await clearPlaylistSnapshotRefresh(db, userId, playlistId);
-    if (remoteSnapshotMatches) {
-      const verifiedAt = new Date();
-      await db
-        .update(playlistTargets)
-        .set({ snapshotVerifiedAt: verifiedAt, updatedAt: verifiedAt })
-        .where(eq(playlistTargets.id, target.id));
-    }
+    // A cheap identity check must not postpone the periodic full-read deadline.
     return {
       cacheHit: true,
       items: target.snapshotItems,
@@ -145,6 +171,7 @@ export async function loadVerifiedSpotifyPlaylistSnapshot(
     };
   }
   const pageReader = client.getPlaylistItemsPage;
+  await clearSpotifyPlaylistMutationEvidence(db, target.id);
   const refreshed =
     options.maxReadPages !== undefined && pageReader
       ? await readBoundedConsistentSpotifyPlaylistSnapshot(db, userId, client, playlist, {
@@ -158,6 +185,7 @@ export async function loadVerifiedSpotifyPlaylistSnapshot(
     refreshed.playlist.snapshot_id,
     refreshed.items,
   );
+  await clearSpotifyPlaylistMutationEvidence(db, target.id);
   return { cacheHit: false, ...refreshed, targetId: target.id };
 }
 
@@ -312,7 +340,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export async function persistSpotifyPlaylistSnapshot(
-  db: RadarDatabase,
+  db: PlaylistEvidenceDatabase,
   targetId: string,
   snapshotId: string,
   items: readonly SpotifyPlaylistItemSnapshot[],

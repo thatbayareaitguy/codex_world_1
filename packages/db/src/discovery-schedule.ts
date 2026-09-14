@@ -1,6 +1,8 @@
 import { and, asc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { RadarDatabase } from "./client";
+import { spotifyAuthorizedPlaylistId } from "@radar/providers";
+import { inspectSpotifyPlaylistCheckpoint } from "./spotify-playlist-export";
 import { reconcileSpotifySchedulerWork } from "./spotify-scheduler";
 import {
   discoveryReconciliationArtists,
@@ -19,6 +21,7 @@ import {
   spotifySchedulerWork,
   trackExternalIds,
   tracks,
+  playlistTargets,
 } from "./schema";
 
 export const discoveryScheduleStateId = "global";
@@ -355,6 +358,7 @@ export async function markDiscoveryPlaylistInboxStatus(
   input: {
     exportRunId?: string | null;
     pauseForCooldown?: boolean;
+    yieldToMatching?: boolean;
     status: "ready" | "exporting" | "partial" | "completed" | "failed";
   },
   now = new Date(),
@@ -365,7 +369,7 @@ export async function markDiscoveryPlaylistInboxStatus(
       countActiveApplePriority(tx, "apple_catchup"),
     ]);
     const phase: DiscoverySchedulePhase =
-      input.status !== "completed"
+      input.status !== "completed" && !input.yieldToMatching
         ? input.pauseForCooldown
           ? "cooldown_wait"
           : "playlist_inbox"
@@ -420,7 +424,12 @@ export async function preparePriorityDiscoveryPlaylistCheckpoint(
       and(
         eq(discoveryScheduleState.id, discoveryScheduleStateId),
         inArray(discoveryScheduleState.phase, ["apple_priority", "apple_catchup_priority"]),
-        inArray(discoveryScheduleState.playlistInboxStatus, ["pending", "completed"]),
+        inArray(discoveryScheduleState.playlistInboxStatus, [
+          "pending",
+          "completed",
+          "partial",
+          "failed",
+        ]),
       ),
     )
     .returning({ id: discoveryScheduleState.id });
@@ -1148,12 +1157,72 @@ export async function getRecurringDiscoveryScheduleStatus(db: RadarDatabase, now
           ),
         )
     : [];
+  const target = await db.query.playlistTargets.findFirst({
+    where: and(
+      eq(playlistTargets.provider, "spotify"),
+      eq(playlistTargets.providerPlaylistId, spotifyAuthorizedPlaylistId),
+    ),
+  });
+  const ownerId =
+    target?.userId ??
+    (
+      await db.query.users.findFirst({
+        orderBy: (user, { asc }) => [asc(user.createdAt), asc(user.id)],
+      })
+    )?.id;
+  const delivery = ownerId
+    ? await inspectSpotifyPlaylistCheckpoint(db, ownerId, spotifyAuthorizedPlaylistId, {
+        now,
+      })
+    : null;
+  const fullJob = latest("apple_full");
+  const weeklyRows = fullJob
+    ? await db.execute<{
+        total: number;
+        attempted: number;
+        unattempted: number;
+        waiting: number;
+        oldest_waiting_at: string | null;
+      }>(sql`
+    with weekly_tracks as (
+      select distinct candidate.matched_track_id as track_id
+      from release_candidates candidate
+      join discovery_schedule_jobs job on job.scan_run_id = candidate.scan_run_id
+      where job.scheduled_for >= ${fullJob.scheduledFor.toISOString()}::timestamptz
+        and job.scheduled_for <= ${now.toISOString()}::timestamptz
+        and candidate.provider = 'apple_music' and candidate.matched_track_id is not null
+    ), progress as (
+      select weekly.track_id,
+        coalesce(bool_or(work.attempt_count > 0 and work.last_started_at >= ${fullJob.scheduledFor.toISOString()}::timestamptz), false) as attempted,
+        coalesce(bool_or(work.status in ('queued', 'leased', 'blocked')), false) as waiting,
+        min(work.created_at) filter (where work.status in ('queued', 'leased', 'blocked')) as waiting_at
+      from weekly_tracks weekly left join spotify_scheduler_work work on work.target_track_id = weekly.track_id
+      group by weekly.track_id
+    ) select count(*)::int as total,
+      count(*) filter (where attempted)::int as attempted,
+      count(*) filter (where waiting and not attempted)::int as unattempted,
+      count(*) filter (where waiting)::int as waiting,
+      min(waiting_at)::text as oldest_waiting_at from progress
+  `)
+    : [];
+  const weekly = weeklyRows[0];
   return {
+    weeklyMatching: {
+      scheduledFor: fullJob?.scheduledFor.toISOString() ?? null,
+      totalTracks: Number(weekly?.total ?? 0),
+      attemptedTracks: Number(weekly?.attempted ?? 0),
+      unattemptedWaitingTracks: Number(weekly?.unattempted ?? 0),
+      waitingTracks: Number(weekly?.waiting ?? 0),
+      oldestWaitingAt: weekly?.oldest_waiting_at
+        ? new Date(weekly.oldest_waiting_at).toISOString()
+        : null,
+    },
     actionable,
     catchup: { latest: latest("apple_catchup"), next: next("apple_catchup") },
     full: { latest: latest("apple_full"), next: next("apple_full") },
     phase: state ? parseDiscoverySchedulePhase(state.phase) : "idle",
     playlistInbox: {
+      delivery,
       exportRunId: state?.playlistInboxExportRunId ?? null,
       pendingCount: Number(pendingExport[0]?.count ?? 0),
       status: state?.playlistInboxStatus ?? "pending",

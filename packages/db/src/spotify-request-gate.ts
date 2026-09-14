@@ -4,6 +4,7 @@ import type {
   SpotifyRequestGate,
   SpotifyRequestPermit,
 } from "@radar/providers";
+import { providerExecutionSignal, reserveProviderCapacityWait } from "@radar/providers";
 import { and, asc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { RadarDatabase } from "./client";
@@ -474,6 +475,8 @@ async function acquireSpotifyPermit(
   discoveryReconciliationCampaignId?: string,
   options: SpotifyRequestGateOptions = {},
 ): Promise<SpotifyRequestPermit> {
+  const inheritedSignal = providerExecutionSignal(input.signal);
+  input = { ...input, ...(inheritedSignal ? { signal: inheritedSignal } : {}) };
   const endpointCategory = spotifyQuotaCategory(input.endpointCategory);
   const quotaLane = spotifyQuotaLane(endpointCategory, schedulerContext?.source, options.quotaLane);
   const artistAlbumsBudget = validateArtistAlbumsBudget(
@@ -532,6 +535,7 @@ async function acquireSpotifyPermit(
             nextCapacityAt.getTime() < sharedCapacityWaitDeadline)
         ) {
           const delayMs = nextCapacityAt.getTime() - now.getTime();
+          reserveProviderCapacityWait(delayMs);
           const sleep = options.rollingCapacityWait.sleep ?? cancellableDelay;
           await sleep(delayMs, input.signal);
           continue;

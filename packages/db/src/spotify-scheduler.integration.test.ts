@@ -893,11 +893,6 @@ describe("Spotify rolling scheduler persistence", () => {
       .where(eq(spotifySchedulerWork.artistId, broadArtist));
     await setSpotifySchedulerMode(db, "automatic", now);
 
-    expect(await claimSpotifySchedulerWork(db, now)).toBeNull();
-    await db
-      .update(discoveryScheduleState)
-      .set({ phase: "apple_priority", playlistInboxStatus: "completed" })
-      .where(eq(discoveryScheduleState.id, "global"));
     const priority = await claimSpotifySchedulerWork(db, now);
     expect(priority).toMatchObject({ artistId: priorityArtist, source: "apple_priority" });
     await finishSpotifySchedulerWork(db, priority!, { status: "completed" }, now);
@@ -978,12 +973,12 @@ describe("Spotify rolling scheduler persistence", () => {
     });
     await setSpotifySchedulerMode(db, "automatic", now);
 
-    expect(await claimSpotifySchedulerWork(db, now)).toBeNull();
+    expect(await claimSpotifySchedulerWork(db, now)).toMatchObject({ source: "apple_priority" });
     expect(
       await db.query.discoveryScheduleState.findFirst({
         where: eq(discoveryScheduleState.id, "global"),
       }),
-    ).toMatchObject({ phase: "playlist_inbox", playlistInboxStatus: "ready" });
+    ).toMatchObject({ phase: "apple_priority", playlistInboxStatus: "ready" });
   });
 
   it("caps a large backlog at 75 broad artists per local day without starving detail work", async () => {

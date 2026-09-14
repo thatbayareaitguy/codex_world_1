@@ -277,14 +277,17 @@ pnpm discovery:scheduler:register
 
 This creates two hidden, direct `conhost.exe --headless node.exe --import tsx` tasks. The recurring
 task checks once per minute only while Windows is already awake and has `WakeToRun` disabled. The
-separate maintenance task uses `WakeToRun`, `StartWhenAvailable`, `IgnoreNew`, bounded restart
-settings, and a four-hour execution limit. Its fixed Pacific-time triggers are Saturday through
+separate maintenance task uses `WakeToRun`, `StartWhenAvailable`, `IgnoreNew`, application-managed
+recovery only, and a four-hour execution limit. Its fixed Pacific-time triggers are Saturday through
 Wednesday at 8:50 AM and 8:50 PM, Thursday at 8:50 PM, Friday at 8:50 AM, and Friday at 8:50 PM.
 The Friday evening trigger is a priority and recovery fallback only. Broad Spotify work remains
 disabled every Thursday and Friday.
 
-The maintenance application yields at 3 hours 55 minutes so it has five minutes to persist state and
-release keep-awake before the Windows limit. A scheduled Apple scan receives at most 3.5 hours and
+The maintenance episode ends 3 hours 55 minutes after the original fixed window, not after each
+restart. Its initial launch and at most two recovery launches share that deadline and a total
+15-minute capacity-wait allowance. Append-only launch and wait reservations under
+`%LOCALAPPDATA%\TSNewMusicRadar\runtime\maintenance-episodes` survive crashes; do not delete or
+reset them to obtain more runtime. A scheduled Apple scan receives at most 3.5 hours and
 its schedule lease remains valid for four hours. Maintenance will not start Apple work with less
 than 15 minutes left. Playlist, priority, and broad work require at least 20 minutes, which reserves
 the longest permitted 15-minute capacity wait plus the five-minute shutdown margin. Retryable,
@@ -292,16 +295,20 @@ deferred, cooldown-blocked, and runtime-limited Apple work retains the same sche
 batch, scan run, and completed artist rows. Apple claims are serialized, and a later completed full
 scan can satisfy an unstarted catch-up window without creating a second campaign.
 
-After PostgreSQL is ready, maintenance arms one deadman `StartupRecoveryWake` for the application
-start time plus four hours and one minute. This is required because the mandated
+After PostgreSQL is ready, maintenance arms one in-episode deadman `StartupRecoveryWake` seven
+minutes later, only when another launch fits the original episode. This is required because the mandated
 `conhost.exe --headless` wrapper can return success even when its Node child exits nonzero. A clean
 completion clears the deadman. A controlled runtime yield or caught failure replaces it with a wake
-seven minutes later, and inability to arm it is a startup failure. Task Scheduler restart-on-failure
-remains enabled as an additional safeguard.
+seven minutes later, subject to the same episode limits. The minute coordinator can also recover a
+dead owner but cannot reset the ledger. Maintenance Task Scheduler restart-on-failure is disabled;
+only the bounded application recovery paths may request another launch. Exhausted or expired
+episodes defer work to the next fixed wake without forcing Windows to sleep.
 
 If pending priority or playlist work is blocked by a stored Spotify cooldown or rolling capacity,
 the scheduler maintains at most one `DynamicCapacityWake` trigger on the maintenance task. It is set
-for ten minutes before the database-calculated next runnable time. A wait of fifteen minutes or less
+for ten minutes before the database-calculated next runnable time, only inside the episode and
+with a recovery launch remaining. Routine playlist verification and ordinary broad backlog never
+create dynamic wakes. A wait fitting the remaining cumulative allowance
 holds a hidden Windows system-required power request only when that wait ends before the shared
 maintenance deadline. A longer wait releases power and relies on the one-time trigger. The request
 is released immediately when no eligible work remains, on failure, or at the absolute runtime
@@ -312,16 +319,38 @@ The shared rolling Spotify request gate defaults to 30 request starts per rollin
 20 for playlist work. Broad scheduling also stops early enough to leave room for its maximum
 six-request unit. Playlist reads, writes, metadata calls, and OAuth calls use this same persisted
 gate; Artist Albums retains its separate 80-call trailing budget and 20-call priority reserve.
-Capacity exhaustion is a resumable wait, not a failed work item.
+Capacity exhaustion is resumable work, not a reason to reset an episode.
 Automatic playlist execution may wait inside its existing exclusive writer session when the gate
 has a known rolling-capacity boundary no more than fifteen minutes away. This prevents a one-slot
 capacity trickle from repeatedly restarting ownership and snapshot checks. The wait is opt-in for
 the automatic playlist lane only, remains abortable, and does not weaken cooldown or rolling-limit
-enforcement. Unknown or later capacity still yields to `DynamicCapacityWake`.
+enforcement. Unknown or later capacity yields to a permitted recovery or the next fixed window.
 Every sequential Spotify capacity wait in an automatic export shares the maintenance application's
 one absolute deadline. If the next request would start at or after that deadline, the export records
 `runtime_yield`, leaves the same export run and inbox state resumable, releases its writer lock, and
 does not start the request.
+
+Delivery inspection separates mutations, uncertain write outcomes, routine verification, and no
+work. A unit adds at most three tracks and performs at most three native mutations. Matching gets
+an intervening bounded unit; delivery starts at three ready tracks or a persisted ten-minute flush
+deadline. Acknowledged snapshot IDs, local deltas, operation status, and export records commit
+together. Cheap equal-snapshot checks reuse coherent evidence without marking provenance verified.
+Full pagination is reserved for missing cache, divergence, uncertain outcomes, and due reconciliation.
+Known predecessor metadata is deferred with bounded backoff, never ordered by opaque ID text.
+Read cursors survive capacity yields. Routine verification uses spare capacity in an already-running
+maintenance window and neither blocks independent matching nor generates a wake.
+
+The history status separates additions, reorders, uncertainty, and verification, and reports the
+latest weekly cycle's targeted matching attempts, waiting tracks, oldest queued timestamp, next
+allowed wake, and conservative episode hold/wait totals. Upcoming releases needing human review
+remain visible in both views, while the export planner independently rejects future release dates.
+
+For code rollback, first disable both discovery tasks and verify no executor or writer remains.
+Deploy a reviewed compatible revision and rebuild the loopback web application. Preserve the current
+database, provider cooldowns, export history, snapshot evidence, and episode ledger. Do not restore
+an old database dump to roll back code: it could replay acknowledged playlist writes. Keep automatic
+maintenance disabled if the older revision lacks the episode limits or acknowledgment handling.
+Backups are disaster-recovery artifacts and require explicit replacement confirmation to restore.
 
 The Windows interval is not the artist pacing mechanism. The actual Thursday 9:00 PM Apple scan,
 Friday 9:00 AM catch-up, Saturday-Wednesday Spotify window, recovery deadlines, daily ceilings, and

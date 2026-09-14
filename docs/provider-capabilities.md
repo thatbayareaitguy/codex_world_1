@@ -1,5 +1,17 @@
 # Provider Capabilities and Cost Gate
 
+## Reliability boundary review (2026-09-13)
+
+Rechecked the official [Spotify rate limits](https://developer.spotify.com/documentation/web-api/concepts/rate-limits),
+[playlist snapshot guidance](https://developer.spotify.com/documentation/web-api/concepts/playlists),
+and [Apple Music API documentation](https://developer.apple.com/documentation/applemusicapi)
+before the weekly delivery reliability work. This work changes local scheduling, cancellation,
+and snapshot evidence accounting. It adds no provider capability, account, payment requirement,
+OAuth scope, or target. Existing paid-access decisions and public-catalog boundaries remain in force.
+The numeric Spotify quota and consistency delay remain unknown; returned snapshot IDs are opaque.
+Local limits remain conservative application limits, not provider approval or guaranteed capacity.
+Successful mutation acknowledgments must remain distinguishable from complete remote readback.
+
 ## Dormant MusicBrainz adapter (disabled by default)
 
 MusicBrainz is not part of production or normal GUI operation. `MUSICBRAINZ_ENABLED=false` is the

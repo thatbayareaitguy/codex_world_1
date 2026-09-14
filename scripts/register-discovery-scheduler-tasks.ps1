@@ -56,7 +56,6 @@ foreach ($temporaryWakeId in @("DynamicCapacityWake", "StartupRecoveryWake")) {
   }
 }
 $maintenanceSettings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable -WakeToRun `
-  -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
   -ExecutionTimeLimit (New-TimeSpan -Hours 4) -AllowStartIfOnBatteries `
   -DontStopIfGoingOnBatteries -Hidden
 

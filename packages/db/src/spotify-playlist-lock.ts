@@ -1,5 +1,6 @@
 import { hostname } from "node:os";
 import type { SpotifyClient } from "@radar/providers";
+import { providerExecutionSignal } from "@radar/providers";
 import type { RadarDatabase } from "./client";
 import {
   acquireOperationLock,
@@ -110,6 +111,7 @@ export async function assertSpotifyPlaylistWriterLockOwnership(
   now = new Date(),
 ): Promise<void> {
   const existing = await loadOperationLock(db, lock.lockKey);
+  providerExecutionSignal();
   const metadata = isRecord(existing?.metadata) ? existing.metadata : {};
   if (
     !existing ||

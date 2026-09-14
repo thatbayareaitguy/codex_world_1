@@ -1,6 +1,43 @@
 import { expect, test } from "@playwright/test";
 import { feedFixtures } from "@radar/testing";
 
+test("keeps an upcoming release visible while it also needs review", async ({ page }) => {
+  const item = {
+    ...feedFixtures[0]!,
+    id: "future-review",
+    state: "needs_review",
+    title: "Future Review Song",
+    releaseTitle: "Future Review Song",
+    releaseDate: "2099-09-18",
+    exportStatus: "blocked",
+  };
+  await page.route("**/api/feed**", async (route) => {
+    const url = new URL(route.request().url());
+    await route.fulfill({
+      json:
+        url.searchParams.get("mode") === "revision"
+          ? { count: 1, revision: "future-review" }
+          : {
+              count: 1,
+              totalCount: 1,
+              items: [item],
+              hasMore: false,
+              nextCursor: null,
+              revision: "future-review",
+              summary: { needsReview: 1, newThisWeek: 0, upcoming: 1 },
+            },
+    });
+  });
+  await page.goto("/?e2e-scan-status=database#feed");
+  await page.getByRole("tab", { name: "Upcoming" }).click();
+  const card = page.getByRole("article").filter({ hasText: "Future Review Song" });
+  await expect(card).toBeVisible();
+  await expect(card.getByText("Needs review", { exact: true })).toBeVisible();
+  await expect(card.getByText("Upcoming", { exact: true })).toBeVisible();
+  await page.goto("/?e2e-scan-status=database#review");
+  await expect(page.getByRole("article").filter({ hasText: "Future Review Song" })).toBeVisible();
+});
+
 test("opens the discovery feed on New and keeps All as the second tab", async ({ page }) => {
   await page.goto("/#feed");
 
@@ -616,6 +653,24 @@ test("defaults scan history to the meaningful batch and inspects other run types
         active: null,
         defaultHistoryId: batchRunId,
         discoverySchedule: {
+          weeklyMatching: {
+            scheduledFor: "2026-09-11T04:00:00Z",
+            totalTracks: 81,
+            attemptedTracks: 12,
+            unattemptedWaitingTracks: 34,
+            waitingTracks: 46,
+            oldestWaitingAt: "2026-09-11T05:00:00Z",
+          },
+          maintenanceEpisode: {
+            nextFixedWakeAt: "2026-09-14T03:50:00Z",
+            deadlineAt: "2026-09-13T19:45:00Z",
+            launches: 3,
+            recoveryLaunches: 2,
+            capacityWaitMs: 900000,
+            holdMs: 7200000,
+            allowed: false,
+            reason: "launch_limit",
+          },
           catchup: {
             latest: {
               appleMusicBatchId: null,
@@ -658,7 +713,22 @@ test("defaults scan history to the meaningful batch and inspects other run types
             },
           },
           phase: "broad_spotify",
-          playlistInbox: { exportRunId: null, pendingCount: 0, status: "completed" },
+          playlistInbox: {
+            exportRunId: null,
+            pendingCount: 0,
+            status: "completed",
+            delivery: {
+              workKind: "verification",
+              pendingAdditionCount: 0,
+              pendingOperationCount: 0,
+              reorderMoveCount: 0,
+              uncertainOperationCount: 0,
+              verificationPending: true,
+              oldestReadyAt: null,
+              flushDeadlineAt: null,
+              checkNotBefore: null,
+            },
+          },
           timezone: "America/Los_Angeles",
         },
         history: olderPage
@@ -845,6 +915,11 @@ test("defaults scan history to the meaningful batch and inspects other run types
   await expect(appleSchedule).toContainText("Friday catch-up");
   await expect(appleSchedule).toContainText("593/593");
   await expect(appleSchedule).toContainText("Automatic playlist inbox");
+  await expect(appleSchedule).toContainText(
+    "12 attempted this cycle; 34 waiting without an attempt; 46 waiting total",
+  );
+  await expect(appleSchedule).toContainText("pending, awake-window only");
+  await expect(appleSchedule).toContainText("Recovery launches 2/2");
   await expect(appleSchedule).toContainText("Export complete");
   const scheduler = page.getByRole("region", { name: "Spotify rolling scheduler status" });
   await expect(scheduler).toContainText("Disabled");

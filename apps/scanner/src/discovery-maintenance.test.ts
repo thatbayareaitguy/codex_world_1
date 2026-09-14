@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   decideDiscoveryMaintenance,
-  maintenanceHardTerminationRecoveryDelayMs,
+  maintenanceStartupRecoveryDelayMs,
   maintenanceMaximumRuntimeMs,
   maintenanceShutdownGraceMs,
   maintenanceTaskExecutionLimitMs,
@@ -10,14 +10,47 @@ import {
 } from "./discovery-maintenance";
 
 describe("discovery maintenance decisions", () => {
-  it("keeps the application deadline inside PT4H and the deadman after it", () => {
+  it("keeps routine verification inside an existing awake window and lets matching proceed first", () => {
+    const now = new Date("2026-09-11T17:00:00Z");
+    const snapshot = baseSnapshot();
+    snapshot.discovery.playlistInbox.delivery = {
+      workKind: "verification",
+      shouldDeliver: false,
+      checkNotBefore: null,
+      flushDeadlineAt: null,
+    };
+    expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
+      runNow: false,
+      holdPower: false,
+      dynamicWakeAt: null,
+    });
+    expect(
+      decideDiscoveryMaintenance(snapshot, now, { allowRoutineVerification: true }),
+    ).toMatchObject({ reason: "routine_verification", runNow: true });
+    snapshot.spotify.priorityRunnableCount = 1;
+    expect(
+      decideDiscoveryMaintenance(snapshot, now, { allowRoutineVerification: true }).reason,
+    ).toBe("priority_work");
+    snapshot.discovery.playlistInbox.delivery.workKind = "uncertain";
+    expect(decideDiscoveryMaintenance(snapshot, now).reason).toBe("priority_work");
+  });
+  it("does not create a broad cooldown wake", () => {
+    const snapshot = baseSnapshot();
+    snapshot.spotify.broadRunnableCount = 5;
+    snapshot.spotify.cooldownActive = true;
+    snapshot.spotify.cooldownUntil = new Date("2026-09-13T19:00:00Z");
+    expect(decideDiscoveryMaintenance(snapshot, new Date("2026-09-13T17:00:00Z"))).toMatchObject({
+      dynamicWakeAt: null,
+      holdPower: false,
+      reason: "broad_capacity_wait",
+    });
+  });
+  it("keeps the application deadline inside PT4H and recovery inside the episode", () => {
     expect(maintenanceTaskExecutionLimitMs).toBe(4 * 60 * 60_000);
     expect(maintenanceMaximumRuntimeMs).toBe(
       maintenanceTaskExecutionLimitMs - maintenanceShutdownGraceMs,
     );
-    expect(maintenanceHardTerminationRecoveryDelayMs).toBe(
-      maintenanceTaskExecutionLimitMs + 60_000,
-    );
+    expect(maintenanceStartupRecoveryDelayMs).toBe(7 * 60_000);
   });
 
   it("holds power for an Apple job due within ten minutes", () => {
@@ -491,7 +524,7 @@ describe("discovery maintenance decisions", () => {
     ).toMatchObject({ holdPower: true, reason: "broad_work", runNow: true });
   });
 
-  it("schedules a dynamic wake for broad work when rolling capacity returns", () => {
+  it("defers broad work to the next fixed window when rolling capacity is unavailable", () => {
     const now = new Date("2026-08-29T16:00:00.000Z");
     const nextCapacityAt = new Date(now.getTime() + 90 * 60_000);
     const snapshot = baseSnapshot();
@@ -501,14 +534,14 @@ describe("discovery maintenance decisions", () => {
     snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt = nextCapacityAt;
     const decision = decideDiscoveryMaintenance(snapshot, now);
     expect(decision).toMatchObject({
-      dynamicWakeAt: new Date(nextCapacityAt.getTime() - maintenanceWakeLeadMs),
+      dynamicWakeAt: null,
       holdPower: false,
       reason: "broad_capacity_wait",
       runNow: false,
     });
   });
 
-  it("schedules a broad wake when the general rolling gate is exhausted", () => {
+  it("does not create a broad wake when the general rolling gate is exhausted", () => {
     const now = new Date("2026-08-29T16:00:00.000Z");
     const nextCapacityAt = new Date(now.getTime() + 90 * 60_000);
     const snapshot = baseSnapshot();
@@ -517,14 +550,14 @@ describe("discovery maintenance decisions", () => {
     snapshot.spotify.broadRollingRequestNextCapacityAt = nextCapacityAt;
 
     expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
-      dynamicWakeAt: new Date(nextCapacityAt.getTime() - maintenanceWakeLeadMs),
+      dynamicWakeAt: null,
       holdPower: false,
       reason: "broad_capacity_wait",
       runNow: false,
     });
   });
 
-  it("uses the reserved broad rolling boundary instead of the later general boundary", () => {
+  it("does not turn either broad rolling boundary into an extra wake", () => {
     const now = new Date("2026-08-29T16:00:00.000Z");
     const broadCapacityAt = new Date(now.getTime() + 45 * 60_000);
     const generalCapacityAt = new Date(now.getTime() + 3 * 60 * 60_000);
@@ -535,13 +568,13 @@ describe("discovery maintenance decisions", () => {
     snapshot.spotify.rollingRequestNextCapacityAt = generalCapacityAt;
 
     expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
-      dynamicWakeAt: new Date(broadCapacityAt.getTime() - maintenanceWakeLeadMs),
+      dynamicWakeAt: null,
       holdPower: false,
       reason: "broad_capacity_wait",
     });
   });
 
-  it("holds power for a near-term broad capacity return", () => {
+  it("releases power for a near-term broad capacity return", () => {
     const now = new Date("2026-08-29T16:00:00.000Z");
     const nextCapacityAt = new Date(now.getTime() + 12 * 60_000);
     const snapshot = baseSnapshot();
@@ -551,14 +584,14 @@ describe("discovery maintenance decisions", () => {
     snapshot.spotify.endpointBudget.artistAlbums.nextCapacityAt = nextCapacityAt;
     expect(decideDiscoveryMaintenance(snapshot, now)).toMatchObject({
       dynamicWakeAt: null,
-      holdPower: true,
+      holdPower: false,
       reason: "broad_capacity_wait",
       runNow: false,
-      waitUntil: nextCapacityAt,
+      waitUntil: null,
     });
   });
 
-  it("releases power and wakes for broad work deferred beyond fifteen minutes", () => {
+  it("releases power without an extra wake for deferred broad work", () => {
     const now = new Date("2026-09-12T16:00:00.000Z");
     const nextRunnableAt = new Date("2026-09-12T18:00:00.000Z");
     const snapshot = baseSnapshot();
@@ -566,7 +599,7 @@ describe("discovery maintenance decisions", () => {
     snapshot.spotify.broadNextRunnableAt = nextRunnableAt;
 
     expect(decideDiscoveryMaintenance(snapshot, now)).toEqual({
-      dynamicWakeAt: new Date(nextRunnableAt.getTime() - maintenanceWakeLeadMs),
+      dynamicWakeAt: null,
       holdPower: false,
       reason: "broad_deferred_wait",
       runNow: false,

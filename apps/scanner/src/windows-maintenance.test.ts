@@ -33,6 +33,16 @@ describe("Windows discovery maintenance integration", () => {
     expect(invocation?.args).toContain("Hidden");
     expect(invocation?.args.at(-1)).toContain("SetThreadExecutionState");
     expect(invocation?.args.at(-1)).toContain("$continuous -bor $systemRequired");
+    const helperScript = String(invocation?.args.at(-1));
+    const compilation = helperScript.indexOf("Add-Type");
+    expect(helperScript.indexOf("RADAR_POWER_RELEASE_PATH")).toBeLessThan(compilation);
+    expect(helperScript.lastIndexOf("-ge $deadline")).toBeGreaterThan(compilation);
+    expect(helperScript.lastIndexOf("-ge $deadline")).toBeLessThan(
+      helperScript.indexOf("$activation=[Radar.PowerRequest]"),
+    );
+    expect(Number.isFinite(Date.parse(String(invocation?.options.env?.RADAR_POWER_DEADLINE)))).toBe(
+      true,
+    );
     expect(invocation?.options.windowsHide).toBe(true);
     expect(invocation?.options.stdio).toBe("ignore");
     expect(invocation?.options.env).toMatchObject({ RADAR_POWER_MAX_SECONDS: "90" });

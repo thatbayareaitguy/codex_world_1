@@ -1,5 +1,6 @@
 import { log, normalizeSpotifyArtworkUrl } from "@radar/core";
 import { z } from "zod";
+import { providerExecutionSignal } from "./execution-budget";
 import {
   abbreviateSpotifyPlaylistId,
   assertOwnedNonCollaborativeSpotifyPlaylist,
@@ -763,8 +764,11 @@ export class SpotifyClient {
     schema: z.ZodType<T>,
     options: RequestOptions = {},
   ): Promise<T> {
+    const inheritedSignal = providerExecutionSignal(options.signal);
+    options = { ...options, ...(inheritedSignal ? { signal: inheritedSignal } : {}) };
     let refreshed = false;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
+      providerExecutionSignal(options.signal);
       const method = options.method ?? "GET";
       let permit: SpotifyRequestPermit | undefined;
       let permitCompleted = false;
@@ -791,6 +795,7 @@ export class SpotifyClient {
         const signal = options.signal
           ? AbortSignal.any([options.signal, timeoutSignal])
           : timeoutSignal;
+        signal.throwIfAborted();
         const response = await this.fetcher(`${this.apiBaseUrl}${path}`, {
           ...(options.body ? { body: JSON.stringify(options.body) } : {}),
           headers: {
@@ -868,6 +873,7 @@ export class SpotifyClient {
         }
         // Playlist additions are non-idempotent. A timeout or 5xx can arrive after Spotify has
         // committed the POST, so only a fresh playlist snapshot may decide whether to retry it.
+        options.signal?.throwIfAborted();
         const retryable =
           method !== "POST" &&
           ((error instanceof SpotifyHttpError && error.status >= 500) ||
@@ -974,9 +980,11 @@ export class SpotifyOAuthClient {
   }
 
   private async tokenRequest(body: URLSearchParams): Promise<SpotifyTokenResponse> {
+    const signal = providerExecutionSignal();
     const permit = await this.requestGate?.acquire({
       endpointCategory: "oauth_or_other",
       method: "POST",
+      ...(signal ? { signal } : {}),
     });
     let completed = false;
     try {
@@ -987,7 +995,9 @@ export class SpotifyOAuthClient {
           "Content-Type": "application/x-www-form-urlencoded",
         },
         method: "POST",
-        signal: AbortSignal.timeout(15_000),
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(15_000)])
+          : AbortSignal.timeout(15_000),
       });
       const errorResponse = response.ok ? undefined : await inspectSpotifyErrorResponse(response);
       const responseClassification = errorResponse?.responseClassification;

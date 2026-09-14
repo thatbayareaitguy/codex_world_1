@@ -1,4 +1,5 @@
 import type { AppleMusicRequestPersistence } from "@radar/providers";
+import { providerExecutionSignal, providerCancellableDelay } from "@radar/providers";
 import { createHash, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { RadarDatabase } from "./client";
@@ -59,6 +60,7 @@ export function createAppleMusicRequestPersistence(
       let claimed = false;
       try {
         while (true) {
+          providerExecutionSignal();
           const now = new Date();
           const [run, batch, state] = await Promise.all([
             db.query.scanRuns.findFirst({ where: eq(scanRuns.id, options.scanRunId) }),
@@ -637,5 +639,5 @@ async function ensureAppleMusicState(db: RadarDatabase): Promise<void> {
 }
 
 async function delay(milliseconds: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, milliseconds));
+  await providerCancellableDelay(milliseconds);
 }
