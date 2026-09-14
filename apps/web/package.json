@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "next build",
-    "dev": "next dev",
-    "start": "next start",
+    "build": "node --import tsx scripts/next-with-workspace-env.ts build",
+    "dev": "node --import tsx scripts/next-with-workspace-env.ts dev",
+    "start": "node --import tsx scripts/next-with-workspace-env.ts start",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -1,0 +1,1 @@
+ALTER TABLE "manual_match_decisions" ADD COLUMN "deferred_until" timestamp with time zone;

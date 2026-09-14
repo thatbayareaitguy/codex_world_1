@@ -1,0 +1,3 @@
+ALTER TABLE "spotify_scheduler_work" ADD COLUMN "discovery_reconciliation_campaign_id" uuid;--> statement-breakpoint
+ALTER TABLE "spotify_scheduler_work" ADD CONSTRAINT "spotify_scheduler_work_discovery_reconciliation_campaign_id_discovery_reconciliation_campaigns_id_fk" FOREIGN KEY ("discovery_reconciliation_campaign_id") REFERENCES "public"."discovery_reconciliation_campaigns"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "spotify_scheduler_work_discovery_campaign_idx" ON "spotify_scheduler_work" USING btree ("discovery_reconciliation_campaign_id","status","source","due_at");

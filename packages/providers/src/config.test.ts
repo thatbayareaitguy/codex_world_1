@@ -5,15 +5,71 @@ describe("provider configuration", () => {
   it("starts without credentials and hides manual SoundCloud links", () => {
     const config = loadProviderConfiguration({});
 
-    expect(config.spotify).toMatchObject({ enabled: true, configured: false });
-    expect(config.musicbrainz).toMatchObject({ enabled: true, configured: false });
+    expect(config.spotify).toMatchObject({
+      artistAlbums24HourLimit: 80,
+      artistAlbumsPriorityReserve: 20,
+      artistAlbumsReserveReleaseAfterHours: 20,
+      enabled: true,
+      configured: false,
+      expectedPlaylistPublic: true,
+      playlistWritesEnabled: false,
+    });
+    expect(config.spotify.allowedPlaylistId).toBeUndefined();
+    expect(config.musicbrainz).toMatchObject({ enabled: false, configured: false });
     expect(config.soundcloudManualLinksEnabled).toBe(false);
+    expect(config.reddit).toMatchObject({
+      accessApproved: false,
+      configured: false,
+      enabled: false,
+      includeComments: false,
+      internalMaxQpm: 30,
+    });
     expect(config.initialBackfillDays).toBe(60);
+    expect(config.discoverySchedulerEnabled).toBe(false);
+  });
+
+  it("validates the single allowed Spotify playlist boundary", () => {
+    const config = loadProviderConfiguration({
+      SPOTIFY_ALLOWED_PLAYLIST_ID: "4l6LaMPL6duulmFe3hRR4Y",
+      SPOTIFY_PLAYLIST_WRITES_ENABLED: "true",
+    });
+    expect(config.spotify).toMatchObject({
+      allowedPlaylistId: "4l6LaMPL6duulmFe3hRR4Y",
+      expectedPlaylistPublic: true,
+      playlistWritesEnabled: true,
+    });
+    expect(() =>
+      loadProviderConfiguration({ SPOTIFY_ALLOWED_PLAYLIST_ID: "1234567890123456789012" }),
+    ).toThrow("authorized Release Inbox");
+    expect(() =>
+      loadProviderConfiguration({ SPOTIFY_ALLOWED_PLAYLIST_ID: "not-a-playlist-id" }),
+    ).toThrow();
+  });
+
+  it("validates the Artist Albums reserve below its trailing limit", () => {
+    expect(() =>
+      loadProviderConfiguration({
+        SPOTIFY_ARTIST_ALBUMS_24H_LIMIT: "20",
+        SPOTIFY_ARTIST_ALBUMS_PRIORITY_RESERVE: "20",
+      }),
+    ).toThrow();
+    expect(
+      loadProviderConfiguration({
+        SPOTIFY_ARTIST_ALBUMS_24H_LIMIT: "100",
+        SPOTIFY_ARTIST_ALBUMS_PRIORITY_RESERVE: "25",
+        SPOTIFY_ARTIST_ALBUMS_RESERVE_RELEASE_AFTER_HOURS: "22",
+      }).spotify,
+    ).toMatchObject({
+      artistAlbums24HourLimit: 100,
+      artistAlbumsPriorityReserve: 25,
+      artistAlbumsReserveReleaseAfterHours: 22,
+    });
   });
 
   it("validates typed feature flags", () => {
     const config = loadProviderConfiguration({
       APP_ENCRYPTION_KEY: "test-key",
+      DISCOVERY_SCHEDULER_ENABLED: "true",
       MUSICBRAINZ_CONTACT_EMAIL: "owner@example.test",
       MUSICBRAINZ_ENABLED: "false",
       SOUNDCLOUD_MANUAL_LINKS_ENABLED: "true",
@@ -25,5 +81,76 @@ describe("provider configuration", () => {
     expect(config.spotify).toMatchObject({ enabled: false, configured: false });
     expect(config.musicbrainz).toMatchObject({ enabled: false, configured: false });
     expect(config.soundcloudManualLinksEnabled).toBe(true);
+    expect(config.discoverySchedulerEnabled).toBe(true);
+  });
+
+  it("bounds dynamic Spotify priority work to ten persisted items per process", () => {
+    expect(
+      loadProviderConfiguration({ SPOTIFY_PRIORITY_MAX_ITEMS_PER_RUN: "5" }).spotify.scheduler,
+    ).toMatchObject({ priorityMaxItemsPerRun: 5 });
+    expect(() => loadProviderConfiguration({ SPOTIFY_PRIORITY_MAX_ITEMS_PER_RUN: "11" })).toThrow();
+  });
+
+  it("requires an explicit flag and contact email to configure MusicBrainz", () => {
+    const config = loadProviderConfiguration({
+      MUSICBRAINZ_CONTACT_EMAIL: "owner@example.test",
+      MUSICBRAINZ_ENABLED: "true",
+    });
+
+    expect(config.musicbrainz).toMatchObject({ enabled: true, configured: true });
+  });
+
+  it("requires approval, credentials, and a descriptive Reddit User-Agent", () => {
+    const blocked = loadProviderConfiguration({
+      REDDIT_ACCESS_APPROVED: "false",
+      REDDIT_CLIENT_ID: "client",
+      REDDIT_CLIENT_SECRET: "secret",
+      REDDIT_ENABLED: "true",
+      REDDIT_USER_AGENT: "node",
+    });
+    expect(blocked.reddit).toMatchObject({ configured: false, userAgentValid: false });
+
+    const configured = loadProviderConfiguration({
+      REDDIT_ACCESS_APPROVED: "true",
+      REDDIT_CLIENT_ID: "client",
+      REDDIT_CLIENT_SECRET: "secret",
+      REDDIT_ENABLED: "true",
+      REDDIT_USER_AGENT: "web:ts-new-music-radar:v0.1.0 (by /u/owner)",
+    });
+    expect(configured.reddit).toMatchObject({ configured: true, userAgentValid: true });
+  });
+});
+
+describe("Spotify Development Mode configuration", () => {
+  it("uses conservative defaults", () => {
+    expect(loadProviderConfiguration({}).spotify).toMatchObject({
+      artistsPerBatch: 15,
+      batchPauseSeconds: 60,
+      dailyMaxPagesPerArtist: 1,
+      initialMaxPagesPerArtist: 2,
+      maxConcurrency: 1,
+      minRequestIntervalMs: 10_000,
+      scanDistributionHours: 24,
+      scheduler: {
+        enabled: false,
+        maxRequestsPerTick: 6,
+        maxRuntimeMs: 90_000,
+        rolling24HourLimit: 1_200,
+        rolling30MinuteLimit: 30,
+      },
+    });
+  });
+
+  it.each([
+    { SPOTIFY_MAX_CONCURRENCY: "0" },
+    { SPOTIFY_MAX_CONCURRENCY: "2" },
+    { SPOTIFY_MIN_REQUEST_INTERVAL_MS: "0" },
+    { SPOTIFY_MIN_REQUEST_INTERVAL_MS: "9999" },
+    { SPOTIFY_DAILY_MAX_PAGES_PER_ARTIST: "0" },
+    { SPOTIFY_SCHEDULER_MAX_REQUESTS_PER_TICK: "7" },
+    { SPOTIFY_SCHEDULER_MAX_RUNTIME_MS: "90001" },
+    { SPOTIFY_SCHEDULER_ROLLING_30M_LIMIT: "0" },
+  ])("rejects unsafe Spotify limits: %j", (environment) => {
+    expect(() => loadProviderConfiguration(environment)).toThrow();
   });
 });

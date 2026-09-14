@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { matchCandidate, normalizeText } from "./index";
+import {
+  exactStableTrackIdentityRule,
+  matchCandidate,
+  normalizeText,
+  primaryArtistCreditsOverlap,
+} from "./index";
 import type { CanonicalTrack, TrackCandidate } from "./types";
 
 const candidate: TrackCandidate = {
@@ -34,6 +39,12 @@ const canonical: CanonicalTrack = {
   durationMs: 218400,
   isrc: "USMCK2600001",
 };
+
+function candidateWithoutIsrc(): TrackCandidate {
+  const copy = { ...candidate };
+  delete copy.isrc;
+  return copy;
+}
 
 describe("matchCandidate", () => {
   it("merges provider records with the same normalized ISRC", () => {
@@ -84,15 +95,28 @@ describe("matchCandidate", () => {
     });
   });
 
-  it("does not merge identical titles credited to different artists", () => {
+  it("does not propose identical titles credited to unrelated primary artists", () => {
     const withoutIsrc: TrackCandidate = {
       ...candidate,
       credits: [{ name: "Another Artist", role: "primary" }],
     };
     delete withoutIsrc.isrc;
     expect(matchCandidate(withoutIsrc, [canonical])).toMatchObject({
-      confidence: 0.7,
-      kind: "review",
+      confidence: 1,
+      kind: "new",
+      rule: "new_canonical",
+    });
+  });
+
+  it("still trusts an exact identifier when provider artist credits disagree", () => {
+    expect(
+      matchCandidate({ ...candidate, credits: [{ name: "Another Artist", role: "primary" }] }, [
+        canonical,
+      ]),
+    ).toMatchObject({
+      canonicalTrackId: "canonical-1",
+      kind: "automatic",
+      rule: "exact_isrc",
     });
   });
 
@@ -118,5 +142,135 @@ describe("matchCandidate", () => {
       kind: "automatic",
       rule: "exact_isrc",
     });
+  });
+
+  it("does not collapse different tracks from the same MusicBrainz release group", () => {
+    const releaseGroupCandidate: TrackCandidate = {
+      ...candidateWithoutIsrc(),
+      musicbrainzReleaseGroupId: "11111111-1111-4111-8111-111111111111",
+      title: "Second Track",
+      trackNumber: 2,
+    };
+    const releaseGroupTrack: CanonicalTrack = {
+      ...canonical,
+      musicbrainzReleaseGroupId: "11111111-1111-4111-8111-111111111111",
+      title: "First Track",
+      normalizedTitle: normalizeText("First Track"),
+      trackNumber: 1,
+    };
+    expect(matchCandidate(releaseGroupCandidate, [releaseGroupTrack])).toMatchObject({
+      kind: "new",
+    });
+  });
+
+  it("matches a MusicBrainz release group only with the same position and title", () => {
+    const releaseGroupCandidate: TrackCandidate = {
+      ...candidateWithoutIsrc(),
+      musicbrainzReleaseGroupId: "11111111-1111-4111-8111-111111111111",
+      trackNumber: 1,
+    };
+    const releaseGroupTrack: CanonicalTrack = {
+      ...canonical,
+      musicbrainzReleaseGroupId: "11111111-1111-4111-8111-111111111111",
+      trackNumber: 1,
+    };
+    expect(matchCandidate(releaseGroupCandidate, [releaseGroupTrack])).toMatchObject({
+      kind: "automatic",
+      rule: "exact_musicbrainz",
+    });
+  });
+});
+
+describe("primaryArtistCreditsOverlap", () => {
+  it("normalizes primary names and ignores featured-credit differences", () => {
+    expect(
+      primaryArtistCreditsOverlap(
+        [
+          { name: "  Oliverse ", role: "primary" },
+          { name: "Guest One", role: "featured" },
+        ],
+        [
+          { name: "OLIVERSE", role: "primary" },
+          { name: "Guest Two", role: "featured" },
+        ],
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects unrelated primary artist credits", () => {
+    expect(
+      primaryArtistCreditsOverlap(
+        [{ name: "Oliverse", role: "primary" }],
+        [{ name: "Maurizzle", role: "primary" }],
+      ),
+    ).toBe(false);
+  });
+
+  it("preserves legacy behavior when either side lacks a primary credit", () => {
+    expect(
+      primaryArtistCreditsOverlap(
+        [{ name: "Oliverse", role: "primary" }],
+        [{ name: "Maurizzle", role: "featured" }],
+      ),
+    ).toBe(true);
+  });
+
+  it("does not treat a symbol-only primary artist as an empty wildcard", () => {
+    expect(
+      primaryArtistCreditsOverlap(
+        [{ name: "!!!", role: "primary" }],
+        [{ name: "Maurizzle", role: "primary" }],
+      ),
+    ).toBe(false);
+    expect(
+      primaryArtistCreditsOverlap(
+        [{ name: "！！！", role: "primary" }],
+        [{ name: "!!!", role: "primary" }],
+      ),
+    ).toBe(true);
+    expect(
+      primaryArtistCreditsOverlap(
+        [{ name: "   ", role: "primary" }],
+        [{ name: "Maurizzle", role: "primary" }],
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("exactStableTrackIdentityRule", () => {
+  it("uses current stable identifiers independently of persisted match metadata", () => {
+    expect(
+      exactStableTrackIdentityRule(
+        {
+          isrc: "US-MCK-26-00001",
+          provider: "apple_music",
+          externalTrackId: "apple-track-1",
+          title: "Glass Horizon",
+        },
+        {
+          isrc: "USMCK2600001",
+          providerExternalIds: [],
+          title: "Glass Horizon",
+        },
+      ),
+    ).toBe("exact_isrc");
+  });
+
+  it("prefers an exact provider identity over other stable identifiers", () => {
+    expect(
+      exactStableTrackIdentityRule(
+        {
+          isrc: "US-MCK-26-00001",
+          provider: "apple_music",
+          externalTrackId: "apple-track-1",
+          title: "Glass Horizon",
+        },
+        {
+          isrc: "USMCK2600001",
+          providerExternalIds: [{ externalId: "apple-track-1", provider: "apple_music" }],
+          title: "Glass Horizon",
+        },
+      ),
+    ).toBe("exact_provider_id");
   });
 });

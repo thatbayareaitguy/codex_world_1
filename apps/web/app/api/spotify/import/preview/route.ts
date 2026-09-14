@@ -11,11 +11,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     enforceRateLimit(request, 5);
     const context = await createSpotifyServerContext();
     try {
-      const [followed, canonicalRows, aliasRows] = await Promise.all([
+      const [followed, canonicalRows, aliasRows, followRows] = await Promise.all([
         context.client.getFollowedArtists(),
         context.db.select().from(artists),
         context.db.select().from(artistAliases),
+        context.db.query.artistFollows.findMany({
+          where: (table, { eq }) => eq(table.userId, context.userId),
+          columns: { active: true, artistId: true },
+        }),
       ]);
+      const followActiveByArtist = new Map(
+        followRows.map((follow) => [follow.artistId, follow.active] as const),
+      );
       const preview = createSpotifyImportPreview(
         followed,
         canonicalRows.map((artist) => ({
@@ -25,6 +32,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           id: artist.id,
           manuallyEdited: true,
           name: artist.name,
+          selectedByDefault: followActiveByArtist.get(artist.id) !== false,
         })),
       );
       const importRunId = await createSpotifyImportRun(context.db, context.userId, preview);

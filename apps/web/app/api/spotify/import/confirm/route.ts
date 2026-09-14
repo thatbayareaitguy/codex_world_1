@@ -1,6 +1,7 @@
 import { confirmSpotifyImport } from "@radar/db";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { assertSameOrigin, enforceRateLimit } from "../../../../../lib/request-security";
 import { createSpotifyServerContext } from "../../../../../lib/spotify-server";
@@ -35,6 +36,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           selected: decision.selected,
         })),
       );
+      revalidatePath("/");
       return NextResponse.json(summary);
     } finally {
       await context.close();

@@ -1,0 +1,2 @@
+ALTER TABLE "discovery_schedule_state" DROP CONSTRAINT "discovery_schedule_state_phase_check";--> statement-breakpoint
+ALTER TABLE "discovery_schedule_state" ADD CONSTRAINT "discovery_schedule_state_phase_check" CHECK ("discovery_schedule_state"."phase" in ('idle', 'cooldown_wait', 'playlist_inbox', 'apple_priority', 'apple_catchup_priority', 'broad_spotify', 'weekly_apple'));

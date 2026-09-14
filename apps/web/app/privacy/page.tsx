@@ -3,7 +3,7 @@ export default function PrivacyPage() {
     <main className="legal-page">
       <a href="/#settings">Back to settings</a>
       <h1>Privacy</h1>
-      <p>TS New Music Radar is a personal, single-user application.</p>
+      <p>TS New Music Scanner is a personal, single-user application.</p>
       <h2>Stored data</h2>
       <p>
         The local database stores the canonical watchlist, source evidence, scan history, provider

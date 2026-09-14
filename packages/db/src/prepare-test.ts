@@ -7,6 +7,7 @@ export const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL ?? "postgres://radar:radar@127.0.0.1:5433/radar_test";
 
 function startTestDatabase(): void {
+  if (process.env.TEST_DATABASE_URL) return;
   const result = spawnSync("docker", ["compose", "up", "-d", "db-test"], {
     stdio: "inherit",
     shell: false,
@@ -48,6 +49,7 @@ export async function resetTestDatabase(): Promise<void> {
   const resetClient = postgres(TEST_DATABASE_URL, { max: 1 });
   try {
     await resetClient.unsafe("drop schema if exists public cascade");
+    await resetClient.unsafe("drop schema if exists drizzle cascade");
     await resetClient.unsafe("create schema public");
   } finally {
     await resetClient.end();

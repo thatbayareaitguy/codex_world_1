@@ -36,4 +36,27 @@ describe("Spotify followed-artist import", () => {
       { proposedAction: "review", selected: false },
     ]);
   });
+
+  it("does not select a previously removed canonical artist for automatic reimport", () => {
+    const preview = createSpotifyImportPreview(
+      [spotifyArtist("removed", "Removed Artist")],
+      [
+        {
+          aliases: [],
+          id: "removed-canonical",
+          manuallyEdited: false,
+          name: "Removed Artist",
+          selectedByDefault: false,
+        },
+      ],
+    );
+
+    expect(preview).toEqual([
+      expect.objectContaining({
+        existingArtistId: "removed-canonical",
+        proposedAction: "merge",
+        selected: false,
+      }),
+    ]);
+  });
 });

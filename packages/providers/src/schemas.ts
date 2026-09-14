@@ -1,6 +1,16 @@
 import { feedStates, providerNames, releaseTypes } from "@radar/core";
 import { z } from "zod";
 
+export const spotifyPlaylistMutationEvidenceSchema = z.object({
+  version: z.literal(1),
+  snapshotId: z.string().min(1),
+  acknowledgedAt: z.string().datetime(),
+  fullReadAt: z.string().datetime().nullable(),
+  previousSnapshotIds: z.array(z.string()).max(64),
+  checkNotBefore: z.string().datetime().nullable(),
+  lagChecks: z.number().int().nonnegative(),
+});
+
 const artistCreditSchema = z.object({
   name: z.string().min(1),
   canonicalArtistId: z.string().min(1).optional(),
