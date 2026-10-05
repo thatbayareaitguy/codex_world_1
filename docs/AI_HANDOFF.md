@@ -1,6 +1,38 @@
 # AI Handoff
 
-Updated: 2026-09-08 PDT
+Updated: 2026-10-04 PDT
+
+## Current Showcase transfer safeguards
+
+- See `docs/showcase-update-operations.md`. Public traffic and ISR now read a deployment snapshot,
+  not Neon. One bounded 8 MB read happens before a Vercel build, with contract/hash validation and
+  failure preserving the previous deployment. No scanner provider/scheduler behavior changed.
+- Dedicated local weekly update: Friday 23:00 Pacific, Saturday 00:45 retry, Saturday 11:00 catch-up,
+  logon catch-up within 24 hours. Requires signed-in Windows user. The publisher gates on a fresh
+  completed error-free Apple batch, refuses active batches and suspicious/empty catalog changes,
+  and skips timestamp-only publications. It does not certify Spotify backlog or playlist completion.
+- Local reservation ledger under `%LOCALAPPDATA%\Showcase\publication`: 32 MB/attempt, maximum eight
+  attempts per rolling week, 750 MB weekly and 3.5 GB monthly budgets. October baseline is 2 GB from
+  the supplied 1.87 GB console reading. Missing accounting fails closed. This is not a billing API
+  meter or cap on other clients, manual builds, or legacy deployment URLs.
+- Bounded real publication produced version 7: 581 artists, 18 genres, 638 releases, 635 artwork,
+  229 Spotify links, 13 collaborations, and 1,284 tracks. Readback hash matched. Content SHA-256:
+  `8b582754af6cdc939cf0e08479d3ca18581cd49c3202a14ab7a89c656c51899f`.
+- Release state and the seven-day home discovery window now advance with the date. Production
+  does not reapply possibly stale bundled editorial assignments over its published snapshot.
+- Scanner browser regression had one expired future-date fixture. Only that test clock was fixed;
+  scanner runtime code and the production worktree were not changed.
+- Verification: 550 unit tests, 149 integration tests on isolated PostgreSQL port 5443, Showcase
+  browser checks (10) and 31 scanner browser tests passed. Formatting, lint, types, and both Next builds
+  are checked in this worktree. Normal tests use mocks, not live music providers.
+- A first CLI deployment was rejected for oversized local caches. `.vercelignore` now explicitly
+  excludes build caches in addition to credentials and runtime state. Subsequent uploads use the
+  source files only. Failed attempts remain charged in the local safety ledger.
+- Production snapshot deployment `showcasedm-ixe4a9qmx-showcase-edm.vercel.app` is live on
+  `https://showcasedm.com` and the existing project alias. Both public status hashes match version 7;
+  public pages return cached/prerendered responses and `/local/genre-review` returns 404 publicly.
+  Task registration verified: next run Friday 2026-10-09 at 23:00 Pacific. Two initial attempts
+  reserved 64 MB total in addition to the 2 GB October baseline. No owner credential was used.
 
 ## Showcase Public Site Milestone
 
@@ -8,9 +40,9 @@ Updated: 2026-09-08 PDT
   `C:\Users\taysh\Documents\Codex\codex_world_1_showcase`, based on production checkpoint
   `113d2a51db6030f8fe663e2667d752540b1dced3` from `codex/release-radar-hardening`.
 - `apps/showcase` remains a separate Next.js application with no imports from `@radar/db`, scanner,
-  providers, or provider API clients. Its server reads the current immutable catalog through the
-  pooled Neon `showcase_web_readonly` role. Local development falls back to the generated JSON
-  snapshot when Neon is absent, while Vercel requires Neon. All fictional release and artist
+  providers, or provider API clients. Its build reads the current immutable catalog through the
+  pooled Neon `showcase_web_readonly` role. Runtime uses the generated JSON snapshot without Neon;
+  Vercel requires Neon only before its build. All fictional release and artist
   fixtures have been removed.
 - Public routes are `/`, `/releases`, `/releases/[slug]`, `/artists`, `/artists/[slug]`,
   `/playlists`, `/about`, and `/contact`, with responsive navigation, local filters, loading states,

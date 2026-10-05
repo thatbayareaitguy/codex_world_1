@@ -145,7 +145,9 @@ describe("Showcase public catalog", () => {
       sources
         .filter((entry) => /from ["']postgres["']/u.test(entry.source))
         .map((entry) => entry.path.replaceAll("\\", "/")),
-    ).toEqual([expect.stringMatching(/apps\/showcase\/lib\/catalog-source\.server\.ts$/u)]);
+    ).toEqual([]);
+    expect(source).not.toContain("showcase-neon-reader");
+    expect(source).not.toContain("SHOWCASE_NEON_PUBLIC_DATABASE_URL");
     for (const entry of sources.filter((candidate) =>
       candidate.source.startsWith('"use client"'),
     )) {

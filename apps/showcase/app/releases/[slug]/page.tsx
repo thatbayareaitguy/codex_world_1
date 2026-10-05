@@ -13,7 +13,8 @@ import {
   getReleaseGenreNames,
 } from "../../../lib/public-catalog";
 
-export const dynamic = "force-dynamic";
+export const dynamic = "force-static";
+export const revalidate = 3600;
 
 interface ReleasePageProps {
   readonly params: Promise<{ slug: string }>;

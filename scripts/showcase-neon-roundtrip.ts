@@ -7,10 +7,7 @@ import postgres, { type Sql } from "postgres";
 
 import { validateShowcasePublisherDatabaseUrl } from "../apps/scanner/src/showcase-neon-publication";
 import { catalogContentSha256 } from "../apps/showcase/lib/catalog-integrity";
-import {
-  loadPublicCatalog,
-  validateShowcasePublicDatabaseUrl,
-} from "../apps/showcase/lib/catalog-source.server";
+import { readPublishedCatalog, validateShowcasePublicDatabaseUrl } from "./showcase-neon-reader";
 import { publicCatalog } from "../apps/showcase/lib/public-catalog";
 import { buildPublicCatalogSnapshot } from "../apps/showcase/lib/public-catalog";
 import { parsePublicCatalogSnapshot } from "../apps/showcase/lib/public-catalog-schema";
@@ -100,7 +97,7 @@ async function main(): Promise<void> {
     if (publisherRow === undefined) throw new Error("The published Showcase catalog is missing.");
 
     operationStage = "website-current-catalog-read";
-    const websiteCatalog = await loadPublicCatalog({
+    const websiteCatalog = await readPublishedCatalog({
       environment: {
         NODE_ENV: "production",
         SHOWCASE_CATALOG_SOURCE: "neon",

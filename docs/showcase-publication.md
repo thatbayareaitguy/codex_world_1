@@ -1,6 +1,9 @@
 # Showcase publication bridge
 
-Updated: 2026-09-02
+Updated: 2026-10-04
+
+For scheduling, budgets, safe retries, and operational recovery, see
+[Showcase budgeted updates](showcase-update-operations.md).
 
 ## Boundary and flow
 
@@ -16,10 +19,12 @@ persisted scanner tables
   -> strict showcase-public-v3 Zod validation
   -> restricted Neon publish_catalog function
   -> atomic generated JSON fallback write
-  -> Showcase server read through the Neon read-only view
+  -> one bounded Neon read before Vercel build
+  -> deployment JSON snapshot served without runtime Neon reads
 ```
 
-Run `pnpm showcase:publish` from the dedicated Showcase worktree. The publication process may be
+Run `pnpm showcase:update` for budgeted publication and deployment from the dedicated Showcase
+worktree. `pnpm showcase:publish` updates Neon and local JSON only. The publication process may be
 pointed at the private scanner environment file with `SHOWCASE_SCANNER_ENV_PATH`; it does not copy or
 modify that file. Apple Music Feed credentials and the Neon publisher credential are loaded from
 ignored local configuration. Scanner discovery, scheduling, providers, and playlists are not
@@ -120,16 +125,15 @@ relationships. Private suggestion evidence and source URLs never enter the publi
 
 ## Current published snapshot
 
-The bounded 2026-09-02 publication created Neon catalog version 5 with:
+The bounded 2026-10-04 Pacific publication created Neon catalog version 7 with:
 
 - 581 artists, including 258 with one or more confirmed Showcase genres
 - 18 genre records
-- 409 Apple-origin releases: 406 released and 3 upcoming
-- 221 releases with a confirmed Spotify outbound link and 188 with Apple Music only
-- 406 releases with exact Apple Music Feed artwork and 3 neutral placeholders
+- 638 Apple-origin releases: 637 released and 1 upcoming at publication
+- 229 releases with a confirmed Spotify outbound link and 409 with Apple Music only
+- 635 releases with exact Apple Music Feed artwork and 3 neutral placeholders
 - 13 releases with multiple credits
-- 865 public track rows
-- 1 unresolved collaborator omitted because no safe public identity was available
+- 1,284 public track rows
 
 ## Neon behavior
 
@@ -137,12 +141,13 @@ The publisher URL is loaded from `%LOCALAPPDATA%\Showcase\neon-publisher.env`. T
 only the validated publishing function and read the current public view. It cannot mutate the base
 table directly.
 
-The website URL is loaded from `%LOCALAPPDATA%\Showcase\neon-public-web.env` or from the same named
-server-side deployment environment variable. That role can read only `showcase.current_catalog`.
+The build-reader URL is loaded from `%LOCALAPPDATA%\Showcase\neon-public-web.env` or from the same
+named server-side deployment environment variable. That role can read only `showcase.current_catalog`.
 It cannot read the base table or execute the publisher function.
 
-When Neon configuration is absent in local development, Showcase reads
-`apps/showcase/lib/generated-public-catalog.json`. Vercel requires Neon and refuses this fallback.
+Both development and deployed runtime read `apps/showcase/lib/generated-public-catalog.json`.
+Vercel requires a successful bounded Neon read before building that snapshot, with no silent stale
+fallback at build time. Runtime cannot query Neon, even if its read-only credential is configured.
 
 ## Verification
 
@@ -153,5 +158,5 @@ When Neon configuration is absent in local development, Showcase reads
 - `pnpm showcase:neon:verify` validates both least-privilege roles.
 - `pnpm showcase:neon:roundtrip` compares normalized local and Neon snapshots, validates the stored
   hash, and tests denied publisher and website operations.
-- Showcase Playwright runs in forced JSON mode for stable regression coverage and can also run
-  against Neon with `SHOWCASE_E2E_CATALOG_SOURCE=neon`.
+- Showcase Playwright runs against a local build of the generated snapshot, without a live database
+  or provider dependency. Production status hashes verify the deployed snapshot matches publication.

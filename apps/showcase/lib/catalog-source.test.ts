@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { loadPublicCatalog, validateShowcasePublicDatabaseUrl } from "./catalog-source.server";
+import { loadPublicCatalog } from "./catalog-source.server";
+import { validateShowcasePublicDatabaseUrl } from "../../../scripts/showcase-neon-reader";
+import { catalogAtDate } from "./catalog-dates";
 import { publicCatalog } from "./public-catalog";
 
 describe("Showcase catalog source", () => {
@@ -9,15 +11,15 @@ describe("Showcase catalog source", () => {
       loadPublicCatalog({
         environment: { NODE_ENV: "test", SHOWCASE_CATALOG_SOURCE: "json" },
       }),
-    ).resolves.toBe(publicCatalog);
+    ).resolves.toEqual(catalogAtDate(publicCatalog, new Date()));
   });
 
-  it("requires Neon for a Vercel deployment", async () => {
+  it("serves a Vercel snapshot without any database configuration", async () => {
     await expect(
       loadPublicCatalog({
         environment: { NODE_ENV: "test", SHOWCASE_CATALOG_SOURCE: "json", VERCEL: "1" },
       }),
-    ).rejects.toThrow(/must use Neon/u);
+    ).resolves.toHaveProperty("contractVersion", "showcase-public-v3");
   });
 
   it("accepts only the pooled read-only website connection", () => {

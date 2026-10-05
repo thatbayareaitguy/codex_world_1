@@ -13,7 +13,8 @@ import {
   getRelatedArtists,
 } from "../../../lib/public-catalog";
 
-export const dynamic = "force-dynamic";
+export const dynamic = "force-static";
+export const revalidate = 3600;
 
 interface ArtistPageProps {
   readonly params: Promise<{ slug: string }>;

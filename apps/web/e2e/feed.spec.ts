@@ -22,6 +22,7 @@ test("opens the discovery feed on New and keeps All as the second tab", async ({
 test("shows released previews individually without exposing their future album in New", async ({
   page,
 }) => {
+  await page.clock.setFixedTime(new Date("2026-08-10T12:00:00Z"));
   const futureReleaseId = "71000000-0000-4000-8000-000000000001";
   const previews = [
     {

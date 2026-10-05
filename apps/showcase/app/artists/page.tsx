@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { ArtistExplorer } from "../../components/artist-explorer";
 import { loadPublicCatalog } from "../../lib/catalog-source.server";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 3600;
 
 export const metadata: Metadata = {
   title: "Artists",

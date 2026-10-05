@@ -35,6 +35,8 @@
     "showcase:startup:register": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/register-showcase-startup-task.ps1",
     "showcase:startup:remove": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/remove-showcase-startup-task.ps1",
     "showcase:publish": "tsx apps/scanner/src/showcase-publish-cli.ts",
+    "showcase:update": "tsx scripts/showcase-update.ts",
+    "showcase:publication:register": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/register-showcase-publication-task.ps1",
     "showcase:genre-research": "tsx apps/showcase/ops/genre-evidence-cli.ts",
     "showcase:neon:bootstrap": "tsx scripts/showcase-neon-bootstrap.ts",
     "showcase:neon:migrate": "tsx scripts/showcase-neon-migrate.ts",
@@ -66,11 +68,12 @@
     "eslint": "^9.38.0",
     "hyparquet": "1.29.2",
     "hyparquet-compressors": "1.1.1",
-    "prettier": "^3.6.2",
     "postgres": "^3.4.7",
+    "prettier": "^3.6.2",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.0",
-    "vitest": "^4.0.0"
+    "vitest": "^4.0.0",
+    "zod": "^4.4.3"
   }
 }

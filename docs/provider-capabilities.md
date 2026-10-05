@@ -71,6 +71,14 @@ automatic confirmation.
 
 ## Apple Music Verification
 
+Showcase publication orchestration reverified 2026-10-04 against Apple's official
+[Feed export instructions](https://developer.apple.com/documentation/applemusicfeed/requesting-a-feed-export).
+The scheduled local publisher reuses validated artwork only for the same exact Apple release URL,
+and looks up missing artwork during changed publications using the existing Feed adapter. Feed
+unavailability leaves placeholders. No scanner provider, credential, request gate, or discovery
+behavior changed. This does not establish Apple approval of the product or resolve launch-policy
+questions about ongoing artwork availability and attribution.
+
 Verified 2026-08-29 against current official Apple documentation:
 
 - [MusicKit and Apple Music API](https://developer.apple.com/musickit/): Apple documents public catalog access for songs, albums, artists, playlists, music videos, stations, and charts. This implementation uses only artist and album catalog resources.

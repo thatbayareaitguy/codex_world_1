@@ -281,7 +281,7 @@ const publicTypeByCanonicalType: Readonly<Record<string, (typeof publicReleaseTy
 const strictSpotifyReconciliationStatuses = new Set(["matched", "missing_spotify_track"]);
 
 export async function loadShowcasePublicationSource(
-  db: RadarDatabase,
+  db: Pick<RadarDatabase, "select">,
 ): Promise<ShowcasePublicationSource> {
   const activeRows = await db
     .select({ artistId: artists.id, name: artists.name })

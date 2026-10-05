@@ -4,18 +4,13 @@ import { ArrowRight, CalendarDays, Headphones, Radio } from "lucide-react";
 import { ArtistCard } from "../components/artist-card";
 import { ReleaseCard } from "../components/release-card";
 import { loadPublicCatalog } from "../lib/catalog-source.server";
+import { releasesThisWeek } from "../lib/catalog-dates";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 3600;
 
 export default async function HomePage() {
   const publicCatalog = await loadPublicCatalog();
-  const weekCutoff = new Date(publicCatalog.generatedAt);
-  weekCutoff.setUTCDate(weekCutoff.getUTCDate() - 7);
-  const newReleasesThisWeek = publicCatalog.releases.filter(
-    (release) =>
-      release.status === "released" &&
-      release.firstDiscoveredDate >= weekCutoff.toISOString().slice(0, 10),
-  );
+  const newReleasesThisWeek = releasesThisWeek(publicCatalog.releases, new Date());
   const newReleases = newReleasesThisWeek.slice(0, 3);
   const upcomingReleases = publicCatalog.releases
     .filter((release) => release.status === "upcoming")

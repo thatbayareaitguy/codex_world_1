@@ -1,6 +1,18 @@
 import { expect, test } from "@playwright/test";
 import generatedCatalog from "../lib/generated-public-catalog.json";
 
+test("public catalog status identifies the snapshot without database access", async ({
+  request,
+}) => {
+  const response = await request.get("/api/catalog-status");
+  expect(response.status()).toBe(200);
+  expect(await response.json()).toMatchObject({
+    source: "deployment-snapshot",
+    runtimeDatabaseReads: 0,
+    releases: generatedCatalog.releases.length,
+  });
+});
+
 test("homepage introduces release and artist discovery", async ({ page }) => {
   await page.goto("/");
 
@@ -48,11 +60,12 @@ test("hero emphasis uses upright gradient headline styling on every public page"
 });
 
 test("release filters and detail routes work", async ({ page }) => {
+  const today = new Date().toISOString().slice(0, 10);
   const releasedReleases = generatedCatalog.releases.filter(
-    (release) => release.status === "released",
+    (release) => release.releaseDate <= today,
   );
   const upcomingReleases = generatedCatalog.releases.filter(
-    (release) => release.status === "upcoming",
+    (release) => release.releaseDate > today,
   );
   const upcomingRelease = upcomingReleases[0];
   expect(upcomingRelease).toBeDefined();

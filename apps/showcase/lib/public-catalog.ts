@@ -93,8 +93,12 @@ const confirmedGenresByArtistId = new Map(
   ),
 );
 const excludedArtistPublicIds = new Set(excludedPublicArtists.artistPublicIds);
-export function buildPublicCatalogSnapshot(value: unknown): PublicCatalogSnapshot {
+export function buildPublicCatalogSnapshot(
+  value: unknown,
+  options: { readonly applyEditorial?: boolean } = {},
+): PublicCatalogSnapshot {
   const catalog = parsePublicCatalogSnapshot(value);
+  if (options.applyEditorial === false) return catalog;
   const excludedArtistSlugs = new Set(
     catalog.artists.flatMap((artist) =>
       excludedArtistPublicIds.has(artist.publicId) ? [artist.slug] : [],
@@ -165,10 +169,13 @@ export const getReleaseGenreNames = (release: PublicRelease): readonly string[] 
 export const formatArtistCredits = (release: PublicRelease): string =>
   release.artistCredits.map((credit) => credit.name).join(" & ");
 
-export const getReleaseArtists = (release: PublicRelease): readonly PublicArtist[] =>
+export const getReleaseArtists = (
+  release: PublicRelease,
+  catalog: PublicCatalogSnapshot = publicCatalog,
+): readonly PublicArtist[] =>
   release.artistCredits.flatMap((credit) => {
     if (credit.artistSlug === undefined) return [];
-    const artist = getArtist(credit.artistSlug);
+    const artist = getArtist(credit.artistSlug, catalog);
     return artist === undefined ? [] : [artist];
   });
 

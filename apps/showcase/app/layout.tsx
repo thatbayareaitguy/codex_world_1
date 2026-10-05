@@ -1,17 +1,12 @@
 import type { Metadata } from "next";
-import { headers } from "next/headers";
 import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Menu, Search } from "lucide-react";
 import "./globals.css";
 
-export async function generateMetadata(): Promise<Metadata> {
-  const requestHeaders = await headers();
-  const host = requestHeaders.get("host") ?? "127.0.0.1:3200";
-  const protocol =
-    requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("127.0.0.1") ? "http" : "https");
-  const origin = `${protocol}://${host}`;
+export function generateMetadata(): Metadata {
+  const origin = "https://showcasedm-showcase-edm.vercel.app";
   const description =
     "Discover new electronic music releases and the artists shaping what comes next.";
 
