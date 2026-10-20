@@ -9,7 +9,7 @@ export function updateRuntimeDirectory(): string {
 
 export async function withUpdateBudget<T>(
   slot: string,
-  operation: () => Promise<T>,
+  operation: (reserveRecovery: () => Promise<boolean>) => Promise<T>,
 ): Promise<T | undefined> {
   const directory = updateRuntimeDirectory();
   await mkdir(directory, { recursive: true });
@@ -24,7 +24,29 @@ export async function withUpdateBudget<T>(
     await writeFile(`${ledgerPath}.tmp`, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
     await rename(`${ledgerPath}.tmp`, ledgerPath);
     // Reserve before any network operation. Failures also consume the allowance.
-    return await operation();
+    let recoveryReserved = false;
+    let active = true;
+    try {
+      return await operation(async () => {
+        if (!active || recoveryReserved) return false;
+        // This closure is usable only while this run owns update.lock. Reserve another
+        // complete attempt before recovery, without widening any quota or retry limit.
+        recoveryReserved = true;
+        const current = budgetLedgerSchema.parse(JSON.parse(await readFile(ledgerPath, "utf8")));
+        const recovered = reserveUpdate(
+          current,
+          new Date(),
+          slot === "manual" ? "manual" : `${slot}/recovery`,
+        );
+        await writeFile(`${ledgerPath}.tmp`, `${JSON.stringify(recovered, null, 2)}\n`, {
+          mode: 0o600,
+        });
+        await rename(`${ledgerPath}.tmp`, ledgerPath);
+        return true;
+      });
+    } finally {
+      active = false;
+    }
   } finally {
     await lock.close();
     await unlink(lockPath);

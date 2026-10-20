@@ -1,6 +1,6 @@
 # Showcase budgeted updates
 
-Updated: 2026-10-04 Pacific
+Updated: 2026-10-20 Pacific
 
 ## Architecture
 
@@ -71,6 +71,10 @@ protocol and small verification responses. At eight attempts, the current job is
 256 MB reserved per rolling week. The normal three scheduled attempts reserve 96 MB. Reservations
 are intentionally not refunded for skips or errors.
 
+A run may reserve **one additional 32 MB recovery attempt**, shared across all recovery stages.
+That reservation consumes one of the same eight attempts and is checked against the same weekly
+and monthly limits before recovery starts. Limits are not increased, and failures are not refunded.
+
 This is a conservative application ledger, **not a Neon billing meter or account-wide quota**.
 Unrelated SQL clients, older deployment URLs still serving old code, direct diagnostic commands,
 and manual/Git-triggered Vercel builds are outside the local ledger. Each new Vercel build is still
@@ -92,6 +96,11 @@ State is outside Git at `%LOCALAPPDATA%\Showcase\publication`:
 - `update.lock`: overlap protection, PID and start time only. If a process was forcibly killed,
   verify that PID is no longer the publication process before removing this one stale lock.
 - `latest.json` and `history.jsonl`: safe outcomes, counts, public content hash, and timestamps.
+- `runs/<run-id>.jsonl`: private stage-by-stage journals, including preflight failures, stage
+  timestamps, a run ID, recovery count, and allowlisted error categories/codes. Known application
+  source locations may include a relative filename and line number. Raw messages, stack traces,
+  SQL, URLs, credentials, and raw deployment output are not persisted. CLI output is bounded in
+  memory and converted to fixed authentication, upload, build, network, or unknown categories.
 
 `--initialize-budget` is a one-time October 2026 bootstrap, refuses to overwrite existing state,
 and is not a budget-reset command. Monthly accounting rolls forward automatically while retaining
@@ -109,6 +118,33 @@ Vercel login. If login expires, reauthenticate interactively; scheduled runs fai
 only in the next allowed slot. No login token is written to the repository.
 
 ## Recovery and verification
+
+Transient readback, local rename, live-status, and deployment failures can recover once within
+the existing lock and budget. Recovery never repeats scanner queries, Feed enrichment, or a Neon
+publication write. If a write acknowledgement is lost, verify the expected catalog hash instead
+of blindly writing again. Authentication, build, validation, readiness, and quota failures do not
+automatically retry. Both deployment attempts share a 25-minute deadline.
+
+If local snapshot replacement still fails, remove only the temporary file created by that run.
+This avoids leaving an untracked file that would block a later scheduled preflight. Cleanup
+failure is logged without hiding the original replacement error.
+
+An unreadable live status is a failure, not evidence that the site is stale. Before retrying a
+catalog deployment, check whether that catalog is already live. Code-only deployments cannot use
+the catalog hash to prove the code version. The scheduled Saturday slots remain fallback checks.
+
+### October 20 investigation
+
+The October 9 and October 16 Friday runs failed after generating their catalogs. Saturday 00:45
+successes reported unchanged Neon content and deployed it, consistent with the Friday data having
+reached Neon before the website update completed. Historical logs omitted the failing stage and
+underlying error, so the exact cause cannot be established. Do not label it a confirmed provider,
+database, or Vercel outage.
+
+Two instrumented real updates on October 20 completed publication, readback, local snapshot,
+deployment, and live verification successfully: latest version 12, 711 releases, 581 artists, 18 genres,
+708 artwork images. This validates the path but does not reproduce the historical Friday failure.
+Future failures now leave actionable private diagnostics, even if a later Saturday run succeeds.
 
 Confirm the production `/api/catalog-status` hash matches `latest.json`. If publication succeeded
 but deployment failed, the next allowed update can deploy that already-published catalog. Failed

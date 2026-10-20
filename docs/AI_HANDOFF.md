@@ -1,6 +1,32 @@
 # AI Handoff
 
-Updated: 2026-10-04 PDT
+Updated: 2026-10-20 PDT
+
+## Showcase publication reliability, October 20
+
+- Friday October 9 and 16 failures lacked stage/error details. Saturday 00:45 runs successfully
+  deployed already-published Neon content. Exact historical root cause remains unproven; a real
+  instrumented October 20 update succeeded without reproducing the failure.
+- Private per-run journals under `%LOCALAPPDATA%\Showcase\publication\runs` record stages, run IDs,
+  safe reason/code/source location, and recovery attempts. Preflight failures now enter outcome
+  history. No raw exception, SQL, credential, or CLI output is persisted.
+- One shared recovery attempt may reserve another 32 MB under the unchanged eight-attempt,
+  750 MB rolling-week and 3.5 GB monthly limits. It never repeats scanner/Feed work or a Neon write;
+  ambiguous write acknowledgements use expected-hash readback. Live-status failure no longer
+  triggers a blind deployment. Deployment retries share a 25-minute deadline. Failed local catalog
+  replacement cleans up its own temporary file so it does not block the next scheduled preflight.
+- Two real publication/readback/live checks succeeded. Latest: version 12, 711 releases, 581 artists, 18 genres,
+  708 artwork images. SHA-256:
+  `53e865ea92f6f585307c3b26e1dd507499f3ced1f317bdbb52fef269aac339c4`.
+  Deployment: `showcasedm-pyrbd67xy-showcase-edm.vercel.app`. Public runtime remains snapshot-only.
+  October ledger: 320 MB reserved plus 2 GB baseline, not an actual Neon billing reading.
+- Verification: 576 unit tests, 149 isolated database integration tests, 10 Showcase browser tests,
+  31 scanner browser tests, lint, root/workspace type checks, and both Next builds passed.
+  Normal verification used mocks; two explicitly bounded publications used existing providers.
+- Weekly task remains Friday 23:00, Saturday 00:45 and 11:00 Pacific with logon catch-up. Next
+  Friday is October 23. No scanner runtime, provider, playlist, or schedule changes were made.
+- See `docs/showcase-update-operations.md` for failure inspection and limits. Historical milestone
+  counts below are snapshots of their milestones, not current catalog counts.
 
 ## Current Showcase transfer safeguards
 
