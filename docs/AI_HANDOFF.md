@@ -1,6 +1,39 @@
 # AI Handoff
 
-Updated: 2026-10-20 PDT
+Updated: 2026-10-28 PDT
+
+## Showcase deployment authentication, October 28
+
+- October 23 publication/readback succeeded, then deployment failed in six seconds and recovered
+  on its one bounded retry. Historical raw CLI output was not retained, so exact attribution of
+  that individual failure remains uncertain. The installed Vercel CLI 62.2.0 has a reproduced
+  expired-session race: concurrent project/owner requests refresh the same single-use token.
+  One request fails even though the other saves fresh credentials usable on the next attempt.
+- `scripts/showcase-deploy.ts` now runs one serial `whoami --non-interactive` before deployment,
+  under the existing lock and budget. Auth timeout is 60 seconds within the shared 25-minute
+  deadline. Our code does not read/copy tokens, modify the CLI, or pass provider/database secrets.
+  `deployment-auth` journals separate login failures from deployment; safe diagnostics recognize
+  invalid-token/refresh errors and record validated exit codes/signals without raw CLI output.
+- Offline proof: `node --import tsx scripts/showcase-vercel-auth-repro.ts` uses the actual pinned
+  CLI with synthetic credentials and mocked network. Old path: two refreshes, one rejected,
+  NOT_AUTHORIZED. New path: one refresh, zero rejected, linked. No real credential persistence.
+- One budgeted deployment-only live verification succeeded first try, no retry, on October 28.
+  Run ID `3eb7bbb2-4669-44cb-b636-eb39360d40d8`. No scanner reads, Feed calls, or Neon publication
+  writes were performed. Both production aliases return the unchanged October 23 catalog:
+  762 releases, 581 artists, 18 genres, zero runtime database reads. Hash:
+  `88d9866990c5c5ebe45786a1f206a3cb45acf6f72fb0f8f520e726ce035e3e2e`.
+- Existing budget limits unchanged. Local October ledger after verification: 15 reservations,
+  480 MB plus 2 GB baseline; rolling seven days: 160 MB reserved. This is not actual Neon usage.
+- Verification: formatting, lint, root/workspace types, 586 unit tests, 149 isolated PostgreSQL
+  integration tests, both Next builds, 10 Showcase and 31 scanner browser tests passed. One
+  initial Showcase page-load timeout passed on a full rerun with two workers. Scanner navigation
+  had depended on local saved account scopes; only its browser fixture now supplies synthetic
+  status. No scanner runtime/provider/playlist/scheduling behavior or production worktree changed.
+- Scheduled task last ran October 24 at 11:00 with result 0, no missed runs. Next Friday slot:
+  October 30 at 23:00 Pacific, then the unchanged Saturday fallbacks. The next scheduled expired
+  session is not yet observed live; its failure/fix is covered by the offline reproduction.
+- Pre-existing generated JSON changes from the October 23 job are preserved separately from the
+  code fix. Scheduled preflight already permits this generated file to be dirty.
 
 ## Showcase publication reliability, October 20
 

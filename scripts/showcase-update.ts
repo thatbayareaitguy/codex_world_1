@@ -1,8 +1,8 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { appendFile, mkdir, writeFile, rename } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { deploymentFailure } from "./showcase-deployment-diagnostics";
+import { deployShowcase } from "./showcase-deploy";
 import { recoverOnce } from "./showcase-recovery";
 import {
   initializeBudget,
@@ -19,71 +19,6 @@ import {
 } from "./showcase-diagnostics";
 
 const website = "https://showcasedm-showcase-edm.vercel.app";
-
-async function deploy(deadline: number): Promise<void> {
-  if (Date.now() >= deadline) throw new Error("Deployment deadline exceeded.");
-  // Never hand the scanner/publisher/provider environment to the deployment subprocess.
-  const environment: NodeJS.ProcessEnv = {};
-  for (const key of [
-    "PATH",
-    "Path",
-    "SystemRoot",
-    "SYSTEMROOT",
-    "WINDIR",
-    "COMSPEC",
-    "TEMP",
-    "TMP",
-    "USERPROFILE",
-    "HOME",
-    "LOCALAPPDATA",
-    "APPDATA",
-  ]) {
-    if (process.env[key]) environment[key] = process.env[key];
-  }
-  await new Promise<void>((resolvePromise, reject) => {
-    let outputTail = "";
-    const child = spawn(
-      process.execPath,
-      [
-        resolve(".app-runtime/deployer/node_modules/vercel/dist/index.js"),
-        "deploy",
-        "--prod",
-        "--yes",
-      ],
-      {
-        env: environment,
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      },
-    );
-    const capture = (data: Buffer) => {
-      outputTail = (outputTail + data.toString("utf8")).slice(-32_768);
-    };
-    child.stdout.on("data", capture);
-    child.stderr.on("data", capture);
-    const timeout = setTimeout(
-      () => {
-        if (child.pid && process.platform === "win32")
-          spawnSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
-            windowsHide: true,
-            stdio: "ignore",
-          });
-        else child.kill();
-        reject(new Error("Deployment deadline exceeded."));
-      },
-      Math.max(1, deadline - Date.now()),
-    );
-    child.once("error", (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
-    child.once("close", (code) => {
-      clearTimeout(timeout);
-      if (code === 0) resolvePromise();
-      else reject(deploymentFailure(outputTail));
-    });
-  });
-}
 
 async function liveHash(): Promise<string> {
   try {
@@ -176,7 +111,7 @@ export async function runShowcaseUpdate(): Promise<void> {
             )
               return;
             attempted = true;
-            await deploy(deadline);
+            await deployShowcase(deadline);
           },
           reserveRecovery,
         );

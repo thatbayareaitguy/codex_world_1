@@ -1,6 +1,6 @@
 # Showcase budgeted updates
 
-Updated: 2026-10-20 Pacific
+Updated: 2026-10-28 Pacific
 
 ## Architecture
 
@@ -101,6 +101,8 @@ State is outside Git at `%LOCALAPPDATA%\Showcase\publication`:
   source locations may include a relative filename and line number. Raw messages, stack traces,
   SQL, URLs, credentials, and raw deployment output are not persisted. CLI output is bounded in
   memory and converted to fixed authentication, upload, build, network, or unknown categories.
+  Authentication now has its own `deployment-auth` stage. Failed CLI commands also record a
+  validated numeric exit code or allowlisted termination signal, never arbitrary CLI text.
 
 `--initialize-budget` is a one-time October 2026 bootstrap, refuses to overwrite existing state,
 and is not a budget-reset command. Monthly accounting rolls forward automatically while retaining
@@ -113,9 +115,12 @@ existing local env files. Only the read-only Neon credential belongs in Vercel. 
 subprocess receives a minimal OS environment, and `.vercelignore` excludes local credentials,
 private runtime files, build caches, test artifacts, and backups.
 
-The pinned local Vercel CLI is installed under `.app-runtime/deployer` and requires a valid local
-Vercel login. If login expires, reauthenticate interactively; scheduled runs fail safely and retry
-only in the next allowed slot. No login token is written to the repository.
+The pinned local Vercel CLI is installed under `.app-runtime/deployer`. Before deployment, a serial
+`whoami --non-interactive` check lets the CLI refresh its stored session before starting concurrent
+project lookups. This check has a 60-second timeout within the existing 25-minute deployment
+deadline. It performs no Neon read, catalog publication, or provider request. If the refresh session
+itself is invalid or revoked, reauthenticate interactively; the job stops before upload. No login
+token is read by our code or written to the repository.
 
 ## Recovery and verification
 
@@ -145,6 +150,26 @@ Two instrumented real updates on October 20 completed publication, readback, loc
 deployment, and live verification successfully: latest version 12, 711 releases, 581 artists, 18 genres,
 708 artwork images. This validates the path but does not reproduce the historical Friday failure.
 Future failures now leave actionable private diagnostics, even if a later Saturday run succeeds.
+
+### October 28 authentication race investigation
+
+The October 23 Friday journal showed publication/readback/snapshot success, then deployment failure
+within six seconds, followed by a successful bounded retry. The raw CLI text was not retained, so
+that individual error cannot be reconstructed exactly. Inspection and offline reproduction of the
+installed Vercel CLI 62.2.0 identified a matching failure mode: project and owner lookups refresh an
+expired session concurrently. The second use of the same single-use refresh token fails, while the
+first request can still save a fresh token. The command fails but its next invocation succeeds.
+
+`node --import tsx scripts/showcase-vercel-auth-repro.ts` exercises the installed CLI with synthetic
+credentials, mocked network responses, disabled credential persistence, and a temporary synthetic
+project link. Without preflight: two refreshes, one rejected request, `NOT_AUTHORIZED`. With serial
+preflight: one refresh, no rejected requests, linked project. The diagnostic is pinned to 62.2.0
+bundle exports and fails closed for other versions. It never needs real credentials or a provider.
+
+`scripts/showcase-deploy.ts` applies the serial preflight under the existing publication lock and
+budget. It does not modify the installed CLI or extend any limits. Classification now recognizes
+the CLI's "token is not valid" wording, refresh rejection, and ANSI-colored login instructions.
+The one bounded recovery remains for unrelated transient failures, not as the normal auth strategy.
 
 Confirm the production `/api/catalog-status` hash matches `latest.json`. If publication succeeded
 but deployment failed, the next allowed update can deploy that already-published catalog. Failed

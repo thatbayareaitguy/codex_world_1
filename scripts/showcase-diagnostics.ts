@@ -19,6 +19,7 @@ export type PublicationStage =
   | "local-snapshot"
   | "live-status"
   | "deployment"
+  | "deployment-auth"
   | "live-verification"
   | "record-outcome"
   | "recovery-reserved";
@@ -93,6 +94,7 @@ const safeCodes = new Set([
 ]);
 const diagnosticFiles = new Set([
   "scripts/showcase-update.ts",
+  "scripts/showcase-deploy.ts",
   "scripts/showcase-publish.ts",
   "scripts/showcase-recovery.ts",
   "scripts/showcase-update-budget.ts",
@@ -106,6 +108,8 @@ const diagnosticFiles = new Set([
 ]);
 
 export function safeFailure(error: unknown) {
+  const exitCode = error instanceof Error && "cliExitCode" in error ? error.cliExitCode : undefined;
+  const signal = error instanceof Error && "cliSignal" in error ? error.cliSignal : undefined;
   const code =
     typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
   const frame =
@@ -146,6 +150,16 @@ export function safeFailure(error: unknown) {
         : "UnknownError",
     ...(typeof code === "string" && safeCodes.has(code) ? { code } : {}),
     ...(frame === undefined ? {} : { source: frame }),
+    ...(typeof exitCode === "number" &&
+    Number.isInteger(exitCode) &&
+    exitCode >= 0 &&
+    exitCode <= 0xffffffff
+      ? { cliExitCode: exitCode }
+      : {}),
+    ...(typeof signal === "string" &&
+    ["SIGTERM", "SIGKILL", "SIGABRT", "SIGSEGV", "SIGINT"].includes(signal)
+      ? { cliSignal: signal }
+      : {}),
     // Deliberately omit messages, stacks, URLs, SQL, and arbitrary provider/CLI output.
   };
 }

@@ -1,7 +1,17 @@
+import { stripVTControlCharacters } from "node:util";
+
 // Classify only known CLI failure categories. Never persist CLI output or extracted URLs.
-export function deploymentFailure(output: string): Error {
+export function deploymentFailure(
+  rawOutput: string,
+  outcome?: { exitCode: number | null; signal: string | null },
+): Error {
+  const error = classifyDeploymentFailure(stripVTControlCharacters(rawOutput));
+  return Object.assign(error, { cliExitCode: outcome?.exitCode, cliSignal: outcome?.signal });
+}
+
+function classifyDeploymentFailure(output: string): Error {
   if (
-    /not authenticated|authentication required|token.*(?:invalid|expired)|please.*(?:login|log in)|vercel login|login expired/i.test(
+    /not authenticated|authentication required|token.*(?:invalid|expired|not valid)|invalid_grant|NOT_AUTHORIZED|please.*(?:login|log in)|vercel login|login expired|no existing credentials/i.test(
       output,
     )
   )

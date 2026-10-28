@@ -1440,6 +1440,47 @@ test("hides manual SoundCloud controls by default", async ({ page }) => {
 });
 
 test("navigates every primary view and resolves manual review", async ({ page }) => {
+  // This navigation test must not depend on a saved account in the local database.
+  await page.route("**/api/system/status", async (route) => {
+    await route.fulfill({
+      json: {
+        appleMusic: {
+          configured: false,
+          enabled: false,
+          minRequestIntervalMs: 1100,
+          storefront: "us",
+        },
+        backup: { lastCompletedAt: null },
+        database: { configured: true, connected: true },
+        generatedAt: "2026-10-28T12:00:00.000Z",
+        reddit: {
+          approvalRecorded: false,
+          configured: false,
+          credentialsConfigured: false,
+          enabled: false,
+        },
+        scheduler: {
+          automaticEnabled: false,
+          expectedNextScanAt: null,
+          managedByApplication: false,
+          recommendedCommand: "pnpm discovery:scheduler:tick",
+          schedule: null,
+        },
+        spotify: {
+          allowedPlaylistConfigured: true,
+          configured: true,
+          connected: true,
+          enabled: true,
+          expectedPlaylistPublic: true,
+          grantedScopes: ["user-follow-read", "playlist-read-private"],
+          playlistWritesEnabled: true,
+          playlistWritePolicy: "authorized_owner_non_collaborative",
+          redirectUriValid: true,
+          requiredScopes: ["user-follow-read", "playlist-read-private"],
+        },
+      },
+    });
+  });
   await page.route("**/api/musicbrainz/mappings", async (route) => {
     await route.fulfill({ json: { mappings: [], reviews: [] } });
   });
